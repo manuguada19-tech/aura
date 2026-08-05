@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
+  <meta name="description" content="Aura — Conecta con personas reales, encuentra tu match perfecto." />
+  <title>Aura — Encuentra tu match</title>
+  <link rel="manifest" href="manifest.json?v=4" />
+  <link rel="icon" type="image/png" href="assets/aura-icon-512.png?v=4" />
+  <link rel="apple-touch-icon" href="assets/aura-icon-512.png?v=4" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <link rel="stylesheet" href="styles.css?v=442" />
+  <!-- Google AdSense: verificación de propiedad + carga de anuncios -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9759358849227466"
+     crossorigin="anonymous"></script>
+  <style>
+    /* Anti-FOUC: oculta el DOM hasta que CSS y JS estén listos.
+       Evita mostrar el marco de escritorio, la lista de bullets y las mock cards
+       durante la carga inicial (era el "primer pantalla" que veía el usuario). */
+    html.js-loading body { visibility: hidden !important; }
+    html.js-loading #auraSplash { visibility: visible !important; }
+    #auraSplash {
+      position: fixed; inset: 0; z-index: 9999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px;
+      background: #0b0c10;
+      transition: opacity .25s ease;
+    }
+    html[data-theme="light"] #auraSplash { background: #ffe4ec; }
+    #auraSplash .sp-logo {
+      width: 120px; height: 120px;
+      background-image: url("assets/aura-logo.png?v=3");
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+    html[data-theme="light"] #auraSplash .sp-logo {
+      background-image: url("assets/aura-logo-light.png?v=3");
+    }
+    #auraSplash .sp-text {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: .04em;
+      color: #b7bdcc;
+    }
+    html[data-theme="light"] #auraSplash .sp-text { color: #5b6270; }
+    #auraSplash .sp-dot {
+      display: inline-block; width: 4px; height: 4px; margin: 0 1px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: spDot 1.2s infinite ease-in-out;
+    }
+    #auraSplash .sp-dot:nth-child(2) { animation-delay: .15s; }
+    #auraSplash .sp-dot:nth-child(3) { animation-delay: .3s; }
+    @keyframes spDot {
+      0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-3px); }
+    }
+    html:not(.js-loading) #auraSplash { opacity: 0; pointer-events: none; }
+  </style>
+  <script>
+    // Marca el documento como "cargando" antes de mostrar contenido.
+    document.documentElement.classList.add("js-loading");
+  </script>
+  <script>
+    // Cache-bust styles.css y app.js dinámicamente si el usuario ha visto una versión anterior recientemente
+    (function(){
+      try {
+        var stamp = Date.now();
+        var link = document.querySelector('link[href^="styles.css"]');
+        if (link) link.href = "styles.css?v=" + stamp;
+      } catch(e){}
+    })();
+  </script>
+  <script>
+    (function(){
+      try {
+        var t = localStorage.getItem("aura-theme") || "dark";
+        document.documentElement.dataset.theme = t;
+      } catch(e) { document.documentElement.dataset.theme = "dark"; }
+    })();
+  </script>
+</head>
+<body>
+  <!-- Splash inicial anti-FOUC (fuera del body oculto). Se desvanece cuando app.js termina de renderizar. -->
+  <div id="auraSplash" aria-hidden="true">
+    <div class="sp-logo" role="img" aria-label="Aura"></div>
+    <div class="sp-text">Cargando versión web<span class="sp-dot"></span><span class="sp-dot"></span><span class="sp-dot"></span></div>
+  </div>
+  <!-- Capa de fondo global, controlada solo con inline styles -->
+  <div id="auraBg" style="position:fixed;inset:0;z-index:0;pointer-events:none;background:#0b0c10 radial-gradient(1200px 500px at 10% -10%, rgba(255,59,107,.22), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgba(168,85,247,.22), transparent 60%)"></div>
+  <!-- Desktop frame that hosts a phone-style app on large screens -->
+  <div id="stage" class="stage" style="position:relative;z-index:1;background:transparent">
+    <aside class="stage-side stage-side-left">
+      <div class="brand-block" aria-hidden="true">
+        <div class="brand-logo" id="sideBrandLogo">
+          <svg viewBox="0 0 100 100" width="56" height="56" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3b6b"/><stop offset="1" stop-color="#ff8a3b"/></linearGradient></defs><path fill="url(#lg)" d="M50 88 C20 68 8 48 8 30 A22 22 0 0 1 50 22 A22 22 0 0 1 92 30 C92 48 80 68 50 88Z"/></svg>
+        </div>
+        <p class="brand-tag">Conexiones reales, momentos únicos.</p>
+        <ul class="brand-points">
+          <li><span>✦</span> Perfiles verificados</li>
+          <li><span>✦</span> Chat privado & seguro</li>
+          <li><span>✦</span> Zona Hetero & LGTB</li>
+          <li><span>✦</span> Match inteligente</li>
+        </ul>
+      </div>
+      <button id="themeCard" class="theme-card" type="button" aria-label="Cambiar tema">
+        <span class="theme-card-ic" id="themeCardIc" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+        </span>
+        <span class="theme-card-txt">
+          <strong id="themeCardTitle">Cambiar a tema claro</strong>
+          <small id="themeCardSub">Estás usando el tema oscuro</small>
+        </span>
+        <span class="theme-card-chev" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>
+        </span>
+      </button>
+    </aside>
+
+    <main class="phone" id="phone" role="application" aria-label="Aura App">
+      <div class="phone-notch" aria-hidden="true"></div>
+      <div class="phone-status" aria-hidden="true">
+        <span class="ps-time" id="statusTime">9:41</span>
+        <span class="ps-icons">
+          <svg width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><rect x="0" y="6" width="2" height="4" rx="1" fill="currentColor"/><rect x="4" y="4" width="2" height="6" rx="1" fill="currentColor"/><rect x="8" y="2" width="2" height="8" rx="1" fill="currentColor"/><rect x="12" y="0" width="2" height="10" rx="1" fill="currentColor"/></svg>
+          <svg width="14" height="10" viewBox="0 0 14 10" aria-hidden="true"><path d="M7 8.5a1 1 0 100-2 1 1 0 000 2zm-3-2.5a3 3 0 016 0" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M2 5a5 5 0 0110 0" stroke="currentColor" fill="none" stroke-width="1.2"/><path d="M0 3.5a7 7 0 0114 0" stroke="currentColor" fill="none" stroke-width="1.2"/></svg>
+          <span class="ps-battery"><span></span></span>
+        </span>
+      </div>
+
+      <div class="app-viewport" id="viewport">
+        <!-- Screens are rendered by app.js -->
+      </div>
+
+      <nav class="tabbar" id="tabbar" hidden>
+        <button data-tab="discover" class="tab active" aria-label="Descubrir">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 21s-7-4.5-9.5-9A5.5 5.5 0 0112 6a5.5 5.5 0 019.5 6c-2.5 4.5-9.5 9-9.5 9z"/></svg>
+          <span>Descubrir</span>
+        </button>
+        <button data-tab="search" class="tab" aria-label="Buscar">
+          <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" stroke-width="2"/><path d="M20 20l-4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <span>Buscar</span>
+        </button>
+        <button data-tab="nearby" class="tab" aria-label="Cerca">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/></svg>
+          <span>Cerca</span>
+        </button>
+        <button data-tab="likes" class="tab" aria-label="Likes">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>
+          <span>Likes</span>
+          <em class="tab-badge">7</em>
+        </button>
+        <button data-tab="chats" class="tab" aria-label="Chats">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M4 5h16a2 2 0 012 2v9a2 2 0 01-2 2h-9l-5 4V7a2 2 0 012-2z"/></svg>
+          <span>Chats</span>
+          <em class="tab-badge">3</em>
+        </button>
+        <button data-tab="me" class="tab" aria-label="Perfil">
+          <svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="8" r="4" fill="currentColor"/><path fill="currentColor" d="M4 21a8 8 0 0116 0z"/></svg>
+          <span>Yo</span>
+        </button>
+      </nav>
+
+      <div class="phone-home" aria-hidden="true"></div>
+    </main>
+
+    <aside class="stage-side stage-side-right" aria-hidden="true">
+      <div class="mock-card mock-card-1" id="mockCard1">
+        <div class="mock-badge" id="mockBadge1">✨ Nuevo</div>
+        <div class="mock-title" id="mockTitle1">Presenta a tus fotos</div>
+        <div class="mock-sub" id="mockSub1">La IA de Aura elige la mejor portada.</div>
+      </div>
+      <div class="mock-card mock-card-2" id="mockCard2">
+        <div class="mock-title" id="mockTitle2">3 nuevos matches</div>
+        <div class="mock-avatars" id="mockAvatars">
+          <span style="background-image:url('https://i.pravatar.cc/80?img=32')"></span>
+          <span style="background-image:url('https://i.pravatar.cc/80?img=45')"></span>
+          <span style="background-image:url('https://i.pravatar.cc/80?img=68')"></span>
+        </div>
+      </div>
+      <div class="mock-card mock-card-3" id="mockCard3">
+        <div class="mock-title" id="mockTitle3">Zona Hetero · LGTB</div>
+        <div class="mock-sub" id="mockSub3">Cambia cuando quieras desde Ajustes.</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Global overlays -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="modal" class="modal" hidden>
+    <div class="modal-scrim" data-close></div>
+    <div class="modal-sheet" role="dialog" aria-modal="true" id="modalSheet"></div>
+  </div>
+
+  <button id="themeToggle" class="theme-toggle" aria-label="Cambiar tema">
+    <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+  </button>
+
+
+  <script>
+    // Carga dinámica de app.js con cache-bust para evitar que Chrome sirva versión antigua
+    (function(){
+      var s = document.createElement("script");
+      s.src = "app.js?v=" + Date.now();
+      s.async = false;
+      document.body.appendChild(s);
+    })();
+  </script>
+
+  <!-- ================================================================
+       V441 · Auto-scale del marco del teléfono en escritorio.
+       El marco físico (.phone) se dimensiona SIEMPRE a 400×820 CSS-px.
+       Este script mide el hueco disponible en la pantalla (con zoom,
+       resize, cambio de barra de herramientas…) y aplica un
+       transform: scale(k) al elemento para que el CONTENIDO interior
+       nunca cambie de tamaño relativo. Si el usuario amplía el zoom
+       del navegador, el marco se escala, no se re-maqueta.
+       En dispositivos táctiles (móvil real) NO se aplica escalado.
+       ================================================================ -->
+  <script>
+    (function(){
+      var PHONE_W = 400;
+      var PHONE_H = 820;
+      var GAP_H   = 48;   // margen vertical mínimo
+      var GAP_W   = 48;   // margen horizontal mínimo (para dejar hueco a los sidebars)
+      var phone = document.getElementById("phone");
+      if (!phone) return;
+
+      function isDesktop() {
+        try {
+          return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+        } catch (_) {
+          return true;
+        }
+      }
+
+      function reset() {
+        phone.style.transform = "";
+        phone.style.transformOrigin = "";
+        phone.style.setProperty("--phone-scale", "1");
+        document.documentElement.style.removeProperty("--phone-scale");
+      }
+
+      function apply() {
+        if (!isDesktop()) { reset(); return; }
+        // Fijamos dimensiones lógicas siempre iguales.
+        phone.style.width  = PHONE_W + "px";
+        phone.style.height = PHONE_H + "px";
+        phone.style.minWidth  = PHONE_W + "px";
+        phone.style.minHeight = PHONE_H + "px";
+        phone.style.maxWidth  = PHONE_W + "px";
+        phone.style.maxHeight = PHONE_H + "px";
+        phone.style.flex = "0 0 " + PHONE_W + "px";
+
+        // Espacio disponible en la ventana. Usamos visualViewport si existe
+        // (más fiable con zoom del navegador).
+        var vw = (window.visualViewport && window.visualViewport.width)  || window.innerWidth  || document.documentElement.clientWidth;
+        var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight;
+
+        var availW = Math.max(200, vw - GAP_W);
+        var availH = Math.max(200, vh - GAP_H);
+
+        var kW = availW / PHONE_W;
+        var kH = availH / PHONE_H;
+        var k  = Math.min(kW, kH, 1.15); // permitir hasta un 15% más grande en pantallas enormes
+        if (!isFinite(k) || k <= 0) k = 1;
+        // Nunca comprimir demasiado (usuario podría hacer zoom in absurdo).
+        k = Math.max(k, 0.30);
+
+        phone.style.transform = "scale(" + k.toFixed(4) + ")";
+        phone.style.transformOrigin = "center center";
+        phone.style.setProperty("--phone-scale", k.toFixed(4));
+        document.documentElement.style.setProperty("--phone-scale", k.toFixed(4));
+      }
+
+      // El wrapper del stage debe permitir centrar el marco escalado sin
+      // que el layout empuje el resto del contenido.
+      // Añadimos wrapper con dimensiones = PHONE_W*k / PHONE_H*k para reservar el espacio real.
+      function reserveSpace() {
+        if (!isDesktop()) return;
+        var k = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--phone-scale")) || 1;
+        // El truco: como usamos transform: scale, el layout sigue reservando 400×820.
+        // Para que el navegador reserve el ancho/alto REAL escalado, envolvemos
+        // el .phone en un contenedor con esas medidas reales.
+        var wrap = phone.parentElement;
+        if (!wrap || wrap.id !== "phoneScaleWrap") {
+          wrap = document.createElement("div");
+          wrap.id = "phoneScaleWrap";
+          wrap.style.cssText = "display:flex;align-items:center;justify-content:center;position:relative;";
+          phone.parentNode.insertBefore(wrap, phone);
+          wrap.appendChild(phone);
+        }
+        wrap.style.width  = (PHONE_W * k) + "px";
+        wrap.style.height = (PHONE_H * k) + "px";
+        wrap.style.flex   = "0 0 " + (PHONE_W * k) + "px";
+      }
+
+      function tick() { apply(); reserveSpace(); }
+
+      // Aplicar en:
+      //  - carga inicial
+      //  - resize
+      //  - visualViewport resize/scroll (detecta zoom)
+      //  - orientación
+      tick();
+      window.addEventListener("resize", tick, { passive: true });
+      window.addEventListener("orientationchange", tick);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", tick);
+        window.visualViewport.addEventListener("scroll", tick);
+      }
+      // Re-check tras cargar app.js
+      window.addEventListener("load", tick);
+      document.addEventListener("DOMContentLoaded", tick);
+      // Watch: media query cambia si el usuario conecta/desconecta un ratón.
+      try {
+        var mq = window.matchMedia("(hover: hover) and (pointer: fine)");
+        if (mq.addEventListener) mq.addEventListener("change", tick);
+        else if (mq.addListener) mq.addListener(tick);
+      } catch(_){}
+    })();
+  </script>
+</body>
+</html>

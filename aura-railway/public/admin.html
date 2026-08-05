@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#ff3b6b" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
+  <title>Aura Admin — Panel de administración</title>
+  <link rel="icon" type="image/png" href="assets/aura-logo.png?v=3" />
+  <link rel="apple-touch-icon" href="assets/aura-logo.png?v=3" />
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
+  <style>
+    /* Splash de carga del panel admin */
+    html.admin-loading body > *:not(#adminSplash) { visibility: hidden !important; }
+    #adminSplash {
+      position: fixed; inset: 0; z-index: 99999;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 20px;
+      background: #0f0f14;
+      transition: opacity .3s ease;
+    }
+    html[data-theme="light"] #adminSplash { background: #ffffff; }
+    #adminSplash .as-logo {
+      width: 160px; height: 160px;
+      background-image: url("assets/aura-admin-logo.png?v=1");
+      background-size: contain;
+      background-position: center;
+      background-repeat: no-repeat;
+    }
+    #adminSplash .as-text {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      color: #b7bdcc;
+    }
+    html[data-theme="light"] #adminSplash .as-text { color: #5b6270; }
+    #adminSplash .as-dot {
+      display: inline-block; width: 5px; height: 5px; margin: 0 2px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: asDot 1.2s infinite ease-in-out;
+    }
+    #adminSplash .as-dot:nth-child(2) { animation-delay: .15s; }
+    #adminSplash .as-dot:nth-child(3) { animation-delay: .3s; }
+    @keyframes asDot {
+      0%, 80%, 100% { opacity: .25; transform: translateY(0); }
+      40% { opacity: 1; transform: translateY(-4px); }
+    }
+    html:not(.admin-loading) #adminSplash { opacity: 0; pointer-events: none; }
+  </style>
+  <script>
+    document.documentElement.classList.add("admin-loading");
+    // Aplica tema guardado ANTES de renderizar
+    try {
+      var t = localStorage.getItem("aura-admin-theme") || localStorage.getItem("aura-theme") || "light";
+      document.documentElement.dataset.theme = t;
+    } catch(e){}
+  </script>
+  <script>
+    // Bootstrap: capture adminToken from URL (if any), persist, then load protected assets with it.
+    (function(){
+      try {
+        var qp = new URLSearchParams(location.search);
+        var tok = qp.get("adminToken");
+        if (tok) {
+          localStorage.setItem("adminToken", tok);
+          // Clean URL so token doesn't linger
+          history.replaceState({}, "", location.pathname);
+        } else {
+          tok = localStorage.getItem("adminToken");
+        }
+        if (!tok) {
+          document.write("<p style='font-family:system-ui;padding:24px'>Sesión de administrador requerida. <a href='/'>Iniciar sesión</a></p>");
+          return;
+        }
+        window.__ADMIN_TOKEN__ = tok;
+        var link = document.createElement("link");
+        link.rel = "stylesheet";
+        link.href = "admin.css?v=" + Date.now() + "&adminToken=" + encodeURIComponent(tok);
+        document.head.appendChild(link);
+      } catch(e){}
+    })();
+  </script>
+</head>
+<body>
+  <div id="adminSplash" aria-hidden="true">
+    <div class="as-logo" role="img" aria-label="Aura Admin"></div>
+    <div class="as-text">Cargando Panel de Administración<span class="as-dot"></span><span class="as-dot"></span><span class="as-dot"></span></div>
+  </div>
+  <div class="admin-shell">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="brand" id="adminBrand" role="button" tabindex="0" title="Ir al panel" style="cursor:pointer;">
+        <div class="brand-logo">
+          <svg viewBox="0 0 100 100" width="28" height="28"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff3b6b"/><stop offset="1" stop-color="#ff8a3b"/></linearGradient></defs><path fill="url(#lg)" d="M50 88 C20 68 8 48 8 30 A22 22 0 0 1 50 22 A22 22 0 0 1 92 30 C92 48 80 68 50 88Z"/></svg>
+        </div>
+        <div>
+          <div class="brand-name">Aura</div>
+          <div class="brand-sub">Administración</div>
+        </div>
+      </div>
+
+      <nav class="nav" id="nav">
+        <div class="nav-section">General</div>
+        <a data-view="dashboard" class="nav-link active">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+          Panel
+        </a>
+        <a data-view="users" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-8 2-8 6v2h16v-2c0-4-4-6-8-6z"/></svg>
+          Usuarios <span class="badge" id="navBadgeUsers" hidden></span>
+        </a>
+        <a data-view="moderation" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/></svg>
+          Moderación <span class="badge alert" id="navBadgeMod" hidden></span>
+        </a>
+        <a data-view="reports" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2C7 2 3 6 3 11c0 4.4 3 8 7 8.8V22l4-2 4 2v-2.2c4-.8 7-4.4 7-8.8 0-5-4-9-9-9z"/></svg>
+          Denuncias
+        </a>
+        <a data-view="tickets" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M20 12a2 2 0 01 2-2V6a2 2 0 00-2-2H4a2 2 0 00-2 2v4a2 2 0 010 4v4a2 2 0 002 2h16a2 2 0 002-2v-4a2 2 0 01-2-2zM8 8h8v2H8V8zm0 4h8v2H8v-2z"/></svg>
+          Tickets soporte
+        </a>
+        <a data-view="chats" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 5h16a2 2 0 012 2v9a2 2 0 01-2 2h-9l-5 4V7a2 2 0 012-2z"/></svg>
+          Chats
+        </a>
+        <a data-view="otp" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 00-5 5v3H6a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2v-8a2 2 0 00-2-2h-1V7a5 5 0 00-5-5zm-3 8V7a3 3 0 016 0v3H9z"/></svg>
+          Códigos OTP <span class="badge alert" id="navBadgeOtp" hidden></span>
+        </a>
+
+        <div class="nav-section">Monetización</div>
+        <a data-view="subscriptions" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2l3 6 6 .9-4.5 4.3L18 20l-6-3-6 3 1.5-6.8L3 8.9 9 8z"/></svg>
+          Suscripciones
+        </a>
+        <a data-view="payments" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 6h18v12H3z" fill-opacity=".2"/><path fill="currentColor" d="M3 6h18v3H3zM3 12h18v6H3z"/></svg>
+          Pagos & Facturación
+        </a>
+        <a data-view="promos" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M20 4L4 20l-2-2 16-16 2 2zm-11 6a2 2 0 100-4 2 2 0 000 4zm8 8a2 2 0 100-4 2 2 0 000 4z"/></svg>
+          Campañas y promociones
+        </a>
+        <a data-view="reads" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 5C6 5 2 12 2 12s4 7 10 7 10-7 10-7-4-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"/></svg>
+          Lecturas de chat
+        </a>
+        <a data-view="ads" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 10v4l6 4V6L3 10zm10-6h2v16h-2zm4 3h4v10h-4z"/></svg>
+          Anuncios
+        </a>
+
+        <div class="nav-section">Contenido</div>
+        <a data-view="content" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4h16v4H4zm0 6h16v4H4zm0 6h10v4H4z"/></svg>
+          Textos de la app
+        </a>
+        <a data-view="design" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3a9 9 0 100 18c1.1 0 2-.9 2-2 0-.6-.2-1.1-.6-1.4-.4-.4-.6-.9-.6-1.4 0-1.1.9-2 2-2h2a5 5 0 005-5c0-3.9-4-7-8.8-7zM6.5 12a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm3-4a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm5 0a1.5 1.5 0 110-3 1.5 1.5 0 010 3zm3 4a1.5 1.5 0 110-3 1.5 1.5 0 010 3z"/></svg>
+          Diseño
+        </a>
+
+        <div class="nav-section">Sistema</div>
+        <a data-view="stats" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M3 3v18h18v-2H5V3H3zm4 12h2v3H7v-3zm4-6h2v9h-2V9zm4 3h2v6h-2v-6zm4-6h2v12h-2V6z"/></svg>
+          Estadísticas
+        </a>
+        <a data-view="notifications" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 22a2 2 0 002-2h-4a2 2 0 002 2zm7-6V11a7 7 0 10-14 0v5l-2 2v1h18v-1l-2-2z"/></svg>
+          Notificaciones
+        </a>
+        <a data-view="emails" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M4 4h16a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2zm0 2v.3l8 5 8-5V6H4zm0 2.3V18h16V8.3l-8 5-8-5z"/>
+          </svg>
+          Plantillas de email
+        </a>
+        <a data-view="waitlist" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M6 2h12a2 2 0 012 2v3l-6 5 6 5v3a2 2 0 01-2 2H6a2 2 0 01-2-2v-3l6-5-6-5V4a2 2 0 012-2zm10 15.5L12 14l-4 3.5V20h8v-2.5zM8 6.5l4 3.5 4-3.5V4H8v2.5z"/>
+          </svg>
+          Lista de espera beta
+        </a>
+        <a data-view="maintenance_emails" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M22 8.6V6a2 2 0 00-2-2H4a2 2 0 00-2 2v12a2 2 0 002 2h9v-2H4V8l8 5 6.5-4.06.5-.31V8.6zM22 13h-2v3h-3v2h3v3h2v-3h3v-2h-3v-3zM20 6l-8 5-8-5h16z"/>
+          </svg>
+          Emails de mantenimiento
+        </a>
+        <a data-view="kyc" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M3 5h18v14H3zm2 2v10h14V7H5zm3 2h4v2H8V9zm0 4h8v2H8v-2z"/>
+          </svg>
+          Verificación de edad
+        </a>
+        <a data-view="invites" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18">
+            <path fill="currentColor" d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM4 6h16v.5l-8 5-8-5V6zm0 12v-9.4l7.4 4.6a1 1 0 001.2 0L20 8.6V18H4z"/>
+          </svg>
+          Invitaciones
+        </a>
+        <a data-view="settings" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2-1v-2l-2-3h-2l-2-2h-2l-2 2H7L5 9v2l-2 1v2l2 1v2l2 3h2l2 2h2l2-2h2l2-3v-2l2-1v-2z" fill-opacity=".3"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+          Configuración
+        </a>
+        <a data-view="backup" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 3l-1.5 1.5L14 8h-1v4h2V8h-1l3.5-3.5L15 3H9zm9 6h-4v2h3v9H4v-9h3V9H3a1 1 0 00-1 1v11a1 1 0 001 1h18a1 1 0 001-1V10a1 1 0 00-1-1zM8 15h8v2H8v-2z"/></svg>
+          Backup
+        </a>
+        <a data-view="logs" class="nav-link">
+          <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M4 4h16v2H4zm0 4h16v2H4zm0 4h10v2H4zm0 4h16v2H4zm0 4h10v2H4z"/></svg>
+          Logs del sistema
+        </a>
+      </nav>
+
+      <div class="admin-user">
+        <div class="au-avatar" style="background-image:url('https://i.pravatar.cc/80?img=12')"></div>
+        <div class="au-info">
+          <div class="au-name">Alex Ramos</div>
+          <div class="au-role">Superadministrador</div>
+        </div>
+        <button class="au-logout" title="Cerrar sesión">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M10 3H5a2 2 0 00-2 2v14a2 2 0 002 2h5v-2H5V5h5V3zm8 9l-5-5v3H9v4h4v3l5-5z"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <header class="topbar">
+        <button class="menu-btn" id="menuBtn" aria-label="Menú">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+        </button>
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+          <input placeholder="Buscar usuarios, denuncias, transacciones…" />
+          <kbd>⌘K</kbd>
+        </div>
+        <div class="topbar-right">
+          <a class="tb-link" href="index.html" target="_blank">↗ Abrir app</a>
+          <button class="tb-icon" id="themeBtn" aria-label="Tema">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
+          </button>
+          <button class="tb-icon" id="notifBtn" aria-label="Notificaciones">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 22a2 2 0 002-2h-4a2 2 0 002 2zm7-6V11a7 7 0 10-14 0v5l-2 2v1h18v-1l-2-2z"/></svg>
+            <span class="dot" id="notifDot" hidden></span>
+          </button>
+          <div class="tb-avatar" style="background-image:url('https://i.pravatar.cc/80?img=12')"></div>
+        </div>
+      </header>
+
+      <section id="view" class="view"></section>
+    </main>
+  </div>
+
+  <!-- Overlays -->
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-scrim" data-close></div>
+    <aside class="drawer-body" id="drawerBody"></aside>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+
+  <script>
+    (function(){
+      var tok = window.__ADMIN_TOKEN__;
+      if (!tok) return;
+      var s = document.createElement("script");
+      s.src = "admin.js?v=" + Date.now() + "&adminToken=" + encodeURIComponent(tok);
+      document.body.appendChild(s);
+    })();
+  </script>
+</body>
+</html>
