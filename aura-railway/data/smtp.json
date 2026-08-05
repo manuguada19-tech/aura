@@ -1,1 +1,13 @@
-
+{
+  "host": "smtp.serviciodecorreo.es",
+  "port": 587,
+  "secure": false,
+  "requireTLS": true,
+  "boxes": {
+    "no-reply@citasaura.es": { "name": "Aura" },
+    "hola@citasaura.es": { "name": "Aura" },
+    "seguridad@citasaura.es": { "name": "Aura Seguridad" },
+    "soporte@citasaura.es": { "name": "Aura Soporte" },
+    "suscripciones@citasaura.es": { "name": "Aura Suscripciones" }
+  }
+}
