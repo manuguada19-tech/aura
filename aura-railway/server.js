@@ -5533,7 +5533,8 @@ function initSmtpMailers() {
   const host   = process.env.SMTP_HOST   || SMTP_CFG.host;
   const port   = parseInt(process.env.SMTP_PORT || SMTP_CFG.port || 587, 10);
   const secure = String(process.env.SMTP_SECURE || SMTP_CFG.secure || "false").toLowerCase() === "true";
-  const requireTLS = SMTP_CFG.requireTLS !== false;
+  // Si secure=true (465), NO requireTLS; solo aplica en 587 STARTTLS
+  const requireTLS = !secure && (SMTP_CFG.requireTLS !== false);
   const boxes = SMTP_CFG.boxes || {};
   const sharedPass = SMTP_CFG.shared_password || "";
   Object.keys(boxes).forEach((addr) => {
@@ -5546,6 +5547,9 @@ function initSmtpMailers() {
         host, port, secure, requireTLS,
         auth: { user: addr, pass },
         tls: { rejectUnauthorized: false },
+        connectionTimeout: 15000,
+        greetingTimeout: 15000,
+        socketTimeout: 20000,
       });
       SMTP_MAILERS.set(addr, { transporter: t, name: b.name || "Aura", address: addr });
     } catch (e) {
