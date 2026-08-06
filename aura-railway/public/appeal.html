@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apelar eliminación de cuenta · Aura</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root { --pink:#ff4d8f; --purple:#7c3aed; --bg:#0e0e14; --panel:#1a1a24; --border:#2a2a3a; --text:#eee; --muted:#9aa; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px}
+  .card{max-width:560px;width:100%;background:var(--panel);border:1px solid var(--border);border-radius:20px;padding:28px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .brand-logo{width:44px;height:44px;border-radius:50%;object-fit:cover;background:linear-gradient(135deg,var(--pink),var(--purple));display:flex;align-items:center;justify-content:center;font-size:24px;flex-shrink:0;overflow:hidden}
+  .brand-logo img{width:100%;height:100%;object-fit:cover;border-radius:50%}
+  .brand-name{font-weight:700;font-size:22px;background:linear-gradient(135deg,var(--pink),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent;letter-spacing:-.3px}
+  h1{margin:14px 0 6px;font-size:22px}
+  p.muted{color:var(--muted);font-size:14px;line-height:1.5;margin:0 0 12px}
+  .info{background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:12px 14px;margin:12px 0;font-size:14px}
+  .info b{color:#c9b8ff}
+  label{display:block;font-weight:600;margin:12px 0 6px;font-size:14px}
+  textarea,input{width:100%;background:#111119;border:1px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-size:14px;font-family:inherit}
+  textarea{min-height:140px;resize:vertical}
+  .actions{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}
+  button{flex:1;padding:12px 18px;border:0;border-radius:10px;font-weight:600;cursor:pointer;font-size:15px}
+  .btn-primary{background:linear-gradient(135deg,var(--pink),var(--purple));color:#fff}
+  .btn-ghost{background:transparent;color:var(--muted);border:1px solid var(--border)}
+  .status{margin-top:14px;padding:12px;border-radius:10px;font-size:14px;display:none}
+  .status.ok{display:block;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35);color:#86efac}
+  .status.err{display:block;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5}
+  .warn{background:rgba(250,204,21,.08);border:1px solid rgba(250,204,21,.25);border-radius:10px;padding:10px 12px;margin:10px 0;font-size:13px;color:#fde68a}
+  .deadline{font-size:13px;color:var(--muted);margin-top:4px}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite;margin-right:6px;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="brand">
+      <div class="brand-logo" id="brandLogo">💗</div>
+      <div class="brand-name" id="brandName">Aura</div>
+    </div>
+    <div id="content">
+      <p class="muted"><span class="spinner"></span>Cargando información de la solicitud…</p>
+    </div>
+  </div>
+
+<script>
+(async function() {
+  // 1) Cargar logo y nombre desde /api/admin-branding (o /api/public-config como fallback)
+  (async () => {
+    try {
+      const b = await fetch("/api/admin-branding", { cache: "no-store" }).then(r => r.ok ? r.json() : null);
+      if (b) {
+        if (b.logo) {
+          const box = document.getElementById("brandLogo");
+          box.textContent = "";
+          const img = document.createElement("img");
+          img.src = b.logo;
+          img.alt = b.name || "Aura";
+          box.appendChild(img);
+        }
+        if (b.name) document.getElementById("brandName").textContent = b.name;
+      }
+    } catch {}
+  })();
+
+  const params = new URLSearchParams(location.search);
+  // Token puede venir como ?t=xxxx o como /appeal/xxxx
+  let token = params.get("t");
+  if (!token) {
+    const parts = location.pathname.split("/").filter(Boolean);
+    const last = parts[parts.length - 1] || "";
+    if (last && last !== "appeal" && last !== "appeal.html") token = last;
+  }
+
+  const content = document.getElementById("content");
+  function render(html) { content.innerHTML = html; }
+
+  if (!token) {
+    render(`
+      <h1>Enlace de apelación no válido</h1>
+      <p class="muted">Esta página se abre desde el enlace que recibiste por email tras la eliminación de tu cuenta.</p>
+      <p class="muted">Si has llegado aquí por otro motivo, no necesitas hacer nada. Puedes volver a <a href="https://www.citasaura.es" style="color:#ff4d8f">citasaura.es</a>.</p>
+    `);
+    return;
+  }
+
+  let data;
+  try {
+    const r = await fetch("/api/public/appeal/" + encodeURIComponent(token));
+    if (r.status === 404) {
+      render(`<h1>Enlace no encontrado</h1><p class="muted">El token de esta apelación no existe o ya fue procesada. Si crees que es un error, contacta con soporte en <a href="mailto:soporte@citasaura.es" style="color:#ff4d8f">soporte@citasaura.es</a>.</p>`);
+      return;
+    }
+    if (r.status === 410) {
+      render(`<h1>Plazo caducado</h1><p class="muted">El plazo para presentar una apelación ha finalizado. La decisión es firme.</p>`);
+      return;
+    }
+    if (!r.ok) throw new Error("load_failed");
+    data = await r.json();
+  } catch (e) {
+    render(`<h1>No se pudo cargar</h1><p class="muted">Ha habido un problema temporal al cargar tu apelación. Vuelve a intentarlo en unos minutos o escribe a <a href="mailto:soporte@citasaura.es" style="color:#ff4d8f">soporte@citasaura.es</a>.</p>`);
+    return;
+  }
+
+  const deadlineTxt = data.appeal_deadline
+    ? new Date(data.appeal_deadline).toLocaleString("es-ES", { dateStyle: "long", timeStyle: "short" })
+    : "sin plazo definido";
+
+  render(`
+    <h1>Apelar eliminación de cuenta</h1>
+    <p class="muted">Hola ${data.name ? escapeHtml(data.name) : ""}, tu cuenta asociada a <b>${escapeHtml(data.email || "")}</b> fue eliminada.</p>
+
+    <div class="info">
+      <div><b>Motivo:</b> ${escapeHtml(data.reason_label || "No especificado")}</div>
+      <div class="deadline"><b>Plazo de apelación:</b> ${deadlineTxt}</div>
+    </div>
+
+    <div class="warn">⚠️ Presentar esta apelación no garantiza que la decisión sea revertida. Nuestro equipo revisará tu caso y responderá al email indicado.</div>
+
+    <label for="msg">Explica por qué crees que la decisión debería revisarse (mínimo 20 caracteres):</label>
+    <textarea id="msg" placeholder="Cuéntanos tu situación con el mayor detalle posible..."></textarea>
+
+    <div class="actions">
+      <button class="btn-ghost" onclick="location.href='https://www.citasaura.es'">Cancelar</button>
+      <button class="btn-primary" id="sendBtn">Enviar apelación</button>
+    </div>
+
+    <div class="status" id="status"></div>
+  `);
+
+  document.getElementById("sendBtn").addEventListener("click", async () => {
+    const msg = document.getElementById("msg").value.trim();
+    const status = document.getElementById("status");
+    const btn = document.getElementById("sendBtn");
+    status.className = "status";
+    if (msg.length < 20) {
+      status.className = "status err";
+      status.textContent = "El mensaje debe tener al menos 20 caracteres.";
+      return;
+    }
+    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Enviando…';
+    try {
+      const r = await fetch("/api/public/appeal/" + encodeURIComponent(token), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg }),
+      });
+      if (r.status === 410) {
+        status.className = "status err";
+        status.textContent = "El plazo para apelar ha caducado.";
+        return;
+      }
+      if (!r.ok) throw new Error("send_failed");
+      status.className = "status ok";
+      status.textContent = "✓ Tu apelación se envió correctamente. Recibirás una respuesta en tu email.";
+      btn.style.display = "none";
+      document.getElementById("msg").disabled = true;
+    } catch (e) {
+      status.className = "status err";
+      status.textContent = "No se pudo enviar. Vuelve a intentarlo.";
+    } finally {
+      btn.disabled = false; btn.textContent = "Enviar apelación";
+    }
+  });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  }
+})();
+</script>
+</body>
+</html>

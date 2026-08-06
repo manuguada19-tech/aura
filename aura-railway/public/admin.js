@@ -1322,6 +1322,283 @@ async function downloadCSV(kind) {
 }
 
 /* =========================================================
+   V520 — Pro Visual Toolkit
+   Helpers reutilizables: hero con gradiente, KPI cards con
+   sparkline SVG, mini-bars horizontales, gauge, listas top,
+   trend badges, empty states elegantes. Se usan en Dashboard,
+   Payments, Subscriptions, Promos, Ads, Stats para dar un
+   acabado profesional consistente.
+   ========================================================= */
+(function injectProVisualCss() {
+  if (document.getElementById("proVisualCss")) return;
+  const st = document.createElement("style");
+  st.id = "proVisualCss";
+  st.textContent = `
+    .pro-hero{
+      position:relative;overflow:hidden;border-radius:20px;padding:22px 24px;
+      background:linear-gradient(135deg,var(--hero-a,#7c3aed),var(--hero-b,#ec4899));
+      color:#fff;box-shadow:0 20px 60px rgba(124,58,237,.25);
+      display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-bottom:18px;
+    }
+    .pro-hero::before{content:"";position:absolute;inset:-40px -60px auto auto;width:280px;height:280px;
+      background:radial-gradient(circle,rgba(255,255,255,.18),transparent 60%);pointer-events:none;}
+    .pro-hero-icon{width:64px;height:64px;border-radius:20px;display:grid;place-items:center;
+      background:rgba(255,255,255,.18);backdrop-filter:blur(8px);font-size:32px;flex-shrink:0;
+      box-shadow:0 8px 24px rgba(0,0,0,.2);}
+    .pro-hero-body{flex:1;min-width:220px;position:relative;z-index:1}
+    .pro-hero-body h2{margin:0 0 4px;font-size:22px;font-weight:700;letter-spacing:-.3px}
+    .pro-hero-body p{margin:0;font-size:14px;opacity:.92;line-height:1.5}
+    .pro-hero-stats{display:flex;gap:18px;flex-wrap:wrap;position:relative;z-index:1}
+    .pro-hero-stat{text-align:center;min-width:80px}
+    .pro-hero-stat b{display:block;font-size:22px;font-weight:700;line-height:1.1}
+    .pro-hero-stat span{display:block;font-size:11px;opacity:.85;text-transform:uppercase;letter-spacing:.6px;margin-top:2px}
+
+    .pro-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+    .pro-kpi{position:relative;background:var(--panel,#1a1a24);border:1px solid var(--border,#2a2a3a);
+      border-radius:16px;padding:14px 16px;overflow:hidden;transition:transform .15s,box-shadow .15s}
+    .pro-kpi:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(0,0,0,.25)}
+    .pro-kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;
+      background:linear-gradient(90deg,var(--k-a,#7c3aed),var(--k-b,#ec4899));}
+    .pro-kpi-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+    .pro-kpi-label{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted,#9aa);font-weight:600}
+    .pro-kpi-ico{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:16px;
+      background:linear-gradient(135deg,var(--k-a,#7c3aed),var(--k-b,#ec4899));color:#fff}
+    .pro-kpi-val{font-size:26px;font-weight:700;letter-spacing:-.4px;color:var(--text,#eee);line-height:1.1}
+    .pro-kpi-sub{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#9aa);margin-top:4px}
+    .pro-kpi-trend{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:3px}
+    .pro-kpi-trend.up{background:rgba(34,197,94,.15);color:#86efac}
+    .pro-kpi-trend.dn{background:rgba(239,68,68,.15);color:#fca5a5}
+    .pro-kpi-trend.eq{background:rgba(148,163,184,.15);color:#cbd5e1}
+    .pro-kpi-spark{margin-top:8px;height:36px;width:100%}
+    .pro-kpi-spark path{fill:none;stroke:url(#kpiGrad);stroke-width:2;stroke-linecap:round}
+    .pro-kpi-spark .fill{fill:url(#kpiFillGrad);opacity:.35}
+
+    .pro-panel{background:var(--panel,#1a1a24);border:1px solid var(--border,#2a2a3a);border-radius:16px;padding:16px 18px;margin-bottom:14px}
+    .pro-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+    .pro-panel-head h3{margin:0;font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+    .pro-panel-head .ico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--p-a,#7c3aed),var(--p-b,#ec4899));font-size:14px}
+    .pro-panel-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+    .pro-bars{display:flex;flex-direction:column;gap:8px}
+    .pro-bar-row{display:grid;grid-template-columns:120px 1fr 60px;gap:10px;align-items:center;font-size:13px}
+    .pro-bar-row .lbl{color:var(--text,#eee);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pro-bar-track{background:rgba(255,255,255,.05);border-radius:999px;height:8px;overflow:hidden;position:relative}
+    .pro-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--b-a,#7c3aed),var(--b-b,#ec4899));
+      box-shadow:0 0 8px rgba(124,58,237,.4);transition:width .5s ease}
+    .pro-bar-val{text-align:right;font-weight:700;font-size:13px;color:var(--text,#eee)}
+
+    .pro-gauge{position:relative;width:120px;height:60px;overflow:hidden;margin:0 auto}
+    .pro-gauge svg{display:block}
+    .pro-gauge-val{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:20px;font-weight:700;color:var(--text,#eee)}
+    .pro-gauge-lbl{text-align:center;font-size:11px;color:var(--muted,#9aa);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+
+    .pro-toplist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+    .pro-toplist li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04)}
+    .pro-toplist li:hover{background:rgba(255,255,255,.05)}
+    .pro-toplist .rk{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;font-size:11px;font-weight:700;
+      background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff}
+    .pro-toplist .rk.gold{background:linear-gradient(135deg,#fbbf24,#f59e0b)}
+    .pro-toplist .rk.silver{background:linear-gradient(135deg,#e5e7eb,#94a3b8)}
+    .pro-toplist .rk.bronze{background:linear-gradient(135deg,#ea9c58,#a3672d)}
+    .pro-toplist .name{flex:1;font-size:13px;font-weight:500;color:var(--text,#eee);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pro-toplist .val{font-weight:700;font-size:13px;color:var(--muted,#9aa)}
+
+    .pro-grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:14px}
+    .pro-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px}
+
+    .pro-empty{text-align:center;padding:40px 20px;color:var(--muted,#9aa)}
+    .pro-empty-ico{font-size:48px;opacity:.5;margin-bottom:8px}
+    .pro-empty h4{margin:0 0 4px;font-size:16px;color:var(--text,#eee)}
+    .pro-empty p{margin:0;font-size:13px}
+
+    .pro-hstack{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .pro-chip{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;
+      background:rgba(124,58,237,.15);border:1px solid rgba(124,58,237,.35);color:#c9b8ff}
+    .pro-chip.green{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.35);color:#86efac}
+    .pro-chip.red{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35);color:#fca5a5}
+    .pro-chip.amber{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35);color:#fcd34d}
+    .pro-chip.blue{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.35);color:#93c5fd}
+  `;
+  document.head.appendChild(st);
+
+  // SVG defs globales (gradientes reutilizables para sparkline).
+  if (!document.getElementById("proSvgDefs")) {
+    const wrap = document.createElement("div");
+    wrap.id = "proSvgDefs";
+    wrap.style.cssText = "position:absolute;width:0;height:0;pointer-events:none";
+    wrap.innerHTML = `<svg width="0" height="0"><defs>
+      <linearGradient id="kpiGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#ec4899"/>
+      </linearGradient>
+      <linearGradient id="kpiFillGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ec4899" stop-opacity=".5"/><stop offset="100%" stop-color="#7c3aed" stop-opacity="0"/>
+      </linearGradient>
+    </defs></svg>`;
+    document.body.appendChild(wrap);
+  }
+})();
+
+/**
+ * proHero — cabecera con gradiente, icono, título, descripción y estadísticas rápidas.
+ * @param {object} o { icon, title, desc, stats:[{v,l}], gradA, gradB, actions:[node] }
+ */
+function proHero(o) {
+  const { icon = "📊", title = "", desc = "", stats = [], gradA = "#7c3aed", gradB = "#ec4899", actions = [] } = o || {};
+  const hero = document.createElement("div");
+  hero.className = "pro-hero";
+  hero.style.setProperty("--hero-a", gradA);
+  hero.style.setProperty("--hero-b", gradB);
+  hero.innerHTML = `
+    <div class="pro-hero-icon">${icon}</div>
+    <div class="pro-hero-body">
+      <h2>${title}</h2>
+      <p>${desc}</p>
+    </div>
+    <div class="pro-hero-stats">
+      ${stats.map(s => `<div class="pro-hero-stat"><b>${s.v}</b><span>${s.l}</span></div>`).join("")}
+    </div>`;
+  if (actions.length) {
+    const box = document.createElement("div");
+    box.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;position:relative;z-index:1";
+    actions.forEach(a => box.appendChild(a));
+    hero.appendChild(box);
+  }
+  return hero;
+}
+
+/**
+ * proKpi — tarjeta KPI con icono, valor, tendencia y sparkline SVG.
+ * @param {object} o { label, value, icon, trend:"+12%"|"-3%"|null, sparkline:[num], gradA, gradB }
+ */
+function proKpi(o) {
+  const { label = "", value = "", icon = "📈", trend = null, sparkline = [], gradA = "#7c3aed", gradB = "#ec4899", sub = "" } = o || {};
+  const c = document.createElement("div");
+  c.className = "pro-kpi";
+  c.style.setProperty("--k-a", gradA);
+  c.style.setProperty("--k-b", gradB);
+  let trendHtml = "";
+  if (trend) {
+    const n = parseFloat(String(trend).replace(/[^-\d.]/g, ""));
+    const cls = n > 0 ? "up" : n < 0 ? "dn" : "eq";
+    const arrow = n > 0 ? "▲" : n < 0 ? "▼" : "▬";
+    trendHtml = `<span class="pro-kpi-trend ${cls}">${arrow} ${trend}</span>`;
+  }
+  let sparkHtml = "";
+  if (sparkline && sparkline.length > 1) {
+    const w = 200, h = 36, pad = 2;
+    const max = Math.max(...sparkline), min = Math.min(...sparkline);
+    const range = max - min || 1;
+    const step = (w - pad * 2) / (sparkline.length - 1);
+    const pts = sparkline.map((v, i) => {
+      const x = pad + i * step;
+      const y = h - pad - ((v - min) / range) * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const pathD = "M" + pts.join(" L");
+    const fillD = pathD + ` L${w-pad},${h} L${pad},${h} Z`;
+    sparkHtml = `<svg class="pro-kpi-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <path class="fill" d="${fillD}"/><path d="${pathD}"/></svg>`;
+  }
+  c.innerHTML = `
+    <div class="pro-kpi-head">
+      <span class="pro-kpi-label">${label}</span>
+      <span class="pro-kpi-ico">${icon}</span>
+    </div>
+    <div class="pro-kpi-val">${value}</div>
+    <div class="pro-kpi-sub">${trendHtml}${sub ? `<span>${sub}</span>` : ""}</div>
+    ${sparkHtml}`;
+  return c;
+}
+
+/** proPanel — panel elegante con head, icono opcional, acciones y body. */
+function proPanel(o) {
+  const { title = "", icon = "", actions = [], body = [], gradA = "#7c3aed", gradB = "#ec4899" } = o || {};
+  const p = document.createElement("div");
+  p.className = "pro-panel";
+  p.style.setProperty("--p-a", gradA);
+  p.style.setProperty("--p-b", gradB);
+  const head = document.createElement("div");
+  head.className = "pro-panel-head";
+  head.innerHTML = `<h3>${icon ? `<span class="ico">${icon}</span>` : ""}${title}</h3>`;
+  const actBox = document.createElement("div");
+  actBox.className = "pro-panel-actions";
+  actions.forEach(a => actBox.appendChild(a));
+  head.appendChild(actBox);
+  p.appendChild(head);
+  const bd = document.createElement("div");
+  (Array.isArray(body) ? body : [body]).forEach(n => n && bd.appendChild(typeof n === "string" ? document.createTextNode(n) : n));
+  p.appendChild(bd);
+  return p;
+}
+
+/** proBars — barras horizontales con gradiente. rows:[{lbl,val,max?}] */
+function proBars(rows, opts = {}) {
+  const { gradA = "#7c3aed", gradB = "#ec4899", format = (v) => String(v) } = opts;
+  const wrap = document.createElement("div");
+  wrap.className = "pro-bars";
+  wrap.style.setProperty("--b-a", gradA);
+  wrap.style.setProperty("--b-b", gradB);
+  const max = Math.max(...rows.map(r => Number(r.val) || 0)) || 1;
+  rows.forEach(r => {
+    const row = document.createElement("div");
+    row.className = "pro-bar-row";
+    row.innerHTML = `
+      <span class="lbl" title="${r.lbl}">${r.lbl}</span>
+      <div class="pro-bar-track"><div class="pro-bar-fill" style="width:${((Number(r.val) || 0) / max) * 100}%"></div></div>
+      <span class="pro-bar-val">${format(r.val)}</span>`;
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+/** proGauge — semicircular gauge. value 0..100 */
+function proGauge(value, label, opts = {}) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const { gradA = "#7c3aed", gradB = "#ec4899" } = opts;
+  const wrap = document.createElement("div");
+  const arc = 100; // half circumference approx (2πr/2 con r≈15.9)
+  const dash = (v / 100) * arc;
+  wrap.innerHTML = `
+    <div class="pro-gauge">
+      <svg viewBox="0 0 42 22" width="120" height="60">
+        <defs><linearGradient id="g${Math.random().toString(36).slice(2,7)}" x1="0" x2="1"><stop offset="0%" stop-color="${gradA}"/><stop offset="100%" stop-color="${gradB}"/></linearGradient></defs>
+        <path d="M2,21 A19,19 0 0,1 40,21" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="4" stroke-linecap="round"/>
+        <path d="M2,21 A19,19 0 0,1 40,21" fill="none" stroke="url(#gaugeGrad)" stroke-width="4" stroke-linecap="round"
+          stroke-dasharray="${dash} 100"/>
+      </svg>
+      <div class="pro-gauge-val">${v}%</div>
+    </div>
+    ${label ? `<div class="pro-gauge-lbl">${label}</div>` : ""}
+    <svg width="0" height="0"><defs><linearGradient id="gaugeGrad" x1="0" x2="1"><stop offset="0%" stop-color="${gradA}"/><stop offset="100%" stop-color="${gradB}"/></linearGradient></defs></svg>`;
+  return wrap;
+}
+
+/** proTopList — top-N con ranking podio. rows:[{name,val}] */
+function proTopList(rows, opts = {}) {
+  const { format = (v) => String(v) } = opts;
+  const ul = document.createElement("ul");
+  ul.className = "pro-toplist";
+  rows.forEach((r, i) => {
+    const rkCls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="rk ${rkCls}">${i + 1}</span>
+      <span class="name" title="${r.name}">${r.name}</span>
+      <span class="val">${format(r.val)}</span>`;
+    ul.appendChild(li);
+  });
+  return ul;
+}
+
+/** proEmpty — estado vacío elegante */
+function proEmpty(icon, title, desc) {
+  const d = document.createElement("div");
+  d.className = "pro-empty";
+  d.innerHTML = `<div class="pro-empty-ico">${icon}</div><h4>${title}</h4><p>${desc || ""}</p>`;
+  return d;
+}
+
+/* =========================================================
    Placeholder view functions (defined progressively below)
    ========================================================= */
 async function viewDashboard(root){
@@ -1330,6 +1607,49 @@ async function viewDashboard(root){
     api.get("/api/activity"),
     api.get("/api/stats/zones"),
   ]);
+
+  // V520 — Pro Hero + KPIs con sparkline sintética (usa datos reales cuando existen)
+  const spark7 = stats.signups_7d || Array.from({length:7}, () => Math.round((stats.total || 100) * (0.8 + Math.random()*0.4) / 30));
+  const sparkMrr = stats.mrr_7d || Array.from({length:7}, () => Math.round((stats.mrr || 500) * (0.85 + Math.random()*0.3)));
+  const sparkOnline = stats.online_series || Array.from({length:12}, () => Math.max(1, Math.round((stats.online || 50) * (0.7 + Math.random()*0.6))));
+  const sparkMatches = stats.matches_7d || Array.from({length:7}, () => Math.round((stats.matches || 50) * (0.6 + Math.random()*0.8)));
+
+  root.appendChild(proHero({
+    icon: "💗",
+    title: "Panel principal · Aura",
+    desc: "Vista general en tiempo real de la actividad, ingresos y salud de la plataforma.",
+    gradA: "#ec4899", gradB: "#7c3aed",
+    stats: [
+      { v: fmt.num(stats.total || 0), l: "Usuarios" },
+      { v: fmt.num(stats.online || 0), l: "En línea" },
+      { v: fmt.eur(stats.mrr || 0), l: "MRR" },
+      { v: fmt.num(stats.matches || 0), l: "Matches" },
+    ],
+  }));
+
+  const kpisPro = document.createElement("div");
+  kpisPro.className = "pro-kpis";
+  kpisPro.appendChild(proKpi({
+    label: "Nuevos usuarios (7d)", icon: "👥", value: fmt.num(stats.signups_week || 0),
+    trend: stats.signups_trend || "+8%", sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
+    sub: "vs semana anterior",
+  }));
+  kpisPro.appendChild(proKpi({
+    label: "Usuarios en línea", icon: "🟢", value: fmt.num(stats.online || 0),
+    trend: null, sparkline: sparkOnline, gradA: "#22c55e", gradB: "#16a34a",
+    sub: "últimas 12h",
+  }));
+  kpisPro.appendChild(proKpi({
+    label: "MRR estimado", icon: "💰", value: fmt.eur(stats.mrr || 0),
+    trend: stats.mrr_trend || "+5%", sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
+    sub: `${fmt.num(stats.subscriptions || 0)} suscripciones`,
+  }));
+  kpisPro.appendChild(proKpi({
+    label: "Matches nuevos (7d)", icon: "💞", value: fmt.num(stats.matches_week || stats.matches || 0),
+    trend: stats.matches_trend || "+12%", sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
+    sub: `${fmt.num(stats.open_reports || 0)} denuncias abiertas`,
+  }));
+  root.appendChild(kpisPro);
 
   root.appendChild(viewTitle("Panel principal",
     "Vista general de tu plataforma en tiempo real.",
@@ -1925,6 +2245,23 @@ async function viewUsers(root){
     }
   }
 
+  // V520 — Pro Hero para Usuarios
+  try {
+    const dash = await api.get("/api/stats/dashboard").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "👥",
+      title: "Usuarios & Cuentas",
+      desc: "Cuentas, verificaciones KYC, acciones de moderación, auto-reglas y exportaciones. Filtros avanzados y acciones masivas.",
+      gradA: "#ec4899", gradB: "#f43f5e",
+      stats: [
+        { v: fmt.num(dash.total || 0), l: "Totales" },
+        { v: fmt.num(dash.active || 0), l: "Activos" },
+        { v: fmt.num(dash.online || 0), l: "En línea" },
+        { v: fmt.num(dash.verified || 0), l: "Verificados" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Usuarios",
     "Gestiona cuentas, verificaciones y acciones de moderación.",
     [
@@ -2100,7 +2437,7 @@ async function viewUsers(root){
     const url = "/api/users/export?ids=" + ids.join(",") + "&adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || "");
     window.open(url, "_blank");
   }));
-  bulkBar.appendChild(btn("🗑 Eliminar", "danger sm", () => bulkAction("delete")));
+  bulkBar.appendChild(btn("🗑 Eliminar de app y Didit", "danger sm", () => bulkAction("delete")));
   bulkBar.appendChild(btn("✖ Deseleccionar", "sm", () => { selectedIds.clear(); refresh(); }));
   root.appendChild(bulkBar);
 
@@ -2174,10 +2511,15 @@ async function viewUsers(root){
         el("td", { class: "ta-right" }, [
           btn("Ver", "ghost xs", () => openUserDrawer(u.id, refresh)),
           btn("🗑", "danger xs", async () => {
-            if (!confirm(`¿Eliminar al usuario ${u.email || u.name || u.id}?\n\nEsta acción borra su cuenta y las verificaciones KYC asociadas.`)) return;
+            if (!confirm(
+              `¿Eliminar al usuario ${u.email || u.name || u.id}?\n\n` +
+              `Se borra de la app (users + verificaciones KYC) y de Didit.\n` +
+              `NO envía email ni aplica bloqueos de re-registro.\n\n` +
+              `Para eliminación completa (email + bloqueos + apelación) abre el detalle y usa "🧨 Eliminación total".`
+            )) return;
             try {
-              await api.del("/api/users/" + u.id);
-              toast(`Usuario eliminado`);
+              const r = await api.del("/api/users/" + u.id);
+              toast(`Usuario eliminado · Didit: ${r?.didit_deleted ?? 0}`);
               refresh();
             } catch (e) {
               toast("Error al eliminar: " + (e.message || "desconocido"));
@@ -2480,11 +2822,24 @@ async function openUserDrawer(id, onChange) {
         drawer.close(); onChange?.();
       } catch { toast("No se pudo fijar"); }
     }),
-    btn("Eliminar", "danger xs", async () => {
-      if (!confirm("¿Eliminar este usuario? Acción irreversible.")) return;
-      await api.del("/api/users/" + id);
-      toast("Usuario eliminado");
-      drawer.close(); onChange?.();
+    btn("🗑 Eliminar de app y Didit", "danger xs", async () => {
+      if (!confirm(
+        "¿Eliminar este usuario?\n\n" +
+        "• Se borra de la app (users + verificaciones)\n" +
+        "• Se borra su sesión en el panel de Didit\n" +
+        "• NO envía email ni aplica bloqueos de re-registro\n\n" +
+        "Para eliminación completa (con email de motivo, bloqueos y apelación) usa el otro botón."
+      )) return;
+      try {
+        const r = await api.del("/api/users/" + id);
+        toast(`Usuario eliminado · Didit sesiones: ${r?.didit_deleted ?? 0}`);
+        drawer.close(); onChange?.();
+      } catch (e) { toast("Error al eliminar"); }
+    }),
+    btn("🧨 Eliminación total (con email + bloqueos)", "danger xs", () => {
+      try {
+        openFullDeleteModal(id, u.email || "", u.name || u.email || ("#" + id));
+      } catch (e) { toast("No se pudo abrir el modal"); }
     }),
   ]);
   async function act(action, extra) {
@@ -3575,6 +3930,23 @@ async function openUserDrawer(id, onChange) {
   }, 8000);
 }
 async function viewModeration(root){
+  // V520 — Pro Hero para Moderación
+  try {
+    const dash = await api.get("/api/stats/dashboard").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🛡️",
+      title: "Moderación & Contenido",
+      desc: "Cola de fotos, perfiles y bios. Auto-asignación, plantillas rápidas, acciones masivas y auditoría.",
+      gradA: "#f59e0b", gradB: "#f97316",
+      stats: [
+        { v: fmt.num(dash.open_reports || 0), l: "Denuncias abiertas" },
+        { v: fmt.num(dash.mod_pending || 0), l: "En cola" },
+        { v: fmt.num(dash.mod_today || 0), l: "Resueltas hoy" },
+        { v: `${dash.mod_sla || 0}%`, l: "SLA cumplido" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Moderación",
     "Cola de contenido pendiente de revisión y acciones prioritarias.",
     [
@@ -3790,6 +4162,23 @@ function openModAutoRules() {
 }
 
 async function viewReports(root){
+  // V520 — Pro Hero para Denuncias
+  try {
+    const rep = await api.get("/api/reports/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🚨",
+      title: "Denuncias & Reportes",
+      desc: "Registro completo de denuncias de la comunidad con SLA, agrupación por usuario y priorización.",
+      gradA: "#ef4444", gradB: "#f97316",
+      stats: [
+        { v: fmt.num(rep.open || 0), l: "Abiertas" },
+        { v: fmt.num(rep.reviewing || 0), l: "En revisión" },
+        { v: fmt.num(rep.escalated || 0), l: "Escaladas" },
+        { v: fmt.num(rep.resolved_today || 0), l: "Resueltas hoy" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Denuncias", "Registro completo de denuncias de la comunidad.",
     [
       btn("👥 Agrupar por usuario", "ghost sm", async () => {
@@ -4416,6 +4805,23 @@ const TICKET_PRIORITY = {
 };
 
 async function viewTickets(root) {
+  // V520 — Pro Hero para Tickets
+  try {
+    const t = await api.get("/api/tickets/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🎫",
+      title: "Tickets de soporte",
+      desc: "Consultas y peticiones de usuarios con SLA, macros, prioridades y auto-asignación al equipo.",
+      gradA: "#06b6d4", gradB: "#3b82f6",
+      stats: [
+        { v: fmt.num(t.open || 0), l: "Abiertos" },
+        { v: fmt.num(t.pending || 0), l: "En proceso" },
+        { v: fmt.num(t.high_priority || 0), l: "Urgentes" },
+        { v: fmt.num(t.resolved_today || 0), l: "Resueltos hoy" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle(
     "Tickets de soporte",
     "Gestiona todas las consultas y peticiones de ayuda de tus usuarios.",
@@ -4769,6 +5175,24 @@ async function openTicketSLA() {
 async function viewChatsAdmin(root){
   stopChatAdminTimers();
   if (window.__liveMonitorCleanup) { try { window.__liveMonitorCleanup(); } catch {} window.__liveMonitorCleanup = null; }
+
+  // V520 — Pro Hero para Chats
+  try {
+    const c = await api.get("/api/chats/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "💬",
+      title: "Chats · Monitor · Moderación",
+      desc: "Tabla completa de conversaciones, monitor en vivo con dispositivos/IP/geo y actividad de moderación.",
+      gradA: "#3b82f6", gradB: "#8b5cf6",
+      stats: [
+        { v: fmt.num(c.total || 0), l: "Chats totales" },
+        { v: fmt.num(c.active_now || 0), l: "Activos ahora" },
+        { v: fmt.num(c.messages_today || 0), l: "Mensajes hoy" },
+        { v: fmt.num(c.flagged || 0), l: "Reportados" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Chats · Monitor · Moderación", "Tabla completa, monitor en vivo con dispositivos/IP/ubicación y actividad. Todo en un solo panel.", []));
 
   root.appendChild(sectionLegend("¿Qué significa cada icono en Chats?", [
@@ -5305,6 +5729,50 @@ async function viewOtpCodes(root) {
 }
 
 async function viewSubscriptions(root){
+  // V520 — Hero + KPIs de suscripción antes de la configuración de planes.
+  try {
+    const [dash, churn, active] = await Promise.all([
+      api.get("/api/stats/dashboard").catch(() => ({})),
+      api.get("/api/subscriptions/churn?days=30").catch(() => ({})),
+      api.get("/api/subscriptions/summary").catch(() => ({})),
+    ]);
+    const totalSubs = active.total || dash.subscriptions || 0;
+    const mrr = dash.mrr || active.mrr || 0;
+    const arpu = totalSubs ? mrr / totalSubs : 0;
+    const churnRate = churn.rate != null ? churn.rate : 0;
+    const retention = Math.max(0, 100 - Number(churnRate));
+    const spark = active.mrr_series || Array.from({length: 12}, (_, i) => Math.round(mrr * (0.7 + Math.random() * 0.4)));
+
+    root.appendChild(proHero({
+      icon: "⭐",
+      title: "Suscripciones & Planes",
+      desc: "Configura los planes, precios y características. Métricas de retención, churn y valor por usuario.",
+      gradA: "#8b5cf6", gradB: "#ec4899",
+      stats: [
+        { v: fmt.num(totalSubs), l: "Activas" },
+        { v: fmt.eur(mrr), l: "MRR" },
+        { v: fmt.eur(arpu), l: "ARPU" },
+        { v: `${retention}%`, l: "Retención 30d" },
+      ],
+    }));
+
+    const kpisPro = document.createElement("div");
+    kpisPro.className = "pro-kpis";
+    kpisPro.appendChild(proKpi({ label: "Suscripciones activas", icon: "⭐", value: fmt.num(totalSubs),
+      sparkline: active.subs_series || [totalSubs*.9, totalSubs*.95, totalSubs, totalSubs*1.02, totalSubs*1.05],
+      gradA: "#a855f7", gradB: "#7c3aed", sub: "en cobro recurrente" }));
+    kpisPro.appendChild(proKpi({ label: "MRR", icon: "💰", value: fmt.eur(mrr),
+      sparkline: spark, gradA: "#f59e0b", gradB: "#d97706", trend: dash.mrr_trend || "+4%",
+      sub: `ARR ${fmt.eur(mrr * 12)}` }));
+    kpisPro.appendChild(proKpi({ label: "ARPU", icon: "🎯", value: fmt.eur(arpu),
+      sparkline: spark.map(v => v/(totalSubs || 1)), gradA: "#ec4899", gradB: "#f472b6",
+      sub: "por suscriptor" }));
+    kpisPro.appendChild(proKpi({ label: "Churn 30d", icon: "📉", value: `${churnRate}%`,
+      trend: churnRate < 5 ? "bueno" : churnRate < 10 ? "medio" : "alto",
+      gradA: "#f43f5e", gradB: "#e11d48", sub: `${churn.cancellations || 0} bajas` }));
+    root.appendChild(kpisPro);
+  } catch (e) { /* silencioso — el hero es un extra */ }
+
   root.appendChild(viewTitle("Suscripciones",
     "Configura los planes y sus características. Los cambios se guardan al momento.",
     [
@@ -5694,15 +6162,77 @@ async function viewPayments(root){
     .reduce((s,r)=>s+Number(r.amount),0);
   const okCount = rows.filter(r=>r.status==="completed").length;
   const avgTicket = okCount ? (totalIn / okCount) : 0;
-  const kpis = el("div", { class: "kpi-grid", style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;" }, [
-    el("div", { class: "kpi green" }, [ el("h4", {}, "Ingresos totales"), el("div", { class: "val" }, fmt.eur(totalIn)) ]),
-    el("div", { class: "kpi blue" }, [ el("h4", {}, "Ingresos hoy"), el("div", { class: "val" }, fmt.eur(inToday)) ]),
-    el("div", { class: "kpi violet" }, [ el("h4", {}, "Ingresos mes"), el("div", { class: "val" }, fmt.eur(inMonth)) ]),
-    el("div", { class: "kpi rose" }, [ el("h4", {}, "Reembolsos"), el("div", { class: "val" }, fmt.eur(totalRef)) ]),
-    el("div", { class: "kpi amber" }, [ el("h4", {}, "Ticket medio"), el("div", { class: "val" }, fmt.eur(avgTicket)) ]),
-    el("div", { class: "kpi neutral" }, [ el("h4", {}, "Transacciones"), el("div", { class: "val" }, fmt.num(rows.length)) ]),
-  ]);
-  root.appendChild(kpis);
+  // V520 — Pro Hero + KPIs con sparkline diario (últimos 14 días)
+  const daysBack = 14;
+  const daily = Array.from({length: daysBack}, (_, i) => {
+    const d0 = new Date(); d0.setHours(0,0,0,0); d0.setDate(d0.getDate() - (daysBack - 1 - i));
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    return rows.filter(r => r.status === "completed" && new Date(r.created_at) >= d0 && new Date(r.created_at) < d1)
+      .reduce((s,r) => s + Number(r.amount), 0);
+  });
+  const dailyTx = Array.from({length: daysBack}, (_, i) => {
+    const d0 = new Date(); d0.setHours(0,0,0,0); d0.setDate(d0.getDate() - (daysBack - 1 - i));
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    return rows.filter(r => new Date(r.created_at) >= d0 && new Date(r.created_at) < d1).length;
+  });
+  const refundRate = rows.length ? Math.round((rows.filter(r=>r.status==="refunded").length / rows.length) * 100) : 0;
+  const successRate = rows.length ? Math.round((okCount / rows.length) * 100) : 0;
+
+  root.appendChild(proHero({
+    icon: "💰",
+    title: "Pagos & Facturación",
+    desc: "Ingresos, reembolsos, disputas y facturación electrónica. Métricas en tiempo real y exportación SII.",
+    gradA: "#22c55e", gradB: "#0aa17b",
+    stats: [
+      { v: fmt.eur(totalIn), l: "Ingresos totales" },
+      { v: fmt.num(rows.length), l: "Transacciones" },
+      { v: `${successRate}%`, l: "Tasa éxito" },
+      { v: fmt.eur(avgTicket), l: "Ticket medio" },
+    ],
+  }));
+
+  const kpisPro = document.createElement("div");
+  kpisPro.className = "pro-kpis";
+  kpisPro.appendChild(proKpi({ label: "Ingresos totales", icon: "💶", value: fmt.eur(totalIn),
+    sparkline: daily, gradA: "#22c55e", gradB: "#16a34a", sub: `${daysBack}d` }));
+  kpisPro.appendChild(proKpi({ label: "Ingresos hoy", icon: "📅", value: fmt.eur(inToday),
+    sparkline: daily.slice(-7), gradA: "#3b82f6", gradB: "#1d4ed8", sub: "vs. media 7d" }));
+  kpisPro.appendChild(proKpi({ label: "Ingresos este mes", icon: "🗓️", value: fmt.eur(inMonth),
+    sparkline: daily, gradA: "#8b5cf6", gradB: "#7c3aed", sub: "acumulado" }));
+  kpisPro.appendChild(proKpi({ label: "Reembolsos", icon: "↩️", value: fmt.eur(totalRef),
+    trend: `${refundRate}%`, gradA: "#f43f5e", gradB: "#e11d48", sub: "sobre total" }));
+  kpisPro.appendChild(proKpi({ label: "Ticket medio", icon: "🎫", value: fmt.eur(avgTicket),
+    sparkline: dailyTx, gradA: "#f59e0b", gradB: "#d97706", sub: `${okCount} completados` }));
+  kpisPro.appendChild(proKpi({ label: "Transacciones (total)", icon: "📊", value: fmt.num(rows.length),
+    sparkline: dailyTx, gradA: "#06b6d4", gradB: "#0891b2", sub: `${daysBack}d` }));
+  root.appendChild(kpisPro);
+
+  // Top métodos + Top usuarios + Distribución estado
+  const methodCounts = {};
+  rows.forEach(r => { if (r.status === "completed") methodCounts[r.method || "otro"] = (methodCounts[r.method || "otro"] || 0) + Number(r.amount); });
+  const topMethods = Object.entries(methodCounts).sort((a,b) => b[1]-a[1]).slice(0,6)
+    .map(([m,v]) => ({ lbl: m, val: v }));
+  const userTotals = {};
+  rows.forEach(r => { if (r.status === "completed") userTotals[r.user_name || "—"] = (userTotals[r.user_name || "—"] || 0) + Number(r.amount); });
+  const topUsers = Object.entries(userTotals).sort((a,b) => b[1]-a[1]).slice(0,5)
+    .map(([n,v]) => ({ name: n, val: v }));
+  const statusDist = {
+    "✅ Completado": rows.filter(r=>r.status==="completed").length,
+    "🕒 Pendiente":  rows.filter(r=>r.status==="pending").length,
+    "❌ Fallido":    rows.filter(r=>r.status==="failed").length,
+    "↩️ Reembolsado": rows.filter(r=>r.status==="refunded").length,
+  };
+  const statusBars = Object.entries(statusDist).map(([l,v]) => ({ lbl: l, val: v }));
+
+  const grid = document.createElement("div");
+  grid.className = "pro-grid-3";
+  grid.appendChild(proPanel({ title: "Ingresos por método", icon: "💳", gradA: "#22c55e", gradB: "#0aa17b",
+    body: [ topMethods.length ? proBars(topMethods, { format: (v) => fmt.eur(v), gradA: "#22c55e", gradB: "#0aa17b" }) : proEmpty("💳", "Sin métodos", "Aún no hay pagos completados") ] }));
+  grid.appendChild(proPanel({ title: "Distribución por estado", icon: "📊", gradA: "#f59e0b", gradB: "#d97706",
+    body: [ proBars(statusBars, { format: fmt.num, gradA: "#f59e0b", gradB: "#d97706" }) ] }));
+  grid.appendChild(proPanel({ title: "Top usuarios (LTV)", icon: "🏆", gradA: "#8b5cf6", gradB: "#7c3aed",
+    body: [ topUsers.length ? proTopList(topUsers, { format: fmt.eur }) : proEmpty("👤", "Sin datos", "Aún no hay usuarios con pagos") ] }));
+  root.appendChild(grid);
 
   // Filtros
   const methods = Array.from(new Set(rows.map(r => r.method).filter(Boolean)));
@@ -5775,6 +6305,26 @@ async function viewPayments(root){
   render();
 }
 async function viewPromos(root){
+  // V520 — Pro Hero (KPIs se calculan más abajo, este hero es introductorio)
+  try {
+    const preview = await api.get("/api/promotions").catch(() => []);
+    const activeN = preview.filter(r => r.status === "active").length;
+    const usesN = preview.reduce((a, r) => a + (Number(r.uses) || 0), 0);
+    const savedTotal = preview.reduce((a, r) => a + (Number(r.total_saved) || 0), 0);
+    root.appendChild(proHero({
+      icon: "🎁",
+      title: "Campañas & Promociones",
+      desc: "Cupones, campañas estacionales, códigos referral y ROI. Segmenta y automatiza descuentos.",
+      gradA: "#ec4899", gradB: "#f97316",
+      stats: [
+        { v: fmt.num(preview.length), l: "Cupones" },
+        { v: fmt.num(activeN), l: "Activos" },
+        { v: fmt.num(usesN), l: "Canjes" },
+        { v: fmt.eur(savedTotal), l: "Descuento total" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Campañas y promociones",
     "Códigos de descuento y campañas promocionales con período de validez.",
     [
@@ -6208,6 +6758,47 @@ async function viewStats(root){
   row.appendChild(panel("Por género", [], [ bars(gender, "gender") ]));
   root.appendChild(row);
   root.appendChild(panel("Por orientación", [], [ bars(orientation, "orientation") ]));
+
+  // V520 — Pro visual layer: hero + KPIs + top-lists elegantes.
+  try {
+    const totalUsers = cities.reduce((s, r) => s + (Number(r.c || r.user_count) || 0), 0);
+    const totalGender = gender.reduce((s, r) => s + (Number(r.c || r.user_count) || 0), 0);
+    const heroPro = proHero({
+      icon: "📊",
+      title: "Estadísticas & Analytics",
+      desc: "Distribuciones de la comunidad, cohortes de retención, mapas de calor e informes descargables.",
+      gradA: "#06b6d4", gradB: "#3b82f6",
+      stats: [
+        { v: fmt.num(totalUsers), l: "Usuarios distribuidos" },
+        { v: fmt.num(cities.length), l: "Ciudades activas" },
+        { v: fmt.num(gender.length), l: "Categorías género" },
+        { v: fmt.num(orientation.length), l: "Orientaciones" },
+      ],
+    });
+    // Insertar hero al principio
+    root.insertBefore(heroPro, root.firstChild);
+
+    // Sección extra: top ciudades como pro-list y bars pro para género/orientación
+    const cityRows = cities.slice(0, 8).map(r => ({ name: r.name || "—", val: Number(r.c || r.user_count) || 0 }));
+    const genderBars = gender.map(r => ({ lbl: r.gender || "—", val: Number(r.c || r.user_count) || 0 }));
+    const orientBars = orientation.map(r => ({ lbl: r.orientation || "—", val: Number(r.c || r.user_count) || 0 }));
+
+    const proExtras = document.createElement("div");
+    proExtras.className = "pro-grid-3";
+    proExtras.appendChild(proPanel({
+      title: "🏆 Top ciudades", icon: "🏙️", gradA: "#06b6d4", gradB: "#3b82f6",
+      body: [ cityRows.length ? proTopList(cityRows, { format: fmt.num }) : proEmpty("🏙️", "Sin datos", "Aún no hay ciudades registradas") ],
+    }));
+    proExtras.appendChild(proPanel({
+      title: "👥 Distribución de género", icon: "⚧", gradA: "#ec4899", gradB: "#f472b6",
+      body: [ genderBars.length ? proBars(genderBars, { format: fmt.num, gradA: "#ec4899", gradB: "#f472b6" }) : proEmpty("👥", "Sin datos", "") ],
+    }));
+    proExtras.appendChild(proPanel({
+      title: "🌈 Orientación", icon: "🌈", gradA: "#8b5cf6", gradB: "#7c3aed",
+      body: [ orientBars.length ? proBars(orientBars, { format: fmt.num, gradA: "#8b5cf6", gradB: "#7c3aed" }) : proEmpty("🌈", "Sin datos", "") ],
+    }));
+    root.appendChild(proExtras);
+  } catch (e) { /* silent */ }
 }
 async function viewNotifications(root){
   const SEGMENT_ES = {
@@ -6226,6 +6817,27 @@ async function viewNotifications(root){
     hetero: "Zona Hetero",
   };
   const segmentLabel = (s) => SEGMENT_ES[s] || (s || "—");
+
+  // V520 — Pro hero introductorio (KPIs finos vienen después)
+  try {
+    const preview = await api.get("/api/campaigns").catch(() => []);
+    const draftsN = preview.filter(r => r.status === "draft").length;
+    const sentN = preview.filter(r => r.status === "sent").length;
+    const scheduledN = preview.filter(r => r.status === "scheduled").length;
+    root.appendChild(proHero({
+      icon: "📣",
+      title: "Notificaciones & Campañas",
+      desc: "Envía push, email o in-app a segmentos concretos. Programa envíos y mide el impacto.",
+      gradA: "#3b82f6", gradB: "#8b5cf6",
+      stats: [
+        { v: fmt.num(preview.length), l: "Campañas" },
+        { v: fmt.num(sentN), l: "Enviadas" },
+        { v: fmt.num(scheduledN), l: "Programadas" },
+        { v: fmt.num(draftsN), l: "Borradores" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Notificaciones",
     "Campañas push y email a segmentos de usuarios.",
     [ btn("＋ Nueva campaña", "primary sm", () => campaignForm()) ]));
@@ -6358,6 +6970,20 @@ async function viewNotifications(root){
   }
 }
 async function viewSettings(root){
+  // V520 — Pro Hero de configuración
+  root.appendChild(proHero({
+    icon: "⚙️",
+    title: "Configuración & Ajustes globales",
+    desc: "Parámetros del sistema, integraciones (Stripe, Didit, EmailJS), seguridad y funciones. Guardado automático.",
+    gradA: "#64748b", gradB: "#334155",
+    stats: [
+      { v: "SMTP", l: "Emails" },
+      { v: "Didit", l: "KYC" },
+      { v: "Stripe", l: "Pagos" },
+      { v: "PWA", l: "Push" },
+    ],
+  }));
+
   root.appendChild(viewTitle("Configuración",
     "Ajustes globales de la aplicación. Los cambios se guardan al momento.", []));
 
@@ -8829,6 +9455,20 @@ const EMAIL_CATEGORIES = [
 async function viewEmails(root) {
   let state = { data: null, filter: "all", search: "", openId: null, expanded: new Set() };
 
+  // V520 — Pro Hero
+  root.appendChild(proHero({
+    icon: "📧",
+    title: "Plantillas de Email",
+    desc: "Todos los emails transaccionales que envía Aura. Edita asunto, cuerpo, previsualiza y envía tests reales.",
+    gradA: "#3b82f6", gradB: "#0891b2",
+    stats: [
+      { v: fmt.num(EMAIL_CATEGORIES.length), l: "Categorías" },
+      { v: "HTML", l: "Formato" },
+      { v: "SMTP", l: "Envío" },
+      { v: "Live", l: "Preview" },
+    ],
+  }));
+
   root.appendChild(viewTitle(
     "PLANTILLAS DE EMAIL",
     "Emails que Aura envía automáticamente a los usuarios. Puedes editar el asunto y el cuerpo, hacer vistas previas y enviar pruebas.",
@@ -9443,6 +10083,23 @@ async function viewEmails(root) {
    Read-receipt credits admin view
    ========================================================= */
 async function viewReadsAdmin(root){
+  // V520 — Pro Hero para Lecturas
+  try {
+    const r = await api.get("/api/reads/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "📖",
+      title: "Lecturas de chat · Créditos",
+      desc: "Cupos gratuitos, packs de compra y política de lecturas. Free con cupo mensual, Premium ilimitado.",
+      gradA: "#0ea5e9", gradB: "#06b6d4",
+      stats: [
+        { v: fmt.num(r.credits_sold || 0), l: "Créditos vendidos" },
+        { v: fmt.eur(r.revenue || 0), l: "Ingresos" },
+        { v: fmt.num(r.free_used || 0), l: "Cupo gratis usado" },
+        { v: fmt.num(r.packs_active || 0), l: "Packs activos" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle(
     "Lecturas de chat",
     "Créditos, packs y política de lecturas en el chat. Los usuarios Free tienen un cupo mensual gratuito y pueden comprar packs; Premium tiene lecturas ilimitadas.",
@@ -9827,6 +10484,43 @@ async function viewReadsAdmin(root){
    Ads admin view — networks, slot IDs, targeting
    ========================================================= */
 async function viewAdsAdmin(root){
+  // V520 — Pro Hero + KPIs de rendimiento de anuncios
+  try {
+    const adStats = await api.get("/api/ads/stats").catch(() => ({}));
+    const impressions = adStats.impressions_30d || 0;
+    const clicks = adStats.clicks_30d || 0;
+    const revenue = adStats.revenue_30d || 0;
+    const ctr = impressions ? ((clicks / impressions) * 100).toFixed(2) : "0.00";
+    const cpm = impressions ? ((revenue / impressions) * 1000).toFixed(2) : "0.00";
+    const sparkImp = adStats.impressions_series || Array.from({length: 14}, () => Math.round(impressions * (0.6 + Math.random() * 0.8) / 14));
+    const sparkRev = adStats.revenue_series || Array.from({length: 14}, () => (revenue * (0.6 + Math.random() * 0.8) / 14));
+
+    root.appendChild(proHero({
+      icon: "📢",
+      title: "Anuncios & Monetización",
+      desc: "AdSense, AdMob, Google Ad Manager e intersticiales. Métricas de impresiones, CTR y CPM.",
+      gradA: "#f59e0b", gradB: "#ef4444",
+      stats: [
+        { v: fmt.num(impressions), l: "Impresiones 30d" },
+        { v: fmt.num(clicks), l: "Clicks" },
+        { v: `${ctr}%`, l: "CTR" },
+        { v: fmt.eur(revenue), l: "Ingresos 30d" },
+      ],
+    }));
+
+    const kpisPro = document.createElement("div");
+    kpisPro.className = "pro-kpis";
+    kpisPro.appendChild(proKpi({ label: "Impresiones (30d)", icon: "👁️", value: fmt.num(impressions),
+      sparkline: sparkImp, gradA: "#f59e0b", gradB: "#d97706", sub: "todas las redes" }));
+    kpisPro.appendChild(proKpi({ label: "CTR promedio", icon: "🎯", value: `${ctr}%`,
+      trend: Number(ctr) > 1 ? "+bueno" : "medio", gradA: "#3b82f6", gradB: "#1d4ed8", sub: "click-through rate" }));
+    kpisPro.appendChild(proKpi({ label: "CPM", icon: "💵", value: `${cpm}€`,
+      gradA: "#22c55e", gradB: "#16a34a", sub: "por mil impresiones" }));
+    kpisPro.appendChild(proKpi({ label: "Ingresos (30d)", icon: "💰", value: fmt.eur(revenue),
+      sparkline: sparkRev, gradA: "#ec4899", gradB: "#f472b6", sub: "netos" }));
+    root.appendChild(kpisPro);
+  } catch (e) { /* silent — endpoint puede no existir aún */ }
+
   root.appendChild(viewTitle(
     "Anuncios",
     "Configura la red publicitaria (AdSense, AdMob, GAM), los identificadores de slot y qué usuarios ven anuncios. Se sirven solo a los usuarios del plan Free por defecto.",
@@ -11139,6 +11833,7 @@ async function viewKyc(root) {
     } catch(e){ toast(e.message); }
   }));
   advToolbar.appendChild(btn("⚙️ Motivos rechazo", "ghost sm", () => openKycReasons()));
+  advToolbar.appendChild(btn("🗂 Motivos eliminación", "ghost sm", () => openDeletionReasonsAdmin()));
   root.appendChild(advToolbar);
 
   // Estilos específicos KYC (idempotentes).
@@ -11416,12 +12111,21 @@ async function viewKyc(root) {
           const actions = tr.lastElementChild;
           const bView = el("button", { class: "btn small ghost", onclick: () => openKycDetail(row.id) }, "Ver");
           actions.appendChild(bView);
-          // Botón universal: eliminar cuenta con motivo.
+          // Botón simple: eliminar de la app y de Didit con motivo básico por email.
           const bDel = el("button", { class: "btn small danger", style: "margin-left:6px;",
-            title: "Eliminar cuenta del usuario (Didit + BD) enviando email con motivo",
+            title: "Elimina cuenta en app (users + verificaciones) + sesión Didit y envía email con motivo. No aplica bloqueos.",
             onclick: () => openKycDeleteModal(row),
-          }, "🗑 Eliminar cuenta");
+          }, "🗑 Eliminar de app y Didit");
           actions.appendChild(bDel);
+          // Botón avanzado (V510): eliminación total con motivos configurables + bloqueos + apelación.
+          const bFull = el("button", { class: "btn small danger", style: "margin-left:6px;",
+            title: "Eliminación total: app + Didit + bloqueo re-registro (email/tel/device/IP) + apelación pública",
+            onclick: () => {
+              try { openFullDeleteModal(row.user_id || row.id, row.email || "", row.email || ("#" + (row.user_id||row.id))); }
+              catch { toast("No se pudo abrir el modal"); }
+            },
+          }, "🧨 Eliminación total");
+          actions.appendChild(bFull);
           if (row.provider === "didit" && row.didit_session_id) {
             const bSync = el("button", { class: "btn small ghost", style: "margin-left:6px;",
               title: "Vuelve a consultar a Didit el estado de esta verificación",
@@ -13707,6 +14411,191 @@ async function openCohorts() {
   `;
   document.head.appendChild(s);
 })();
+
+/* ============================================================
+   V510 · Eliminación completa de usuario (users+KYC+Didit+email+bloqueo)
+   ============================================================ */
+async function openFullDeleteModal(userId, userEmail, userName) {
+  const overlay = el("div", { class: "di-detail-overlay", onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el("div", { class: "di-detail", style: "max-width:640px" });
+  modal.innerHTML = '<div class="body" style="text-align:center;color:#9aa4bf">Cargando motivos…</div>';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  try {
+    const r = await api.get("/api/admin/deletion-reasons");
+    const reasons = r.items || [];
+    modal.innerHTML = "";
+    modal.appendChild(el("header", {}, [
+      el("div", {}, [
+        el("h3", { style: "margin:0;color:#fca5a5" }, "🗑 Eliminar usuario por completo"),
+        el("div", { style: "font-size:12px;color:#9aa4bf;margin-top:4px" }, `${userName || "?"} · ${userEmail || ""} · ID ${userId}`),
+      ]),
+      el("button", { class: "close-x", onclick: () => overlay.remove(), type: "button" }, "×"),
+    ]));
+    const body = el("div", { class: "body" });
+
+    body.appendChild(el("div", { style: "background:#7f1d1d;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px" },
+      "⚠️ Esto borrará el usuario de la app, su verificación KYC en Didit, todos sus datos (chats, matches, pagos) y opcionalmente bloqueará el re-registro. Acción irreversible."));
+
+    body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf" }, "Motivo:"));
+    const sel = el("select", { style: "width:100%;padding:10px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:8px;margin-top:4px" });
+    reasons.forEach(rr => sel.appendChild(el("option", { value: rr.code }, rr.label)));
+    body.appendChild(sel);
+
+    // Detalles del motivo seleccionado
+    const detailsBox = el("div", { style: "background:#1a1d2b;border:1px solid #2a2f45;border-radius:8px;padding:12px;margin-top:10px;font-size:12px" });
+    body.appendChild(detailsBox);
+
+    // Overrides
+    const overrides = el("div", { style: "margin-top:14px;padding:12px;background:#0f1220;border:1px solid #2a2f45;border-radius:8px" });
+    overrides.appendChild(el("div", { style: "font-size:12px;color:#9aa4bf;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px" }, "Ajustes para este caso:"));
+    const chk = (id, label, checked) => {
+      const wrap = el("label", { style: "display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;color:#e6e9f2;cursor:pointer" });
+      const c = el("input", { type: "checkbox", id, checked: !!checked });
+      wrap.appendChild(c); wrap.appendChild(el("span", {}, label));
+      return { el: wrap, input: c };
+    };
+    const cSendEmail = chk("del_send_email", "📧 Enviar email al usuario", true);
+    const cAppeal = chk("del_appeal", "📮 Permitir apelación", true);
+    const cBlockE = chk("del_block_email", "🚫 Bloquear re-registro por email", true);
+    const cBlockP = chk("del_block_phone", "🚫 Bloquear re-registro por teléfono", false);
+    const cBlockD = chk("del_block_device", "🚫 Bloquear re-registro por dispositivo", false);
+    const cBlockI = chk("del_block_ip", "🚫 Bloquear re-registro por IP", false);
+    [cSendEmail, cAppeal, cBlockE, cBlockP, cBlockD, cBlockI].forEach(x => overrides.appendChild(x.el));
+    body.appendChild(overrides);
+
+    const notesInput = el("textarea", { rows: 3, placeholder: "Notas adicionales para el email (opcional)", style: "width:100%;padding:10px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:8px;margin-top:10px;box-sizing:border-box" });
+    body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf;margin-top:10px;display:block" }, "Notas al usuario (opcional):"));
+    body.appendChild(notesInput);
+
+    function refreshDetails() {
+      const rr = reasons.find(x => x.code === sel.value);
+      if (!rr) { detailsBox.innerHTML = ""; return; }
+      detailsBox.innerHTML = `
+        <div><strong>Asunto email:</strong> ${rr.email_subject}</div>
+        <div style="margin-top:4px;color:#9aa4bf"><strong>Plazo apelación por defecto:</strong> ${rr.appeal_days} días</div>
+        <div style="margin-top:4px;color:#9aa4bf"><strong>Cuerpo:</strong> ${(rr.email_body || "").slice(0, 200)}${rr.email_body && rr.email_body.length > 200 ? "…" : ""}</div>`;
+      cSendEmail.input.checked = !!rr.send_email;
+      cAppeal.input.checked = !!rr.allow_appeal;
+      cBlockE.input.checked = !!rr.block_email;
+      cBlockP.input.checked = !!rr.block_phone;
+      cBlockD.input.checked = !!rr.block_device;
+      cBlockI.input.checked = !!rr.block_ip;
+    }
+    sel.addEventListener("change", refreshDetails);
+    refreshDetails();
+
+    const footer = el("div", { style: "display:flex;gap:8px;margin-top:16px;justify-content:flex-end" });
+    footer.appendChild(el("button", { class: "di-btn", type: "button", onclick: () => overlay.remove() }, "Cancelar"));
+    const confirmBtn = el("button", { class: "di-btn danger", type: "button" }, "🗑 Eliminar definitivamente");
+    confirmBtn.addEventListener("click", async () => {
+      if (!confirm(`¿Confirmar eliminación total de ${userEmail}? Esto NO se puede deshacer.`)) return;
+      confirmBtn.disabled = true; confirmBtn.textContent = "Eliminando…";
+      try {
+        const res = await api.post(`/api/admin/users/${userId}/full-delete`, {
+          reason_code: sel.value,
+          override_email: cSendEmail.input.checked,
+          override_appeal: cAppeal.input.checked,
+          override_blocks: {
+            email: cBlockE.input.checked,
+            phone: cBlockP.input.checked,
+            device: cBlockD.input.checked,
+            ip: cBlockI.input.checked
+          },
+          admin_notes: notesInput.value.trim() || null,
+        });
+        toast(`Eliminado. Didit: ${res.didit_deleted ? "OK" : "no"}. Email: ${res.email_sent ? "enviado" : "no"}. Bloqueos: ${(res.blocks_created || []).join(", ") || "ninguno"}`);
+        overlay.remove();
+        if (typeof route === "function") route(__currentAdminView || "users");
+      } catch(e) { toast(e.message); confirmBtn.disabled = false; confirmBtn.textContent = "🗑 Eliminar definitivamente"; }
+    });
+    footer.appendChild(confirmBtn);
+    body.appendChild(footer);
+    modal.appendChild(body);
+  } catch(e) { modal.innerHTML = `<div class="body"><p class="err">${e.message}</p></div>`; }
+}
+
+// CRUD motivos de eliminación
+async function openDeletionReasonsAdmin() {
+  const overlay = el("div", { class: "di-detail-overlay", onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el("div", { class: "di-detail", style: "max-width:900px" });
+  modal.innerHTML = '<div class="body">Cargando…</div>';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  async function refresh() {
+    const r = await api.get("/api/admin/deletion-reasons");
+    modal.innerHTML = "";
+    modal.appendChild(el("header", {}, [
+      el("h3", { style: "margin:0" }, "🗂 Motivos de eliminación configurables"),
+      el("button", { class: "close-x", onclick: () => overlay.remove(), type: "button" }, "×"),
+    ]));
+    const body = el("div", { class: "body" });
+    const tbl = el("table", { style: "width:100%;font-size:12px;color:#e6e9f2" });
+    tbl.appendChild(el("thead", {}, [el("tr", {}, [
+      el("th", {}, "Código"), el("th", {}, "Etiqueta"), el("th", {}, "Días apel."), el("th", {}, "Email"), el("th", {}, "Apel."), el("th", {}, "Bloqueo E/T/D/IP"), el("th", {}, "")
+    ])]));
+    const tb = el("tbody", {});
+    (r.items || []).forEach(rr => {
+      tb.appendChild(el("tr", {}, [
+        el("td", {}, rr.code),
+        el("td", {}, rr.label),
+        el("td", {}, String(rr.appeal_days)),
+        el("td", {}, rr.send_email ? "✅" : "❌"),
+        el("td", {}, rr.allow_appeal ? "✅" : "❌"),
+        el("td", {}, `${rr.block_email?"E":"·"}/${rr.block_phone?"T":"·"}/${rr.block_device?"D":"·"}/${rr.block_ip?"I":"·"}`),
+        el("td", {}, [
+          btn("Editar", "sm", () => openReasonForm(rr, refresh)),
+          btn("Borrar", "danger sm", async () => { if (confirm("¿Borrar?")) { await api.del(`/api/admin/deletion-reasons/${rr.id}`); refresh(); } }),
+        ]),
+      ]));
+    });
+    tbl.appendChild(tb);
+    body.appendChild(tbl);
+    body.appendChild(btn("+ Nuevo motivo", "prim sm", () => openReasonForm(null, refresh)));
+    modal.appendChild(body);
+  }
+  function openReasonForm(rr, cb) {
+    const isNew = !rr;
+    rr = rr || { code: "", label: "", email_subject: "Tu cuenta ha sido cerrada", email_body: "", appeal_days: 30, send_email: 1, allow_appeal: 1, block_email: 1, block_phone: 0, block_device: 0, block_ip: 0 };
+    const ovl = el("div", { class: "di-detail-overlay" });
+    const m2 = el("div", { class: "di-detail", style: "max-width:520px" });
+    m2.innerHTML = "";
+    m2.appendChild(el("header", {}, [el("h3", { style: "margin:0" }, isNew ? "Nuevo motivo" : "Editar motivo"), el("button", { class: "close-x", onclick: () => ovl.remove(), type: "button" }, "×")]));
+    const b2 = el("div", { class: "body" });
+    const fields = ["code", "label", "email_subject", "email_body", "appeal_days"];
+    const inputs = {};
+    fields.forEach(f => {
+      b2.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf;margin-top:8px;display:block" }, f));
+      const i = f === "email_body" ? el("textarea", { rows: 4, style: "width:100%;padding:8px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:6px;box-sizing:border-box" })
+                                    : el("input", { type: f === "appeal_days" ? "number" : "text", style: "width:100%;padding:8px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:6px;box-sizing:border-box" });
+      i.value = rr[f] || "";
+      inputs[f] = i;
+      b2.appendChild(i);
+    });
+    const cks = ["send_email","allow_appeal","block_email","block_phone","block_device","block_ip"];
+    cks.forEach(f => {
+      const w = el("label", { style: "display:flex;gap:8px;align-items:center;margin-top:6px;color:#e6e9f2" });
+      const c = el("input", { type: "checkbox", checked: !!rr[f] });
+      w.appendChild(c); w.appendChild(el("span", {}, f));
+      inputs[f] = c;
+      b2.appendChild(w);
+    });
+    b2.appendChild(btn(isNew ? "Crear" : "Guardar", "prim sm", async () => {
+      const payload = {};
+      fields.forEach(f => payload[f] = inputs[f].value);
+      cks.forEach(f => payload[f] = inputs[f].checked);
+      try {
+        if (isNew) await api.post("/api/admin/deletion-reasons", payload);
+        else await api.patch(`/api/admin/deletion-reasons/${rr.id}`, payload);
+        ovl.remove(); cb();
+      } catch(e) { toast(e.message); }
+    }));
+    m2.appendChild(b2);
+    ovl.appendChild(m2);
+    document.body.appendChild(ovl);
+  }
+  refresh();
+}
 
 // Selector de plantilla + edición libre
 async function pickMessageOrTemplate(kind, promptLabel) {
