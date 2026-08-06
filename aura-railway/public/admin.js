@@ -1424,6 +1424,8 @@ function avatar(url, size=36) {
   return el("div", { class: "av", style: `width:${size}px;height:${size}px;background-image:url('${url||""}')` });
 }
 function btn(label, cls="ghost sm", onclick) {
+  // Overload: si el 2º argumento es function, se trata de onclick y cls por defecto
+  if (typeof cls === "function") { onclick = cls; cls = "ghost sm"; }
   return el("button", { type: "button", class: "btn " + cls, onclick }, label);
 }
 
