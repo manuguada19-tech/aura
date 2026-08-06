@@ -7425,10 +7425,13 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
     return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url } });
   }
   // Auto-registro deshabilitado: los usuarios se crean únicamente desde el
-  // panel de administrador (Usuarios → crear). Si el email no existe en la BD
-  // el flujo de login/social devuelve access_locked para que la app muestre
-  // el mensaje de pruebas privadas.
-  return res.status(403).json({ error: "access_locked" });
+  // panel de administrador (Usuarios → crear). Si el email no existe:
+  //  - Si la app está en pruebas privadas → access_locked (muestra pantalla beta).
+  //  - Si NO está en pruebas → not_registered (cuenta no existe; volver a welcome).
+  if (isTrue("app.access_locked", false)) {
+    return res.status(403).json({ error: "access_locked" });
+  }
+  return res.status(403).json({ error: "not_registered" });
 }));
 
 // GET /api/my/conversations  → list of conversations for X-User-Id
