@@ -1917,6 +1917,16 @@ async function viewUsers(root){
         el("td", {}, fmt.reldate(u.created_at)),
         el("td", { class: "ta-right" }, [
           btn("Ver", "ghost xs", () => openUserDrawer(u.id, refresh)),
+          btn("🗑", "danger xs", async () => {
+            if (!confirm(`¿Eliminar al usuario ${u.email || u.name || u.id}?\n\nEsta acción borra su cuenta y las verificaciones KYC asociadas.`)) return;
+            try {
+              await api.del("/api/users/" + u.id);
+              toast(`Usuario eliminado`);
+              refresh();
+            } catch (e) {
+              toast("Error al eliminar: " + (e.message || "desconocido"));
+            }
+          }),
         ]),
       ]));
     });
