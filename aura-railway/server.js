@@ -418,6 +418,9 @@ const PUBLIC_API = new Set([
   "POST /api/admin/login",
   "POST /api/admin/logout",
   "GET /api/admin/me",
+  "POST /api/admin/email-login/send",
+  "POST /api/admin/email-login/verify",
+  "POST /api/login/email-recovery/send",
   // Real chat endpoints (no admin token required — associated to a user id)
   "POST /api/my/ensure",
   "POST /api/my/heartbeat",
