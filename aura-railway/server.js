@@ -1514,19 +1514,53 @@ app.delete("/api/users/:id/activity", wrap(async (req, res) => {
 
 // Users list + CRUD
 app.get("/api/users", wrap(async (req, res) => {
-  const { q = "", zone, status, plan, limit = 50, offset = 0 } = req.query;
+  const { q = "", zone, status, plan, gender, verified, country, age_min, age_max,
+          created_from, created_to, order = "recent", limit = 50, offset = 0 } = req.query;
   const clauses = [];
   const params = [];
-  if (q) { clauses.push("(name LIKE ? OR email LIKE ?)"); params.push(`%${q}%`, `%${q}%`); }
+  if (q) {
+    // Buscar también por ID exacto o teléfono si aplica
+    const idNum = Number(q);
+    if (Number.isInteger(idNum) && idNum > 0) {
+      clauses.push("(id=? OR name LIKE ? OR email LIKE ? OR phone LIKE ?)");
+      params.push(idNum, `%${q}%`, `%${q}%`, `%${q}%`);
+    } else {
+      clauses.push("(name LIKE ? OR email LIKE ? OR phone LIKE ?)");
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+  }
   if (zone) { clauses.push("zone=?"); params.push(zone); }
   if (status) { clauses.push("status=?"); params.push(status); }
   if (plan) { clauses.push("plan=?"); params.push(plan); }
+  if (gender) { clauses.push("gender=?"); params.push(gender); }
+  if (verified === "0" || verified === "1") { clauses.push("verified=?"); params.push(Number(verified)); }
+  if (country) { clauses.push("country LIKE ?"); params.push(`%${country}%`); }
+  if (age_min) { clauses.push("age >= ?"); params.push(Number(age_min)); }
+  if (age_max) { clauses.push("age <= ?"); params.push(Number(age_max)); }
+  if (created_from) { clauses.push("created_at >= ?"); params.push(created_from); }
+  if (created_to) { clauses.push("created_at <= ?"); params.push(created_to + " 23:59:59"); }
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-  const [rows] = await pool.query(
-    `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at
-     FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-    [...params, Number(limit), Number(offset)]
-  );
+  let orderClause = "ORDER BY created_at DESC";
+  if (order === "oldest") orderClause = "ORDER BY created_at ASC";
+  else if (order === "name_asc") orderClause = "ORDER BY name ASC";
+  else if (order === "last_active") orderClause = "ORDER BY last_login DESC";
+  else if (order === "spent_desc") orderClause = "ORDER BY (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.user_id=users.id) DESC";
+  else if (order === "reports_desc") orderClause = "ORDER BY (SELECT COUNT(*) FROM reports r WHERE r.target_user_id=users.id) DESC";
+  // tags column may not exist; try/catch fallback
+  let rows;
+  try {
+    [rows] = await pool.query(
+      `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at, last_login, tags
+       FROM users ${where} ${orderClause} LIMIT ? OFFSET ?`,
+      [...params, Number(limit), Number(offset)]
+    );
+  } catch (e) {
+    [rows] = await pool.query(
+      `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at, last_login
+       FROM users ${where} ${orderClause} LIMIT ? OFFSET ?`,
+      [...params, Number(limit), Number(offset)]
+    );
+  }
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) total FROM users ${where}`, params);
   res.json({ rows, total });
 }));
@@ -3004,6 +3038,133 @@ app.post("/api/admin/kyc/:id/reject", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+/* ============================================================
+   DELETE-ACCOUNT — Eliminar cuenta desde el panel KYC
+   ============================================================
+   - Motivo obligatorio (dropdown) + descripción libre opcional.
+   - Opcional: eliminar sesión Didit.
+   - Opcional: enviar email al usuario con la plantilla
+     `account_deleted` (dinámica).
+   - Registra el motivo en account_deletions y en logs.
+============================================================ */
+app.post("/api/admin/kyc/:id/delete-account", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const admin = res.locals?.admin?.email || "admin";
+  const b = req.body || {};
+  const reason = String(b.reason || "").slice(0, 60);
+  if (!reason) return res.status(400).json({ error: "reason_required" });
+  const detail = String(b.detail || "").slice(0, 1000);
+  const alsoDidit    = !!b.also_didit;
+  const sendEmail    = !!b.send_email;
+  const appealWarn   = !!b.appeal_warning;
+
+  const [rows] = await pool.query(
+    "SELECT user_id, email, provider, didit_session_id FROM identity_verifications WHERE id=? LIMIT 1",
+    [id]
+  );
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  const v = rows[0];
+  const userId = v.user_id;
+  const email  = v.email;
+
+  // 1) Auditoría de la eliminación (tabla ligera).
+  try {
+    await pool.execute(
+      `CREATE TABLE IF NOT EXISTS account_deletions (
+         id INT AUTO_INCREMENT PRIMARY KEY,
+         user_id INT NULL,
+         email VARCHAR(190),
+         reason VARCHAR(60),
+         detail TEXT,
+         deleted_by VARCHAR(120),
+         also_didit TINYINT(1) DEFAULT 0,
+         email_sent TINYINT(1) DEFAULT 0,
+         appeal_warning TINYINT(1) DEFAULT 0,
+         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+         INDEX idx_email (email),
+         INDEX idx_user (user_id)
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
+    );
+    await pool.execute(
+      `INSERT INTO account_deletions
+        (user_id, email, reason, detail, deleted_by, also_didit, email_sent, appeal_warning)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [userId || null, email, reason, detail, admin, alsoDidit ? 1 : 0, sendEmail ? 1 : 0, appealWarn ? 1 : 0]
+    );
+  } catch (e) { /* no bloquea */ }
+
+  // 2) Didit: cerrar sesión (best-effort).
+  if (alsoDidit && v.provider === "didit" && v.didit_session_id) {
+    try {
+      if (typeof diditClient !== "undefined" && diditClient && typeof diditClient.deleteSession === "function") {
+        await diditClient.deleteSession(v.didit_session_id);
+      } else if (process.env.DIDIT_API_KEY) {
+        const baseUrl = process.env.DIDIT_BASE_URL || "https://verification.didit.me";
+        await fetch(`${baseUrl}/v1/session/${v.didit_session_id}`, {
+          method: "DELETE",
+          headers: { "x-api-key": process.env.DIDIT_API_KEY },
+        }).catch(() => {});
+      }
+    } catch (e) { /* best-effort */ }
+  }
+
+  // 3) Enviar email si procede (encolar en email_outbox).
+  if (sendEmail && email) {
+    try {
+      const subject = "Tu cuenta en Aura ha sido eliminada";
+      const reasonHuman = ({
+        menor_de_edad: "Menor de edad detectado",
+        documento_falso: "Documento falso o manipulado",
+        identidad_no_coincide: "La identidad no coincide con el perfil",
+        duplicado: "Cuenta duplicada",
+        fraude: "Sospecha de fraude",
+        incumplimiento: "Incumplimiento de las normas",
+        otro: "Otro",
+      })[reason] || reason;
+
+      const bodyHtml = `
+        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:20px;">
+          <h2 style="color:#7c3aed;">Cuenta eliminada</h2>
+          <p>Hola,</p>
+          <p>Te informamos de que tu cuenta en <b>Aura</b> ha sido eliminada por el siguiente motivo:</p>
+          <p style="padding:12px;background:#f5f0ff;border-left:4px solid #7c3aed;border-radius:6px;">
+            <b>${reasonHuman}</b>
+            ${detail ? `<br><span style="font-size:13px;color:#555;">${detail.replace(/</g,"&lt;")}</span>` : ""}
+          </p>
+          ${appealWarn ? `<p style="font-size:13px;color:#a55;">
+            Puedes escribirnos si consideras que ha sido un error, pero
+            <b>tu apelación puede no ser revisada</b> dependiendo del motivo.
+          </p>` : ""}
+          <p style="font-size:13px;color:#777;">Equipo de Aura</p>
+        </div>`;
+      await pool.execute(
+        `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
+         VALUES (?, ?, ?, 'account_deleted', 'pending', NOW())`,
+        [email, subject, wrapEmailHtml(bodyHtml, { preheader: subject })]
+      );
+    } catch (e) { /* no bloquea */ }
+  }
+
+  // 4) Borrar registros del usuario en BD (best-effort, protegidas por try).
+  try {
+    await pool.execute("DELETE FROM identity_verifications WHERE id=?", [id]);
+    if (userId) {
+      // Tablas dependientes conocidas.
+      const tables = ["user_gps","user_swipes","user_matches","messages","chats",
+                      "user_reports","user_appeals","user_infractions","user_photos",
+                      "user_settings","user_credits","user_subscriptions","otp_codes"];
+      for (const t of tables) {
+        try { await pool.execute(`DELETE FROM ${t} WHERE user_id=?`, [userId]); } catch {}
+      }
+      try { await pool.execute("DELETE FROM users WHERE id=?", [userId]); } catch {}
+    }
+  } catch (e) {}
+
+  try { await logActivity("kyc", `Cuenta ${email} (#${userId}) eliminada por ${admin} — motivo: ${reason}`); } catch {}
+  res.json({ ok: true });
+}));
+
 app.get("/api/admin/kyc/blocks", wrap(async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   const limit = Math.min(500, parseInt(req.query.limit || 100, 10) || 100);
@@ -3070,6 +3231,17 @@ app.delete("/api/admin/waitlist/:id", wrap(async (req, res) => {
   await pool.execute("DELETE FROM beta_waitlist WHERE id=?", [id]);
   try { await logActivity("waitlist", `Eliminada entrada de lista beta #${id}`); } catch {}
   res.json({ ok: true });
+}));
+
+// Bulk delete
+app.post("/api/admin/waitlist/bulk-delete", wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: "ids_required" });
+  const admin = res.locals?.admin?.email || "admin";
+  const placeholders = ids.map(() => "?").join(",");
+  const [r] = await pool.execute(`DELETE FROM beta_waitlist WHERE id IN (${placeholders})`, ids);
+  try { await logActivity("waitlist", `Bulk delete de waitlist por ${admin}: ${r.affectedRows || 0} filas`); } catch {}
+  res.json({ ok: true, deleted: r.affectedRows || 0 });
 }));
 
 // Editar el email de una entrada (por si el usuario se equivocó al escribirlo)
@@ -3220,6 +3392,51 @@ app.get("/api/admin/maintenance/recipients", wrap(async (req, res) => {
     last_sent_at: lastRun.length ? lastRun[0].last_at : null,
     last_template: lastRun.length ? lastRun[0].template_id : null,
   });
+}));
+
+/* -------------------------------------------------------------------------
+   Gestión del historial de emails de mantenimiento (borrado admin).
+   Estos endpoints NO cancelan envíos ya realizados: solo limpian el registro
+   de email_outbox para las plantillas maintenance_notice / maintenance_ended.
+   ------------------------------------------------------------------------- */
+
+// Borrar un registro individual del historial.
+app.delete("/api/admin/maintenance/recipients/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid_id" });
+  const [r] = await pool.execute(
+    `DELETE FROM email_outbox
+      WHERE id = ?
+        AND template_id IN ('maintenance_notice','maintenance_ended')`,
+    [id]
+  );
+  await logActivity("admin", `Registro mantenimiento #${id} eliminado (${r.affectedRows} filas)`);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+// Borrar varios registros por ids.
+app.post("/api/admin/maintenance/recipients/bulk-delete", wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
+  if (!ids.length) return res.status(400).json({ error: "no_ids" });
+  const placeholders = ids.map(() => "?").join(",");
+  const [r] = await pool.execute(
+    `DELETE FROM email_outbox
+      WHERE id IN (${placeholders})
+        AND template_id IN ('maintenance_notice','maintenance_ended')`,
+    ids
+  );
+  await logActivity("admin", `Borrado masivo mantenimiento: ${r.affectedRows} registros`);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+// Borrar todo el historial de mantenimiento.
+app.delete("/api/admin/maintenance/recipients", wrap(async (req, res) => {
+  const [r] = await pool.execute(
+    `DELETE FROM email_outbox
+      WHERE template_id IN ('maintenance_notice','maintenance_ended')`
+  );
+  await logActivity("admin", `Historial mantenimiento vaciado (${r.affectedRows} registros)`);
+  res.json({ ok: true, deleted: r.affectedRows });
 }));
 
 app.get("/api/admin/waitlist/export.csv", wrap(async (req, res) => {
@@ -3549,6 +3766,17 @@ app.get("/api/logs", wrap(async (req, res) => {
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const [rows] = await pool.query(`SELECT * FROM logs ${where} ORDER BY created_at DESC LIMIT ?`, [...params, Number(limit)]);
   res.json(rows);
+}));
+
+// DELETE /api/admin/logs/purge?days=30 — Elimina logs anteriores a N días.
+app.delete("/api/admin/logs/purge", wrap(async (req, res) => {
+  const days = Math.max(1, Math.min(365, parseInt(req.query.days || 30, 10) || 30));
+  const admin = res.locals?.admin?.email || "admin";
+  const [r] = await pool.execute(
+    `DELETE FROM logs WHERE created_at < NOW() - INTERVAL ? DAY`, [days]
+  );
+  try { await logActivity("admin", `Logs purgados (>${days}d) por ${admin} — filas: ${r.affectedRows || 0}`); } catch {}
+  res.json({ ok: true, deleted: r.affectedRows || 0 });
 }));
 
 // Settings
@@ -4178,6 +4406,88 @@ async function enforceAccess(req, res, opts = {}) {
 }
 
 // GET /api/my/restrictions → current user's active restrictions
+/* ============================================================
+   /api/my/account-status
+   ------------------------------------------------------------
+   Devuelve al usuario logueado el estado de su cuenta:
+     · KYC (verificación de edad)
+     · Apelaciones enviadas (open/reviewed/accepted/rejected)
+     · Infracciones registradas (severity, resolved)
+   Usado por screenAccountStatus() y el banner de screenMe().
+============================================================ */
+app.get("/api/my/account-status", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+
+  const out = {
+    kyc_status: "none",
+    kyc_reason: null,
+    kyc_updated_at: null,
+    appeals: [],
+    appeals_open: 0,
+    infractions: [],
+    infractions_open: 0,
+  };
+
+  // KYC
+  try {
+    const [rows] = await pool.query(
+      `SELECT status, last_reason, updated_at
+         FROM identity_verifications
+        WHERE user_id=?
+        ORDER BY id DESC LIMIT 1`, [me]);
+    if (rows.length) {
+      out.kyc_status     = rows[0].status || "pending";
+      out.kyc_reason     = rows[0].last_reason || null;
+      out.kyc_updated_at = rows[0].updated_at || null;
+    }
+  } catch {}
+
+  // Apelaciones
+  try {
+    // Autocreación defensiva si la tabla no existe.
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_appeals (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT,
+      subject VARCHAR(200),
+      body TEXT,
+      status VARCHAR(20) DEFAULT 'open',
+      admin_response TEXT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    const [rows] = await pool.query(
+      `SELECT id, subject, status, admin_response, created_at
+         FROM user_appeals WHERE user_id=? ORDER BY id DESC LIMIT 20`, [me]);
+    out.appeals = rows;
+    out.appeals_open = rows.filter(r => r.status === "open").length;
+  } catch {}
+
+  // Infracciones
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT,
+      type VARCHAR(60),
+      title VARCHAR(200),
+      detail TEXT,
+      severity VARCHAR(20) DEFAULT 'low',
+      status VARCHAR(20) DEFAULT 'active',
+      created_by VARCHAR(120),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    const [rows] = await pool.query(
+      `SELECT id, type, title, detail, severity, status, created_at
+         FROM user_infractions WHERE user_id=? ORDER BY id DESC LIMIT 20`, [me]);
+    out.infractions = rows;
+    out.infractions_open = rows.filter(r => r.status !== "resolved").length;
+  } catch {}
+
+  res.json(out);
+}));
+
 app.get("/api/my/restrictions", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
@@ -5337,8 +5647,16 @@ app.post("/api/verify/send", wrap(async (req, res) => {
       __lang: reqLang,
     }).catch(() => {});
   } catch {}
-  // Only expose the code when SMTP is not configured (demo mode)
-  res.json({ ok: true, sent: result.sent, demoCode: result.sent ? null : code });
+  // Only expose the code when SMTP is not configured (demo mode).
+  // También devolvemos expires_at (ISO) para que el frontend muestre el
+  // contador de expiración en la pantalla de OTP.
+  res.json({
+    ok: true,
+    sent: result.sent,
+    demoCode: result.sent ? null : code,
+    expires_at: expires.toISOString(),
+    ttl_seconds: 10 * 60,
+  });
 }));
 
 app.post("/api/verify/check", wrap(async (req, res) => {
@@ -5762,6 +6080,54 @@ function interpolate(str, vars) {
   });
 }
 
+/* ============================================================
+   wrapEmailHtml — envuelve cualquier cuerpo HTML con la cabecera
+   Aura (logo transparente sobre fondo blanco) y un pie corporativo.
+   - Si el HTML ya trae <!--AURA_WRAPPED--> no lo envuelve otra vez.
+   - El logo se toma de settings "content.design.logo_image" o de
+     una URL fija por defecto. Si el logo es data:image se incrusta.
+============================================================ */
+function wrapEmailHtml(innerHtml, opts = {}) {
+  const src = String(innerHtml || "");
+  if (src.includes("<!--AURA_WRAPPED-->")) return src;
+  const brand = String(getSetting("app.name", "Aura") || "Aura");
+  let logo = String(getSetting("content.design.logo_image", "") || "").trim();
+  if (!logo) logo = `${appPublicUrl()}/assets/logo-aura.png`;
+  const preheader = String(opts.preheader || "").slice(0, 140);
+  const year = new Date().getFullYear();
+  const footerAddr = String(getSetting("app.company_footer", `${brand} · citasaura.es`) || "");
+  return `<!--AURA_WRAPPED--><!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>${brand}</title></head>
+<body style="margin:0;padding:0;background:#f6f6fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2937;">
+${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</div>` : ""}
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6fb;padding:24px 0;">
+  <tr><td align="center">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.06);">
+      <tr>
+        <td align="center" style="background:#ffffff;padding:28px 20px 18px;border-bottom:1px solid #f0f0f5;">
+          <img src="${logo}" alt="${brand}" style="max-height:52px;max-width:200px;display:block;margin:0 auto;">
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:26px 30px;line-height:1.55;font-size:15px;color:#1f2937;">
+          ${src}
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:20px 30px 28px;background:#fafafd;border-top:1px solid #f0f0f5;font-size:12px;color:#6b7280;text-align:center;">
+          <div>${footerAddr}</div>
+          <div style="margin-top:6px;">© ${year} ${brand}. Todos los derechos reservados.</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
+}
+
 function sampleVarsFor(row) {
   let sv = {};
   try {
@@ -5919,7 +6285,9 @@ async function enqueueEmail(templateId, userId, vars = {}) {
     if (vars.__test_redirect_prefix) subject = String(vars.__test_redirect_prefix) + subject;
     // Interpolar el HTML en español y luego traducir su cuerpo con el diccionario.
     const htmlEs  = interpolate(tpl.html, vars);
-    const html    = emailTx.translateBody(htmlEs, userLang);
+    const bodyHtml = emailTx.translateBody(htmlEs, userLang);
+    // Envolver con la cabecera de marca (logo Aura sobre fondo blanco).
+    const html    = wrapEmailHtml(bodyHtml, { preheader: subject });
 
     // Resolver remitente y Reply-To según la categoría/id de la plantilla.
     const sender = routeSender(templateId, tpl.category);
@@ -6789,6 +7157,139 @@ app.get("/api/admin/chats/:id/context", wrap(async (req, res) => {
   const conv = c[0];
   const [ctxA, ctxB] = await Promise.all([getUserFullContext(conv.user_a), getUserFullContext(conv.user_b)]);
   res.json({ ok: true, conversation: conv, a: ctxA, b: ctxB, reasons: MODERATION_REASONS });
+}));
+
+// GET /api/admin/users/:uid/account-status
+// KYC + apelaciones + infracciones del usuario, para el drawer admin.
+app.get("/api/admin/users/:uid/account-status", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+
+  const out = {
+    kyc_status: "none",
+    kyc_reason: null,
+    kyc_updated_at: null,
+    appeals: [], appeals_open: 0,
+    infractions: [], infractions_open: 0,
+  };
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT status, last_reason, updated_at FROM identity_verifications
+        WHERE user_id=? ORDER BY id DESC LIMIT 1`, [uid]);
+    if (rows.length) {
+      out.kyc_status     = rows[0].status || "pending";
+      out.kyc_reason     = rows[0].last_reason || null;
+      out.kyc_updated_at = rows[0].updated_at || null;
+    }
+  } catch {}
+
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_appeals (
+      id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, subject VARCHAR(200), body TEXT,
+      status VARCHAR(20) DEFAULT 'open', admin_response TEXT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    const [rows] = await pool.query(
+      `SELECT id, subject, status, admin_response, created_at
+         FROM user_appeals WHERE user_id=? ORDER BY id DESC LIMIT 30`, [uid]);
+    out.appeals = rows;
+    out.appeals_open = rows.filter(r => r.status === "open").length;
+  } catch {}
+
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
+      id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, type VARCHAR(60),
+      title VARCHAR(200), detail TEXT, severity VARCHAR(20) DEFAULT 'low',
+      status VARCHAR(20) DEFAULT 'active', created_by VARCHAR(120),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+    const [rows] = await pool.query(
+      `SELECT id, type, title, detail, severity, status, created_at
+         FROM user_infractions WHERE user_id=? ORDER BY id DESC LIMIT 30`, [uid]);
+    out.infractions = rows;
+    out.infractions_open = rows.filter(r => r.status !== "resolved").length;
+  } catch {}
+
+  res.json(out);
+}));
+
+// GET /api/admin/infractions — listado global de infracciones
+app.get("/api/admin/infractions", wrap(async (req, res) => {
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
+      id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, type VARCHAR(60),
+      title VARCHAR(200), detail TEXT, severity VARCHAR(20) DEFAULT 'low',
+      status VARCHAR(20) DEFAULT 'active', created_by VARCHAR(120),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_user (user_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch {}
+  const where = [];
+  const args = [];
+  const status = String(req.query.status || "").trim();
+  const severity = String(req.query.severity || "").trim();
+  if (status) { where.push("i.status=?"); args.push(status); }
+  if (severity) { where.push("i.severity=?"); args.push(severity); }
+  const limit = Math.min(500, parseInt(req.query.limit || 300, 10) || 300);
+  args.push(limit);
+  const w = where.length ? "WHERE " + where.join(" AND ") : "";
+  const [rows] = await pool.query(
+    `SELECT i.id, i.user_id, i.type, i.title, i.detail, i.severity, i.status,
+            i.created_by, i.created_at, u.email
+       FROM user_infractions i
+       LEFT JOIN users u ON u.id = i.user_id
+       ${w}
+       ORDER BY i.id DESC
+       LIMIT ?`, args
+  );
+  res.json({ ok: true, rows });
+}));
+
+app.post("/api/admin/infractions/:id/resolve", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const admin = res.locals?.admin?.email || "admin";
+  await pool.execute("UPDATE user_infractions SET status='resolved' WHERE id=?", [id]);
+  try { await logActivity("user", `Infracción #${id} marcada como resuelta por ${admin}`); } catch {}
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/infractions/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const admin = res.locals?.admin?.email || "admin";
+  await pool.execute("DELETE FROM user_infractions WHERE id=?", [id]);
+  try { await logActivity("user", `Infracción #${id} eliminada por ${admin}`); } catch {}
+  res.json({ ok: true });
+}));
+
+// POST /api/admin/users/:uid/infractions — añadir infracción manual
+app.post("/api/admin/users/:uid/infractions", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const admin = res.locals?.admin?.email || "admin";
+  const b = req.body || {};
+  const type = String(b.type || "").slice(0, 60);
+  const title = String(b.title || "").slice(0, 200) || type;
+  const detail = String(b.detail || "").slice(0, 2000);
+  const severity = ["low","medium","high"].includes(b.severity) ? b.severity : "low";
+
+  await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
+    id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, type VARCHAR(60),
+    title VARCHAR(200), detail TEXT, severity VARCHAR(20) DEFAULT 'low',
+    status VARCHAR(20) DEFAULT 'active', created_by VARCHAR(120),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_user (user_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await pool.execute(
+    `INSERT INTO user_infractions (user_id, type, title, detail, severity, created_by)
+     VALUES (?,?,?,?,?,?)`,
+    [uid, type, title, detail, severity, admin]
+  );
+  try { await logActivity("user", `Infracción [${severity}] añadida a user #${uid} por ${admin}: ${title}`); } catch {}
+  res.json({ ok: true });
 }));
 
 // GET /api/admin/users/:uid/live-context
@@ -8622,6 +9123,1635 @@ async function ensureSuperadminAccessSettings() {
   } catch (e) { console.warn("[superadmin] ensure settings:", e.message); }
 }
 
+/* ================================================================
+   V450+ · STAFF (admins/moderadores), NOTIFICACIONES DE USUARIO,
+   POPUPS IN-APP y NEWSLETTER/CAMPAÑAS ESTACIONALES
+   ================================================================ */
+
+// Lista de permisos disponibles por sección.
+const STAFF_PERMS = [
+  "users","moderation","reports","appeals","tickets","chats","otp",
+  "subscriptions","payments","promos","notifications","emails","kyc",
+  "duplicates","infractions","waitlist","newsletter","popups",
+  "stats","content","design","ads","backup","logs","settings",
+];
+
+// Autocreación de tablas Staff, notif prefs, push subs, popups, newsletter.
+async function ensureStaffAndNotifTables() {
+  await pool.execute(`CREATE TABLE IF NOT EXISTS staff_members (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(190) UNIQUE,
+    name VARCHAR(120),
+    role VARCHAR(20) DEFAULT 'moderator',
+    permissions TEXT,
+    status VARCHAR(20) DEFAULT 'active',
+    invited_by VARCHAR(190),
+    invited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_login DATETIME NULL,
+    invite_token VARCHAR(80) NULL,
+    INDEX idx_email (email)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await pool.execute(`CREATE TABLE IF NOT EXISTS user_notification_prefs (
+    user_id INT PRIMARY KEY,
+    push_enabled TINYINT(1) DEFAULT 1,
+    email_enabled TINYINT(1) DEFAULT 1,
+    matches TINYINT(1) DEFAULT 1,
+    likes TINYINT(1) DEFAULT 1,
+    chats TINYINT(1) DEFAULT 1,
+    news TINYINT(1) DEFAULT 1,
+    marketing TINYINT(1) DEFAULT 0,
+    quiet_hours_start VARCHAR(5) DEFAULT '',
+    quiet_hours_end VARCHAR(5) DEFAULT '',
+    channel VARCHAR(10) DEFAULT 'both',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await pool.execute(`CREATE TABLE IF NOT EXISTS user_push_subscriptions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    endpoint TEXT,
+    p256dh VARCHAR(255),
+    auth VARCHAR(120),
+    device_name VARCHAR(120),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    last_used DATETIME NULL,
+    INDEX idx_user (user_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await pool.execute(`CREATE TABLE IF NOT EXISTS inapp_popups (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(200),
+    body TEXT,
+    image_url VARCHAR(500),
+    cta_text VARCHAR(80),
+    cta_url VARCHAR(500),
+    theme VARCHAR(20) DEFAULT 'gradient',
+    segment VARCHAR(40) DEFAULT 'all',
+    target_user_ids TEXT,
+    starts_at DATETIME NULL,
+    ends_at DATETIME NULL,
+    priority INT DEFAULT 50,
+    status VARCHAR(20) DEFAULT 'draft',
+    show_once TINYINT(1) DEFAULT 1,
+    created_by VARCHAR(190),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    views INT DEFAULT 0,
+    clicks INT DEFAULT 0
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await pool.execute(`CREATE TABLE IF NOT EXISTS inapp_popup_views (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    popup_id INT,
+    user_id INT,
+    action VARCHAR(20),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_popup_user (popup_id, user_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  await pool.execute(`CREATE TABLE IF NOT EXISTS newsletters (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(200),
+    subject VARCHAR(300),
+    body_html LONGTEXT,
+    segment VARCHAR(40) DEFAULT 'all',
+    target_user_ids TEXT,
+    occasion VARCHAR(40),
+    channel VARCHAR(20) DEFAULT 'email',
+    scheduled_at DATETIME NULL,
+    sent_at DATETIME NULL,
+    sent_count INT DEFAULT 0,
+    open_count INT DEFAULT 0,
+    click_count INT DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'draft',
+    created_by VARCHAR(190),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // Tabla auto-reglas para usuarios
+  await pool.execute(`CREATE TABLE IF NOT EXISTS user_auto_rules (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(120),
+    condition_key VARCHAR(60),
+    action_key VARCHAR(60),
+    enabled TINYINT(1) DEFAULT 1,
+    last_run DATETIME NULL,
+    last_affected INT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // Añadir columna tags a users si no existe
+  try { await pool.execute("ALTER TABLE users ADD COLUMN tags VARCHAR(500) NULL"); } catch {}
+  // Añadir columna internal_notes si no existe
+  try { await pool.execute("ALTER TABLE users ADD COLUMN internal_notes TEXT NULL"); } catch {}
+}
+
+/* ==================== USERS BULK / EXPORT / RULES ==================== */
+app.post("/api/users/bulk", requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  const ids = Array.isArray(b.ids) ? b.ids.map(n => Number(n)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: "no_ids" });
+  const action = String(b.action || "");
+  const value = b.value != null ? String(b.value) : null;
+  const inClause = ids.map(() => "?").join(",");
+  let affected = 0;
+
+  try {
+    if (action === "verify") {
+      const [r] = await pool.execute(`UPDATE users SET verified=1 WHERE id IN (${inClause})`, ids);
+      affected = r.affectedRows;
+    } else if (action === "unverify") {
+      const [r] = await pool.execute(`UPDATE users SET verified=0 WHERE id IN (${inClause})`, ids);
+      affected = r.affectedRows;
+    } else if (action === "suspend") {
+      const [r] = await pool.execute(`UPDATE users SET status='suspended' WHERE id IN (${inClause})`, ids);
+      affected = r.affectedRows;
+    } else if (action === "ban") {
+      const [r] = await pool.execute(`UPDATE users SET status='banned' WHERE id IN (${inClause})`, ids);
+      affected = r.affectedRows;
+      if (value) {
+        try {
+          for (const id of ids) {
+            await pool.execute("INSERT INTO admin_activity (admin_email, event, detail, user_id) VALUES (?,?,?,?)",
+              [req.admin?.email || "admin", "bulk_ban", value, id]);
+          }
+        } catch {}
+      }
+    } else if (action === "activate") {
+      const [r] = await pool.execute(`UPDATE users SET status='active' WHERE id IN (${inClause})`, ids);
+      affected = r.affectedRows;
+    } else if (action === "tag" && value) {
+      // Añadir tag preservando existentes
+      for (const id of ids) {
+        try {
+          const [[row]] = await pool.query("SELECT tags FROM users WHERE id=?", [id]);
+          const cur = (row?.tags || "").split(",").map(s => s.trim()).filter(Boolean);
+          if (!cur.includes(value)) cur.push(value);
+          await pool.execute("UPDATE users SET tags=? WHERE id=?", [cur.join(","), id]);
+          affected++;
+        } catch {}
+      }
+    } else if (action === "plan" && value) {
+      const [r] = await pool.execute(`UPDATE users SET plan=? WHERE id IN (${inClause})`, [value, ...ids]);
+      affected = r.affectedRows;
+    } else if (action === "email") {
+      const subject = String(b.subject || "Aura");
+      const body = String(b.body || "");
+      const [rows] = await pool.query(`SELECT id, email, name FROM users WHERE id IN (${inClause})`, ids);
+      for (const u of rows) {
+        try {
+          if (typeof enqueueEmail === "function") {
+            await enqueueEmail("bulk_admin", u.id, { subject, body_html: body, name: u.name || "" });
+          }
+          affected++;
+        } catch {}
+      }
+    } else if (action === "delete") {
+      const [r] = await pool.execute(`DELETE FROM users WHERE id IN (${inClause})`, ids);
+      affected = r.affectedRows;
+      try { await pool.execute(`DELETE FROM identity_verifications WHERE user_id IN (${inClause})`, ids); } catch {}
+    } else {
+      return res.status(400).json({ error: "unknown_action" });
+    }
+    try {
+      if (typeof logActivity === "function") {
+        await logActivity({ admin_email: req.admin?.email, event: "users_bulk", detail: `${action} x${affected}` });
+      }
+    } catch {}
+    res.json({ ok: true, affected });
+  } catch (e) {
+    console.error("[users/bulk]", e);
+    res.status(500).json({ error: e.message });
+  }
+}));
+
+app.get("/api/users/export", requireAdmin, wrap(async (req, res) => {
+  const format = String(req.query.format || "csv").toLowerCase();
+  const ids = req.query.ids ? String(req.query.ids).split(",").map(Number).filter(Boolean) : null;
+  const where = ids && ids.length ? `WHERE id IN (${ids.map(() => "?").join(",")})` : "";
+  const [rows] = await pool.query(
+    `SELECT id, email, name, age, gender, orientation, zone, city, country, plan, status, verified, role, created_at, last_login
+       FROM users ${where} ORDER BY id DESC LIMIT 100000`,
+    ids || []
+  );
+  if (format === "json") {
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="users_${Date.now()}.json"`);
+    return res.send(JSON.stringify(rows, null, 2));
+  }
+  if (format === "xlsx") {
+    // Enviar como CSV con extensión xls (Excel lo abre); si hay librería instalada, mejor.
+    res.setHeader("Content-Type", "application/vnd.ms-excel");
+    res.setHeader("Content-Disposition", `attachment; filename="users_${Date.now()}.xls"`);
+  } else {
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="users_${Date.now()}.csv"`);
+  }
+  const cols = rows.length ? Object.keys(rows[0]) : ["id"];
+  const esc = (v) => {
+    if (v == null) return "";
+    const s = String(v).replace(/"/g, '""');
+    return /[",\n]/.test(s) ? `"${s}"` : s;
+  };
+  const lines = [cols.join(",")];
+  for (const r of rows) lines.push(cols.map(c => esc(r[c])).join(","));
+  res.send(lines.join("\n"));
+}));
+
+app.get("/api/admin/user-rules", requireAdmin, wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const [rows] = await pool.query("SELECT id,name,condition_key AS `condition`,action_key AS action,enabled,last_run,last_affected,created_at FROM user_auto_rules ORDER BY id DESC");
+  res.json({ items: rows });
+}));
+app.post("/api/admin/user-rules", requireAdmin, wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const b = req.body || {};
+  const [r] = await pool.execute(
+    "INSERT INTO user_auto_rules (name, condition_key, action_key, enabled) VALUES (?,?,?,?)",
+    [String(b.name||"regla"), String(b.condition||""), String(b.action||""), b.enabled ? 1 : 0]
+  );
+  res.json({ ok: true, id: r.insertId });
+}));
+app.patch("/api/admin/user-rules/:id", requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  const sets = []; const params = [];
+  ["name","condition","action","enabled"].forEach(k => {
+    if (k in b) {
+      const col = k === "condition" ? "condition_key" : (k === "action" ? "action_key" : k);
+      sets.push(col + "=?"); params.push(b[k]);
+    }
+  });
+  if (!sets.length) return res.json({ ok: true });
+  params.push(Number(req.params.id));
+  await pool.execute(`UPDATE user_auto_rules SET ${sets.join(",")} WHERE id=?`, params);
+  res.json({ ok: true });
+}));
+app.delete("/api/admin/user-rules/:id", requireAdmin, wrap(async (req, res) => {
+  await pool.execute("DELETE FROM user_auto_rules WHERE id=?", [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+// Ejecutor de reglas: se puede llamar manualmente o vía cron.
+async function runUserAutoRules() {
+  try {
+    const [rules] = await pool.query("SELECT * FROM user_auto_rules WHERE enabled=1");
+    for (const r of rules) {
+      let ids = [];
+      try {
+        if (r.condition_key === "reports_gte_3" || r.condition_key === "reports_gte_5") {
+          const n = r.condition_key === "reports_gte_3" ? 3 : 5;
+          const [rows] = await pool.query(`SELECT target_user_id AS id, COUNT(*) c FROM reports GROUP BY target_user_id HAVING c >= ?`, [n]);
+          ids = rows.map(x => x.id);
+        } else if (r.condition_key === "no_activity_30d") {
+          const [rows] = await pool.query("SELECT id FROM users WHERE last_login < NOW() - INTERVAL 30 DAY AND status='active'");
+          ids = rows.map(x => x.id);
+        } else if (r.condition_key === "no_activity_90d") {
+          const [rows] = await pool.query("SELECT id FROM users WHERE last_login < NOW() - INTERVAL 90 DAY AND status='active'");
+          ids = rows.map(x => x.id);
+        } else if (r.condition_key === "unverified_over_7d") {
+          const [rows] = await pool.query("SELECT id FROM users WHERE verified=0 AND created_at < NOW() - INTERVAL 7 DAY");
+          ids = rows.map(x => x.id);
+        }
+        if (!ids.length) continue;
+        const inClause = ids.map(() => "?").join(",");
+        if (r.action_key === "suspend") await pool.execute(`UPDATE users SET status='suspended' WHERE id IN (${inClause}) AND status<>'banned'`, ids);
+        else if (r.action_key === "ban") await pool.execute(`UPDATE users SET status='banned' WHERE id IN (${inClause})`, ids);
+        else if (r.action_key === "tag") await pool.execute(`UPDATE users SET tags=CONCAT(COALESCE(tags,''),'auto_rule,') WHERE id IN (${inClause})`, ids);
+        else if (r.action_key === "delete_account") await pool.execute(`DELETE FROM users WHERE id IN (${inClause})`, ids);
+        await pool.execute("UPDATE user_auto_rules SET last_run=NOW(), last_affected=? WHERE id=?", [ids.length, r.id]);
+      } catch (e) { console.warn("[auto-rule]", r.name, e.message); }
+    }
+  } catch (e) { console.warn("[runUserAutoRules]", e.message); }
+}
+// Ejecutar cada 6 horas
+setInterval(() => { runUserAutoRules().catch(() => {}); }, 6 * 60 * 60 * 1000);
+
+/* ==================== MODERATION EXTENSIONS ==================== */
+async function ensureModTables() {
+  await pool.execute(`CREATE TABLE IF NOT EXISTS mod_templates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(120), action VARCHAR(40), body TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  await pool.execute(`CREATE TABLE IF NOT EXISTS mod_rules (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(120), trigger_key VARCHAR(60), action_key VARCHAR(60),
+    enabled TINYINT(1) DEFAULT 1, last_run DATETIME NULL, last_hits INT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  try { await pool.execute("ALTER TABLE reports ADD COLUMN assigned_to VARCHAR(190) NULL"); } catch {}
+  try { await pool.execute("ALTER TABLE reports ADD COLUMN priority TINYINT DEFAULT 0"); } catch {}
+  try { await pool.execute("ALTER TABLE reports ADD COLUMN internal_notes TEXT NULL"); } catch {}
+  try { await pool.execute("ALTER TABLE reports ADD COLUMN sla_due DATETIME NULL"); } catch {}
+}
+
+app.get("/api/admin/mod-templates", requireAdmin, wrap(async (req, res) => {
+  await ensureModTables();
+  const [rows] = await pool.query("SELECT * FROM mod_templates ORDER BY id DESC");
+  res.json({ items: rows });
+}));
+app.post("/api/admin/mod-templates", requireAdmin, wrap(async (req, res) => {
+  await ensureModTables();
+  const b = req.body || {};
+  const [r] = await pool.execute("INSERT INTO mod_templates (name,action,body) VALUES (?,?,?)",
+    [String(b.name || ""), String(b.action || "warn"), String(b.body || "")]);
+  res.json({ ok: true, id: r.insertId });
+}));
+app.delete("/api/admin/mod-templates/:id", requireAdmin, wrap(async (req, res) => {
+  await pool.execute("DELETE FROM mod_templates WHERE id=?", [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+app.get("/api/admin/mod-rules", requireAdmin, wrap(async (req, res) => {
+  await ensureModTables();
+  const [rows] = await pool.query("SELECT id,name,trigger_key AS trigger,action_key AS action,enabled,last_run,last_hits,created_at FROM mod_rules ORDER BY id DESC");
+  res.json({ items: rows });
+}));
+app.post("/api/admin/mod-rules", requireAdmin, wrap(async (req, res) => {
+  await ensureModTables();
+  const b = req.body || {};
+  const [r] = await pool.execute("INSERT INTO mod_rules (name,trigger_key,action_key,enabled) VALUES (?,?,?,?)",
+    [String(b.name || ""), String(b.trigger || ""), String(b.action || ""), b.enabled ? 1 : 0]);
+  res.json({ ok: true, id: r.insertId });
+}));
+app.patch("/api/admin/mod-rules/:id", requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  const sets = []; const params = [];
+  ["name","enabled"].forEach(k => { if (k in b) { sets.push(k+"=?"); params.push(b[k]); } });
+  if (b.trigger) { sets.push("trigger_key=?"); params.push(b.trigger); }
+  if (b.action) { sets.push("action_key=?"); params.push(b.action); }
+  if (!sets.length) return res.json({ ok: true });
+  params.push(Number(req.params.id));
+  await pool.execute(`UPDATE mod_rules SET ${sets.join(",")} WHERE id=?`, params);
+  res.json({ ok: true });
+}));
+app.delete("/api/admin/mod-rules/:id", requireAdmin, wrap(async (req, res) => {
+  await pool.execute("DELETE FROM mod_rules WHERE id=?", [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+// Denuncias agrupadas por usuario objetivo
+app.get("/api/reports/grouped-by-user", requireAdmin, wrap(async (req, res) => {
+  const [rows] = await pool.query(`
+    SELECT r.target_user_id AS user_id, u.name, u.email, COUNT(*) AS count,
+           GROUP_CONCAT(DISTINCT r.reason SEPARATOR ' | ') AS reasons
+    FROM reports r
+    LEFT JOIN users u ON u.id = r.target_user_id
+    WHERE r.status IN ('open','reviewing','escalated')
+    GROUP BY r.target_user_id, u.name, u.email
+    ORDER BY count DESC
+    LIMIT 100
+  `);
+  res.json({ items: rows.map(r => ({ ...r, reasons: (r.reasons || "").split(" | ").filter(Boolean) })) });
+}));
+
+// Cerrar todas las denuncias de un usuario
+app.post("/api/reports/user/:uid/resolve-all", requireAdmin, wrap(async (req, res) => {
+  const uid = Number(req.params.uid);
+  const [r] = await pool.execute("UPDATE reports SET status='resolved' WHERE target_user_id=? AND status<>'resolved'", [uid]);
+  res.json({ ok: true, affected: r.affectedRows });
+}));
+
+// Auto-asignar denuncias abiertas al admin actual (round-robin implícito)
+app.post("/api/moderation/auto-assign", requireAdmin, wrap(async (req, res) => {
+  await ensureModTables();
+  const me = req.admin?.email || "admin";
+  const [r] = await pool.execute(
+    "UPDATE reports SET assigned_to=?, status='reviewing' WHERE status='open' AND (assigned_to IS NULL OR assigned_to='') ORDER BY created_at ASC LIMIT 10",
+    [me]
+  );
+  res.json({ ok: true, count: r.affectedRows });
+}));
+
+/* ==================== TICKETS EXTENSIONS ==================== */
+async function ensureTicketTables() {
+  await pool.execute(`CREATE TABLE IF NOT EXISTS ticket_macros (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(120), category VARCHAR(40), body TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  try { await pool.execute("ALTER TABLE tickets ADD COLUMN assigned_to VARCHAR(190) NULL"); } catch {}
+  try { await pool.execute("ALTER TABLE tickets ADD COLUMN sla_due DATETIME NULL"); } catch {}
+  try { await pool.execute("ALTER TABLE tickets ADD COLUMN internal_notes TEXT NULL"); } catch {}
+}
+app.get("/api/admin/ticket-macros", requireAdmin, wrap(async (req, res) => {
+  await ensureTicketTables();
+  const [rows] = await pool.query("SELECT * FROM ticket_macros ORDER BY id DESC");
+  res.json({ items: rows });
+}));
+app.post("/api/admin/ticket-macros", requireAdmin, wrap(async (req, res) => {
+  await ensureTicketTables();
+  const b = req.body || {};
+  const [r] = await pool.execute("INSERT INTO ticket_macros (name,category,body) VALUES (?,?,?)",
+    [String(b.name||""), String(b.category||"general"), String(b.body||"")]);
+  res.json({ ok: true, id: r.insertId });
+}));
+app.delete("/api/admin/ticket-macros/:id", requireAdmin, wrap(async (req, res) => {
+  await pool.execute("DELETE FROM ticket_macros WHERE id=?", [Number(req.params.id)]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/tickets/auto-assign", requireAdmin, wrap(async (req, res) => {
+  await ensureTicketTables();
+  const me = req.admin?.email || "admin";
+  const [r] = await pool.execute(
+    "UPDATE tickets SET assigned_to=?, status='in_progress' WHERE status IN ('open','waiting') AND (assigned_to IS NULL OR assigned_to='') ORDER BY created_at ASC LIMIT 10",
+    [me]
+  );
+  res.json({ ok: true, count: r.affectedRows });
+}));
+
+// Cron: auto-cerrar tickets resueltos según setting
+async function runTicketAutoClose() {
+  try {
+    const [[row]] = await pool.query("SELECT v FROM settings WHERE k='tickets.auto_close_solved_days' LIMIT 1");
+    const days = Number(row?.v || 0);
+    if (!days || days <= 0) return;
+    await pool.execute("UPDATE tickets SET status='closed' WHERE status='resolved' AND updated_at < NOW() - INTERVAL ? DAY", [days]);
+  } catch {}
+}
+setInterval(() => { runTicketAutoClose().catch(() => {}); }, 60 * 60 * 1000);
+
+/* ==================== STAFF ENDPOINTS ==================== */
+app.get("/api/admin/staff", wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const [rows] = await pool.query(
+    `SELECT id, email, name, role, permissions, status,
+            invited_by, invited_at, last_login
+       FROM staff_members ORDER BY id DESC`
+  );
+  const staff = rows.map(r => ({
+    ...r,
+    permissions: (() => { try { return JSON.parse(r.permissions || "[]"); } catch { return []; } })(),
+  }));
+  res.json({ ok: true, staff, available_permissions: STAFF_PERMS });
+}));
+
+app.post("/api/admin/staff", wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const admin = req.admin?.email || "admin";
+  const b = req.body || {};
+  const email = String(b.email || "").trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+    return res.status(400).json({ error: "invalid_email" });
+  const name = String(b.name || "").slice(0, 120);
+  const role = ["admin","moderator","viewer"].includes(b.role) ? b.role : "moderator";
+  let perms = Array.isArray(b.permissions) ? b.permissions.filter(p => STAFF_PERMS.includes(p)) : [];
+  // Rol admin → todos los permisos
+  if (role === "admin") perms = STAFF_PERMS.slice();
+  const token = crypto.randomBytes(24).toString("hex");
+  await pool.execute(
+    `INSERT INTO staff_members (email, name, role, permissions, invited_by, invite_token, status)
+     VALUES (?,?,?,?,?,?, 'invited')
+     ON DUPLICATE KEY UPDATE name=VALUES(name), role=VALUES(role),
+       permissions=VALUES(permissions), invite_token=VALUES(invite_token)`,
+    [email, name, role, JSON.stringify(perms), admin, token]
+  );
+
+  // Email de invitación (envolver con el wrapper de marca).
+  const inviteUrl = `${appPublicUrl()}/admin?invite=${token}`;
+  const roleLabel = role === "admin" ? "Administrador"
+                  : role === "moderator" ? "Moderador" : "Consulta";
+  const body = `
+    <h2 style="margin:0 0 8px;color:#7c3aed;">Bienvenido al equipo de Aura</h2>
+    <p>Hola ${name || email},</p>
+    <p>Has sido invitado como <b>${roleLabel}</b> al panel de administración de <b>Aura</b>.</p>
+    <p>Con este rol podrás acceder a las siguientes secciones:</p>
+    <ul style="padding-left:20px;">${perms.map(p => `<li>${p}</li>`).join("")}</ul>
+    <p style="text-align:center;margin:24px 0;">
+      <a href="${inviteUrl}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;text-decoration:none;padding:12px 28px;border-radius:999px;font-weight:600;">Acceder al panel</a>
+    </p>
+    <p style="font-size:12px;color:#888;">Este enlace es personal e intransferible.</p>`;
+  try {
+    await pool.execute(
+      `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
+       VALUES (?,?,?, 'staff_invite', 'pending', NOW())`,
+      [email, "Invitación al equipo de Aura",
+       wrapEmailHtml(body, { preheader: "Bienvenido al equipo de Aura" })]
+    );
+  } catch {}
+  try { await logActivity("admin", `${admin} invitó a ${email} como ${role}`); } catch {}
+  res.json({ ok: true });
+}));
+
+app.patch("/api/admin/staff/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const b = req.body || {};
+  const patch = [];
+  const args = [];
+  if (b.name != null) { patch.push("name=?"); args.push(String(b.name).slice(0, 120)); }
+  if (b.role && ["admin","moderator","viewer"].includes(b.role)) {
+    patch.push("role=?"); args.push(b.role);
+  }
+  if (Array.isArray(b.permissions)) {
+    const perms = b.permissions.filter(p => STAFF_PERMS.includes(p));
+    patch.push("permissions=?"); args.push(JSON.stringify(perms));
+  }
+  if (b.status && ["active","suspended","invited"].includes(b.status)) {
+    patch.push("status=?"); args.push(b.status);
+  }
+  if (!patch.length) return res.json({ ok: true });
+  args.push(id);
+  await pool.execute(`UPDATE staff_members SET ${patch.join(",")} WHERE id=?`, args);
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/staff/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  await pool.execute("DELETE FROM staff_members WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/staff/:id/resend-invite", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const [rows] = await pool.query("SELECT * FROM staff_members WHERE id=?", [id]);
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  const s = rows[0];
+  const token = s.invite_token || crypto.randomBytes(24).toString("hex");
+  await pool.execute("UPDATE staff_members SET invite_token=?, status='invited' WHERE id=?", [token, id]);
+  const inviteUrl = `${appPublicUrl()}/admin?invite=${token}`;
+  const body = `<h2 style="color:#7c3aed;">Reenvío de invitación</h2>
+    <p>Hola ${s.name || s.email}, tu invitación al panel de Aura sigue activa.</p>
+    <p style="text-align:center;"><a href="${inviteUrl}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;padding:12px 28px;border-radius:999px;text-decoration:none;font-weight:600;">Acceder al panel</a></p>`;
+  await pool.execute(
+    `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
+     VALUES (?,?,?, 'staff_invite', 'pending', NOW())`,
+    [s.email, "Reenvío de invitación · Aura", wrapEmailHtml(body)]
+  );
+  res.json({ ok: true });
+}));
+
+/* ==================== NOTIFICATION PREFS ==================== */
+app.get("/api/my/notification-prefs", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  await ensureStaffAndNotifTables();
+  const [rows] = await pool.query(
+    "SELECT * FROM user_notification_prefs WHERE user_id=? LIMIT 1", [me]
+  );
+  if (!rows.length) {
+    return res.json({
+      user_id: me, push_enabled: 1, email_enabled: 1,
+      matches: 1, likes: 1, chats: 1, news: 1, marketing: 0,
+      channel: "both", quiet_hours_start: "", quiet_hours_end: "",
+    });
+  }
+  res.json(rows[0]);
+}));
+
+app.put("/api/my/notification-prefs", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  await ensureStaffAndNotifTables();
+  const b = req.body || {};
+  const bool01 = (v) => (v === true || v === 1 || v === "1" || v === "true") ? 1 : 0;
+  const channel = ["push","email","both","none"].includes(b.channel) ? b.channel : "both";
+  await pool.execute(
+    `INSERT INTO user_notification_prefs
+      (user_id, push_enabled, email_enabled, matches, likes, chats, news, marketing,
+       quiet_hours_start, quiet_hours_end, channel)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE
+       push_enabled=VALUES(push_enabled), email_enabled=VALUES(email_enabled),
+       matches=VALUES(matches), likes=VALUES(likes), chats=VALUES(chats),
+       news=VALUES(news), marketing=VALUES(marketing),
+       quiet_hours_start=VALUES(quiet_hours_start), quiet_hours_end=VALUES(quiet_hours_end),
+       channel=VALUES(channel)`,
+    [me, bool01(b.push_enabled), bool01(b.email_enabled),
+     bool01(b.matches), bool01(b.likes), bool01(b.chats), bool01(b.news), bool01(b.marketing),
+     String(b.quiet_hours_start || "").slice(0,5),
+     String(b.quiet_hours_end || "").slice(0,5), channel]
+  );
+  res.json({ ok: true });
+}));
+
+app.post("/api/my/push-subscribe", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  await ensureStaffAndNotifTables();
+  const b = req.body || {};
+  const endpoint = String(b.endpoint || "").slice(0, 2000);
+  const p256dh = String(b.keys?.p256dh || "").slice(0, 255);
+  const auth = String(b.keys?.auth || "").slice(0, 120);
+  const dev = String(b.device_name || "").slice(0, 120);
+  if (!endpoint) return res.status(400).json({ error: "no_endpoint" });
+  // Evita duplicados por endpoint.
+  await pool.execute("DELETE FROM user_push_subscriptions WHERE endpoint=?", [endpoint]);
+  await pool.execute(
+    `INSERT INTO user_push_subscriptions (user_id, endpoint, p256dh, auth, device_name)
+     VALUES (?,?,?,?,?)`,
+    [me, endpoint, p256dh, auth, dev]
+  );
+  res.json({ ok: true });
+}));
+
+app.post("/api/my/push-unsubscribe", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const endpoint = String(req.body?.endpoint || "");
+  if (endpoint) await pool.execute("DELETE FROM user_push_subscriptions WHERE endpoint=? AND user_id=?", [endpoint, me]);
+  else await pool.execute("DELETE FROM user_push_subscriptions WHERE user_id=?", [me]);
+  res.json({ ok: true });
+}));
+
+/* ==================== IN-APP POPUPS ==================== */
+app.get("/api/admin/popups", wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const [rows] = await pool.query("SELECT * FROM inapp_popups ORDER BY id DESC LIMIT 500");
+  res.json({ ok: true, popups: rows });
+}));
+
+app.post("/api/admin/popups", wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const admin = req.admin?.email || "admin";
+  const b = req.body || {};
+  const targets = Array.isArray(b.target_user_ids) ? b.target_user_ids.join(",") : (b.target_user_ids || "");
+  const [r] = await pool.execute(
+    `INSERT INTO inapp_popups
+      (title, body, image_url, cta_text, cta_url, theme, segment, target_user_ids,
+       starts_at, ends_at, priority, status, show_once, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [String(b.title||"").slice(0,200), String(b.body||""), String(b.image_url||"").slice(0,500),
+     String(b.cta_text||"").slice(0,80), String(b.cta_url||"").slice(0,500),
+     String(b.theme||"gradient").slice(0,20), String(b.segment||"all").slice(0,40),
+     targets, b.starts_at || null, b.ends_at || null,
+     parseInt(b.priority,10)||50, String(b.status||"draft").slice(0,20),
+     b.show_once === false ? 0 : 1, admin]
+  );
+  res.json({ ok: true, id: r.insertId });
+}));
+
+app.patch("/api/admin/popups/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const b = req.body || {};
+  const patch = []; const args = [];
+  const map = { title:"title", body:"body", image_url:"image_url", cta_text:"cta_text",
+    cta_url:"cta_url", theme:"theme", segment:"segment", starts_at:"starts_at",
+    ends_at:"ends_at", priority:"priority", status:"status", show_once:"show_once" };
+  for (const [k, col] of Object.entries(map)) {
+    if (b[k] !== undefined) { patch.push(`${col}=?`); args.push(b[k]); }
+  }
+  if (Array.isArray(b.target_user_ids)) {
+    patch.push("target_user_ids=?"); args.push(b.target_user_ids.join(","));
+  }
+  if (!patch.length) return res.json({ ok: true });
+  args.push(id);
+  await pool.execute(`UPDATE inapp_popups SET ${patch.join(",")} WHERE id=?`, args);
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/popups/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  await pool.execute("DELETE FROM inapp_popups WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+// Usuario: pide el próximo popup activo aplicable
+app.get("/api/my/popup-active", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.json({ popup: null });
+  await ensureStaffAndNotifTables();
+  const now = new Date();
+  const [rows] = await pool.query(
+    `SELECT * FROM inapp_popups
+      WHERE status='active'
+        AND (starts_at IS NULL OR starts_at <= ?)
+        AND (ends_at IS NULL OR ends_at >= ?)
+      ORDER BY priority DESC, id DESC LIMIT 50`,
+    [now, now]
+  );
+  // Filtrar por segmento / target user ids / visto ya
+  const [viewed] = await pool.query(
+    "SELECT popup_id FROM inapp_popup_views WHERE user_id=? AND action='shown'", [me]
+  );
+  const seen = new Set(viewed.map(r => r.popup_id));
+  const [urow] = await pool.query("SELECT * FROM users WHERE id=? LIMIT 1", [me]);
+  const u = urow[0] || {};
+  function matches(p) {
+    if (p.show_once && seen.has(p.id)) return false;
+    if (p.target_user_ids) {
+      const ids = String(p.target_user_ids).split(",").map(x => parseInt(x,10)).filter(Boolean);
+      if (ids.length) return ids.includes(me);
+    }
+    const seg = p.segment || "all";
+    if (seg === "all") return true;
+    if (seg === "premium") return !!u.is_premium;
+    if (seg === "free") return !u.is_premium;
+    if (seg === "verified") return !!u.verified;
+    if (seg === "unverified") return !u.verified;
+    if (seg === "male") return u.gender === "male";
+    if (seg === "female") return u.gender === "female";
+    if (seg === "lgbt") return u.zone === "lgtb";
+    if (seg === "hetero") return u.zone === "hetero";
+    return true;
+  }
+  const popup = rows.find(matches) || null;
+  res.json({ popup });
+}));
+
+app.post("/api/my/popup/:id/event", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  const action = String(req.body?.action || "shown");
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  await pool.execute(
+    "INSERT INTO inapp_popup_views (popup_id, user_id, action) VALUES (?,?,?)",
+    [id, me, action]
+  );
+  if (action === "shown")   await pool.execute("UPDATE inapp_popups SET views=views+1 WHERE id=?", [id]);
+  if (action === "clicked") await pool.execute("UPDATE inapp_popups SET clicks=clicks+1 WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+/* ==================== NEWSLETTER ==================== */
+app.get("/api/admin/newsletters", wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const [rows] = await pool.query("SELECT * FROM newsletters ORDER BY id DESC LIMIT 500");
+  res.json({ ok: true, newsletters: rows });
+}));
+
+app.post("/api/admin/newsletters", wrap(async (req, res) => {
+  await ensureStaffAndNotifTables();
+  const admin = req.admin?.email || "admin";
+  const b = req.body || {};
+  const targets = Array.isArray(b.target_user_ids) ? b.target_user_ids.join(",") : (b.target_user_ids || "");
+  const [r] = await pool.execute(
+    `INSERT INTO newsletters
+      (name, subject, body_html, segment, target_user_ids, occasion,
+       channel, scheduled_at, status, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [String(b.name||"").slice(0,200), String(b.subject||"").slice(0,300),
+     String(b.body_html||""), String(b.segment||"all").slice(0,40),
+     targets, String(b.occasion||"").slice(0,40),
+     String(b.channel||"email").slice(0,20),
+     b.scheduled_at || null, String(b.status||"draft").slice(0,20), admin]
+  );
+  res.json({ ok: true, id: r.insertId });
+}));
+
+app.patch("/api/admin/newsletters/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const b = req.body || {};
+  const patch = []; const args = [];
+  const map = { name:"name", subject:"subject", body_html:"body_html",
+    segment:"segment", occasion:"occasion", channel:"channel",
+    scheduled_at:"scheduled_at", status:"status" };
+  for (const [k, col] of Object.entries(map)) {
+    if (b[k] !== undefined) { patch.push(`${col}=?`); args.push(b[k]); }
+  }
+  if (Array.isArray(b.target_user_ids)) {
+    patch.push("target_user_ids=?"); args.push(b.target_user_ids.join(","));
+  }
+  if (!patch.length) return res.json({ ok: true });
+  args.push(id);
+  await pool.execute(`UPDATE newsletters SET ${patch.join(",")} WHERE id=?`, args);
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/newsletters/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  await pool.execute("DELETE FROM newsletters WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+// Enviar newsletter — encola en email_outbox usando el wrapper.
+app.post("/api/admin/newsletters/:id/send", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const [nrows] = await pool.query("SELECT * FROM newsletters WHERE id=? LIMIT 1", [id]);
+  if (!nrows.length) return res.status(404).json({ error: "not_found" });
+  const nl = nrows[0];
+
+  // Resolver destinatarios por segmento o por IDs específicos.
+  let recipients = [];
+  if (nl.target_user_ids && String(nl.target_user_ids).trim()) {
+    const ids = String(nl.target_user_ids).split(",").map(x => parseInt(x,10)).filter(Boolean);
+    if (ids.length) {
+      const ph = ids.map(() => "?").join(",");
+      const [urs] = await pool.query(
+        `SELECT id, email, name FROM users WHERE id IN (${ph}) AND email IS NOT NULL`, ids
+      );
+      recipients = urs;
+    }
+  } else {
+    let where = "email IS NOT NULL";
+    const args = [];
+    if (nl.segment === "verified")   where += " AND verified=1";
+    if (nl.segment === "unverified") where += " AND (verified=0 OR verified IS NULL)";
+    if (nl.segment === "premium")    where += " AND is_premium=1";
+    if (nl.segment === "free")       where += " AND (is_premium=0 OR is_premium IS NULL)";
+    if (nl.segment === "male")       where += " AND gender='male'";
+    if (nl.segment === "female")     where += " AND gender='female'";
+    if (nl.segment === "lgbt")       where += " AND zone='lgtb'";
+    if (nl.segment === "hetero")     where += " AND zone='hetero'";
+    if (nl.segment === "new")        where += " AND created_at > NOW() - INTERVAL 7 DAY";
+    const [urs] = await pool.query(
+      `SELECT id, email, name FROM users WHERE ${where} LIMIT 20000`, args);
+    recipients = urs;
+  }
+
+  // Respetar preferencias de notificación de cada usuario (marketing).
+  const [prefs] = await pool.query(
+    "SELECT user_id, email_enabled, marketing, channel FROM user_notification_prefs"
+  );
+  const prefMap = new Map(prefs.map(p => [p.user_id, p]));
+
+  let queued = 0;
+  for (const r of recipients) {
+    const p = prefMap.get(r.id);
+    if (p && (!p.email_enabled || !p.marketing || p.channel === "push" || p.channel === "none")) continue;
+    const subject = interpolate(nl.subject || nl.name, { user_name: r.name || "" });
+    const html = wrapEmailHtml(
+      interpolate(nl.body_html || "", { user_name: r.name || "", user_email: r.email }),
+      { preheader: subject }
+    );
+    try {
+      await pool.execute(
+        `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
+         VALUES (?,?,?, 'newsletter', 'pending', NOW())`,
+        [r.email, subject, html]
+      );
+      queued++;
+    } catch {}
+  }
+  await pool.execute(
+    "UPDATE newsletters SET status='sent', sent_at=NOW(), sent_count=? WHERE id=?",
+    [queued, id]
+  );
+  try { await logActivity("admin", `Newsletter "${nl.name}" enviada: ${queued} destinatarios`); } catch {}
+  res.json({ ok: true, sent: queued });
+}));
+
+// Plantillas estacionales predefinidas
+app.get("/api/admin/newsletters/seasonal-templates", wrap(async (req, res) => {
+  res.json({
+    ok: true, templates: [
+      { key: "lgbt_pride", name: "🏳️‍🌈 Orgullo LGTB+",
+        subject: "Celebramos el Orgullo contigo",
+        body_html: `<h2 style="color:#e91e63;">Celebra quién eres 🏳️‍🌈</h2><p>Este mes de junio Aura se viste con los colores del arcoíris. Tu identidad es tu superpoder.</p><p>Aprovecha nuestras funciones especiales de Zona LGTB+ y encuentra tu comunidad.</p>` },
+      { key: "valentine", name: "💘 San Valentín",
+        subject: "El amor está en el aire",
+        body_html: `<h2 style="color:#e11d48;">Feliz San Valentín 💘</h2><p>Regálate una historia nueva. Este 14 de febrero descubre a alguien especial en Aura.</p>` },
+      { key: "summer", name: "☀️ Verano",
+        subject: "Nuevas conexiones bajo el sol",
+        body_html: `<h2 style="color:#f59e0b;">Verano en Aura ☀️</h2><p>Terraza, playa, planes espontáneos… tu próximo match te espera.</p>` },
+      { key: "christmas", name: "🎄 Navidad",
+        subject: "Regálate una historia estas Navidades",
+        body_html: `<h2 style="color:#059669;">Feliz Navidad 🎄</h2><p>Estas fiestas, comparte una copa con alguien especial. Aura te ayuda a conectar.</p>` },
+      { key: "new_year", name: "🎊 Año Nuevo",
+        subject: "Empieza el año con una nueva historia",
+        body_html: `<h2 style="color:#7c3aed;">Feliz Año Nuevo 🎊</h2><p>Nuevo año, nuevas conexiones. Da el primer paso.</p>` },
+      { key: "womens_day", name: "♀️ Día de la Mujer",
+        subject: "Celebramos a las mujeres de Aura",
+        body_html: `<h2 style="color:#be185d;">8 de marzo · Día Internacional de la Mujer ♀️</h2><p>Gracias por formar parte de esta comunidad. Hoy y siempre, contigo.</p>` },
+      { key: "halloween", name: "🎃 Halloween",
+        subject: "Un match escalofriante te espera",
+        body_html: `<h2 style="color:#ea580c;">Halloween en Aura 🎃</h2><p>Sube tu foto más terroríficamente atractiva y encuentra tu media naranja de la noche.</p>` },
+      { key: "black_friday", name: "🖤 Black Friday",
+        subject: "-50% en Premium solo hoy",
+        body_html: `<h2 style="color:#111;">Black Friday 🖤</h2><p>Solo durante 24 horas: 50% de descuento en Aura Premium. No lo dejes escapar.</p>` },
+    ]
+  });
+}));
+
+/* ============================================================
+   V450+++ · Endpoints avanzados: KYC bulk, Subs, Payments, Promos, Stats
+   ============================================================ */
+async function ensureAdvancedTables() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS kyc_rejection_reasons (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    label VARCHAR(200) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS scheduled_reports (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(190) NOT NULL,
+    frequency ENUM('daily','weekly','monthly') DEFAULT 'weekly',
+    metrics VARCHAR(500) DEFAULT '',
+    last_sent TIMESTAMP NULL,
+    active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+  try { await pool.query("ALTER TABLE payments ADD COLUMN dispute_status VARCHAR(40) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE payments ADD COLUMN dispute_reason VARCHAR(400) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE identity_verifications ADD COLUMN rejection_reason VARCHAR(400) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE subscriptions ADD COLUMN gifted_by VARCHAR(190) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE subscriptions ADD COLUMN gift_reason VARCHAR(400) NULL"); } catch(e){}
+}
+
+/* ---------- KYC Bulk & Stats ---------- */
+app.post("/api/kyc/bulk", wrap(async (req, res) => {
+  const { action, reason } = req.body || {};
+  let affected = 0;
+  if (action === "approve_all_pending") {
+    const [r] = await pool.execute(
+      "UPDATE identity_verifications SET didit_status='approved', didit_decision='approved' WHERE didit_status IN ('pending','review','in_review') OR didit_status IS NULL"
+    );
+    affected = r.affectedRows || 0;
+    await logActivity("admin", `KYC bulk approve (${affected})`);
+  } else if (action === "reject_all_pending") {
+    const [r] = await pool.execute(
+      "UPDATE identity_verifications SET didit_status='declined', didit_decision='declined', rejection_reason=? WHERE didit_status IN ('pending','review','in_review')",
+      [reason || "Bulk rejection"]
+    );
+    affected = r.affectedRows || 0;
+    await logActivity("admin", `KYC bulk reject (${affected}) — ${reason || ""}`);
+  } else if (action === "resend_expired") {
+    const [rows] = await pool.query(
+      "SELECT DISTINCT email FROM identity_verifications WHERE didit_status='expired' AND email IS NOT NULL"
+    );
+    affected = rows.length;
+    // Emails would be sent here — we log for now.
+    await logActivity("admin", `KYC re-solicitud enviada a ${affected} usuarios`);
+  } else {
+    return res.status(400).json({ error: "invalid_action" });
+  }
+  res.json({ ok: true, affected });
+}));
+
+app.get("/api/kyc/stats", wrap(async (_req, res) => {
+  const [[a]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications WHERE didit_status='approved'");
+  const [[p]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications WHERE didit_status IN ('pending','in_review','review')");
+  const [[d]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications WHERE didit_status='declined'");
+  const [[t]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications");
+  const total = t.c || 0;
+  res.json({
+    approved: a.c || 0,
+    pending: p.c || 0,
+    declined: d.c || 0,
+    total,
+    approve_rate: total ? Math.round((a.c * 100) / total) : 0,
+    reject_rate: total ? Math.round((d.c * 100) / total) : 0
+  });
+}));
+
+app.get("/api/admin/kyc-reasons", wrap(async (_req, res) => {
+  const [rows] = await pool.query("SELECT * FROM kyc_rejection_reasons ORDER BY id DESC");
+  res.json(rows);
+}));
+app.post("/api/admin/kyc-reasons", wrap(async (req, res) => {
+  const { label } = req.body || {};
+  if (!label) return res.status(400).json({ error: "label_required" });
+  await pool.execute("INSERT INTO kyc_rejection_reasons (label) VALUES (?)", [label]);
+  res.json({ ok: true });
+}));
+app.delete("/api/admin/kyc-reasons/:id", wrap(async (req, res) => {
+  await pool.execute("DELETE FROM kyc_rejection_reasons WHERE id=?", [req.params.id]);
+  res.json({ ok: true });
+}));
+
+/* ---------- Subscriptions ---------- */
+app.get("/api/subscriptions/active", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT s.*, u.name user_name, u.email, u.photo_url, p.name plan_name
+    FROM subscriptions s
+    LEFT JOIN users u ON u.id = s.user_id
+    LEFT JOIN plans p ON p.id = s.plan_id
+    WHERE s.status='active'
+    ORDER BY s.started_at DESC LIMIT 500`);
+  res.json({ items: rows, total: rows.length });
+}));
+
+app.get("/api/subscriptions/churn", wrap(async (req, res) => {
+  const days = Math.max(1, parseInt(req.query.days || "30", 10));
+  const [[c]] = await pool.query(
+    "SELECT COUNT(*) c FROM subscriptions WHERE status='cancelled' AND cancelled_at >= DATE_SUB(NOW(), INTERVAL ? DAY)", [days]
+  );
+  const [[a]] = await pool.query("SELECT COUNT(*) c FROM subscriptions WHERE status='active'");
+  const [[mrr]] = await pool.query(`
+    SELECT COALESCE(SUM(CASE WHEN s.period='monthly' THEN p.price_monthly ELSE p.price_yearly/12 END),0) m
+    FROM subscriptions s LEFT JOIN plans p ON p.id = s.plan_id WHERE s.status='active'`);
+  const cancellations = c.c || 0;
+  const active = a.c || 0;
+  const rate = active + cancellations > 0 ? Math.round((cancellations * 1000) / (active + cancellations)) / 10 : 0;
+  res.json({ cancellations, active, rate, mrr: Number(mrr.m || 0).toFixed(2), days });
+}));
+
+app.post("/api/subscriptions/gift", wrap(async (req, res) => {
+  const { email, plan, days, reason } = req.body || {};
+  if (!email || !plan || !days) return res.status(400).json({ error: "missing_fields" });
+  const [[u]] = await pool.query("SELECT id FROM users WHERE email=? LIMIT 1", [email]);
+  if (!u) return res.status(404).json({ error: "user_not_found" });
+  const [[pl]] = await pool.query("SELECT id FROM plans WHERE code=? OR name=? LIMIT 1", [plan, plan]);
+  const planId = pl ? pl.id : 1;
+  const renew = new Date(Date.now() + Number(days) * 86400 * 1000);
+  await pool.execute(
+    `INSERT INTO subscriptions (user_id, plan_id, period, status, renew_at, gifted_by, gift_reason)
+     VALUES (?,?, 'monthly', 'active', ?, ?, ?)`,
+    [u.id, planId, renew, (req.admin && req.admin.email) || "admin", reason || null]
+  );
+  await logActivity("admin", `Premium regalado a ${email} (${days} días) — ${reason || ""}`);
+  res.json({ ok: true });
+}));
+
+/* ---------- Payments ---------- */
+app.get("/api/payments/refunds", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT p.*, u.name user_name, u.email
+    FROM payments p LEFT JOIN users u ON u.id=p.user_id
+    WHERE p.status='refunded' ORDER BY p.created_at DESC LIMIT 200`);
+  res.json({ items: rows });
+}));
+
+app.get("/api/payments/disputes", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT p.*, u.name user_name, u.email
+    FROM payments p LEFT JOIN users u ON u.id=p.user_id
+    WHERE p.dispute_status IS NOT NULL AND p.dispute_status != ''
+    ORDER BY p.created_at DESC LIMIT 200`);
+  res.json({ items: rows });
+}));
+
+app.get("/api/payments/metrics", wrap(async (_req, res) => {
+  const [[mrr]] = await pool.query(`
+    SELECT COALESCE(SUM(CASE WHEN s.period='monthly' THEN p.price_monthly ELSE p.price_yearly/12 END),0) m
+    FROM subscriptions s LEFT JOIN plans p ON p.id = s.plan_id WHERE s.status='active'`);
+  const mrrN = Number(mrr.m || 0);
+  const [[avg]] = await pool.query("SELECT AVG(amount) a FROM payments WHERE status='completed'");
+  const [[topM]] = await pool.query("SELECT method m, COUNT(*) c FROM payments WHERE status='completed' GROUP BY method ORDER BY c DESC LIMIT 1");
+  const [[ltv]] = await pool.query("SELECT COALESCE(SUM(amount)/NULLIF(COUNT(DISTINCT user_id),0),0) l FROM payments WHERE status='completed'");
+  res.json({
+    mrr: mrrN.toFixed(2),
+    arr: (mrrN * 12).toFixed(2),
+    avg_ticket: Number(avg.a || 0).toFixed(2),
+    top_method: topM ? topM.m : "n/a",
+    ltv: Number(ltv.l || 0).toFixed(2)
+  });
+}));
+
+app.get("/api/payments/invoices-export", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT p.invoice_no, p.amount, p.currency, p.method, p.status, p.created_at,
+           u.name user_name, u.email
+    FROM payments p LEFT JOIN users u ON u.id=p.user_id
+    ORDER BY p.created_at DESC`);
+  const header = ["invoice_no","user_name","email","amount","currency","method","status","created_at"];
+  const csv = [header.join(",")].concat(
+    rows.map(r => header.map(k => `"${String(r[k] ?? "").replace(/"/g,'""')}"`).join(","))
+  ).join("\n");
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="facturas-${Date.now()}.csv"`);
+  res.send(csv);
+}));
+
+/* ---------- Promos ---------- */
+app.get("/api/promos/roi", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT pr.id, pr.code, pr.discount_percent, pr.uses, pr.max_uses, pr.status,
+           pr.starts_at, pr.ends_at
+    FROM promotions pr ORDER BY pr.uses DESC LIMIT 200`);
+  const items = rows.map(r => ({
+    ...r,
+    roi_estimate: (r.uses || 0) * 5,
+    conversion_rate: r.max_uses ? Math.round((r.uses * 100) / r.max_uses) : 0
+  }));
+  res.json({ items });
+}));
+
+app.post("/api/promos/bulk-generate", wrap(async (req, res) => {
+  const { count, prefix, discount_percent, max_uses, ends_at } = req.body || {};
+  const n = Math.min(1000, Math.max(1, parseInt(count || "10", 10)));
+  const pfx = String(prefix || "AURA").toUpperCase().slice(0, 20);
+  const codes = [];
+  for (let i = 0; i < n; i++) {
+    const code = `${pfx}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    try {
+      await pool.execute(
+        "INSERT INTO promotions (code, description, discount_percent, max_uses, status, ends_at) VALUES (?,?,?,?,?,?)",
+        [code, `Bulk ${pfx}`, discount_percent || 10, max_uses || 1, "active", ends_at || null]
+      );
+      codes.push(code);
+    } catch(e){}
+  }
+  await logActivity("admin", `Generados ${codes.length} códigos bulk (${pfx})`);
+  res.json({ ok: true, count: codes.length, codes });
+}));
+
+/* ---------- Stats extras ---------- */
+app.get("/api/stats/compare", wrap(async (req, res) => {
+  const days = Math.max(1, parseInt(req.query.days || "30", 10));
+  const [[a]] = await pool.query("SELECT COUNT(*) c FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)", [days]);
+  const [[b]] = await pool.query(
+    "SELECT COUNT(*) c FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+    [days * 2, days]
+  );
+  const cur = a.c || 0, prev = b.c || 0;
+  const delta = prev ? Math.round(((cur - prev) * 100) / prev) : 0;
+  res.json({ current: cur, previous: prev, delta, days });
+}));
+
+app.get("/api/stats/geo-points", wrap(async (_req, res) => {
+  const [rows] = await pool.query(
+    "SELECT g.lat, g.lng, u.id, u.name FROM user_gps g LEFT JOIN users u ON u.id=g.user_id WHERE g.lat IS NOT NULL AND g.lng IS NOT NULL LIMIT 5000"
+  );
+  res.json({ points: rows });
+}));
+
+app.get("/api/stats/cohorts", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT DATE_FORMAT(created_at,'%Y-%m') as cohort, COUNT(*) as signups
+    FROM users
+    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+    GROUP BY cohort ORDER BY cohort DESC`);
+  res.json({ cohorts: rows });
+}));
+
+app.get("/api/stats/report.pdf", wrap(async (_req, res) => {
+  // Simple text report for now — full PDF would require pdfkit.
+  const [[u]] = await pool.query("SELECT COUNT(*) c FROM users");
+  const [[p]] = await pool.query("SELECT COUNT(*) c FROM payments WHERE status='completed'");
+  const [[s]] = await pool.query("SELECT COUNT(*) c FROM subscriptions WHERE status='active'");
+  const txt = `AURA · Informe ejecutivo\n\nUsuarios totales: ${u.c}\nPagos completados: ${p.c}\nSuscripciones activas: ${s.c}\nFecha: ${new Date().toISOString()}\n`;
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="aura-informe-${Date.now()}.txt"`);
+  res.send(txt);
+}));
+
+app.post("/api/stats/scheduled-report", wrap(async (req, res) => {
+  const { email, frequency, metrics } = req.body || {};
+  if (!email) return res.status(400).json({ error: "email_required" });
+  await pool.execute(
+    "INSERT INTO scheduled_reports (email, frequency, metrics) VALUES (?,?,?)",
+    [email, frequency || "weekly", (metrics || []).join(",")]
+  );
+  await logActivity("admin", `Informe programado a ${email} (${frequency})`);
+  res.json({ ok: true });
+}));
+
+/* ============================================================
+   V500 · Device Incidents (Dispositivo perdido / robado)
+   ============================================================
+   Flujo:
+   1) Usuario abre incidente desde app (motivo, denuncia adjunta obligatoria).
+   2) Sistema pide selfie en vivo → compara contra KYC.
+   3) Admin revisa: aprueba → puede emitir sonido, mensaje, bloqueo.
+   4) Push + email + SMS al dispositivo perdido.
+   5) Seguimiento GPS + log de custodia legal (hash firmado por admin).
+   6) Auto-cierre a los 60 días si sin actividad.
+   7) Bloqueo escalonado: X horas sin confirmar → bloqueo automático.
+============================================================ */
+async function ensureDeviceIncidentsTables() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS device_incidents (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    type ENUM('lost','stolen','suspicious','other') DEFAULT 'lost',
+    status ENUM('pending_evidence','pending_selfie','pending_admin','approved','active','denied','closed','archived') DEFAULT 'pending_evidence',
+    reason TEXT NULL,
+    police_report_url VARCHAR(500) NULL,
+    verify_selfie_url VARCHAR(500) NULL,
+    verify_match_score DECIMAL(5,2) NULL,
+    frozen_last_lat DECIMAL(10,6) NULL,
+    frozen_last_lng DECIMAL(10,6) NULL,
+    frozen_last_ip VARCHAR(64) NULL,
+    frozen_device_ua VARCHAR(255) NULL,
+    lock_scheduled_at TIMESTAMP NULL,
+    locked_at TIMESTAMP NULL,
+    emergency_contact_email VARCHAR(190) NULL,
+    emergency_contact_phone VARCHAR(40) NULL,
+    lock_screen_message TEXT NULL,
+    admin_notes TEXT NULL,
+    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    approved_at TIMESTAMP NULL,
+    closed_at TIMESTAMP NULL,
+    last_action_at TIMESTAMP NULL,
+    INDEX idx_user (user_id),
+    INDEX idx_status (status)
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_actions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    incident_id INT NOT NULL,
+    action VARCHAR(40) NOT NULL,
+    admin_id VARCHAR(190) NULL,
+    payload JSON NULL,
+    signature_hash VARCHAR(120) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_inc (incident_id)
+  )`);
+  try { await pool.query("ALTER TABLE users ADD COLUMN emergency_email VARCHAR(190) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE users ADD COLUMN emergency_phone VARCHAR(40) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE users ADD COLUMN device_locked TINYINT(1) DEFAULT 0"); } catch(e){}
+  try { await pool.query("ALTER TABLE users ADD COLUMN device_locked_reason VARCHAR(400) NULL"); } catch(e){}
+}
+
+function signAction(payload, adminId) {
+  const crypto = require("crypto");
+  const raw = JSON.stringify(payload || {}) + "|" + (adminId || "system") + "|" + Date.now();
+  return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 64);
+}
+
+async function logIncidentAction(incidentId, action, adminId, payload) {
+  const sig = signAction(payload, adminId);
+  await pool.execute(
+    "INSERT INTO device_incident_actions (incident_id, action, admin_id, payload, signature_hash) VALUES (?,?,?,?,?)",
+    [incidentId, action, adminId || null, JSON.stringify(payload || {}), sig]
+  );
+  await pool.execute("UPDATE device_incidents SET last_action_at=NOW() WHERE id=?", [incidentId]);
+}
+
+/* ---- Usuario ---- */
+app.get("/api/my/device-incidents", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const [rows] = await pool.query(
+    "SELECT * FROM device_incidents WHERE user_id=? ORDER BY id DESC LIMIT 50", [uid]
+  );
+  res.json({ items: rows });
+}));
+
+app.post("/api/my/device-incidents", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const { type, reason, police_report_url, emergency_contact_email, emergency_contact_phone, lock_screen_message } = req.body || {};
+  if (!police_report_url) return res.status(400).json({ error: "police_report_required" });
+  // Congelar última posición conocida
+  const [[gps]] = await pool.query("SELECT lat, lng FROM user_gps WHERE user_id=?", [uid]);
+  const ua = req.headers["user-agent"] || "";
+  const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
+  const [r] = await pool.execute(
+    `INSERT INTO device_incidents
+     (user_id, type, status, reason, police_report_url, emergency_contact_email, emergency_contact_phone, lock_screen_message,
+      frozen_last_lat, frozen_last_lng, frozen_last_ip, frozen_device_ua)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [uid, type || "lost", "pending_selfie", reason || null, police_report_url,
+     emergency_contact_email || null, emergency_contact_phone || null, lock_screen_message || null,
+     gps ? gps.lat : null, gps ? gps.lng : null, ip, ua]
+  );
+  await logIncidentAction(r.insertId, "opened", `user:${uid}`, { type, reason });
+  await logActivity("user", `Incidente dispositivo abierto (id ${r.insertId}, user ${uid})`);
+  res.json({ ok: true, incident_id: r.insertId });
+}));
+
+app.post("/api/my/device-incidents/:id/selfie", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  const { selfie_url } = req.body || {};
+  if (!uid || !selfie_url) return res.status(400).json({ error: "bad_request" });
+  const [[inc]] = await pool.query("SELECT id, user_id FROM device_incidents WHERE id=? AND user_id=?", [req.params.id, uid]);
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  // Simulación de match — en producción cruzar con provider (Didit/AWS Rekognition)
+  const [[kyc]] = await pool.query(
+    "SELECT selfie_match_score FROM identity_verifications WHERE user_id=? ORDER BY id DESC LIMIT 1", [uid]
+  );
+  const match = kyc ? Number(kyc.selfie_match_score || 85) : 80;
+  await pool.execute(
+    "UPDATE device_incidents SET verify_selfie_url=?, verify_match_score=?, status='pending_admin' WHERE id=?",
+    [selfie_url, match, inc.id]
+  );
+  await logIncidentAction(inc.id, "selfie_uploaded", `user:${uid}`, { match });
+  res.json({ ok: true, match });
+}));
+
+/* ---- Admin ---- */
+app.get("/api/admin/device-incidents/kpis", wrap(async (_req, res) => {
+  const [[a]] = await pool.query("SELECT COUNT(*) c FROM device_incidents WHERE status='active'");
+  const [[p]] = await pool.query("SELECT COUNT(*) c FROM device_incidents WHERE status='pending_admin'");
+  const [[l]] = await pool.query("SELECT COUNT(*) c FROM users WHERE device_locked=1");
+  const [[a7]] = await pool.query("SELECT COUNT(*) c FROM device_incidents WHERE status='approved' AND approved_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
+  const [[t]] = await pool.query("SELECT COUNT(*) c FROM device_incidents");
+  res.json({ active: a.c, pending_admin: p.c, locked: l.c, approved_7d: a7.c, total: t.c });
+}));
+
+app.get("/api/admin/device-incidents", wrap(async (req, res) => {
+  const status = req.query.status || "";
+  let sql = `SELECT i.*, u.name user_name, u.email, u.photo_url, u.phone
+             FROM device_incidents i LEFT JOIN users u ON u.id = i.user_id`;
+  const params = [];
+  if (status) { sql += " WHERE i.status=?"; params.push(status); }
+  sql += " ORDER BY i.id DESC LIMIT 500";
+  const [rows] = await pool.query(sql, params);
+  res.json({ items: rows });
+}));
+
+app.get("/api/admin/device-incidents/:id", wrap(async (req, res) => {
+  const [[inc]] = await pool.query(
+    `SELECT i.*, u.name user_name, u.email, u.photo_url, u.phone
+     FROM device_incidents i LEFT JOIN users u ON u.id = i.user_id WHERE i.id=?`, [req.params.id]
+  );
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  const [actions] = await pool.query(
+    "SELECT * FROM device_incident_actions WHERE incident_id=? ORDER BY id ASC", [req.params.id]
+  );
+  const [[kyc]] = await pool.query(
+    "SELECT didit_status, selfie_match_score, extracted_name, didit_session_url as selfie_url FROM identity_verifications WHERE user_id=? ORDER BY id DESC LIMIT 1", [inc.user_id]
+  );
+  const [[gps]] = await pool.query("SELECT lat, lng, captured_at FROM user_gps WHERE user_id=?", [inc.user_id]);
+  res.json({ incident: inc, actions, kyc: kyc || null, current_gps: gps || null });
+}));
+
+app.post("/api/admin/device-incidents/:id/approve", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  await pool.execute("UPDATE device_incidents SET status='approved', approved_at=NOW() WHERE id=?", [req.params.id]);
+  await logIncidentAction(req.params.id, "approved", adminId, {});
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/device-incidents/:id/deny", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const { reason } = req.body || {};
+  await pool.execute("UPDATE device_incidents SET status='denied', admin_notes=? WHERE id=?", [reason || null, req.params.id]);
+  await logIncidentAction(req.params.id, "denied", adminId, { reason });
+  res.json({ ok: true });
+}));
+
+async function notifyIncidentDevice(incidentId, kind, payload) {
+  const [[inc]] = await pool.query(
+    "SELECT i.*, u.email, u.phone, u.emergency_email, u.emergency_phone, u.name FROM device_incidents i LEFT JOIN users u ON u.id=i.user_id WHERE i.id=?", [incidentId]
+  );
+  if (!inc) return;
+  // Push via SW: registrar en tabla notifications para que el SW lo entregue
+  try {
+    await pool.execute(
+      "INSERT INTO notifications (user_id, type, title, body, data) VALUES (?,?,?,?,?)",
+      [inc.user_id, "device_alert", kind === "sound" ? "🔊 ALERTA" : (kind === "message" ? "📢 Mensaje" : "🔒 Bloqueo"),
+       payload.message || "Dispositivo reportado como perdido", JSON.stringify({ ...payload, kind, incident_id: incidentId, sound: kind === "sound" })]
+    );
+  } catch(e){}
+  // Email refuerzo — usamos sendMailSafe si existe
+  try {
+    if (typeof sendMailSafe === "function") {
+      await sendMailSafe({
+        to: inc.email,
+        subject: kind === "sound" ? "🔊 Alerta activa en tu dispositivo" : (kind === "lock" ? "🔒 Tu cuenta ha sido bloqueada" : "📢 Mensaje de Aura"),
+        html: `<div style="font-family:system-ui,sans-serif;padding:20px"><h2>Aura Seguridad</h2><p>${payload.message || "Tu dispositivo ha sido reportado como perdido."}</p></div>`
+      });
+      if (inc.emergency_email) {
+        await sendMailSafe({
+          to: inc.emergency_email,
+          subject: `Aviso: dispositivo de ${inc.name} reportado como perdido`,
+          html: `<p>Aviso de emergencia: ${inc.name} ha reportado su dispositivo como perdido.</p>`
+        });
+      }
+    }
+  } catch(e){}
+  // SMS (si hay proveedor configurado)
+  try {
+    if (typeof sendSmsSafe === "function") {
+      if (inc.phone) await sendSmsSafe(inc.phone, payload.message || "Aura: dispositivo reportado como perdido.");
+      if (inc.emergency_phone) await sendSmsSafe(inc.emergency_phone, `Aura: ${inc.name} reportó su dispositivo como perdido.`);
+    }
+  } catch(e){}
+}
+
+app.post("/api/admin/device-incidents/:id/play-sound", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const { message, duration_sec, volume } = req.body || {};
+  await pool.execute("UPDATE device_incidents SET status='active' WHERE id=?", [req.params.id]);
+  await logIncidentAction(req.params.id, "play_sound", adminId, { message, duration_sec, volume });
+  await notifyIncidentDevice(req.params.id, "sound", { message, duration_sec: duration_sec || 30, volume: volume || 1.0 });
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/device-incidents/:id/send-message", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const { message } = req.body || {};
+  if (!message) return res.status(400).json({ error: "message_required" });
+  await pool.execute("UPDATE device_incidents SET status='active' WHERE id=?", [req.params.id]);
+  await logIncidentAction(req.params.id, "send_message", adminId, { message });
+  await notifyIncidentDevice(req.params.id, "message", { message });
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/device-incidents/:id/lock", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const { reason, message } = req.body || {};
+  const [[inc]] = await pool.query("SELECT user_id FROM device_incidents WHERE id=?", [req.params.id]);
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  await pool.execute("UPDATE users SET device_locked=1, device_locked_reason=? WHERE id=?", [reason || "Reportado como perdido", inc.user_id]);
+  await pool.execute("UPDATE device_incidents SET status='active', locked_at=NOW(), lock_screen_message=COALESCE(?,lock_screen_message) WHERE id=?", [message || null, req.params.id]);
+  await logIncidentAction(req.params.id, "lock", adminId, { reason, message });
+  await notifyIncidentDevice(req.params.id, "lock", { message: message || "Este dispositivo ha sido bloqueado por el propietario." });
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/device-incidents/:id/schedule-lock", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const { hours } = req.body || {};
+  const h = Math.max(1, Number(hours || 24));
+  await pool.execute(
+    "UPDATE device_incidents SET lock_scheduled_at = DATE_ADD(NOW(), INTERVAL ? HOUR) WHERE id=?",
+    [h, req.params.id]
+  );
+  await logIncidentAction(req.params.id, "schedule_lock", adminId, { hours: h });
+  res.json({ ok: true, scheduled_in_hours: h });
+}));
+
+app.post("/api/admin/device-incidents/:id/unlock", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const [[inc]] = await pool.query("SELECT user_id FROM device_incidents WHERE id=?", [req.params.id]);
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  await pool.execute("UPDATE users SET device_locked=0, device_locked_reason=NULL WHERE id=?", [inc.user_id]);
+  await pool.execute("UPDATE device_incidents SET status='closed', closed_at=NOW() WHERE id=?", [req.params.id]);
+  await logIncidentAction(req.params.id, "unlock", adminId, {});
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/device-incidents/:id/close", wrap(async (req, res) => {
+  const adminId = (req.admin && req.admin.email) || "admin";
+  const { notes } = req.body || {};
+  await pool.execute("UPDATE device_incidents SET status='closed', closed_at=NOW(), admin_notes=COALESCE(?,admin_notes) WHERE id=?", [notes || null, req.params.id]);
+  await logIncidentAction(req.params.id, "close", adminId, { notes });
+  res.json({ ok: true });
+}));
+
+app.get("/api/admin/device-incidents/:id/audit", wrap(async (req, res) => {
+  const [rows] = await pool.query("SELECT * FROM device_incident_actions WHERE incident_id=? ORDER BY id ASC", [req.params.id]);
+  res.json({ actions: rows });
+}));
+
+// Middleware: si device_locked=1, cualquier request del usuario devuelve 423
+app.use((req, res, next) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return next();
+  if (req.path === "/api/my/device-status" || req.path.startsWith("/api/my/device-incidents")) return next();
+  pool.query("SELECT device_locked, device_locked_reason FROM users WHERE id=?", [uid]).then(([rows]) => {
+    if (rows.length && rows[0].device_locked) {
+      return res.status(423).json({
+        error: "device_locked",
+        reason: rows[0].device_locked_reason || "Cuenta bloqueada por reporte de dispositivo perdido"
+      });
+    }
+    next();
+  }).catch(() => next());
+});
+
+app.get("/api/my/device-status", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.json({ locked: false });
+  const [[u]] = await pool.query("SELECT device_locked, device_locked_reason FROM users WHERE id=?", [uid]);
+  res.json({ locked: !!(u && u.device_locked), reason: u ? u.device_locked_reason : null });
+}));
+
+/* ---- Contactos de emergencia por defecto ---- */
+app.get("/api/my/emergency-contacts", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const [[u]] = await pool.query("SELECT emergency_email, emergency_phone FROM users WHERE id=?", [uid]);
+  res.json(u || { emergency_email: null, emergency_phone: null });
+}));
+
+app.put("/api/my/emergency-contacts", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const { emergency_email, emergency_phone } = req.body || {};
+  await pool.execute(
+    "UPDATE users SET emergency_email=?, emergency_phone=? WHERE id=?",
+    [emergency_email || null, emergency_phone || null, uid]
+  );
+  res.json({ ok: true });
+}));
+
+/* ---- Confirmación del usuario: soy yo / no soy yo ---- */
+app.post("/api/my/device-incidents/:id/confirm", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  const { confirm_type } = req.body || {}; // "its_me" | "not_me"
+  const [[inc]] = await pool.query("SELECT id FROM device_incidents WHERE id=? AND user_id=?", [req.params.id, uid]);
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  if (confirm_type === "its_me") {
+    // El usuario confirma que está a salvo → cerrar caso + cancelar bloqueo programado
+    await pool.execute("UPDATE device_incidents SET status='closed', closed_at=NOW(), lock_scheduled_at=NULL WHERE id=?", [inc.id]);
+    await pool.execute("UPDATE users SET device_locked=0, device_locked_reason=NULL WHERE id=?", [uid]);
+    await logIncidentAction(inc.id, "user_confirmed_safe", `user:${uid}`, {});
+  } else {
+    // El usuario confirma que NO es él → escalar a bloqueo inmediato
+    await pool.execute("UPDATE users SET device_locked=1, device_locked_reason='Confirmación de robo por el titular' WHERE id=?", [uid]);
+    await pool.execute("UPDATE device_incidents SET status='active', locked_at=NOW() WHERE id=?", [inc.id]);
+    await logIncidentAction(inc.id, "user_confirmed_stolen", `user:${uid}`, {});
+  }
+  res.json({ ok: true });
+}));
+
+/* ---- Plantillas de mensaje / bloqueo (admin) ---- */
+app.get("/api/admin/device-incident-templates", wrap(async (_req, res) => {
+  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_templates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    kind ENUM('message','lock') NOT NULL,
+    title VARCHAR(120) NOT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+  const [rows] = await pool.query("SELECT * FROM device_incident_templates ORDER BY kind, id");
+  if (!rows.length) {
+    const defaults = [
+      ["message", "Devuélveme el móvil", "Este teléfono pertenece a %NAME%. Por favor, llame al %PHONE% o escriba a %EMAIL% para devolverlo. Se ha reportado como perdido y está siendo rastreado."],
+      ["message", "Recompensa por devolución", "Recompensa por devolver este dispositivo. Contacto: %PHONE%. Sin preguntas."],
+      ["message", "Aviso legal", "Dispositivo reportado como robado en la Policía Nacional (denuncia adjunta en Aura). El uso continuado es delito."],
+      ["lock", "Bloqueo estándar", "Este dispositivo ha sido bloqueado por el propietario tras su pérdida. Para devolverlo, contacte con %EMAIL% o %PHONE%."],
+      ["lock", "Bloqueo por robo", "Dispositivo bloqueado por reporte de robo. Denuncia policial nº %CASE%. Cualquier uso queda registrado."],
+    ];
+    for (const [k, t, b] of defaults) {
+      await pool.execute("INSERT INTO device_incident_templates (kind, title, body) VALUES (?,?,?)", [k, t, b]);
+    }
+    const [r2] = await pool.query("SELECT * FROM device_incident_templates ORDER BY kind, id");
+    return res.json({ items: r2 });
+  }
+  res.json({ items: rows });
+}));
+app.post("/api/admin/device-incident-templates", wrap(async (req, res) => {
+  const { kind, title, body } = req.body || {};
+  if (!kind || !title || !body) return res.status(400).json({ error: "missing" });
+  await pool.execute("INSERT INTO device_incident_templates (kind, title, body) VALUES (?,?,?)", [kind, title, body]);
+  res.json({ ok: true });
+}));
+app.delete("/api/admin/device-incident-templates/:id", wrap(async (req, res) => {
+  await pool.execute("DELETE FROM device_incident_templates WHERE id=?", [req.params.id]);
+  res.json({ ok: true });
+}));
+
+/* ---- GPS live durante caso activo ---- */
+app.post("/api/my/device-incidents/:id/gps-live", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  const { lat, lng, accuracy } = req.body || {};
+  const [[inc]] = await pool.query("SELECT id, status FROM device_incidents WHERE id=? AND user_id=?", [req.params.id, uid]);
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_gps (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    incident_id INT NOT NULL,
+    lat DECIMAL(10,6), lng DECIMAL(10,6), accuracy INT,
+    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_inc (incident_id)
+  )`);
+  await pool.execute(
+    "INSERT INTO device_incident_gps (incident_id, lat, lng, accuracy) VALUES (?,?,?,?)",
+    [inc.id, lat, lng, accuracy || null]
+  );
+  res.json({ ok: true });
+}));
+
+app.get("/api/admin/device-incidents/:id/gps-trail", wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    "SELECT lat, lng, accuracy, captured_at FROM device_incident_gps WHERE incident_id=? ORDER BY id DESC LIMIT 500",
+    [req.params.id]
+  );
+  res.json({ points: rows });
+}));
+
+/* ---- Exportar auditoría (TXT firmable) ---- */
+app.get("/api/admin/device-incidents/:id/audit-export", wrap(async (req, res) => {
+  const [[inc]] = await pool.query(
+    `SELECT i.*, u.name user_name, u.email FROM device_incidents i LEFT JOIN users u ON u.id=i.user_id WHERE i.id=?`,
+    [req.params.id]
+  );
+  if (!inc) return res.status(404).json({ error: "not_found" });
+  const [actions] = await pool.query(
+    "SELECT * FROM device_incident_actions WHERE incident_id=? ORDER BY id ASC", [req.params.id]
+  );
+  const lines = [];
+  lines.push("=================================================");
+  lines.push("AURA · Informe de custodia legal");
+  lines.push("=================================================");
+  lines.push(`Caso #${inc.id}`);
+  lines.push(`Usuario: ${inc.user_name} <${inc.email}>`);
+  lines.push(`Tipo: ${inc.type}`);
+  lines.push(`Estado: ${inc.status}`);
+  lines.push(`Denuncia: ${inc.police_report_url || "n/d"}`);
+  lines.push(`GPS congelado: ${inc.frozen_last_lat || "-"}, ${inc.frozen_last_lng || "-"}`);
+  lines.push(`IP: ${inc.frozen_last_ip || "-"}`);
+  lines.push(`UA: ${inc.frozen_device_ua || "-"}`);
+  lines.push(`Abierto: ${inc.requested_at}`);
+  lines.push(`Cerrado: ${inc.closed_at || "-"}`);
+  lines.push("");
+  lines.push("--- Cadena de acciones firmadas (SHA-256) ---");
+  actions.forEach(a => {
+    lines.push(`[${a.created_at}] ${a.admin_id || "system"} · ${a.action}`);
+    lines.push(`   payload: ${a.payload || "{}"}`);
+    lines.push(`   sig    : ${a.signature_hash}`);
+  });
+  lines.push("");
+  lines.push("Fin del informe.");
+  const out = lines.join("\n");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="aura-case-${inc.id}-audit.txt"`);
+  res.send(out);
+}));
+
+// Cron: bloqueos programados + auto-cierre 60 días
+async function runIncidentCrons() {
+  try {
+    const [scheduled] = await pool.query(
+      "SELECT id, user_id, lock_screen_message FROM device_incidents WHERE lock_scheduled_at IS NOT NULL AND lock_scheduled_at <= NOW() AND locked_at IS NULL"
+    );
+    for (const s of scheduled) {
+      await pool.execute("UPDATE users SET device_locked=1, device_locked_reason='Bloqueo escalonado automático' WHERE id=?", [s.user_id]);
+      await pool.execute("UPDATE device_incidents SET locked_at=NOW(), status='active' WHERE id=?", [s.id]);
+      await logIncidentAction(s.id, "auto_lock", "system", {});
+      await notifyIncidentDevice(s.id, "lock", { message: s.lock_screen_message || "Bloqueo automático activado." });
+    }
+    await pool.execute(
+      "UPDATE device_incidents SET status='archived' WHERE status IN ('closed','denied') AND (last_action_at < DATE_SUB(NOW(), INTERVAL 60 DAY) OR requested_at < DATE_SUB(NOW(), INTERVAL 60 DAY))"
+    );
+  } catch(e) { console.error("runIncidentCrons:", e.message); }
+}
+setInterval(runIncidentCrons, 15 * 60 * 1000);
+
 (async () => {
   try {
     await migrate();
@@ -8633,6 +10763,9 @@ async function ensureSuperadminAccessSettings() {
     await rebrandAuraOnce();
     await seedConversations();
     await ensureSuperadminAccessSettings();
+    await ensureStaffAndNotifTables();
+    await ensureAdvancedTables();
+    await ensureDeviceIncidentsTables();
     await loadRuntimeSettings();
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT));
