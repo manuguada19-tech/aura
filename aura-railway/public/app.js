@@ -3297,6 +3297,12 @@ async function quickLogin(provider) {
         catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4500); try { render(screenWelcome); } catch {} }
         return;
       }
+      if (data && data.error === "not_registered") {
+        // Cuenta social sin usuario real en la BD. No es beta: solo no existe.
+        toast("Esta cuenta no está registrada. Regístrate primero.", 3800);
+        try { render(screenWelcome); } catch {}
+        return;
+      }
       if (data && data.user_id) {
         state.user = {
           id: data.user_id,
