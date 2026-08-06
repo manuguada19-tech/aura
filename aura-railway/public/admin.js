@@ -388,36 +388,36 @@ function fmtMoney(amount, cur) {
 }
 
 /* API helper */
-const api = {
-  async get(url) {
-    const r = await fetch(url, { headers: authHeaders(), cache: "no-store" });
-    if (r.status === 401) return handleAuthFailure();
-    if (!r.ok) throw new Error("GET " + url + " " + r.status);
-    return r.json();
-  },
-  async send(method, url, body) {
-    const r = await fetch(url, {
-      method,
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: body ? JSON.stringify(body) : undefined,
-      cache: "no-store",
-    });
-    if (r.status === 401) return handleAuthFailure();
-    if (!r.ok) {
-      let data = null;
-      try { data = await r.json(); } catch {}
-      const err = new Error(method + " " + url + " " + r.status);
-      err.status = r.status;
-      err.data = data;
-      throw err;
-    }
-    return r.json();
-  },
-  post(url, body) { return this.send("POST", url, body); },
-  patch(url, body) { return this.send("PATCH", url, body); },
-  put(url, body) { return this.send("PUT", url, body); },
-  del(url) { return this.send("DELETE", url); },
-};
+// Callable: api(url, opts?) -> también objeto con .get/.post/.patch/.put/.del
+async function api(url, opts) {
+  opts = opts || {};
+  const method = (opts.method || "GET").toUpperCase();
+  const hasBody = opts.body != null;
+  const headers = authHeaders(hasBody ? { "Content-Type": "application/json" } : {});
+  Object.assign(headers, opts.headers || {});
+  const r = await fetch(url, {
+    method,
+    headers,
+    body: hasBody ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,
+    cache: "no-store",
+  });
+  if (r.status === 401) return handleAuthFailure();
+  if (!r.ok) {
+    let data = null;
+    try { data = await r.json(); } catch {}
+    const err = new Error(method + " " + url + " " + r.status);
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
+  try { return await r.json(); } catch { return {}; }
+}
+api.get = (url) => api(url);
+api.post = (url, body) => api(url, { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body || {}) });
+api.patch = (url, body) => api(url, { method: "PATCH", body: typeof body === "string" ? body : JSON.stringify(body || {}) });
+api.put = (url, body) => api(url, { method: "PUT", body: typeof body === "string" ? body : JSON.stringify(body || {}) });
+api.del = (url) => api(url, { method: "DELETE" });
+api.send = (method, url, body) => api(url, { method, body: typeof body === "string" ? body : JSON.stringify(body || {}) });
 
 /* ============================================================
    Global auto-save
