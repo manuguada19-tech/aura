@@ -328,6 +328,7 @@ const PUBLIC_API = new Set([
   // GPS opcional (autenticado por X-User-Id, no por admin token)
   "POST /api/my/gps/consent",
   "POST /api/my/gps/report",
+  "POST /api/my/gps/heartbeat",
   "GET /api/my/gps/state",
   "POST /api/my/gps/reask-ack",
   // Preferencias de idioma y tracking del usuario
@@ -7171,6 +7172,22 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
     `UPDATE user_gps SET lat=?, lng=?, accuracy=?, heading=?, speed=?, captured_at=NOW() WHERE user_id=?`,
     [lat, lng, acc, heading, speed, uid]
   );
+  res.json({ ok: true });
+}));
+
+/*  Heartbeat desde el Service Worker (PWA Android con Periodic Sync).
+    No trae GPS pero confirma que la app sigue instalada y viva. Actualiza
+    last_seen del dispositivo para que en admin sepamos que el usuario tuvo
+    la PWA activa recientemente, aunque no envíe ubicación. */
+app.post("/api/my/gps/heartbeat", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  try {
+    // Toca last_seen del dispositivo actual del usuario si existe.
+    await pool.execute(
+      `UPDATE user_devices SET last_seen=NOW() WHERE user_id=? AND is_current=1`, [uid]
+    );
+  } catch {}
   res.json({ ok: true });
 }));
 
