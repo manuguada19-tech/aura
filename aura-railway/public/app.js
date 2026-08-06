@@ -2603,7 +2603,8 @@ const SECTION_MAP = {
   screenMyPhotos: "profile", screenVerifyAccount: "profile",
   screenInvisibleMode: "profile", screenSecurity: "profile",
   screenBlockedUsers: "profile", screenDataExport: "profile",
-  screenAbout: "profile", screenOffers: "profile",
+  screenAbout: "profile", screenOffers: "profile", screenAccountStatus: "profile",
+  screenNotificationSettings: "profile",
   // V437: Info screens usan sección propia para NO heredar el color de
   // texto del hero de bienvenida (que es blanco) sobre fondo claro. Sin
   // este mapeo, el contenido de Términos/Privacidad/Normas quedaba
@@ -2871,6 +2872,10 @@ function applyDeepLink(dl) {
     preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
     preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
     notificaciones: typeof screenNotifications === "function" ? screenNotifications : null,
+    seguridad:      typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    security:       typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    dispositivo:    typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    "dispositivo-perdido": typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
   };
   const sv = subViews[dl.section];
   if (sv) { try { render(sv); } catch {} }
@@ -4245,6 +4250,10 @@ function screenRegisterEmail(root) {
         state.registration.demoCode = data.demoCode;
         toast(`Modo demo — código: ${data.demoCode}`, 5000);
       }
+      // Guardar la fecha de expiración del código para pintar la cuenta atrás
+      // en la pantalla OTP (10 min desde el envío).
+      state.registration.otpExpiresAt = data.expires_at
+        || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
       render(screenRegisterOTP);
     } catch (err) {
       toast("Error enviando el código");
@@ -4264,6 +4273,19 @@ function screenRegisterOTP(root) {
     el("h2", {}, T("content.register.otp.title")),
     el("p", { html: `Enviado a <b>${state.registration.email}</b>` }),
   ]));
+
+  // Badge de cuenta atrás. El código dura 10 min desde que se envió.
+  // Formato: "⏱ Expira en 09:42". En los últimos 60s se vuelve rojo. Al llegar
+  // a 00:00 se convierte en aviso y desactiva los inputs hasta que el usuario
+  // pida un código nuevo.
+  const countdownBadge = el("div", {
+    class: "otp-countdown",
+    style: "display:flex;align-items:center;justify-content:center;gap:8px;margin:10px auto 6px;padding:8px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);font-size:14px;font-weight:600;max-width:max-content;transition:all .2s ease;",
+  }, [
+    el("span", { class: "otp-cd-ico", style: "font-size:16px;" }, "⏱"),
+    el("span", { class: "otp-cd-txt" }, "Calculando…"),
+  ]);
+  form.appendChild(countdownBadge);
 
   const otpWrap = el("div", { class: "otp" });
   const inputs = [];
@@ -4357,6 +4379,10 @@ function screenRegisterOTP(root) {
       const data = await r.json();
       if (data.sent) toast("Nuevo código enviado ✉️");
       else { state.registration.demoCode = data.demoCode; toast(`Modo demo — código: ${data.demoCode}`, 5000); }
+      // Nuevo código = nueva expiración. Actualizamos y reiniciamos la cuenta atrás.
+      state.registration.otpExpiresAt = data.expires_at
+        || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+      if (typeof restartOtpCountdown === "function") restartOtpCountdown();
     } catch (e) { toast("Error al reenviar"); return; }
     cooldown = 30;
     btnEl.disabled = true;
@@ -4369,6 +4395,118 @@ function screenRegisterOTP(root) {
 
   root.appendChild(form);
   setTimeout(() => inputs[0].focus(), 100);
+
+  // ==== Cuenta atrás de expiración del OTP (10 min por defecto) ============
+  // Se actualiza cada segundo. Si no tenemos otpExpiresAt (p. ej. porque el
+  // usuario aterrizó aquí sin pasar por el flujo normal), asumimos 10 min a
+  // partir del render actual.
+  let _cdTimer = null;
+  const cdTxt = countdownBadge.querySelector(".otp-cd-txt");
+  const cdIco = countdownBadge.querySelector(".otp-cd-ico");
+  function mmss(s) {
+    const m = Math.floor(s / 60), r = s % 60;
+    return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
+  }
+  function setExpiredUI() {
+    inputs.forEach(i => { i.disabled = true; });
+    btn.disabled = true;
+    countdownBadge.style.background = "rgba(255,68,68,0.12)";
+    countdownBadge.style.borderColor = "rgba(255,68,68,0.4)";
+    countdownBadge.style.color = "#ff9a9a";
+    cdIco.textContent = "⌛";
+    cdTxt.textContent = "Este código ha expirado";
+    // Si no existe ya el aviso, lo añadimos: botón grande para pedir uno nuevo.
+    if (!form.querySelector(".otp-expired-box")) {
+      const box = el("div", {
+        class: "otp-expired-box",
+        style: "margin-top:12px;padding:14px;border:1px solid rgba(255,68,68,0.35);border-radius:12px;background:rgba(255,68,68,0.06);text-align:center;",
+      }, [
+        el("p", { style: "margin:0 0 10px;color:#ffb4b4;font-size:14px;" },
+          "El código dejó de ser válido. Solicita uno nuevo para continuar."),
+        el("button", {
+          class: "btn btn-brand btn-sm",
+          type: "button",
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            b.textContent = "Enviando…";
+            try {
+              const r = await fetch("/api/verify/send", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: state.registration.email, lang: currentLang }),
+              });
+              const data = await r.json();
+              if (data.sent) toast("Nuevo código enviado ✉️");
+              else if (data.demoCode) {
+                state.registration.demoCode = data.demoCode;
+                toast(`Modo demo — código: ${data.demoCode}`, 5000);
+              }
+              state.registration.otpExpiresAt = data.expires_at
+                || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+              // Reiniciar UI: rehabilitamos inputs, quitamos el aviso, reinicia el tick.
+              inputs.forEach(i => { i.disabled = false; i.value = ""; });
+              box.remove();
+              countdownBadge.style.background = "rgba(255,255,255,0.04)";
+              countdownBadge.style.borderColor = "rgba(255,255,255,0.14)";
+              countdownBadge.style.color = "";
+              cdIco.textContent = "⏱";
+              inputs[0].focus();
+              restartOtpCountdown();
+            } catch {
+              toast("Error al pedir un nuevo código");
+              b.disabled = false;
+              b.textContent = "Solicitar nuevo código";
+            }
+          },
+        }, "Solicitar nuevo código"),
+      ]);
+      form.appendChild(box);
+    }
+  }
+  function tick() {
+    if (!state.registration.otpExpiresAt) {
+      state.registration.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    }
+    const left = Math.max(0, Math.round((new Date(state.registration.otpExpiresAt).getTime() - Date.now()) / 1000));
+    if (left <= 0) {
+      if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+      setExpiredUI();
+      return;
+    }
+    cdTxt.textContent = `Expira en ${mmss(left)}`;
+    // Últimos 60 s en rojo, 60–180 s en ámbar.
+    if (left < 60) {
+      countdownBadge.style.borderColor = "rgba(255,68,68,0.45)";
+      countdownBadge.style.background = "rgba(255,68,68,0.10)";
+      countdownBadge.style.color = "#ffb4b4";
+    } else if (left < 180) {
+      countdownBadge.style.borderColor = "rgba(255,180,60,0.45)";
+      countdownBadge.style.background = "rgba(255,180,60,0.10)";
+      countdownBadge.style.color = "#ffd899";
+    } else {
+      countdownBadge.style.borderColor = "rgba(255,255,255,0.14)";
+      countdownBadge.style.background = "rgba(255,255,255,0.04)";
+      countdownBadge.style.color = "";
+    }
+  }
+  // Expuesta a nivel de función para que `resend()` pueda reiniciarla.
+  function restartOtpCountdown() {
+    if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+    tick();
+    _cdTimer = setInterval(tick, 1000);
+  }
+  // Cerrar el intervalo si la pantalla se desmonta (evita fugas).
+  const _cleanupObs = new MutationObserver(() => {
+    if (!document.body.contains(form)) {
+      if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+      _cleanupObs.disconnect();
+    }
+  });
+  _cleanupObs.observe(document.body, { childList: true, subtree: true });
+  restartOtpCountdown();
+  // Guardamos la referencia para que `resend()` (definido fuera) pueda llamar
+  // a restart. Al estar en la misma closure ya la usa; nada más que hacer.
+
   hideApp();
 }
 
@@ -6011,126 +6149,182 @@ function openPremiumLockModal() {
   modal.open(sheet);
 }
 
-/* ---- Read receipts paywall ---- */
+/* ---- Read receipts paywall ----------------------------------------------
+   Modal rediseñado v2:
+   - Layout compacto pensado para caber sin scroll en móvil normal.
+   - Header con gradiente, icono y estado (chips) todo en una fila.
+   - Packs en fila horizontal (grid auto-fit) con destacado del pack "popular".
+   - Cupón y CTA Premium en la misma sección de acciones, no ocupan alto extra.
+   - Cierre visible con "X" arriba a la derecha.
+--------------------------------------------------------------------------- */
 async function openReadsPaywall(prefStatus) {
-  const sheet = el("div", { class: "reads-paywall" });
-  sheet.appendChild(el("div", { class: "rp-hero" }, [
-    el("div", { class: "rp-hero-ic" }, "🔒"),
-    el("h3", { class: "rp-h" }, "Ver lecturas de chat"),
-    el("p", { class: "rp-p" }, "Descubre cuándo tus mensajes son leídos. Tienes lecturas gratuitas mensuales y puedes ampliar con packs o pasarte a Premium para tenerlas ilimitadas."),
+  // Estilos inline por si el CSS no incluye .reads-paywall-v2. Usamos
+  // variables de tema si existen; si no, colores por defecto.
+  const styleTag = document.getElementById("readsPaywallV2Style") || (() => {
+    const s = document.createElement("style");
+    s.id = "readsPaywallV2Style";
+    s.textContent = `
+      .reads-paywall-v2 { position:relative; padding:0; overflow:hidden; border-radius:20px; max-width:560px; }
+      .rp2-close { position:absolute; top:10px; right:10px; z-index:3; width:34px; height:34px; border-radius:50%; border:none; background:rgba(0,0,0,0.45); color:#fff; font-size:20px; cursor:pointer; display:grid; place-items:center; }
+      .rp2-hero { padding:18px 20px 14px; background:linear-gradient(135deg,#ff3b6b 0%,#ff8a3b 100%); color:#fff; text-align:center; }
+      .rp2-hero-ic { font-size:32px; margin-bottom:4px; filter:drop-shadow(0 2px 8px rgba(0,0,0,0.25)); }
+      .rp2-hero h3 { margin:0; font-size:19px; font-weight:800; letter-spacing:-.01em; }
+      .rp2-hero p  { margin:4px 0 0; font-size:12.5px; opacity:.94; line-height:1.35; }
+      .rp2-chips { display:flex; gap:6px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
+      .rp2-chip { background:rgba(255,255,255,0.18); border-radius:999px; padding:4px 10px; font-size:11.5px; font-weight:600; backdrop-filter:blur(6px); }
+      .rp2-chip b { font-weight:800; }
+      .rp2-body { padding:14px 16px 16px; background:var(--bg,#0f1116); color:var(--text,#e6e6ea); }
+      .rp2-camp { display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:10px; border-radius:10px; background:rgba(255,60,110,0.10); border:1px solid rgba(255,60,110,0.28); font-size:12px; }
+      .rp2-camp b { color:#ffb4b4; }
+      .rp2-camp .rp2-camp-chip { margin-left:auto; padding:4px 10px; border-radius:999px; background:#ff3b6b; color:#fff; border:none; font-size:11px; font-weight:700; cursor:pointer; }
+      .rp2-packs { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+      .rp2-pack { position:relative; padding:14px 10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:14px; background:rgba(255,255,255,0.04); text-align:center; transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+      .rp2-pack:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,0.28); border-color:rgba(255,60,110,0.5); }
+      .rp2-pack.is-popular { border-color:#ff3b6b; background:linear-gradient(180deg,rgba(255,60,110,0.14),rgba(255,60,110,0.03)); }
+      .rp2-pack.is-popular::before { content:"⭐ Más elegido"; position:absolute; top:-10px; left:50%; transform:translateX(-50%); background:#ff3b6b; color:#fff; padding:3px 9px; font-size:10.5px; font-weight:800; border-radius:999px; white-space:nowrap; box-shadow:0 4px 10px rgba(255,60,110,0.4); }
+      .rp2-pack-credits { font-size:22px; font-weight:800; color:#fff; line-height:1; }
+      .rp2-pack-credits small { display:block; font-size:11px; font-weight:600; opacity:.7; margin-top:3px; letter-spacing:.02em; text-transform:uppercase; }
+      .rp2-pack-price { margin:8px 0 10px; font-size:15px; font-weight:700; color:#ffd899; }
+      .rp2-pack-price s { color:rgba(255,255,255,0.5); font-weight:500; font-size:12px; margin-right:4px; }
+      .rp2-pack-save { display:inline-block; margin-top:2px; padding:2px 8px; border-radius:999px; background:rgba(46,204,113,0.15); color:#7ee0a3; font-size:10.5px; font-weight:700; }
+      .rp2-pack-btn { width:100%; padding:9px; border-radius:10px; border:none; background:linear-gradient(135deg,#ff3b6b,#ff8a3b); color:#fff; font-weight:700; font-size:13px; cursor:pointer; transition:opacity .15s; }
+      .rp2-pack-btn:hover { opacity:.92; }
+      .rp2-pack-btn:disabled { opacity:.5; cursor:not-allowed; }
+      .rp2-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+      .rp2-promo { display:flex; gap:6px; margin-top:10px; }
+      .rp2-promo input { flex:1; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:inherit; font-size:12.5px; }
+      .rp2-promo button { padding:8px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.06); color:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+      .rp2-promo-msg { font-size:11.5px; margin-top:4px; min-height:14px; }
+      .rp2-promo-msg.is-ok { color:#7ee0a3; }
+      .rp2-promo-msg.is-err { color:#ffb4b4; }
+      .rp2-cta-premium { padding:10px; border-radius:10px; border:none; background:linear-gradient(135deg,#6a2eff,#3b0f99); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      .rp2-cta-close   { padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:transparent; color:inherit; font-size:13px; cursor:pointer; }
+      @media (max-width:400px) {
+        .rp2-hero h3 { font-size:17px; }
+        .rp2-packs { grid-template-columns:repeat(3,1fr); gap:8px; }
+        .rp2-pack { padding:12px 6px 10px; }
+        .rp2-pack-credits { font-size:19px; }
+        .rp2-pack-price { font-size:13px; }
+        .rp2-pack-btn { font-size:12px; padding:8px 4px; }
+      }
+    `;
+    document.head.appendChild(s);
+    return s;
+  })();
+  void styleTag;
+
+  const sheet = el("div", { class: "reads-paywall-v2" });
+
+  // Botón X flotante para cerrar sin depender del botón inferior.
+  sheet.appendChild(el("button", {
+    class: "rp2-close",
+    type: "button",
+    title: "Cerrar",
+    "aria-label": "Cerrar",
+    "data-close": true,
+  }, "×"));
+
+  // Hero con gradiente y chips de estado. Los chips leerán datos reales
+  // cuando refreshStatus() se ejecute.
+  sheet.appendChild(el("div", { class: "rp2-hero" }, [
+    el("div", { class: "rp2-hero-ic" }, "💬✨"),
+    el("h3", {}, "Amplía tus lecturas de chat"),
+    el("p", {}, "Ve cuándo se leen tus mensajes. Elige un pack o pasa a Premium para tenerlas ilimitadas."),
+    el("div", { class: "rp2-chips" }, [
+      el("span", { class: "rp2-chip" }, [ "Gratis: ", el("b", { id: "rpFree" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ "Créditos: ", el("b", { id: "rpCredits" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ "Plan: ", el("b", { id: "rpPlan" }, "…") ]),
+    ]),
   ]));
 
-  const summary = el("div", { class: "rp-summary" }, [
-    el("div", { class: "rp-s-item" }, [
-      el("small", {}, "Gratis mensuales"),
-      el("b", { id: "rpFree" }, "…"),
-    ]),
-    el("div", { class: "rp-s-item" }, [
-      el("small", {}, "Créditos"),
-      el("b", { id: "rpCredits" }, "…"),
-    ]),
-    el("div", { class: "rp-s-item" }, [
-      el("small", {}, "Plan"),
-      el("b", { id: "rpPlan" }, "…"),
-    ]),
-  ]);
-  sheet.appendChild(summary);
+  const body = el("div", { class: "rp2-body" });
+  sheet.appendChild(body);
 
-  // Campaigns banner — shows a compact strip of active campaigns so the user
-  // can tap to auto-apply the code, or view all offers.
-  const campaignsBanner = el("div", { class: "rp-campaigns", id: "rpCampaigns" });
-  sheet.appendChild(campaignsBanner);
+  // Banner compacto de campaña activa (una sola tira, no ocupa mucho).
+  const campaignsBanner = el("div", { class: "rp2-camp", id: "rpCampaigns", style: "display:none;" });
+  body.appendChild(campaignsBanner);
   (async () => {
     try {
       const r = await fetch("/api/promotions/public", { cache: "no-store" });
       const data = r.ok ? await r.json() : [];
-      const active = data.filter(x => x.is_active_now).slice(0, 3);
-      if (!active.length) { campaignsBanner.remove(); return; }
+      const active = data.filter(x => x.is_active_now);
+      if (!active.length) return;
+      const top = active[0];
+      campaignsBanner.style.display = "flex";
       campaignsBanner.innerHTML = "";
-      campaignsBanner.appendChild(el("div", { class: "rp-camp-head" }, [
-        el("span", { class: "rp-camp-title" }, "🎉 Campañas activas"),
-        el("button", {
-          class: "rp-camp-all",
-          type: "button",
-          onclick: () => { modal.close(); render(screenOffers); },
-        }, "Ver todas →"),
-      ]));
-      const strip = el("div", { class: "rp-camp-strip" });
-      active.forEach(p => {
-        const chip = el("button", {
-          type: "button",
-          class: "rp-camp-chip",
-          title: `Aplicar ${p.code}`,
-          onclick: () => {
-            const inp = document.getElementById("rpPromoInput");
-            const btn2 = document.getElementById("rpPromoBtn");
-            if (inp) inp.value = p.code;
-            if (btn2) btn2.click();
-          },
-        }, [
-          el("span", { class: "rp-camp-disc" }, `-${p.discount_percent}%`),
-          el("span", { class: "rp-camp-code" }, p.code),
-        ]);
-        strip.appendChild(chip);
-      });
-      campaignsBanner.appendChild(strip);
-    } catch { campaignsBanner.remove(); }
+      campaignsBanner.appendChild(el("span", {}, [ "🎉 Campaña activa · ", el("b", {}, `-${top.discount_percent}% con ${top.code}`) ]));
+      campaignsBanner.appendChild(el("button", {
+        class: "rp2-camp-chip",
+        type: "button",
+        onclick: () => {
+          const inp = document.getElementById("rpPromoInput");
+          const btn2 = document.getElementById("rpPromoBtn");
+          if (inp) inp.value = top.code;
+          if (btn2) btn2.click();
+        },
+      }, "Aplicar"));
+    } catch {}
   })();
 
-  const packsRow = el("div", { class: "rp-packs", id: "rpPacksRow" }, [
-    el("div", { class: "rp-loading" }, "Cargando packs…"),
+  // Grid de packs — auto-fit para que quepan en fila sin scroll.
+  const packsRow = el("div", { class: "rp2-packs", id: "rpPacksRow" }, [
+    el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Cargando packs…"),
   ]);
-  sheet.appendChild(packsRow);
+  body.appendChild(packsRow);
 
-  // Promo / coupon code input — validates against /api/promotions/validate
-  // and applies a % discount to all packs shown above.
-  const promoBox = el("div", { class: "rp-promo" }, [
-    el("div", { class: "rp-promo-row" }, [
-      el("input", {
-        id: "rpPromoInput",
-        class: "input rp-promo-input",
-        type: "text",
-        placeholder: "Código promocional",
-        autocomplete: "off",
-        spellcheck: false,
-      }),
-      el("button", {
-        id: "rpPromoBtn",
-        class: "btn btn-ghost btn-sm",
-        type: "button",
-        onclick: async () => {
-          const inp = document.getElementById("rpPromoInput");
-          const msg = document.getElementById("rpPromoMsg");
-          const val = (inp?.value || "").trim();
-          if (!val) { window.__auraPromo = null; refreshPackPrices(); if (msg) { msg.textContent = ""; msg.className = "rp-promo-msg"; } return; }
-          try {
-            const r = await fetch("/api/promotions/validate", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: val }),
-            });
-            const data = await r.json();
-            if (!r.ok) {
-              window.__auraPromo = null;
-              if (msg) { msg.textContent = "✕ " + (data.reason || "Cupón no válido"); msg.className = "rp-promo-msg is-err"; }
-              refreshPackPrices();
-              return;
-            }
-            window.__auraPromo = { code: data.code, discount: data.discount_percent };
-            if (msg) { msg.textContent = `✓ Cupón aplicado · -${data.discount_percent}%`; msg.className = "rp-promo-msg is-ok"; }
+  // Promo (una sola línea).
+  const promoBox = el("div", { class: "rp2-promo" }, [
+    el("input", {
+      id: "rpPromoInput",
+      type: "text",
+      placeholder: "Código promocional (opcional)",
+      autocomplete: "off",
+      spellcheck: false,
+    }),
+    el("button", {
+      id: "rpPromoBtn",
+      type: "button",
+      onclick: async () => {
+        const inp = document.getElementById("rpPromoInput");
+        const msg = document.getElementById("rpPromoMsg");
+        const val = (inp?.value || "").trim();
+        if (!val) { window.__auraPromo = null; refreshPackPrices(); if (msg) { msg.textContent = ""; msg.className = "rp2-promo-msg"; } return; }
+        try {
+          const r = await fetch("/api/promotions/validate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: val }),
+          });
+          const data = await r.json();
+          if (!r.ok) {
+            window.__auraPromo = null;
+            if (msg) { msg.textContent = "✕ " + (data.reason || "Cupón no válido"); msg.className = "rp2-promo-msg is-err"; }
             refreshPackPrices();
-          } catch {
-            if (msg) { msg.textContent = "Error validando el cupón"; msg.className = "rp-promo-msg is-err"; }
+            return;
           }
-        },
-      }, "Aplicar"),
-    ]),
-    el("div", { id: "rpPromoMsg", class: "rp-promo-msg" }),
+          window.__auraPromo = { code: data.code, discount: data.discount_percent };
+          if (msg) { msg.textContent = `✓ Cupón aplicado · -${data.discount_percent}%`; msg.className = "rp2-promo-msg is-ok"; }
+          refreshPackPrices();
+        } catch {
+          if (msg) { msg.textContent = "Error validando el cupón"; msg.className = "rp2-promo-msg is-err"; }
+        }
+      },
+    }, "Aplicar"),
   ]);
-  sheet.appendChild(promoBox);
+  body.appendChild(promoBox);
+  body.appendChild(el("div", { id: "rpPromoMsg", class: "rp2-promo-msg" }));
 
-  sheet.appendChild(el("div", { class: "rp-actions" }, [
-    el("button", { class: "btn btn-brand btn-block", onclick: () => { modal.close(); render(screenSubscriptions); } }, "Ver Aura Premium (ilimitado)"),
-    el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cerrar"),
+  // Acciones inferiores en dos columnas: Premium (destacado) + Cerrar.
+  body.appendChild(el("div", { class: "rp2-actions" }, [
+    el("button", {
+      class: "rp2-cta-premium",
+      type: "button",
+      onclick: () => { modal.close(); render(screenSubscriptions); },
+    }, "👑 Pasar a Premium"),
+    el("button", {
+      class: "rp2-cta-close",
+      type: "button",
+      "data-close": true,
+    }, "Cerrar"),
   ]));
 
   // Símbolo de moneda: EUR→€, USD→$, GBP→£, etc. Cualquier otro se muestra tal cual.
@@ -6150,10 +6344,10 @@ async function openReadsPaywall(prefStatus) {
   // Re-renders the pack prices whenever a promo is applied/cleared.
   function refreshPackPrices() {
     const promo = window.__auraPromo;
-    document.querySelectorAll(".rp-pack").forEach(card => {
+    document.querySelectorAll(".rp2-pack").forEach(card => {
       const orig = Number(card.dataset.origPrice);
       const cur  = card.dataset.currency || "EUR";
-      const priceEl = card.querySelector(".rp-pack-price");
+      const priceEl = card.querySelector(".rp2-pack-price");
       if (!priceEl || !Number.isFinite(orig)) return;
       if (promo && promo.discount) {
         const disc = Math.max(0, Number((orig * (1 - promo.discount/100)).toFixed(2)));
@@ -6190,50 +6384,75 @@ async function openReadsPaywall(prefStatus) {
     const row = document.getElementById("rpPacksRow");
     if (!row) return;
     row.innerHTML = "";
-    (data.packs || []).forEach(p => {
+    const packs = data.packs || [];
+    // Determinar el pack "popular": el central si hay 3, o el de mejor
+    // ratio créditos/precio para orientar al usuario.
+    let popularIdx = -1;
+    if (packs.length === 3) popularIdx = 1;
+    else if (packs.length >= 2) {
+      let best = -Infinity, bi = 0;
+      packs.forEach((p, i) => {
+        const ratio = (Number(p.credits) || 0) / Math.max(0.01, Number(p.price) || 0.01);
+        if (ratio > best) { best = ratio; bi = i; }
+      });
+      popularIdx = bi;
+    }
+    // Calcular el precio por lectura del pack más pequeño para pintar ahorros.
+    const basePricePerRead = packs.length ? (Number(packs[0].price) || 0) / Math.max(1, Number(packs[0].credits) || 1) : 0;
+
+    packs.forEach((p, i) => {
+      const isPopular = i === popularIdx && packs.length >= 2;
+      const perRead = (Number(p.price) || 0) / Math.max(1, Number(p.credits) || 1);
+      const savePct = basePricePerRead > 0 ? Math.round((1 - perRead / basePricePerRead) * 100) : 0;
       const card = el("div", {
-        class: "rp-pack",
+        class: "rp2-pack" + (isPopular ? " is-popular" : ""),
         "data-orig-price": String(p.price ?? 0),
         "data-currency": p.currency || "EUR",
       }, [
-        el("div", { class: "rp-pack-title" }, p.label || ("Pack " + (p.id || "").toUpperCase())),
-        el("div", { class: "rp-pack-credits" }, (p.credits || 0) + " lecturas"),
-        el("div", { class: "rp-pack-price" }, fmtPrice(p.price, p.currency)),
-        el("button", { class: "btn btn-brand btn-sm", onclick: async () => {
-          const btn = card.querySelector("button");
-          if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
-          try {
-            const promo = window.__auraPromo;
-            const resp = await fetch("/api/my/reads/purchase", {
-              method: "POST", headers: chatApi.headers(),
-              body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
-            });
-            if (!resp.ok) {
-              const err = await resp.json().catch(() => ({}));
-              toast(err.reason || "No se pudo completar la compra");
+        el("div", { class: "rp2-pack-credits" }, [
+          String(p.credits || 0),
+          el("small", {}, "lecturas"),
+        ]),
+        el("div", { class: "rp2-pack-price" }, fmtPrice(p.price, p.currency)),
+        savePct > 0 ? el("div", { class: "rp2-pack-save" }, `Ahorra ${savePct}%`) : el("span", {}),
+        el("button", {
+          class: "rp2-pack-btn",
+          type: "button",
+          onclick: async () => {
+            const btn = card.querySelector(".rp2-pack-btn");
+            if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
+            try {
+              const promo = window.__auraPromo;
+              const resp = await fetch("/api/my/reads/purchase", {
+                method: "POST", headers: chatApi.headers(),
+                body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
+              });
+              if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                toast(err.reason || "No se pudo completar la compra");
+                if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
+                return;
+              }
+              const done = await resp.json();
+              refreshStatus(done.status);
+              const priceTxt = done.discount_percent
+                ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
+                : "";
+              toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
               if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-              return;
-            }
-            const done = await resp.json();
-            refreshStatus(done.status);
-            const priceTxt = done.discount_percent
-              ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
-              : "";
-            toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
-            if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-          } catch { toast("Error en la compra"); if (btn) { btn.disabled = false; btn.textContent = "Comprar"; } }
-        } }, "Comprar"),
+            } catch { toast("Error en la compra"); if (btn) { btn.disabled = false; btn.textContent = "Comprar"; } }
+          },
+        }, "Comprar"),
       ]);
       row.appendChild(card);
     });
-    // If a promo was previously applied in this session, refresh prices now.
     if (window.__auraPromo) refreshPackPrices();
-    if (!(data.packs || []).length) {
-      row.appendChild(el("div", { class: "rp-empty" }, "No hay packs disponibles en este momento."));
+    if (!packs.length) {
+      row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "No hay packs disponibles en este momento."));
     }
   } catch {
     const row = document.getElementById("rpPacksRow");
-    if (row) { row.innerHTML = ""; row.appendChild(el("div", { class: "rp-empty" }, "Error cargando packs.")); }
+    if (row) { row.innerHTML = ""; row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Error cargando packs.")); }
   }
 }
 
@@ -6942,6 +7161,42 @@ function screenMe(root) {
     el("button", { class: "me-edit", onclick: () => render(screenEditProfile) }, T("content.me.edit_button") || "Editar"),
   ]));
 
+  // Banner "Mi cuenta y estado" — solo se muestra si hay algo activo
+  // (KYC pendiente, apelaciones abiertas, infracciones sin resolver).
+  const statusBanner = el("div", { id: "meStatusBanner" });
+  root.appendChild(statusBanner);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/account-status", {
+        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const flags = [];
+      if (d.kyc_status && d.kyc_status !== "verified" && d.kyc_status !== "none")
+        flags.push({ tone: "warn", icon: "🛡️", text: "Verificación de edad " + d.kyc_status });
+      if ((d.appeals_open || 0) > 0)
+        flags.push({ tone: "info", icon: "📮", text: `${d.appeals_open} apelación(es) pendiente(s)` });
+      if ((d.infractions_open || 0) > 0)
+        flags.push({ tone: "no", icon: "⚠️", text: `${d.infractions_open} infracción(es) sin resolver` });
+      if (!flags.length) return;
+      statusBanner.innerHTML = "";
+      const box = el("div", {
+        class: "me-status-banner",
+        style: "margin:10px 12px;padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;display:flex;align-items:center;gap:10px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.08);",
+        onclick: () => render(screenAccountStatus),
+      }, [
+        el("div", { style: "font-size:22px;" }, flags[0].icon),
+        el("div", { style: "flex:1;" }, [
+          el("strong", { style: "display:block;font-size:14px;" }, "Tu cuenta necesita atención"),
+          el("small", { style: "display:block;font-size:12px;opacity:.85;" }, flags.map(f => f.text).join(" · ")),
+        ]),
+        el("span", { style: "font-size:18px;opacity:.7;" }, "›"),
+      ]);
+      statusBanner.appendChild(box);
+    } catch {}
+  })();
+
   const list = el("div", { class: "settings-list" });
   const zoneSub = state.zone === "lgtb"
     ? (T("content.zone.lgtb.title") || "Zona LGTB+")
@@ -6955,6 +7210,7 @@ function screenMe(root) {
       { icon: "👤", title: T("content.me.item_edit_profile") || "Editar perfil", onClick: () => render(screenEditProfile) },
       { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
       { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
+      { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
       { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: T("content.me.item_subs_sub") || "Premium · renueva 12 dic", onClick: () => render(screenSubscriptions) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
@@ -6962,12 +7218,13 @@ function screenMe(root) {
     { title: T("content.me.group_prefs") || "Preferencias", items: [
       { icon: "🎛️", title: T("content.me.item_filters") || "Filtros de descubrimiento", onClick: openFilters },
       { icon: "🌈", title: T("content.me.item_zone") || "Cambiar zona", sub: zoneSub, onClick: openZoneSwitch },
-      { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", onClick: () => openNotifSheet() },
+      { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", sub: "Push, email y qué tipos recibes", onClick: () => render(screenNotificationSettings) },
       { icon: "🌙", title: T("content.me.item_theme") || "Tema", sub: themeSub, onClick: () => { $("#themeToggle").click(); render(screenMe); } },
       { icon: "🌍", title: T("content.me.item_lang") || "Idioma", sub: ({ es: "Español", en: "English", fr: "Français", de: "Deutsch", it: "Italiano", pt: "Português" }[currentLang] || "Español"), onClick: () => openLanguageSheet() },
     ]},
     { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
       { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: T("content.me.item_invisible_sub") || "Solo Premium", onClick: () => render(screenInvisibleMode) },
+      { icon: "🛡", title: "Dispositivo perdido o robado", sub: "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
       { icon: "🔒", title: T("content.me.item_security") || "Contraseña y 2FA", onClick: () => render(screenSecurity) },
       { icon: "🚫", title: T("content.me.item_blocked") || "Usuarios bloqueados", onClick: () => render(screenBlockedUsers) },
       { icon: "📱", title: T("content.me.item_devices") || "Dispositivos activos", onClick: () => openDevicesSheet() },
@@ -7021,6 +7278,146 @@ function screenMe(root) {
 function meSubHeader(root, title) {
   root.classList.add("screen-me-sub");
   root.appendChild(topbar(title, () => routeTab("me")));
+}
+
+/* — Mi cuenta y estado —
+   Muestra al usuario el estado actual de:
+     · Verificación de edad (KYC)
+     · Apelaciones enviadas + estado
+     · Infracciones registradas en la cuenta
+   Todo se pinta desde el endpoint /api/my/account-status. */
+function screenAccountStatus(root) {
+  meSubHeader(root, "Mi cuenta y estado");
+  const wrap = el("div", { class: "info-wrap", style: "padding:14px;" });
+  wrap.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 14px;" },
+    "Aquí puedes ver el estado de tu verificación, apelaciones enviadas y cualquier infracción registrada en tu cuenta."));
+
+  const boxKyc      = el("div", { class: "acc-status-box" });
+  const boxAppeals  = el("div", { class: "acc-status-box" });
+  const boxInfract  = el("div", { class: "acc-status-box" });
+  wrap.appendChild(boxKyc);
+  wrap.appendChild(boxAppeals);
+  wrap.appendChild(boxInfract);
+  root.appendChild(wrap);
+
+  // CSS inline (idempotente).
+  if (!document.getElementById("accStatusStyle")) {
+    const st = document.createElement("style");
+    st.id = "accStatusStyle";
+    st.textContent = `
+      .acc-status-box{background:var(--card,#fff);border-radius:14px;
+        padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);}
+      .acc-status-title{display:flex;align-items:center;gap:8px;
+        font-size:15px;font-weight:600;margin:0 0 8px;}
+      .acc-status-item{padding:8px 0;border-top:1px solid rgba(0,0,0,.06);
+        font-size:13.5px;display:flex;justify-content:space-between;align-items:center;gap:8px;}
+      .acc-status-item:first-child{border-top:none;}
+      .acc-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
+      .acc-badge.ok{background:#dcfce7;color:#166534;}
+      .acc-badge.warn{background:#fef3c7;color:#92400e;}
+      .acc-badge.no{background:#fee2e2;color:#991b1b;}
+      .acc-badge.info{background:#dbeafe;color:#1e40af;}
+      .acc-badge.muted{background:#f3f4f6;color:#4b5563;}
+    `;
+    document.head.appendChild(st);
+  }
+
+  function badge(tone, text) {
+    return `<span class="acc-badge ${tone}">${text}</span>`;
+  }
+
+  (async () => {
+    boxKyc.innerHTML     = "<div class='muted' style='padding:8px;'>Cargando…</div>";
+    boxAppeals.innerHTML = "";
+    boxInfract.innerHTML = "";
+    try {
+      const r = await fetch("/api/my/account-status", {
+        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+      });
+      const d = await r.json();
+
+      // KYC
+      const kycMap = {
+        verified:      { t: "ok",   l: "Verificado" },
+        manual_review: { t: "warn", l: "En revisión manual" },
+        pending:       { t: "muted",l: "Pendiente" },
+        rejected:      { t: "no",   l: "Rechazado" },
+        suspended:     { t: "no",   l: "Suspendido" },
+        none:          { t: "muted",l: "No iniciado" },
+      };
+      const kb = kycMap[d.kyc_status] || kycMap.none;
+      boxKyc.innerHTML = `
+        <div class="acc-status-title">🛡️ Verificación de edad</div>
+        <div class="acc-status-item">
+          <span>Estado actual</span>${badge(kb.t, kb.l)}
+        </div>
+        ${d.kyc_reason ? `<div class="acc-status-item"><span>Motivo</span><span style="text-align:right;font-size:12.5px;">${d.kyc_reason}</span></div>` : ""}
+        ${d.kyc_updated_at ? `<div class="acc-status-item"><span>Última actualización</span><span style="font-size:12.5px;">${new Date(d.kyc_updated_at).toLocaleString()}</span></div>` : ""}
+      `;
+
+      // Apelaciones
+      const appeals = d.appeals || [];
+      boxAppeals.innerHTML = `<div class="acc-status-title">📮 Mis apelaciones</div>`;
+      if (!appeals.length) {
+        boxAppeals.appendChild(el("div", { class: "acc-status-item" }, [
+          el("span", { class: "muted" }, "No has enviado apelaciones."),
+        ]));
+      } else {
+        appeals.forEach(a => {
+          const stMap = {
+            open:      { t: "warn", l: "En revisión" },
+            reviewed:  { t: "info", l: "Revisada" },
+            accepted:  { t: "ok",   l: "Aceptada" },
+            rejected:  { t: "no",   l: "Rechazada" },
+          };
+          const sb = stMap[a.status] || { t: "muted", l: a.status };
+          const row = document.createElement("div");
+          row.className = "acc-status-item";
+          row.innerHTML = `
+            <div>
+              <div style="font-weight:600;">${a.subject || "Apelación #" + a.id}</div>
+              <small style="color:#666;">${a.created_at ? new Date(a.created_at).toLocaleString() : ""}</small>
+            </div>
+            ${badge(sb.t, sb.l)}`;
+          boxAppeals.appendChild(row);
+        });
+      }
+
+      // Infracciones
+      const infr = d.infractions || [];
+      boxInfract.innerHTML = `<div class="acc-status-title">⚠️ Infracciones y avisos</div>`;
+      if (!infr.length) {
+        boxInfract.appendChild(el("div", { class: "acc-status-item" }, [
+          el("span", { class: "muted" }, "Tu cuenta no tiene infracciones. ¡Bien hecho!"),
+        ]));
+      } else {
+        infr.forEach(i => {
+          const sev = i.severity === "high" ? "no" : (i.severity === "medium" ? "warn" : "muted");
+          const row = document.createElement("div");
+          row.className = "acc-status-item";
+          row.innerHTML = `
+            <div>
+              <div style="font-weight:600;">${i.title || i.type || "Infracción"}</div>
+              <small style="color:#666;">${i.detail || ""}</small>
+              <small style="color:#999;display:block;">${i.created_at ? new Date(i.created_at).toLocaleString() : ""}</small>
+            </div>
+            ${badge(sev, i.status === "resolved" ? "Resuelta" : (i.severity || "aviso"))}`;
+          boxInfract.appendChild(row);
+        });
+      }
+
+      // Acción rápida
+      if (d.kyc_status === "rejected" || d.kyc_status === "suspended" || infr.length) {
+        wrap.appendChild(el("button", {
+          class: "btn primary block",
+          style: "margin-top:8px;width:100%;",
+          onclick: () => render(screenSupportTicket),
+        }, "Abrir un ticket de soporte"));
+      }
+    } catch (e) {
+      boxKyc.innerHTML = "<div class='muted' style='padding:8px;'>No se pudo cargar el estado.</div>";
+    }
+  })();
 }
 
 /* — Editar perfil — */
@@ -9233,5 +9630,634 @@ function openAdminLogin() {
   ]);
   document.body.appendChild(modal);
 }
+
+/* ================================================================
+   V450+ · Pantalla de preferencias de notificación
+   ================================================================ */
+function screenNotificationSettings(root) {
+  root.appendChild(topbar("Notificaciones", () => render(screenMe)));
+
+  const wrap = el("div", { class: "container", style: "padding:16px;max-width:640px;margin:0 auto" });
+  root.appendChild(wrap);
+
+  wrap.appendChild(el("p", { class: "muted" }, "Elige qué avisos quieres recibir y en qué dispositivos."));
+
+  const loading = el("p", { class: "muted" }, "Cargando…");
+  wrap.appendChild(loading);
+
+  const TYPES = [
+    ["matches","💘 Nuevos matches"],
+    ["likes","❤️ Nuevos likes"],
+    ["chats","💬 Mensajes de chat"],
+    ["visits","👀 Visitas a tu perfil"],
+    ["nearby","📍 Alguien cerca de ti"],
+    ["promos","🎁 Ofertas y promociones"],
+    ["news","📰 Novedades de la app"],
+    ["security","🔒 Seguridad de la cuenta"],
+  ];
+
+  (async () => {
+    try {
+      const prefs = await fetch("/api/my/notification-prefs", { headers: authHeaders() }).then(r => r.json());
+      const cur = prefs.prefs || {};
+      loading.remove();
+
+      const chanBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      chanBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "¿Dónde quieres recibir avisos?"));
+      const channels = [
+        ["push","🔔 Solo push"],
+        ["email","✉️ Solo email"],
+        ["both","🔔 + ✉️ Ambos"],
+        ["none","🔕 Ninguno"],
+      ];
+      const chanSel = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px" });
+      channels.forEach(([v,l]) => {
+        const b = el("button", { type: "button", class: "btn " + ((cur.channel || "both") === v ? "btn-brand" : "btn-ghost") }, l);
+        b.addEventListener("click", async () => {
+          try {
+            await fetch("/api/my/notification-prefs", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ channel: v }),
+            });
+            render(screenNotificationSettings);
+          } catch(e){ toast("Error"); }
+        });
+        chanSel.appendChild(b);
+      });
+      chanBox.appendChild(chanSel);
+      wrap.appendChild(chanBox);
+
+      const pushBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      pushBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "Push en este dispositivo"));
+      const pushInfo = el("p", { class: "muted", style: "margin:0 0 8px;font-size:13px" }, "");
+      pushBox.appendChild(pushInfo);
+      const pushBtn = el("button", { class: "btn btn-brand", type: "button" }, "Cargando…");
+      pushBox.appendChild(pushBtn);
+
+      async function refreshPushState() {
+        if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+          pushInfo.textContent = "Tu navegador no soporta notificaciones push.";
+          pushBtn.style.display = "none";
+          return;
+        }
+        const perm = Notification.permission;
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+        if (perm === "denied") {
+          pushInfo.textContent = "Notificaciones bloqueadas en el navegador. Actívalas en ajustes del sistema.";
+          pushBtn.style.display = "none";
+          return;
+        }
+        if (sub) {
+          pushInfo.textContent = "Push activadas en este dispositivo.";
+          pushBtn.textContent = "🔕 Desactivar push aquí";
+          pushBtn.onclick = async () => {
+            try {
+              await sub.unsubscribe();
+              await fetch("/api/my/push-unsubscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+              });
+              toast("Push desactivadas");
+              refreshPushState();
+            } catch(e){ toast("Error: " + e.message); }
+          };
+        } else {
+          pushInfo.textContent = "Recibe avisos incluso cuando la app esté cerrada.";
+          pushBtn.textContent = "🔔 Activar push en este dispositivo";
+          pushBtn.onclick = async () => {
+            try {
+              const p = await Notification.requestPermission();
+              if (p !== "granted") { toast("Permiso denegado"); return; }
+              const reg2 = await navigator.serviceWorker.ready;
+              const vapid = window.__vapidPublicKey || null;
+              const subOpts = { userVisibleOnly: true };
+              if (vapid) subOpts.applicationServerKey = urlBase64ToUint8Array(vapid);
+              const newSub = await reg2.pushManager.subscribe(subOpts);
+              const raw = newSub.toJSON();
+              await fetch("/api/my/push-subscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ endpoint: raw.endpoint, p256dh: raw.keys?.p256dh, auth: raw.keys?.auth, ua: navigator.userAgent }),
+              });
+              toast("Push activadas");
+              refreshPushState();
+            } catch(e){ toast("Error: " + e.message); }
+          };
+        }
+      }
+      refreshPushState();
+      wrap.appendChild(pushBox);
+
+      const typesBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      typesBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "¿Qué avisos quieres recibir?"));
+      const types = cur.types || {};
+      TYPES.forEach(([k, label]) => {
+        const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border,#eee);cursor:pointer" });
+        row.appendChild(el("span", {}, label));
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = types[k] !== false;
+        cb.addEventListener("change", async () => {
+          try {
+            await fetch("/api/my/notification-prefs", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ type: k, enabled: cb.checked }),
+            });
+          } catch(e) { toast("Error"); }
+        });
+        row.appendChild(cb);
+        typesBox.appendChild(row);
+      });
+      wrap.appendChild(typesBox);
+
+      const quietBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      quietBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "🌙 No molestar"));
+      quietBox.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "Silencia todos los avisos entre estas horas."));
+      const from = el("input", { type: "time", value: cur.quiet_from || "" });
+      const to = el("input", { type: "time", value: cur.quiet_to || "" });
+      const rowQ = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+      rowQ.appendChild(el("span", {}, "De"));
+      rowQ.appendChild(from);
+      rowQ.appendChild(el("span", {}, "a"));
+      rowQ.appendChild(to);
+      const saveQ = el("button", { class: "btn btn-brand", type: "button" }, "Guardar");
+      saveQ.addEventListener("click", async () => {
+        try {
+          await fetch("/api/my/notification-prefs", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ quiet_from: from.value || null, quiet_to: to.value || null }),
+          });
+          toast("Guardado");
+        } catch(e) { toast("Error"); }
+      });
+      rowQ.appendChild(saveQ);
+      quietBox.appendChild(rowQ);
+      wrap.appendChild(quietBox);
+
+    } catch (e) {
+      loading.remove();
+      wrap.appendChild(el("p", { class: "err" }, "Error cargando preferencias: " + e.message));
+    }
+  })();
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+function authHeaders() {
+  const h = {};
+  try { if (state && state.user && state.user.id) h["X-User-Id"] = String(state.user.id); } catch {}
+  return h;
+}
+
+/* ================================================================
+   V450+ · Popup in-app activo
+   ================================================================ */
+async function checkActivePopup() {
+  if (!state || !state.user || !state.user.id) return;
+  try {
+    const r = await fetch("/api/my/popup-active", { headers: authHeaders() });
+    if (!r.ok) return;
+    const p = await r.json();
+    if (!p || !p.id) return;
+    renderPopup(p);
+  } catch {}
+}
+
+function renderPopup(p) {
+  if (document.getElementById("auraPopup")) return;
+  const themes = {
+    default:  { bg: "linear-gradient(160deg,#5b9bff,#c26bff)", fg: "#fff" },
+    pride:    { bg: "linear-gradient(90deg,#ff2b2b,#ff8a3b,#f7d02c,#4caf50,#2196f3,#9c27b0)", fg: "#fff" },
+    valentine:{ bg: "linear-gradient(160deg,#ff5c8a,#ff8fbf)", fg: "#fff" },
+    christmas:{ bg: "linear-gradient(160deg,#0f5132,#c00)", fg: "#fff" },
+    summer:   { bg: "linear-gradient(160deg,#ffd166,#ff6b6b)", fg: "#fff" },
+    premium:  { bg: "linear-gradient(160deg,#111,#333)", fg: "#ffd700" },
+  };
+  const th = themes[p.theme] || themes.default;
+  const overlay = el("div", { id: "auraPopup", style: "position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .2s" });
+  const card = el("div", { style: "background:var(--panel,#fff);border-radius:20px;max-width:420px;width:100%;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.4);animation:popupIn .3s cubic-bezier(.34,1.56,.64,1)" });
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) dismiss(); });
+
+  if (!document.getElementById("popupCss")) {
+    const st = document.createElement("style");
+    st.id = "popupCss";
+    st.textContent = "@keyframes fadeIn{from{opacity:0}to{opacity:1}}@keyframes popupIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}";
+    document.head.appendChild(st);
+  }
+
+  const hero = el("div", { style: `background:${th.bg};color:${th.fg};padding:32px 20px;text-align:center;position:relative` });
+  if (p.image_url) hero.style.backgroundImage = `linear-gradient(rgba(0,0,0,.2),rgba(0,0,0,.4)), url(${p.image_url})`;
+  hero.style.backgroundSize = "cover"; hero.style.backgroundPosition = "center";
+  const closeBtn = el("button", { style: "position:absolute;top:10px;right:10px;background:rgba(0,0,0,.3);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer", "aria-label": "Cerrar" }, "×");
+  closeBtn.addEventListener("click", dismiss);
+  hero.appendChild(closeBtn);
+  hero.appendChild(el("h2", { style: "margin:0 0 8px;font-size:24px;font-weight:800;line-height:1.2" }, p.title || ""));
+  if (p.body) hero.appendChild(el("p", { style: "margin:0;font-size:15px;opacity:.95;line-height:1.4" }, p.body));
+  card.appendChild(hero);
+
+  const foot = el("div", { style: "padding:16px 20px;display:flex;gap:8px;flex-direction:column" });
+  if (p.cta_text) {
+    const cta = el("button", { class: "btn btn-brand btn-block", style: "font-weight:700;padding:14px;font-size:15px;border-radius:12px" }, p.cta_text);
+    cta.addEventListener("click", () => {
+      trackEvent("click");
+      dismiss();
+      if (p.cta_url) {
+        if (p.cta_url.startsWith("http")) window.open(p.cta_url, "_blank");
+        else if (p.cta_url.startsWith("/")) location.href = p.cta_url;
+      }
+    });
+    foot.appendChild(cta);
+  }
+  const dismissBtn = el("button", { class: "btn btn-ghost btn-block", style: "font-size:13px" }, "Ahora no");
+  dismissBtn.addEventListener("click", dismiss);
+  foot.appendChild(dismissBtn);
+  card.appendChild(foot);
+  document.body.appendChild(overlay);
+
+  trackEvent("view");
+
+  function dismiss() { trackEvent("dismiss"); overlay.remove(); }
+  function trackEvent(kind) {
+    try {
+      fetch(`/api/my/popup/${p.id}/event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ event: kind }),
+      });
+    } catch {}
+  }
+}
+
+// Comprobar popups periódicamente cuando la app está visible
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") setTimeout(checkActivePopup, 800);
+});
+setTimeout(() => { try { checkActivePopup(); } catch {} }, 3500);
+
+/* ============================================================
+   V500+ · Seguridad del dispositivo — versión pro
+   ============================================================ */
+(function injectSecurityCss(){
+  if (document.getElementById("securityCss")) return;
+  const s = document.createElement("style"); s.id = "securityCss";
+  s.textContent = `
+  .screen-security{padding:16px;max-width:640px;margin:0 auto}
+  .sec-hero{background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+  .sec-hero h2{margin:0;font-size:22px}
+  .sec-hero p{margin:8px 0 0;opacity:.9;font-size:14px}
+  .sec-steps{display:flex;gap:8px;margin:16px 0;justify-content:space-between}
+  .sec-step{flex:1;text-align:center;padding:12px 6px;background:#1a1d2b;border-radius:10px;border:1px solid #2a2f45;font-size:11px;color:#9aa4bf}
+  .sec-step .n{display:inline-block;width:24px;height:24px;border-radius:50%;background:#3b82f6;color:#fff;font-weight:700;margin-bottom:6px;line-height:24px}
+  .sec-step.done .n{background:#10b981}
+  .sec-form-card{background:#12141c;border:1px solid #2a2f45;border-radius:14px;padding:16px;color:#e6e9f2;margin-top:12px}
+  .sec-form-card label{display:block;margin:12px 0 4px;font-size:12px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.3px}
+  .sec-form-card input,.sec-form-card select,.sec-form-card textarea{width:100%;padding:10px 12px;background:#0f1220;border:1px solid #2a2f45;border-radius:8px;color:#fff;font-size:14px;box-sizing:border-box}
+  .sec-form-card input:focus,.sec-form-card select:focus,.sec-form-card textarea:focus{outline:none;border-color:#3b82f6}
+  .sec-form-card small{color:#9aa4bf;font-size:11px}
+  .sec-btn-primary{background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;border:none;padding:14px;border-radius:10px;font-weight:600;font-size:15px;width:100%;cursor:pointer;margin-top:16px;box-shadow:0 6px 16px rgba(220,38,38,.4)}
+  .sec-btn-primary:hover{filter:brightness(1.1)}
+  .sec-case{background:#12141c;border:1px solid #2a2f45;border-radius:12px;padding:12px;margin-bottom:8px;color:#e6e9f2}
+  .sec-case .head{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+  .sec-case .status{padding:2px 8px;border-radius:12px;font-size:10px;background:#2a2f45}
+  .sec-case .status.active{background:#dc2626;color:#fff}
+  .sec-case .status.pending{background:#f59e0b;color:#111}
+  `;
+  document.head.appendChild(s);
+})();
+
+async function screenDeviceSecurity() {
+  const wrap = el("section", { class: "screen screen-security" });
+  wrap.appendChild(el("div", { class: "sec-hero" }, [
+    el("h2", {}, "🛡 Seguridad del dispositivo"),
+    el("p", {}, "¿Perdiste el móvil o te lo han robado? Solicita alarma sonora, mensaje remoto o bloqueo con verificación de identidad."),
+  ]));
+
+  // Steps
+  wrap.appendChild(el("div", { class: "sec-steps" }, [
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "1"), el("div", {}, "Rellenar formulario") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "2"), el("div", {}, "Adjuntar denuncia") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "3"), el("div", {}, "Selfie en vivo") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "4"), el("div", {}, "Admin verifica") ]),
+  ]));
+
+  const list = el("div", { class: "device-incidents-list" });
+  wrap.appendChild(el("h3", { style: "margin:16px 0 8px;font-size:14px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.4px" }, "Mis casos"));
+  wrap.appendChild(list);
+  async function loadMine() {
+    list.innerHTML = '<p class="muted">Cargando…</p>';
+    try {
+      const r = await fetch("/api/my/device-incidents", { headers: authHeaders() });
+      const j = await r.json();
+      list.innerHTML = "";
+      if (!j.items || !j.items.length) {
+        list.appendChild(el("p", { class: "muted" }, "No tienes casos abiertos."));
+      } else {
+        j.items.forEach(it => {
+          const statusCls = it.status === "active" ? "active" : (it.status === "pending_admin" || it.status === "pending_selfie" ? "pending" : "");
+          const c = el("div", { class: "sec-case" }, [
+            el("div", { class: "head" }, [
+              el("div", {}, [el("strong", {}, `Caso #${it.id}`), el("span", { style: "margin-left:8px;color:#9aa4bf" }, it.type)]),
+              el("span", { class: `status ${statusCls}` }, it.status),
+            ]),
+            it.reason ? el("p", { style: "margin:8px 0 0;font-size:13px;color:#c1c7d8;font-style:italic" }, `"${it.reason}"`) : null,
+            it.police_report_url ? el("a", { href: it.police_report_url, target: "_blank", style: "font-size:12px;color:#93c5fd" }, "📎 Ver denuncia") : null,
+          ].filter(Boolean));
+          list.appendChild(c);
+        });
+      }
+    } catch(e) { list.innerHTML = ""; list.appendChild(el("p", { class: "err" }, e.message || "Error")); }
+  }
+
+  // Formulario de nuevo caso
+  const form = el("form", { class: "sec-form-card" });
+  form.appendChild(el("h3", { style: "margin:0 0 8px;font-size:16px" }, "Nuevo reporte"));
+  const type = el("select", { name: "type" }, [
+    ["lost", "🔍 Perdido"], ["stolen", "🚨 Robado"], ["suspicious", "⚠️ Actividad sospechosa"], ["other", "Otro"]
+  ].map(([v, t]) => el("option", { value: v }, t)));
+  form.appendChild(el("label", {}, ["Tipo: ", type]));
+
+  const reason = el("textarea", { name: "reason", placeholder: "Cuenta qué ha pasado, cuándo y dónde…", rows: 3, style: "width:100%" });
+  form.appendChild(el("label", {}, ["Motivo: ", reason]));
+
+  const policeUrl = el("input", { name: "police_report_url", placeholder: "URL a la denuncia (obligatoria)", style: "width:100%" });
+  form.appendChild(el("label", {}, ["📎 Denuncia policial (URL): ", policeUrl]));
+  form.appendChild(el("small", { class: "muted" }, "Sube tu denuncia a Drive/Dropbox/imgur y pega aquí el enlace. Es obligatoria para activar la alarma o el bloqueo."));
+
+  const emeE = el("input", { name: "emergency_email", type: "email", placeholder: "email de emergencia (opcional)" });
+  const emeP = el("input", { name: "emergency_phone", placeholder: "teléfono de emergencia (opcional)" });
+  form.appendChild(el("label", {}, "Contacto de emergencia (email)"));
+  form.appendChild(emeE);
+  form.appendChild(el("label", {}, "Contacto de emergencia (teléfono)"));
+  form.appendChild(emeP);
+
+  const saveDefault = el("label", { style: "display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px;color:#c1c7d8;text-transform:none;letter-spacing:0" }, [
+    el("input", { type: "checkbox", id: "saveEmergencyDefault", checked: true, style: "width:auto" }),
+    "Guardar como contactos por defecto para futuros casos"
+  ]);
+  form.appendChild(saveDefault);
+
+  // Precargar contactos guardados
+  (async () => {
+    try {
+      const r = await fetch("/api/my/emergency-contacts", { headers: authHeaders() });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.emergency_email) emeE.value = j.emergency_email;
+        if (j.emergency_phone) emeP.value = j.emergency_phone;
+      }
+    } catch {}
+  })();
+
+  const lockMsg = el("textarea", { name: "lock_screen_message", rows: 2, placeholder: "Mensaje que verá quien tenga el móvil (ej: 'Devolver al 600...')", style: "width:100%" });
+  form.appendChild(el("label", {}, ["Mensaje de pantalla bloqueada: ", lockMsg]));
+
+  const submit = el("button", { class: "sec-btn-primary", type: "submit" }, "🚨 Enviar solicitud y hacer selfie");
+  form.appendChild(submit);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!policeUrl.value.trim()) { alert("La URL de la denuncia es obligatoria."); return; }
+    submit.disabled = true;
+    try {
+      const r = await fetch("/api/my/device-incidents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          type: type.value, reason: reason.value,
+          police_report_url: policeUrl.value.trim(),
+          emergency_contact_email: emeE.value.trim() || null,
+          emergency_contact_phone: emeP.value.trim() || null,
+          lock_screen_message: lockMsg.value.trim() || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      // Guardar contactos por defecto si el checkbox está marcado
+      const chk = document.getElementById("saveEmergencyDefault");
+      if (chk && chk.checked) {
+        try {
+          await fetch("/api/my/emergency-contacts", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ emergency_email: emeE.value.trim() || null, emergency_phone: emeP.value.trim() || null })
+          });
+        } catch {}
+      }
+      alert("Solicitud enviada. Ahora te pediremos un selfie en vivo para verificar tu identidad.");
+      await requestVerificationSelfie(j.incident_id);
+      loadMine();
+    } catch(err) { alert(err.message); }
+    finally { submit.disabled = false; }
+  });
+  wrap.appendChild(form);
+
+  async function requestVerificationSelfie(incidentId) {
+    // Captura simple desde la cámara web
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      const video = document.createElement("video");
+      video.srcObject = stream; video.autoplay = true;
+      const modal = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center" });
+      video.style.maxWidth = "80%"; video.style.borderRadius = "8px";
+      modal.appendChild(video);
+      const btnShot = el("button", { class: "btn btn-primary", style: "margin-top:16px" }, "📸 Capturar selfie");
+      modal.appendChild(btnShot);
+      document.body.appendChild(modal);
+      await new Promise(res => btnShot.addEventListener("click", res, { once: true }));
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      stream.getTracks().forEach(t => t.stop());
+      modal.remove();
+      // Se envía como URL data — en producción sube a S3/Cloudinary
+      await fetch(`/api/my/device-incidents/${incidentId}/selfie`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ selfie_url: dataUrl }),
+      });
+      alert("Selfie enviado. El administrador revisará tu caso.");
+    } catch(e) { alert("No se pudo abrir la cámara: " + e.message); }
+  }
+
+  loadMine();
+  return wrap;
+}
+
+/* ============================================================
+   V500 · Recepción de alarmas remotas (sound / message / lock)
+   ============================================================ */
+async function pollDeviceAlerts() {
+  try {
+    if (!state.user || !state.user.id) return;
+    const r = await fetch("/api/my/device-status", { headers: authHeaders() });
+    const j = await r.json();
+    if (j.locked) {
+      showLockScreen(j.reason || "Este dispositivo ha sido bloqueado.");
+      return;
+    }
+    // Buscar notificaciones tipo device_alert
+    const nr = await fetch("/api/my/notifications?type=device_alert&limit=5", { headers: authHeaders() });
+    if (nr.ok) {
+      const nj = await nr.json();
+      (nj.items || []).forEach(n => {
+        try {
+          const d = typeof n.data === "string" ? JSON.parse(n.data) : (n.data || {});
+          if (d.kind === "sound" && !n.__played) { playAlarm(d.duration_sec || 30, d.volume || 1.0); n.__played = true; }
+          if (d.kind === "message") showFullScreenMessage(d.message || n.body);
+        } catch {}
+      });
+    }
+    // Casos activos → enviar GPS live + preguntar confirmación
+    const mine = await fetch("/api/my/device-incidents", { headers: authHeaders() });
+    if (mine.ok) {
+      const j2 = await mine.json();
+      const openCase = (j2.items || []).find(x => ["active", "approved", "pending_admin"].includes(x.status));
+      if (openCase) {
+        // GPS live
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(async pos => {
+            try {
+              await fetch(`/api/my/device-incidents/${openCase.id}/gps-live`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) })
+              });
+            } catch {}
+          }, () => {}, { enableHighAccuracy: true, timeout: 8000 });
+        }
+        // Preguntar al usuario si es él quien está usando el móvil (una vez por sesión)
+        if (!window.__confirmAskedForCase || window.__confirmAskedForCase !== openCase.id) {
+          window.__confirmAskedForCase = openCase.id;
+          showUserConfirmationModal(openCase.id);
+        }
+      }
+    }
+  } catch {}
+}
+
+function showUserConfirmationModal(caseId) {
+  if (document.getElementById("__userConfirmModal")) return;
+  const modal = el("div", { id: "__userConfirmModal", style: "position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:99998;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center" });
+  modal.appendChild(el("div", { style: "font-size:64px" }, "🛡"));
+  modal.appendChild(el("h2", { style: "color:#fff;margin:12px 0 6px" }, "Tienes un reporte de dispositivo perdido abierto"));
+  modal.appendChild(el("p", { style: "color:#c1c7d8;max-width:400px" }, "Confirma si eres tú quien está usando este dispositivo ahora mismo. Si no confirmas, se bloqueará automáticamente."));
+  const btns = el("div", { style: "display:flex;gap:10px;margin-top:20px" });
+  const yes = el("button", { style: "padding:14px 24px;background:#10b981;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "✅ Soy yo, estoy a salvo");
+  yes.addEventListener("click", async () => {
+    try {
+      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ confirm_type: "its_me" })
+      });
+      modal.remove();
+      alert("Caso cerrado. Bienvenido de vuelta.");
+    } catch(e) { alert(e.message); }
+  });
+  const no = el("button", { style: "padding:14px 24px;background:#dc2626;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "🚨 No soy yo, bloquear");
+  no.addEventListener("click", async () => {
+    if (!confirm("Esto bloqueará la cuenta inmediatamente. ¿Confirmas?")) return;
+    try {
+      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ confirm_type: "not_me" })
+      });
+      // Se recargará → middleware 423 activará showLockScreen
+      location.reload();
+    } catch(e) { alert(e.message); }
+  });
+  btns.appendChild(yes); btns.appendChild(no);
+  modal.appendChild(btns);
+  document.body.appendChild(modal);
+}
+// Wake Lock para mantener la pantalla encendida
+let __wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) { __wakeLock = await navigator.wakeLock.request("screen"); }
+  } catch(e) { console.warn("wakeLock:", e); }
+}
+function releaseWakeLock() {
+  try { __wakeLock && __wakeLock.release(); __wakeLock = null; } catch {}
+}
+
+function playAlarm(seconds, volume) {
+  requestWakeLock();
+  // Intentar poner brillo al máximo simulando fondo blanco brillante intermitente
+  try {
+    // Vibración (Android)
+    if (navigator.vibrate) {
+      const pattern = [];
+      for (let i = 0; i < Math.min(30, seconds || 30); i++) pattern.push(400, 200);
+      navigator.vibrate(pattern);
+    }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = volume || 1.0;
+    osc.type = "square"; osc2.type = "sine";
+    osc.frequency.value = 880; osc2.frequency.value = 1200;
+    osc.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc2.start();
+    let i = 0;
+    const beep = setInterval(() => {
+      osc.frequency.value = i % 2 ? 880 : 440;
+      osc2.frequency.value = i % 2 ? 1200 : 660;
+      // Modulación de volumen (efecto sirena)
+      gain.gain.setValueAtTime(i % 2 ? (volume || 1.0) : 0.3, ctx.currentTime);
+      i++;
+    }, 250);
+    // Banner visual mientras suena
+    const banner = el("div", { id: "__alarmBanner", style: "position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#dc2626,#991b1b);color:#fff;padding:12px;text-align:center;font-weight:700;z-index:100001;font-size:14px;animation:alarmPulse 1s infinite" }, "🔊 ALARMA REMOTA ACTIVA · Aura Seguridad");
+    const style = document.createElement("style");
+    style.textContent = "@keyframes alarmPulse{0%,100%{background:linear-gradient(90deg,#dc2626,#991b1b)}50%{background:linear-gradient(90deg,#fbbf24,#dc2626)}}";
+    document.head.appendChild(style);
+    document.body.appendChild(banner);
+    setTimeout(() => {
+      clearInterval(beep);
+      try { osc.stop(); osc2.stop(); ctx.close(); } catch {}
+      banner.remove(); style.remove();
+      if (navigator.vibrate) navigator.vibrate(0);
+      releaseWakeLock();
+    }, (seconds || 30) * 1000);
+  } catch(e) { console.warn("playAlarm:", e); }
+}
+function showFullScreenMessage(msg) {
+  const modal = el("div", { style: "position:fixed;inset:0;background:linear-gradient(180deg,#1e3a8a,#0f1220);color:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;animation:fadeIn .3s" });
+  modal.appendChild(el("div", { style: "font-size:64px;margin-bottom:16px" }, "📢"));
+  modal.appendChild(el("h1", { style: "font-size:28px;margin:0 0 12px" }, "Mensaje desde Aura"));
+  modal.appendChild(el("p", { style: "font-size:18px;max-width:80%;line-height:1.5;background:rgba(255,255,255,.1);padding:16px;border-radius:12px" }, msg));
+  const btn2 = el("button", { style: "margin-top:24px;padding:14px 40px;background:#fff;color:#1e3a8a;border:none;border-radius:10px;font-weight:700;cursor:pointer;font-size:15px" }, "He leído el mensaje");
+  btn2.addEventListener("click", () => modal.remove());
+  modal.appendChild(btn2);
+  document.body.appendChild(modal);
+}
+function showLockScreen(reason) {
+  if (document.getElementById("__deviceLockOverlay")) return;
+  const overlay = el("div", { id: "__deviceLockOverlay", style: "position:fixed;inset:0;background:linear-gradient(180deg,#7f1d1d,#450a0a,#000);color:#fff;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center" });
+  overlay.appendChild(el("div", { style: "font-size:96px;margin-bottom:12px;filter:drop-shadow(0 8px 20px rgba(220,38,38,.6))" }, "🔒"));
+  overlay.appendChild(el("h1", { style: "font-size:32px;margin:0" }, "Dispositivo bloqueado"));
+  overlay.appendChild(el("div", { style: "width:60px;height:3px;background:#dc2626;margin:14px 0;border-radius:2px" }));
+  overlay.appendChild(el("p", { style: "max-width:80%;font-size:17px;line-height:1.5;background:rgba(0,0,0,.4);padding:16px 20px;border-radius:12px;border:1px solid rgba(255,255,255,.1)" }, reason));
+  const box = el("div", { style: "margin-top:32px;background:rgba(255,255,255,.05);padding:16px 20px;border-radius:12px;font-size:13px;color:#fca5a5;max-width:400px" });
+  box.appendChild(el("div", { style: "font-weight:600;margin-bottom:6px" }, "¿Es un error?"));
+  box.appendChild(el("div", {}, "Contacta con soporte@citasaura.es o al 900 000 000 desde otro dispositivo indicando el ID de tu cuenta."));
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+setInterval(pollDeviceAlerts, 15 * 1000);
+setTimeout(pollDeviceAlerts, 4000);
 
 boot();
