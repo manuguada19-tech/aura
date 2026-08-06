@@ -239,7 +239,7 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
           <div style="font-weight:700;font-size:16px;margin-bottom:4px">Verificación en dos pasos</div>
           <div style="font-size:12px;color:#aab;line-height:1.5">Introduce el código de 6 dígitos que aparece<br/>en tu app de autenticación (Google Authenticator, Authy, 1Password…)</div>
         </div>
-        <input class="input" type="text" name="totp_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700" />
+        <input class="input" type="text" name="totp_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="text-align:center;font-size:22px;letter-spacing:6px;font-weight:700;box-sizing:border-box;width:100%" />
         <div style="text-align:center;margin-top:12px;font-size:12px;color:#888">
           ¿Perdiste el acceso a tu app? <a href="#" id="useEmailLink" style="color:#ff8a3b;text-decoration:none">Recibir código por email</a>
         </div>
@@ -250,7 +250,7 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
           <div style="font-weight:700;font-size:16px;margin-bottom:4px">Acceso por correo</div>
           <div id="emailFieldDesc" style="font-size:12px;color:#aab;line-height:1.5">Enviaremos un código de 6 dígitos a tu email de administrador. Introduce ese código para entrar.</div>
         </div>
-        <input class="input" type="text" name="email_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700;display:none" id="emailCodeInput" />
+        <input class="input" type="text" name="email_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="text-align:center;font-size:22px;letter-spacing:6px;font-weight:700;display:none;box-sizing:border-box;width:100%" id="emailCodeInput" />
         <button type="button" id="sendEmailBtn" class="btn" style="width:100%;margin-top:8px">Enviar código a mi correo</button>
         <div style="text-align:center;margin-top:14px;font-size:12px;color:#888">
           ¿Sin acceso al email también? <a href="mailto:soporte@citasaura.es?subject=Ayuda%20con%20acceso%20admin" style="color:#ff8a3b;text-decoration:none">Contactar soporte</a>
@@ -259,7 +259,7 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
       <button class="btn" type="submit">Entrar</button>
       <p class="err" id="err"></p>
     </form>
-    <p class="foot"><a href="/">← Volver a la app</a></p>
+    <p class="foot"><a href="/">← Volver a la app</a> · <a href="#" id="backToLoginStep">Volver al login</a></p>
   </div>
   <script>
     // Load admin branding (logo + name) from public endpoint so the login
@@ -291,6 +291,25 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
       }
       var f = document.getElementById("loginForm");
       var err = document.getElementById("err");
+      // Back-to-login link (resets flow to email+password step)
+      document.getElementById("backToLoginStep").addEventListener("click", function(ev){
+        ev.preventDefault();
+        document.getElementById("totpField").style.display = "none";
+        document.getElementById("emailField").style.display = "none";
+        f.email.parentElement.style.display = "";
+        f.password.parentElement.style.display = "";
+        if (f.totp_code) f.totp_code.value = "";
+        if (f.email_code) f.email_code.value = "";
+        err.textContent = "";
+        var btnR = f.querySelector(".btn");
+        btnR.disabled = false; btnR.textContent = "Entrar";
+        emailStep = 0;
+        var sBtn = document.getElementById("sendEmailBtn");
+        if (sBtn) { sBtn.style.display = ""; sBtn.disabled = false; sBtn.textContent = "Enviar código a mi correo"; }
+        var eInp = document.getElementById("emailCodeInput");
+        if (eInp) eInp.style.display = "none";
+        f.email.focus();
+      });
       // Email fallback flow (send code + verify code)
       var emailStep = 0; // 0=idle, 1=sent
       document.getElementById("useEmailLink").addEventListener("click", function(ev){
