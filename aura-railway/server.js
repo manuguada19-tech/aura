@@ -233,6 +233,7 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
     <form id="loginForm" autocomplete="off">
       <label class="field"><span>Email</span><input class="input" type="email" name="email" required autofocus autocomplete="username" /></label>
       <label class="field"><span>Contraseña</span><input class="input" type="password" name="password" required autocomplete="current-password" /></label>
+      <label class="field" id="totpField" style="display:none"><span>Código 2FA (6 dígitos)</span><input class="input" type="text" name="totp_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" /></label>
       <button class="btn" type="submit">Entrar</button>
       <p class="err" id="err"></p>
     </form>
@@ -273,16 +274,31 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
         err.textContent = "";
         var email = f.email.value.trim();
         var password = f.password.value;
+        var totpCode = f.totp_code ? f.totp_code.value.trim() : "";
         var btn = f.querySelector(".btn");
         btn.disabled = true; btn.textContent = "Entrando…";
         try {
+          var body = {email: email, password: password};
+          if (totpCode) body.totp_code = totpCode;
           var r = await fetch("/api/admin/login", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({email: email, password: password})
+            body: JSON.stringify(body)
           });
           var data = await r.json();
-          if (!r.ok) { err.textContent = "Credenciales incorrectas"; btn.disabled = false; btn.textContent = "Entrar"; return; }
+          if (r.ok && data.needs_2fa) {
+            document.getElementById("totpField").style.display = "";
+            f.totp_code.focus();
+            err.textContent = "Introduce el código de tu app autenticadora";
+            btn.disabled = false; btn.textContent = "Verificar";
+            return;
+          }
+          if (!r.ok) {
+            if (data && data.error === "invalid_2fa") err.textContent = "Código 2FA incorrecto";
+            else err.textContent = "Credenciales incorrectas";
+            btn.disabled = false; btn.textContent = document.getElementById("totpField").style.display === "none" ? "Entrar" : "Verificar";
+            return;
+          }
           localStorage.setItem("adminToken", data.token);
           location.replace("/admin.html?adminToken=" + encodeURIComponent(data.token));
         } catch (ex) {
@@ -5836,7 +5852,7 @@ app.put("/api/content", wrap(async (req, res) => {
 
 // Admin auth
 app.post("/api/admin/login", wrap(async (req, res) => {
-  const { email, password } = req.body || {};
+  const { email, password, totp_code } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing" });
   // Allow the admin to override the password from the panel (stored in settings).
   const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
@@ -5846,9 +5862,173 @@ app.post("/api/admin/login", wrap(async (req, res) => {
   if (String(email).toLowerCase() !== activeEmail || String(password) !== activePass) {
     return res.status(401).json({ error: "invalid_credentials" });
   }
+  // 2FA check — mandatory when admin has TOTP enabled
+  const totpEnabled = String(getSetting("admin.totp_enabled","") || "") === "1";
+  const totpSecret  = getSetting("admin.totp_secret","") || "";
+  if (totpEnabled && totpSecret) {
+    if (!totp_code) return res.status(200).json({ needs_2fa: true });
+    let speakeasy;
+    try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+    const ok = speakeasy.totp.verify({ secret: totpSecret, encoding: "base32", token: String(totp_code).replace(/\s+/g,""), window: 1 });
+    if (!ok) return res.status(401).json({ error: "invalid_2fa" });
+  }
   const token = await issueAdminToken(activeEmail);
   await logActivity("admin", `Inicio de sesión de administrador (${activeEmail})`);
-  res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS });
+  res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS, totp_enabled: totpEnabled });
+}));
+
+/* ============ 2FA (TOTP) — Admin ============ */
+app.get("/api/admin/2fa/status", wrap(async (req, res) => {
+  const entry = await verifyAdminToken(readAdminToken(req));
+  if (!entry) return res.status(401).json({ error: "unauthorized" });
+  const enabled = String(getSetting("admin.totp_enabled","") || "") === "1";
+  res.json({ enabled });
+}));
+
+app.post("/api/admin/2fa/setup", wrap(async (req, res) => {
+  const entry = await verifyAdminToken(readAdminToken(req));
+  if (!entry) return res.status(401).json({ error: "unauthorized" });
+  let speakeasy, QRCode;
+  try { speakeasy = require("speakeasy"); QRCode = require("qrcode"); }
+  catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+  const brand = getSetting("content.brand.name", "Aura") || "Aura";
+  const s = speakeasy.generateSecret({ length: 20, name: `${brand} Admin (${entry.email})`, issuer: brand });
+  // Store as pending secret; only activated after verify
+  await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+    ["admin.totp_secret_pending", s.base32]);
+  runtimeSettingsLoadedAt = 0; await loadRuntimeSettings();
+  const qr = await QRCode.toDataURL(s.otpauth_url);
+  res.json({ ok: true, secret: s.base32, otpauth_url: s.otpauth_url, qr });
+}));
+
+app.post("/api/admin/2fa/enable", wrap(async (req, res) => {
+  const entry = await verifyAdminToken(readAdminToken(req));
+  if (!entry) return res.status(401).json({ error: "unauthorized" });
+  const { code } = req.body || {};
+  const pending = getSetting("admin.totp_secret_pending","") || "";
+  if (!pending) return res.status(400).json({ error: "no_pending_setup" });
+  let speakeasy;
+  try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+  const ok = speakeasy.totp.verify({ secret: pending, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 1 });
+  if (!ok) return res.status(400).json({ error: "invalid_code" });
+  await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+    ["admin.totp_secret", pending]);
+  await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+    ["admin.totp_enabled", "1"]);
+  await pool.execute("DELETE FROM settings WHERE k=?", ["admin.totp_secret_pending"]);
+  runtimeSettingsLoadedAt = 0; await loadRuntimeSettings();
+  await logActivity("admin", `2FA activado para admin (${entry.email})`);
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/2fa/disable", wrap(async (req, res) => {
+  const entry = await verifyAdminToken(readAdminToken(req));
+  if (!entry) return res.status(401).json({ error: "unauthorized" });
+  const { password, code } = req.body || {};
+  const overridePass = getSetting("admin.password_override","") || "";
+  const activePass = overridePass || ADMIN_PASSWORD;
+  if (String(password||"") !== activePass) return res.status(400).json({ error: "wrong_password" });
+  const secret = getSetting("admin.totp_secret","") || "";
+  if (secret && code) {
+    let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){}
+    if (speakeasy) {
+      const ok = speakeasy.totp.verify({ secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 1 });
+      if (!ok) return res.status(400).json({ error: "invalid_code" });
+    }
+  }
+  await pool.execute("DELETE FROM settings WHERE k IN ('admin.totp_enabled','admin.totp_secret','admin.totp_secret_pending')");
+  runtimeSettingsLoadedAt = 0; await loadRuntimeSettings();
+  await logActivity("admin", `2FA desactivado para admin (${entry.email})`);
+  res.json({ ok: true });
+}));
+
+/* ============ 2FA (TOTP) — Usuarios ============ */
+app.get("/api/2fa/status", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const [[row]] = await pool.query("SELECT totp_enabled, totp_last_reminder FROM users WHERE id=? LIMIT 1", [uid]);
+  res.json({ enabled: !!(row && row.totp_enabled), last_reminder: row ? row.totp_last_reminder : null });
+}));
+
+app.post("/api/2fa/setup", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  let speakeasy, QRCode;
+  try { speakeasy = require("speakeasy"); QRCode = require("qrcode"); }
+  catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+  const [[u]] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [uid]);
+  const brand = getSetting("content.brand.name", "Aura") || "Aura";
+  const s = speakeasy.generateSecret({ length: 20, name: `${brand} (${u && u.email || "user"})`, issuer: brand });
+  await pool.execute("UPDATE users SET totp_secret=? WHERE id=?", [s.base32, uid]);
+  const qr = await QRCode.toDataURL(s.otpauth_url);
+  res.json({ ok: true, secret: s.base32, otpauth_url: s.otpauth_url, qr });
+}));
+
+app.post("/api/2fa/enable", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const { code } = req.body || {};
+  const [[u]] = await pool.query("SELECT totp_secret FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u || !u.totp_secret) return res.status(400).json({ error: "no_pending_setup" });
+  let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 1 });
+  if (!ok) return res.status(400).json({ error: "invalid_code" });
+  await pool.execute("UPDATE users SET totp_enabled=1, totp_enabled_at=NOW() WHERE id=?", [uid]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/2fa/disable", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const { code } = req.body || {};
+  const [[u]] = await pool.query("SELECT totp_secret, totp_enabled FROM users WHERE id=? LIMIT 1", [uid]);
+  if (u && u.totp_enabled && u.totp_secret) {
+    let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){}
+    if (speakeasy) {
+      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 1 });
+      if (!ok) return res.status(400).json({ error: "invalid_code" });
+    }
+  }
+  await pool.execute("UPDATE users SET totp_enabled=0, totp_secret=NULL WHERE id=?", [uid]);
+  res.json({ ok: true });
+}));
+
+// Verify TOTP during user login (call after password check)
+app.post("/api/2fa/verify-login", wrap(async (req, res) => {
+  const { user_id, code } = req.body || {};
+  if (!user_id || !code) return res.status(400).json({ error: "missing" });
+  const [[u]] = await pool.query("SELECT totp_secret, totp_enabled FROM users WHERE id=? LIMIT 1", [Number(user_id)]);
+  if (!u || !u.totp_enabled || !u.totp_secret) return res.json({ ok: true, skipped: true });
+  let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 1 });
+  if (!ok) return res.status(401).json({ error: "invalid_code" });
+  res.json({ ok: true });
+}));
+
+// Snooze reminder popup (called by app when user dismisses)
+app.post("/api/2fa/snooze-reminder", wrap(async (req, res) => {
+  const uid = Number(req.headers["x-user-id"] || 0);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  await pool.execute("UPDATE users SET totp_last_reminder=NOW() WHERE id=?", [uid]);
+  res.json({ ok: true });
+}));
+
+// Admin: view/manage 2FA of any user
+app.get("/api/admin/users/:id/2fa", wrap(async (req, res) => {
+  const entry = await verifyAdminToken(readAdminToken(req));
+  if (!entry) return res.status(401).json({ error: "unauthorized" });
+  const [[u]] = await pool.query("SELECT id, email, totp_enabled, totp_enabled_at FROM users WHERE id=? LIMIT 1", [Number(req.params.id)]);
+  if (!u) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true, user: u });
+}));
+
+app.post("/api/admin/users/:id/2fa/reset", wrap(async (req, res) => {
+  const entry = await verifyAdminToken(readAdminToken(req));
+  if (!entry) return res.status(401).json({ error: "unauthorized" });
+  const uid = Number(req.params.id);
+  await pool.execute("UPDATE users SET totp_enabled=0, totp_secret=NULL WHERE id=?", [uid]);
+  await logActivity("admin", `2FA reseteado para usuario ${uid} por ${entry.email}`);
+  res.json({ ok: true });
 }));
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const tok = readAdminToken(req);
@@ -10375,6 +10555,11 @@ async function ensureDeviceIncidentsTables() {
   try { await pool.query("ALTER TABLE users ADD COLUMN emergency_phone VARCHAR(40) NULL"); } catch(e){}
   try { await pool.query("ALTER TABLE users ADD COLUMN device_locked TINYINT(1) DEFAULT 0"); } catch(e){}
   try { await pool.query("ALTER TABLE users ADD COLUMN device_locked_reason VARCHAR(400) NULL"); } catch(e){}
+  // 2FA (TOTP) columns for regular users
+  try { await pool.query("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE users ADD COLUMN totp_enabled TINYINT(1) NOT NULL DEFAULT 0"); } catch(e){}
+  try { await pool.query("ALTER TABLE users ADD COLUMN totp_enabled_at TIMESTAMP NULL"); } catch(e){}
+  try { await pool.query("ALTER TABLE users ADD COLUMN totp_last_reminder TIMESTAMP NULL"); } catch(e){}
 }
 
 function signAction(payload, adminId) {

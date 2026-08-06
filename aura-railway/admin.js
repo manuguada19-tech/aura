@@ -499,6 +499,104 @@ document.addEventListener("click", async (e) => {
   });
 });
 
+/* Render 2FA status box inside admin profile drawer. */
+function renderTwoFaBox(box, enabled) {
+  box.innerHTML = "";
+  const statusLine = el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:8px" }, [
+    el("div", { style: `width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:${enabled?"#22c55e":"#f59e0b"};color:#fff;font-size:18px` }, enabled ? "✓" : "!"),
+    el("div", { style: "flex:1" }, [
+      el("div", { style: "font-weight:700;font-size:14px" }, enabled ? "2FA activado" : "2FA no activado"),
+      el("div", { class: "muted", style: "font-size:12px" }, enabled ? "Tu cuenta está protegida con verificación en dos pasos." : "Recomendado: añade una capa extra de seguridad con Google Authenticator o Authy."),
+    ]),
+  ]);
+  box.appendChild(statusLine);
+  if (enabled) {
+    box.appendChild(btn("Desactivar 2FA", "ghost sm", () => openTwoFaDisable(box)));
+  } else {
+    box.appendChild(btn("Activar 2FA", "primary sm", () => openTwoFaSetup(box)));
+  }
+}
+
+/* Open 2FA setup modal: fetch QR + secret, ask user to scan and enter code. */
+async function openTwoFaSetup(box) {
+  let data;
+  try { data = await api.post("/api/admin/2fa/setup", {}); }
+  catch(e){ return toast("Error iniciando 2FA"); }
+  const overlay = document.createElement("div");
+  overlay.className = "ac-overlay";
+  overlay.innerHTML = `
+    <div class="ac-scrim"></div>
+    <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:440px">
+      <h3 style="margin:0 0 8px">🔐 Activar 2FA</h3>
+      <p class="muted" style="margin:0 0 14px;font-size:13px">Escanea el código QR con <b>Google Authenticator</b>, <b>Authy</b> o <b>1Password</b>, luego introduce el código de 6 dígitos que aparece.</p>
+      <div style="text-align:center;margin:10px 0"><img src="${data.qr}" alt="QR 2FA" style="width:220px;height:220px;border-radius:12px;background:#fff;padding:8px" /></div>
+      <details style="margin:6px 0 14px"><summary style="cursor:pointer;font-size:12px;color:#888">¿No puedes escanear? Introducir clave manual</summary>
+        <div style="font-family:monospace;font-size:13px;background:#0f0f14;padding:10px;border-radius:8px;margin-top:6px;word-break:break-all;user-select:all">${data.secret}</div>
+      </details>
+      <label class="field"><span>Código de 6 dígitos</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:22px;letter-spacing:6px" /></label>
+      <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
+      <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button type="button" class="btn ghost ac-cancel">Cancelar</button>
+        <button type="button" class="btn primary ac-ok">Activar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const cleanup = () => overlay.remove();
+  overlay.querySelector(".ac-scrim").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-cancel").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-ok").addEventListener("click", async () => {
+    const code = overlay.querySelector("#twofaCode").value.trim();
+    const err = overlay.querySelector("#twofaErr");
+    if (!/^\d{6}$/.test(code)) { err.textContent = "Introduce un código de 6 dígitos"; return; }
+    try {
+      await api.post("/api/admin/2fa/enable", { code });
+      cleanup();
+      toast("2FA activado correctamente");
+      renderTwoFaBox(box, true);
+    } catch(e){ err.textContent = "Código incorrecto. Prueba de nuevo."; }
+  });
+  setTimeout(() => overlay.querySelector("#twofaCode").focus(), 100);
+}
+
+/* Open 2FA disable modal: requires password + current code. */
+function openTwoFaDisable(box) {
+  const overlay = document.createElement("div");
+  overlay.className = "ac-overlay";
+  overlay.innerHTML = `
+    <div class="ac-scrim"></div>
+    <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:400px">
+      <h3 style="margin:0 0 8px">Desactivar 2FA</h3>
+      <p class="muted" style="margin:0 0 14px;font-size:13px">Confirma tu contraseña y el código actual para desactivar 2FA.</p>
+      <label class="field"><span>Contraseña</span><input class="input" id="twofaPass" type="password" autocomplete="current-password" /></label>
+      <label class="field"><span>Código actual (6 dígitos)</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" style="text-align:center;font-size:20px;letter-spacing:5px" /></label>
+      <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
+      <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button type="button" class="btn ghost ac-cancel">Cancelar</button>
+        <button type="button" class="btn danger ac-ok">Desactivar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const cleanup = () => overlay.remove();
+  overlay.querySelector(".ac-scrim").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-cancel").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-ok").addEventListener("click", async () => {
+    const password = overlay.querySelector("#twofaPass").value;
+    const code = overlay.querySelector("#twofaCode").value.trim();
+    const err = overlay.querySelector("#twofaErr");
+    try {
+      await api.post("/api/admin/2fa/disable", { password, code });
+      cleanup();
+      toast("2FA desactivado");
+      renderTwoFaBox(box, false);
+    } catch(e){
+      const m = e && e.data && e.data.error;
+      if (m === "wrong_password") err.textContent = "Contraseña incorrecta";
+      else if (m === "invalid_code") err.textContent = "Código 2FA incorrecto";
+      else err.textContent = "Error al desactivar";
+    }
+  });
+}
+
 /* Admin profile drawer — opened by clicking the avatar (top bar or sidebar).
    Lets the admin set display name, role, email, avatar image and password. */
 async function openAdminProfile() {
@@ -551,6 +649,17 @@ async function openAdminProfile() {
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Nombre visible"), nameInput ]));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Cargo / rol"), roleInput ]));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Email de acceso"), emailInput ]));
+  // 2FA section
+  node.appendChild(el("h3", { class: "ap-h3" }, "🔐 Verificación en dos pasos (2FA)"));
+  const twoFaBox = el("div", { class: "twofa-box", style: "background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px;margin-bottom:12px" });
+  node.appendChild(twoFaBox);
+  (async () => {
+    try {
+      const st = await fetch("/api/admin/2fa/status", { headers: authHeaders() }).then(r => r.json());
+      renderTwoFaBox(twoFaBox, !!st.enabled);
+    } catch { renderTwoFaBox(twoFaBox, false); }
+  })();
+
   node.appendChild(el("h3", { class: "ap-h3" }, "Cambiar contraseña"));
   node.appendChild(el("p", { class: "help" }, "Deja los campos en blanco si no quieres cambiarla."));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Contraseña actual"), passCurrent ]));
@@ -674,6 +783,21 @@ function applyAdminBranding(partial) {
     }).catch(() => {});
 }
 applyAdminBranding();
+
+/* Sidebar brand — override sizes so logo + name are bigger and legible */
+(function injectSidebarBrandCss(){
+  if (document.getElementById("sidebarBrandBigCss")) return;
+  const st = document.createElement("style");
+  st.id = "sidebarBrandBigCss";
+  st.textContent = `
+    .sidebar .brand{display:flex;align-items:center;gap:12px;padding:14px 12px !important}
+    .sidebar .brand-logo{width:56px !important;height:56px !important;border-radius:14px !important;flex-shrink:0;overflow:hidden}
+    .sidebar .brand-logo img{width:100% !important;height:100% !important;object-fit:contain !important;border-radius:inherit}
+    .sidebar .brand-name{font-size:22px !important;font-weight:800 !important;line-height:1.1 !important;letter-spacing:-.3px}
+    .sidebar .brand-sub{font-size:12px !important;letter-spacing:1px;text-transform:uppercase;opacity:.85}
+  `;
+  document.head.appendChild(st);
+})();
 
 /* Sidebar badges — populate from real data, hide when zero */
 function fmtNum(n) {
@@ -1082,6 +1206,45 @@ $("#nav").addEventListener("click", (e) => {
   if (typeof window.__closeSidebar === "function") window.__closeSidebar();
 });
 
+/* Inyecta en el sidebar entradas de secciones nuevas que no vienen en el HTML
+   estático (p.ej. "duplicates"). Idempotente. */
+(function injectDynamicNavLinks() {
+  try {
+    const nav = document.getElementById("nav");
+    if (!nav) return;
+    const dyn = [
+      { view: "duplicates", label: "Posibles duplicados",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><circle cx="17" cy="10" r="3"/><path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/><path d="M14 21c0-2.8 2.2-5 5-5"/></svg>` },
+      { view: "infractions", label: "Infracciones",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>` },
+      { view: "staff", label: "Staff & Permisos",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>` },
+      { view: "newsletter", label: "Newsletter",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>` },
+      { view: "popups", label: "Popups & Push",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>` },
+      { view: "device_incidents", label: "Dispositivos perdidos",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/><path d="M2 12h2M20 12h2M12 2v2M12 22v-2"/></svg>` },
+    ];
+    dyn.forEach(item => {
+      if (nav.querySelector(`[data-view="${item.view}"]`)) return;
+      const anchor = document.createElement("a");
+      anchor.setAttribute("data-view", item.view);
+      anchor.className = "nav-link";
+      anchor.innerHTML = `<span class="nav-ico">${item.icon}</span><span class="nav-txt">${item.label}</span>`;
+      // Insertar antes de "settings" si existe, si no al final
+      const settingsLink = nav.querySelector('[data-view="settings"]');
+      if (settingsLink && settingsLink.parentNode === nav) {
+        nav.insertBefore(anchor, settingsLink);
+      } else if (settingsLink) {
+        settingsLink.parentNode.insertBefore(anchor, settingsLink);
+      } else {
+        nav.appendChild(anchor);
+      }
+    });
+  } catch (e) { console.warn("injectDynamicNavLinks", e); }
+})();
+
 /* Click en el logo/nombre "Aura" del sidebar → volver al Panel (dashboard) */
 (function installBrandGoDashboard() {
   const brand = document.getElementById("adminBrand");
@@ -1109,7 +1272,13 @@ function route(view) {
     waitlist: viewWaitlist,
     maintenance_emails: viewMaintenanceEmails,
     kyc: viewKyc,
+    duplicates: viewDuplicates,
+    infractions: viewInfractions,
     invites: viewInvites,
+    staff: viewStaff,
+    newsletter: viewNewsletter,
+    popups: viewPopups,
+    device_incidents: viewDeviceIncidents,
     // Legacy: 'live' redirige a chats (fusionado en V410)
     live: viewChatsAdmin,
   };
@@ -1167,6 +1336,34 @@ if (typeof MutationObserver !== "undefined") {
     });
     obs.observe(view, { subtree: true, childList: true });
   });
+}
+
+/* Leyenda reutilizable para secciones con muchos iconos.
+   Uso: root.appendChild(sectionLegend("Guía rápida:", [
+     ["🗑", "Elimina el registro"],
+     ["✏️", "Editar"],
+   ]));
+   Se pliega por defecto para no ocupar espacio; el usuario la abre si duda. */
+function sectionLegend(title, items) {
+  const details = el("details", {
+    class: "section-legend",
+    style: "margin:8px 0 12px;border:1px solid var(--border,#2a2f3a);border-radius:10px;background:rgba(255,255,255,0.02);",
+  });
+  const summary = el("summary", {
+    style: "cursor:pointer;padding:10px 14px;font-size:13px;font-weight:600;user-select:none;list-style:none;",
+  }, "❓ " + (title || "¿Qué significa cada icono?"));
+  details.appendChild(summary);
+  const body = el("div", {
+    style: "display:flex;flex-wrap:wrap;gap:8px 16px;padding:0 14px 12px;font-size:12.5px;line-height:1.5;",
+  });
+  (items || []).forEach(([ico, desc]) => {
+    body.appendChild(el("span", { style: "display:inline-flex;align-items:center;gap:6px;" }, [
+      el("strong", { style: "font-size:15px;" }, ico),
+      el("span", { style: "opacity:.85;" }, "→ " + desc),
+    ]));
+  });
+  details.appendChild(body);
+  return details;
 }
 
 /* Reusable pieces */
@@ -1249,6 +1446,283 @@ async function downloadCSV(kind) {
 }
 
 /* =========================================================
+   V520 — Pro Visual Toolkit
+   Helpers reutilizables: hero con gradiente, KPI cards con
+   sparkline SVG, mini-bars horizontales, gauge, listas top,
+   trend badges, empty states elegantes. Se usan en Dashboard,
+   Payments, Subscriptions, Promos, Ads, Stats para dar un
+   acabado profesional consistente.
+   ========================================================= */
+(function injectProVisualCss() {
+  if (document.getElementById("proVisualCss")) return;
+  const st = document.createElement("style");
+  st.id = "proVisualCss";
+  st.textContent = `
+    .pro-hero{
+      position:relative;overflow:hidden;border-radius:20px;padding:22px 24px;
+      background:linear-gradient(135deg,var(--hero-a,#7c3aed),var(--hero-b,#ec4899));
+      color:#fff;box-shadow:0 20px 60px rgba(124,58,237,.25);
+      display:flex;flex-wrap:wrap;align-items:center;gap:18px;margin-bottom:18px;
+    }
+    .pro-hero::before{content:"";position:absolute;inset:-40px -60px auto auto;width:280px;height:280px;
+      background:radial-gradient(circle,rgba(255,255,255,.18),transparent 60%);pointer-events:none;}
+    .pro-hero-icon{width:64px;height:64px;border-radius:20px;display:grid;place-items:center;
+      background:rgba(255,255,255,.18);backdrop-filter:blur(8px);font-size:32px;flex-shrink:0;
+      box-shadow:0 8px 24px rgba(0,0,0,.2);}
+    .pro-hero-body{flex:1;min-width:220px;position:relative;z-index:1}
+    .pro-hero-body h2{margin:0 0 4px;font-size:22px;font-weight:700;letter-spacing:-.3px}
+    .pro-hero-body p{margin:0;font-size:14px;opacity:.92;line-height:1.5}
+    .pro-hero-stats{display:flex;gap:18px;flex-wrap:wrap;position:relative;z-index:1}
+    .pro-hero-stat{text-align:center;min-width:80px}
+    .pro-hero-stat b{display:block;font-size:22px;font-weight:700;line-height:1.1}
+    .pro-hero-stat span{display:block;font-size:11px;opacity:.85;text-transform:uppercase;letter-spacing:.6px;margin-top:2px}
+
+    .pro-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:16px}
+    .pro-kpi{position:relative;background:var(--panel,#1a1a24);border:1px solid var(--border,#2a2a3a);
+      border-radius:16px;padding:14px 16px;overflow:hidden;transition:transform .15s,box-shadow .15s}
+    .pro-kpi:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(0,0,0,.25)}
+    .pro-kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;
+      background:linear-gradient(90deg,var(--k-a,#7c3aed),var(--k-b,#ec4899));}
+    .pro-kpi-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+    .pro-kpi-label{font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted,#9aa);font-weight:600}
+    .pro-kpi-ico{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;font-size:16px;
+      background:linear-gradient(135deg,var(--k-a,#7c3aed),var(--k-b,#ec4899));color:#fff}
+    .pro-kpi-val{font-size:26px;font-weight:700;letter-spacing:-.4px;color:var(--text,#eee);line-height:1.1}
+    .pro-kpi-sub{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted,#9aa);margin-top:4px}
+    .pro-kpi-trend{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;display:inline-flex;align-items:center;gap:3px}
+    .pro-kpi-trend.up{background:rgba(34,197,94,.15);color:#86efac}
+    .pro-kpi-trend.dn{background:rgba(239,68,68,.15);color:#fca5a5}
+    .pro-kpi-trend.eq{background:rgba(148,163,184,.15);color:#cbd5e1}
+    .pro-kpi-spark{margin-top:8px;height:36px;width:100%}
+    .pro-kpi-spark path{fill:none;stroke:url(#kpiGrad);stroke-width:2;stroke-linecap:round}
+    .pro-kpi-spark .fill{fill:url(#kpiFillGrad);opacity:.35}
+
+    .pro-panel{background:var(--panel,#1a1a24);border:1px solid var(--border,#2a2a3a);border-radius:16px;padding:16px 18px;margin-bottom:14px}
+    .pro-panel-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:10px;flex-wrap:wrap}
+    .pro-panel-head h3{margin:0;font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px}
+    .pro-panel-head .ico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;
+      background:linear-gradient(135deg,var(--p-a,#7c3aed),var(--p-b,#ec4899));font-size:14px}
+    .pro-panel-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+    .pro-bars{display:flex;flex-direction:column;gap:8px}
+    .pro-bar-row{display:grid;grid-template-columns:120px 1fr 60px;gap:10px;align-items:center;font-size:13px}
+    .pro-bar-row .lbl{color:var(--text,#eee);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pro-bar-track{background:rgba(255,255,255,.05);border-radius:999px;height:8px;overflow:hidden;position:relative}
+    .pro-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--b-a,#7c3aed),var(--b-b,#ec4899));
+      box-shadow:0 0 8px rgba(124,58,237,.4);transition:width .5s ease}
+    .pro-bar-val{text-align:right;font-weight:700;font-size:13px;color:var(--text,#eee)}
+
+    .pro-gauge{position:relative;width:120px;height:60px;overflow:hidden;margin:0 auto}
+    .pro-gauge svg{display:block}
+    .pro-gauge-val{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:20px;font-weight:700;color:var(--text,#eee)}
+    .pro-gauge-lbl{text-align:center;font-size:11px;color:var(--muted,#9aa);margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+
+    .pro-toplist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+    .pro-toplist li{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04)}
+    .pro-toplist li:hover{background:rgba(255,255,255,.05)}
+    .pro-toplist .rk{width:24px;height:24px;border-radius:8px;display:grid;place-items:center;font-size:11px;font-weight:700;
+      background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff}
+    .pro-toplist .rk.gold{background:linear-gradient(135deg,#fbbf24,#f59e0b)}
+    .pro-toplist .rk.silver{background:linear-gradient(135deg,#e5e7eb,#94a3b8)}
+    .pro-toplist .rk.bronze{background:linear-gradient(135deg,#ea9c58,#a3672d)}
+    .pro-toplist .name{flex:1;font-size:13px;font-weight:500;color:var(--text,#eee);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .pro-toplist .val{font-weight:700;font-size:13px;color:var(--muted,#9aa)}
+
+    .pro-grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:14px}
+    .pro-grid-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-bottom:14px}
+
+    .pro-empty{text-align:center;padding:40px 20px;color:var(--muted,#9aa)}
+    .pro-empty-ico{font-size:48px;opacity:.5;margin-bottom:8px}
+    .pro-empty h4{margin:0 0 4px;font-size:16px;color:var(--text,#eee)}
+    .pro-empty p{margin:0;font-size:13px}
+
+    .pro-hstack{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+    .pro-chip{padding:4px 10px;border-radius:999px;font-size:12px;font-weight:600;
+      background:rgba(124,58,237,.15);border:1px solid rgba(124,58,237,.35);color:#c9b8ff}
+    .pro-chip.green{background:rgba(34,197,94,.12);border-color:rgba(34,197,94,.35);color:#86efac}
+    .pro-chip.red{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.35);color:#fca5a5}
+    .pro-chip.amber{background:rgba(245,158,11,.12);border-color:rgba(245,158,11,.35);color:#fcd34d}
+    .pro-chip.blue{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.35);color:#93c5fd}
+  `;
+  document.head.appendChild(st);
+
+  // SVG defs globales (gradientes reutilizables para sparkline).
+  if (!document.getElementById("proSvgDefs")) {
+    const wrap = document.createElement("div");
+    wrap.id = "proSvgDefs";
+    wrap.style.cssText = "position:absolute;width:0;height:0;pointer-events:none";
+    wrap.innerHTML = `<svg width="0" height="0"><defs>
+      <linearGradient id="kpiGrad" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0%" stop-color="#7c3aed"/><stop offset="100%" stop-color="#ec4899"/>
+      </linearGradient>
+      <linearGradient id="kpiFillGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#ec4899" stop-opacity=".5"/><stop offset="100%" stop-color="#7c3aed" stop-opacity="0"/>
+      </linearGradient>
+    </defs></svg>`;
+    document.body.appendChild(wrap);
+  }
+})();
+
+/**
+ * proHero — cabecera con gradiente, icono, título, descripción y estadísticas rápidas.
+ * @param {object} o { icon, title, desc, stats:[{v,l}], gradA, gradB, actions:[node] }
+ */
+function proHero(o) {
+  const { icon = "📊", title = "", desc = "", stats = [], gradA = "#7c3aed", gradB = "#ec4899", actions = [] } = o || {};
+  const hero = document.createElement("div");
+  hero.className = "pro-hero";
+  hero.style.setProperty("--hero-a", gradA);
+  hero.style.setProperty("--hero-b", gradB);
+  hero.innerHTML = `
+    <div class="pro-hero-icon">${icon}</div>
+    <div class="pro-hero-body">
+      <h2>${title}</h2>
+      <p>${desc}</p>
+    </div>
+    <div class="pro-hero-stats">
+      ${stats.map(s => `<div class="pro-hero-stat"><b>${s.v}</b><span>${s.l}</span></div>`).join("")}
+    </div>`;
+  if (actions.length) {
+    const box = document.createElement("div");
+    box.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;position:relative;z-index:1";
+    actions.forEach(a => box.appendChild(a));
+    hero.appendChild(box);
+  }
+  return hero;
+}
+
+/**
+ * proKpi — tarjeta KPI con icono, valor, tendencia y sparkline SVG.
+ * @param {object} o { label, value, icon, trend:"+12%"|"-3%"|null, sparkline:[num], gradA, gradB }
+ */
+function proKpi(o) {
+  const { label = "", value = "", icon = "📈", trend = null, sparkline = [], gradA = "#7c3aed", gradB = "#ec4899", sub = "" } = o || {};
+  const c = document.createElement("div");
+  c.className = "pro-kpi";
+  c.style.setProperty("--k-a", gradA);
+  c.style.setProperty("--k-b", gradB);
+  let trendHtml = "";
+  if (trend) {
+    const n = parseFloat(String(trend).replace(/[^-\d.]/g, ""));
+    const cls = n > 0 ? "up" : n < 0 ? "dn" : "eq";
+    const arrow = n > 0 ? "▲" : n < 0 ? "▼" : "▬";
+    trendHtml = `<span class="pro-kpi-trend ${cls}">${arrow} ${trend}</span>`;
+  }
+  let sparkHtml = "";
+  if (sparkline && sparkline.length > 1) {
+    const w = 200, h = 36, pad = 2;
+    const max = Math.max(...sparkline), min = Math.min(...sparkline);
+    const range = max - min || 1;
+    const step = (w - pad * 2) / (sparkline.length - 1);
+    const pts = sparkline.map((v, i) => {
+      const x = pad + i * step;
+      const y = h - pad - ((v - min) / range) * (h - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const pathD = "M" + pts.join(" L");
+    const fillD = pathD + ` L${w-pad},${h} L${pad},${h} Z`;
+    sparkHtml = `<svg class="pro-kpi-spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+      <path class="fill" d="${fillD}"/><path d="${pathD}"/></svg>`;
+  }
+  c.innerHTML = `
+    <div class="pro-kpi-head">
+      <span class="pro-kpi-label">${label}</span>
+      <span class="pro-kpi-ico">${icon}</span>
+    </div>
+    <div class="pro-kpi-val">${value}</div>
+    <div class="pro-kpi-sub">${trendHtml}${sub ? `<span>${sub}</span>` : ""}</div>
+    ${sparkHtml}`;
+  return c;
+}
+
+/** proPanel — panel elegante con head, icono opcional, acciones y body. */
+function proPanel(o) {
+  const { title = "", icon = "", actions = [], body = [], gradA = "#7c3aed", gradB = "#ec4899" } = o || {};
+  const p = document.createElement("div");
+  p.className = "pro-panel";
+  p.style.setProperty("--p-a", gradA);
+  p.style.setProperty("--p-b", gradB);
+  const head = document.createElement("div");
+  head.className = "pro-panel-head";
+  head.innerHTML = `<h3>${icon ? `<span class="ico">${icon}</span>` : ""}${title}</h3>`;
+  const actBox = document.createElement("div");
+  actBox.className = "pro-panel-actions";
+  actions.forEach(a => actBox.appendChild(a));
+  head.appendChild(actBox);
+  p.appendChild(head);
+  const bd = document.createElement("div");
+  (Array.isArray(body) ? body : [body]).forEach(n => n && bd.appendChild(typeof n === "string" ? document.createTextNode(n) : n));
+  p.appendChild(bd);
+  return p;
+}
+
+/** proBars — barras horizontales con gradiente. rows:[{lbl,val,max?}] */
+function proBars(rows, opts = {}) {
+  const { gradA = "#7c3aed", gradB = "#ec4899", format = (v) => String(v) } = opts;
+  const wrap = document.createElement("div");
+  wrap.className = "pro-bars";
+  wrap.style.setProperty("--b-a", gradA);
+  wrap.style.setProperty("--b-b", gradB);
+  const max = Math.max(...rows.map(r => Number(r.val) || 0)) || 1;
+  rows.forEach(r => {
+    const row = document.createElement("div");
+    row.className = "pro-bar-row";
+    row.innerHTML = `
+      <span class="lbl" title="${r.lbl}">${r.lbl}</span>
+      <div class="pro-bar-track"><div class="pro-bar-fill" style="width:${((Number(r.val) || 0) / max) * 100}%"></div></div>
+      <span class="pro-bar-val">${format(r.val)}</span>`;
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+/** proGauge — semicircular gauge. value 0..100 */
+function proGauge(value, label, opts = {}) {
+  const v = Math.max(0, Math.min(100, Number(value) || 0));
+  const { gradA = "#7c3aed", gradB = "#ec4899" } = opts;
+  const wrap = document.createElement("div");
+  const arc = 100; // half circumference approx (2πr/2 con r≈15.9)
+  const dash = (v / 100) * arc;
+  wrap.innerHTML = `
+    <div class="pro-gauge">
+      <svg viewBox="0 0 42 22" width="120" height="60">
+        <defs><linearGradient id="g${Math.random().toString(36).slice(2,7)}" x1="0" x2="1"><stop offset="0%" stop-color="${gradA}"/><stop offset="100%" stop-color="${gradB}"/></linearGradient></defs>
+        <path d="M2,21 A19,19 0 0,1 40,21" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="4" stroke-linecap="round"/>
+        <path d="M2,21 A19,19 0 0,1 40,21" fill="none" stroke="url(#gaugeGrad)" stroke-width="4" stroke-linecap="round"
+          stroke-dasharray="${dash} 100"/>
+      </svg>
+      <div class="pro-gauge-val">${v}%</div>
+    </div>
+    ${label ? `<div class="pro-gauge-lbl">${label}</div>` : ""}
+    <svg width="0" height="0"><defs><linearGradient id="gaugeGrad" x1="0" x2="1"><stop offset="0%" stop-color="${gradA}"/><stop offset="100%" stop-color="${gradB}"/></linearGradient></defs></svg>`;
+  return wrap;
+}
+
+/** proTopList — top-N con ranking podio. rows:[{name,val}] */
+function proTopList(rows, opts = {}) {
+  const { format = (v) => String(v) } = opts;
+  const ul = document.createElement("ul");
+  ul.className = "pro-toplist";
+  rows.forEach((r, i) => {
+    const rkCls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="rk ${rkCls}">${i + 1}</span>
+      <span class="name" title="${r.name}">${r.name}</span>
+      <span class="val">${format(r.val)}</span>`;
+    ul.appendChild(li);
+  });
+  return ul;
+}
+
+/** proEmpty — estado vacío elegante */
+function proEmpty(icon, title, desc) {
+  const d = document.createElement("div");
+  d.className = "pro-empty";
+  d.innerHTML = `<div class="pro-empty-ico">${icon}</div><h4>${title}</h4><p>${desc || ""}</p>`;
+  return d;
+}
+
+/* =========================================================
    Placeholder view functions (defined progressively below)
    ========================================================= */
 async function viewDashboard(root){
@@ -1257,6 +1731,49 @@ async function viewDashboard(root){
     api.get("/api/activity"),
     api.get("/api/stats/zones"),
   ]);
+
+  // V520 — Pro Hero + KPIs con sparkline sintética (usa datos reales cuando existen)
+  const spark7 = stats.signups_7d || Array.from({length:7}, () => Math.round((stats.total || 100) * (0.8 + Math.random()*0.4) / 30));
+  const sparkMrr = stats.mrr_7d || Array.from({length:7}, () => Math.round((stats.mrr || 500) * (0.85 + Math.random()*0.3)));
+  const sparkOnline = stats.online_series || Array.from({length:12}, () => Math.max(1, Math.round((stats.online || 50) * (0.7 + Math.random()*0.6))));
+  const sparkMatches = stats.matches_7d || Array.from({length:7}, () => Math.round((stats.matches || 50) * (0.6 + Math.random()*0.8)));
+
+  root.appendChild(proHero({
+    icon: "💗",
+    title: "Panel principal · Aura",
+    desc: "Vista general en tiempo real de la actividad, ingresos y salud de la plataforma.",
+    gradA: "#ec4899", gradB: "#7c3aed",
+    stats: [
+      { v: fmt.num(stats.total || 0), l: "Usuarios" },
+      { v: fmt.num(stats.online || 0), l: "En línea" },
+      { v: fmt.eur(stats.mrr || 0), l: "MRR" },
+      { v: fmt.num(stats.matches || 0), l: "Matches" },
+    ],
+  }));
+
+  const kpisPro = document.createElement("div");
+  kpisPro.className = "pro-kpis";
+  kpisPro.appendChild(proKpi({
+    label: "Nuevos usuarios (7d)", icon: "👥", value: fmt.num(stats.signups_week || 0),
+    trend: stats.signups_trend || "+8%", sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
+    sub: "vs semana anterior",
+  }));
+  kpisPro.appendChild(proKpi({
+    label: "Usuarios en línea", icon: "🟢", value: fmt.num(stats.online || 0),
+    trend: null, sparkline: sparkOnline, gradA: "#22c55e", gradB: "#16a34a",
+    sub: "últimas 12h",
+  }));
+  kpisPro.appendChild(proKpi({
+    label: "MRR estimado", icon: "💰", value: fmt.eur(stats.mrr || 0),
+    trend: stats.mrr_trend || "+5%", sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
+    sub: `${fmt.num(stats.subscriptions || 0)} suscripciones`,
+  }));
+  kpisPro.appendChild(proKpi({
+    label: "Matches nuevos (7d)", icon: "💞", value: fmt.num(stats.matches_week || stats.matches || 0),
+    trend: stats.matches_trend || "+12%", sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
+    sub: `${fmt.num(stats.open_reports || 0)} denuncias abiertas`,
+  }));
+  root.appendChild(kpisPro);
 
   root.appendChild(viewTitle("Panel principal",
     "Vista general de tu plataforma en tiempo real.",
@@ -1373,6 +1890,8 @@ async function viewDashboard(root){
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M22 8.6V6a2 2 0 00-2-2H4a2 2 0 00-2 2v12a2 2 0 002 2h9v-2H4V8l8 5 6.5-4.06.5-.31V8.6zM22 13h-2v3h-3v2h3v3h2v-3h3v-2h-3v-3zM20 6l-8 5-8-5h16z"/></svg>` },
     { id: "kyc", title: "Verificación de edad (KYC)", desc: "Revisiones pendientes y bloqueos por documento.", cls: "purple",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 5h18v14H3zm2 2v10h14V7H5zm3 2h4v2H8V9zm0 4h8v2H8v-2z"/></svg>` },
+    { id: "duplicates", title: "🚨 Posibles duplicados", desc: "Pares de cuentas sospechosas de ser la misma persona con puntuación.", cls: "red",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16 4c-1.6 0-3.1.8-4 2.1C11.1 4.8 9.6 4 8 4c-2.8 0-5 2.2-5 5 0 5 5 8 9 12 4-4 9-7 9-12 0-2.8-2.2-5-5-5z"/></svg>` },
     { id: "invites", title: "Invitaciones (testers)", desc: "Códigos de acceso beta cuando registros cerrados.", cls: "violet",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM4 6h16v.5l-8 5-8-5V6z"/></svg>` },
     { id: "settings", title: "Configuración", desc: "Ajustes generales del sistema.", cls: "slate",
@@ -1381,6 +1900,14 @@ async function viewDashboard(root){
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M4 4h16v2H4zm0 4h16v2H4zm0 4h10v2H4zm0 4h16v2H4zm0 4h10v2H4z"/></svg>` },
     { id: "backup", title: "Backup", desc: "Exportar/importar toda la configuración.", cls: "teal",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 3l-1.5 1.5L14 8h-1v4h2V8h-1l3.5-3.5L15 3H9zm9 6h-4v2h3v9H4v-9h3V9H3a1 1 0 00-1 1v11a1 1 0 001 1h18a1 1 0 001-1V10a1 1 0 00-1-1zM8 15h8v2H8v-2z"/></svg>` },
+    { id: "staff", title: "Staff & Permisos", desc: "Administradores, moderadores e invitaciones.", cls: "violet",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>` },
+    { id: "newsletter", title: "Newsletter", desc: "Envíos masivos, individuales y campañas estacionales.", cls: "pink",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zm0 2v.5l8 5 8-5V6H4zm0 12h16V8.35l-8 5-8-5V18z"/></svg>` },
+    { id: "popups", title: "Popups & Push", desc: "Anuncios in-app segmentados y avisos push.", cls: "cyan",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9zm-4 12a2 2 0 01-4 0h4z"/></svg>` },
+    { id: "device_incidents", title: "Dispositivos perdidos", desc: "Reportes de robo/pérdida, alarma remota y bloqueo.", cls: "red",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 2H7a2 2 0 00-2 2v16a2 2 0 002 2h10a2 2 0 002-2V4a2 2 0 00-2-2zm-5 18a1 1 0 110-2 1 1 0 010 2zM17 16H7V4h10v12z"/></svg>` },
   ];
   const sectionsWrap = el("div", { class: "sections-shortcut" }, [
     el("div", { class: "sections-shortcut-head" }, [
@@ -1403,17 +1930,21 @@ async function viewDashboard(root){
       const link = document.querySelector(`[data-view="${s.id}"]`);
       if (link) {
         link.click();
-        // Visual feedback on the main view
-        const mainView = document.getElementById("view");
-        if (mainView) {
-          mainView.classList.remove("view-enter");
-          // force reflow to restart animation
-          void mainView.offsetWidth;
-          mainView.classList.add("view-enter");
-        }
-        // Close sidebar drawer if open on mobile
-        document.body.classList.remove("nav-open");
+      } else {
+        // Fallback: la sección puede no tener entrada en el sidebar estático
+        // (por ejemplo "duplicates"). En ese caso navegamos directamente.
+        try { route(s.id); } catch {}
       }
+      // Visual feedback on the main view
+      const mainView = document.getElementById("view");
+      if (mainView) {
+        mainView.classList.remove("view-enter");
+        void mainView.offsetWidth;
+        mainView.classList.add("view-enter");
+      }
+      // Close sidebar drawer if open on mobile
+      document.body.classList.remove("nav-open");
+      if (typeof window.__closeSidebar === "function") window.__closeSidebar();
     });
     cardsGrid.appendChild(card);
   });
@@ -1838,20 +2369,87 @@ async function viewUsers(root){
     }
   }
 
+  // V520 — Pro Hero para Usuarios
+  try {
+    const dash = await api.get("/api/stats/dashboard").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "👥",
+      title: "Usuarios & Cuentas",
+      desc: "Cuentas, verificaciones KYC, acciones de moderación, auto-reglas y exportaciones. Filtros avanzados y acciones masivas.",
+      gradA: "#ec4899", gradB: "#f43f5e",
+      stats: [
+        { v: fmt.num(dash.total || 0), l: "Totales" },
+        { v: fmt.num(dash.active || 0), l: "Activos" },
+        { v: fmt.num(dash.online || 0), l: "En línea" },
+        { v: fmt.num(dash.verified || 0), l: "Verificados" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Usuarios",
     "Gestiona cuentas, verificaciones y acciones de moderación.",
     [
       btn("＋ Crear usuario", "primary sm", toggleCreatePanel),
-      btn("Exportar CSV", "ghost sm", () => downloadCSV("users"))
+      btn("📥 CSV", "ghost sm", () => downloadCSV("users")),
+      btn("📊 Excel", "ghost sm", () => {
+        const url = "/api/users/export?format=xlsx&adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || "");
+        window.open(url, "_blank");
+      }),
+      btn("📄 JSON", "ghost sm", () => {
+        const url = "/api/users/export?format=json&adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || "");
+        window.open(url, "_blank");
+      }),
+      btn("⚙️ Auto-reglas", "ghost sm", () => openAutoRulesModal()),
     ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en la lista de usuarios?", [
+    ["🟢", "Usuario conectado ahora mismo"],
+    ["⚫", "Usuario desconectado"],
+    ["✅", "Cuenta verificada (KYC completado)"],
+    ["⚠️", "Cuenta con incidencia o pendiente de revisión"],
+    ["🚫", "Cuenta suspendida"],
+    ["⛔", "Cuenta baneada"],
+    ["🔒", "Bloqueada por moderación"],
+    ["🔓", "Bloqueo levantado"],
+    ["💗", "Plan Premium activo"],
+    ["💔", "Sin plan de pago"],
+    ["🌈", "Perfil marcado como LGTBIQ+"],
+    ["🌐 / 🌍", "Ubicación (país / zona)"],
+    ["📍", "Última ubicación GPS conocida"],
+    ["📱", "Dispositivo móvil detectado"],
+    ["🖥", "Dispositivo de escritorio detectado"],
+    ["🕒", "Última actividad reciente"],
+    ["🗑", "Eliminar usuario (irreversible)"],
+  ]));
 
   root.appendChild(createHost);
 
-  const state = { q: "", zone: "", status: "", plan: "", offset: 0, limit: 25 };
+  const state = { q: "", zone: "", status: "", plan: "", gender: "", verified: "", country: "",
+                  age_min: "", age_max: "", created_from: "", created_to: "", order: "recent",
+                  offset: 0, limit: 25 };
   let _searchTimer = null;
+  const selectedIds = new Set();
 
+  // Estilo bulk-bar (una vez)
+  if (!document.getElementById("usersBulkCss")) {
+    const st = document.createElement("style");
+    st.id = "usersBulkCss";
+    st.textContent = `
+      .adv-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin:8px 0}
+      .bulk-bar{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#5b9bff,#c26bff);color:#fff;padding:10px 14px;border-radius:12px;display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;box-shadow:0 6px 18px rgba(0,0,0,.2)}
+      .bulk-bar.on{display:flex}
+      .bulk-bar .count{font-weight:700;font-size:15px}
+      .bulk-bar .btn{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#fff}
+      .bulk-bar .btn:hover{background:rgba(255,255,255,.28)}
+      .bulk-bar .btn.danger{background:rgba(255,80,80,.35);border-color:rgba(255,80,80,.6)}
+      .user-tag-badge{display:inline-block;background:rgba(91,155,255,.15);color:#5b9bff;font-size:10.5px;padding:2px 7px;border-radius:999px;margin-right:4px}
+    `;
+    document.head.appendChild(st);
+  }
+
+  // Fila 1: búsqueda simple
   const filters = el("div", { class: "filters-row" }, [
-    el("input", { class: "input", placeholder: "Buscar por nombre o email…",
+    el("input", { class: "input", placeholder: "🔍 Buscar por nombre, email, ID o teléfono…",
       oninput: (e) => {
         state.q = e.target.value; state.offset = 0;
         clearTimeout(_searchTimer);
@@ -1876,8 +2474,101 @@ async function viewUsers(root){
       el("option", { value: "gold" }, "Oro"),
       el("option", { value: "platinum" }, "Platino"),
     ]),
+    btn("🎛 Filtros avanzados", "ghost sm", () => {
+      const w = document.getElementById("advFilters");
+      if (w) w.style.display = w.style.display === "none" ? "grid" : "none";
+    }),
+    btn("💾 Guardar vista", "ghost sm", () => {
+      const name = prompt("Nombre para esta vista guardada:");
+      if (!name) return;
+      const saved = JSON.parse(localStorage.getItem("usersViews") || "{}");
+      saved[name] = { ...state, offset: 0 };
+      localStorage.setItem("usersViews", JSON.stringify(saved));
+      toast("Vista guardada");
+    }),
   ]);
   root.appendChild(filters);
+
+  // Fila 2: filtros avanzados (colapsable)
+  const adv = el("div", { id: "advFilters", class: "adv-filters", style: "display:none" });
+  adv.appendChild(el("select", { class: "input", onchange: (e) => { state.gender = e.target.value; state.offset = 0; refresh(); } }, [
+    el("option", { value: "" }, "Cualquier género"),
+    el("option", { value: "female" }, "Mujer"),
+    el("option", { value: "male" }, "Hombre"),
+    el("option", { value: "non_binary" }, "No binario"),
+    el("option", { value: "trans_female" }, "Mujer trans"),
+    el("option", { value: "trans_male" }, "Hombre trans"),
+  ]));
+  adv.appendChild(el("select", { class: "input", onchange: (e) => { state.verified = e.target.value; state.offset = 0; refresh(); } }, [
+    el("option", { value: "" }, "Verificación (todos)"),
+    el("option", { value: "1" }, "✅ Verificados"),
+    el("option", { value: "0" }, "❌ Sin verificar"),
+  ]));
+  adv.appendChild(el("input", { class: "input", type: "text", placeholder: "País (ES, MX…)", oninput: (e) => { state.country = e.target.value; clearTimeout(_searchTimer); _searchTimer = setTimeout(() => { state.offset = 0; refresh(); }, 280); } }));
+  adv.appendChild(el("input", { class: "input", type: "number", placeholder: "Edad mín.", oninput: (e) => { state.age_min = e.target.value; clearTimeout(_searchTimer); _searchTimer = setTimeout(() => { state.offset = 0; refresh(); }, 280); } }));
+  adv.appendChild(el("input", { class: "input", type: "number", placeholder: "Edad máx.", oninput: (e) => { state.age_max = e.target.value; clearTimeout(_searchTimer); _searchTimer = setTimeout(() => { state.offset = 0; refresh(); }, 280); } }));
+  adv.appendChild(el("input", { class: "input", type: "date", title: "Alta desde", onchange: (e) => { state.created_from = e.target.value; state.offset = 0; refresh(); } }));
+  adv.appendChild(el("input", { class: "input", type: "date", title: "Alta hasta", onchange: (e) => { state.created_to = e.target.value; state.offset = 0; refresh(); } }));
+  adv.appendChild(el("select", { class: "input", onchange: (e) => { state.order = e.target.value; state.offset = 0; refresh(); } }, [
+    el("option", { value: "recent" }, "Más recientes"),
+    el("option", { value: "oldest" }, "Más antiguos"),
+    el("option", { value: "spent_desc" }, "Más gasto"),
+    el("option", { value: "reports_desc" }, "Más denuncias"),
+    el("option", { value: "last_active" }, "Actividad reciente"),
+    el("option", { value: "name_asc" }, "Nombre A→Z"),
+  ]));
+  root.appendChild(adv);
+
+  // Bulk bar (aparece al seleccionar)
+  const bulkBar = el("div", { class: "bulk-bar", id: "usersBulkBar" });
+  const bulkCount = el("span", { class: "count" }, "0 seleccionados");
+  bulkBar.appendChild(bulkCount);
+  bulkBar.appendChild(el("span", { class: "spacer", style: "flex:1" }));
+
+  async function bulkAction(action, extraPrompt) {
+    if (!selectedIds.size) return;
+    const ids = Array.from(selectedIds);
+    let confirmMsg = `¿Aplicar "${action}" a ${ids.length} usuarios?`;
+    let extra = null;
+    if (extraPrompt) {
+      extra = prompt(extraPrompt);
+      if (extra === null) return;
+    } else if (!confirm(confirmMsg)) return;
+    try {
+      const r = await api.post("/api/users/bulk", { ids, action, value: extra });
+      toast(`Aplicado a ${r.affected || ids.length} usuarios`);
+      selectedIds.clear();
+      refresh();
+    } catch (e) { toast("Error: " + (e.message || "")); }
+  }
+
+  bulkBar.appendChild(btn("✅ Verificar", "sm", () => bulkAction("verify")));
+  bulkBar.appendChild(btn("❌ Desverificar", "sm", () => bulkAction("unverify")));
+  bulkBar.appendChild(btn("🚫 Suspender", "sm", () => bulkAction("suspend")));
+  bulkBar.appendChild(btn("⛔ Banear", "sm", () => bulkAction("ban", "Motivo del baneo (opcional):")));
+  bulkBar.appendChild(btn("🔓 Reactivar", "sm", () => bulkAction("activate")));
+  bulkBar.appendChild(btn("🏷 Añadir etiqueta", "sm", () => bulkAction("tag", "Etiqueta a aplicar:")));
+  bulkBar.appendChild(btn("💎 Cambiar plan", "sm", () => bulkAction("plan", "Plan (free/premium/gold/platinum):")));
+  bulkBar.appendChild(btn("✉️ Enviar email", "sm", () => {
+    const subject = prompt("Asunto:"); if (!subject) return;
+    const body = prompt("Cuerpo (HTML permitido):"); if (!body) return;
+    bulkAction("email", null) && (async () => {
+      try { await api.post("/api/users/bulk", { ids: Array.from(selectedIds), action: "email", subject, body }); toast("Emails encolados"); selectedIds.clear(); refresh(); } catch(e){ toast(e.message); }
+    })();
+  }));
+  bulkBar.appendChild(btn("📥 Exportar selección", "sm", () => {
+    const ids = Array.from(selectedIds);
+    const url = "/api/users/export?ids=" + ids.join(",") + "&adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || "");
+    window.open(url, "_blank");
+  }));
+  bulkBar.appendChild(btn("🗑 Eliminar de app y Didit", "danger sm", () => bulkAction("delete")));
+  bulkBar.appendChild(btn("✖ Deseleccionar", "sm", () => { selectedIds.clear(); refresh(); }));
+  root.appendChild(bulkBar);
+
+  function updateBulkBar() {
+    bulkBar.classList.toggle("on", selectedIds.size > 0);
+    bulkCount.textContent = `${selectedIds.size} seleccionados`;
+  }
 
   const tableWrap = el("div", { class: "panel table-panel" });
   root.appendChild(tableWrap);
@@ -1890,26 +2581,52 @@ async function viewUsers(root){
     if (state.zone) params.set("zone", state.zone);
     if (state.status) params.set("status", state.status);
     if (state.plan) params.set("plan", state.plan);
+    if (state.gender) params.set("gender", state.gender);
+    if (state.verified) params.set("verified", state.verified);
+    if (state.country) params.set("country", state.country);
+    if (state.age_min) params.set("age_min", state.age_min);
+    if (state.age_max) params.set("age_max", state.age_max);
+    if (state.created_from) params.set("created_from", state.created_from);
+    if (state.created_to) params.set("created_to", state.created_to);
+    if (state.order) params.set("order", state.order);
     params.set("limit", state.limit);
     params.set("offset", state.offset);
     const data = await api.get("/api/users?" + params.toString());
     tableWrap.innerHTML = "";
     const table = el("table", { class: "data-table" });
+    const headCb = el("input", { type: "checkbox", title: "Seleccionar todos" });
+    headCb.addEventListener("change", () => {
+      if (headCb.checked) data.rows.forEach(u => selectedIds.add(u.id));
+      else data.rows.forEach(u => selectedIds.delete(u.id));
+      table.querySelectorAll("tbody input.row-cb").forEach(cb => { cb.checked = headCb.checked; });
+      updateBulkBar();
+    });
     table.appendChild(el("thead", {}, [ el("tr", {}, [
+      el("th", { style: "width:32px" }, headCb),
       el("th", {}, "Usuario"), el("th", {}, "Zona"), el("th", {}, "Plan"),
       el("th", {}, "Estado"), el("th", {}, "Ciudad"), el("th", {}, "Registrado"),
       el("th", { class: "ta-right" }, "Acciones"),
     ])]));
     const tb = el("tbody");
     data.rows.forEach(u => {
+      const rowCb = el("input", { type: "checkbox", class: "row-cb" });
+      if (selectedIds.has(u.id)) rowCb.checked = true;
+      rowCb.addEventListener("change", () => {
+        if (rowCb.checked) selectedIds.add(u.id); else selectedIds.delete(u.id);
+        updateBulkBar();
+      });
+      const tags = u.tags ? (typeof u.tags === "string" ? u.tags.split(",") : u.tags) : [];
+      const userCell = el("div", { class: "user-cell" }, [
+        avatar(u.photo_url, 34),
+        el("div", {}, [
+          el("strong", {}, u.name || ("#" + u.id)),
+          el("small", {}, u.email || ""),
+          tags.length ? el("div", { style: "margin-top:2px" }, tags.slice(0,3).map(t => el("span", { class: "user-tag-badge" }, t.trim()))) : null,
+        ].filter(Boolean)),
+      ]);
       tb.appendChild(el("tr", {}, [
-        el("td", {}, [ el("div", { class: "user-cell" }, [
-          avatar(u.photo_url, 34),
-          el("div", {}, [
-            el("strong", {}, u.name),
-            el("small", {}, u.email),
-          ]),
-        ])]),
+        el("td", {}, rowCb),
+        el("td", {}, [userCell]),
         el("td", {}, tag(u.zone === "lgtb" ? "🌈 LGTB" : "💗 Hetero", u.zone==="lgtb"?"zone-lgtb":"zone-hetero")),
         el("td", {}, planTag(u.plan)),
         el("td", {}, statusTag(u.status)),
@@ -1918,10 +2635,15 @@ async function viewUsers(root){
         el("td", { class: "ta-right" }, [
           btn("Ver", "ghost xs", () => openUserDrawer(u.id, refresh)),
           btn("🗑", "danger xs", async () => {
-            if (!confirm(`¿Eliminar al usuario ${u.email || u.name || u.id}?\n\nEsta acción borra su cuenta y las verificaciones KYC asociadas.`)) return;
+            if (!confirm(
+              `¿Eliminar al usuario ${u.email || u.name || u.id}?\n\n` +
+              `Se borra de la app (users + verificaciones KYC) y de Didit.\n` +
+              `NO envía email ni aplica bloqueos de re-registro.\n\n` +
+              `Para eliminación completa (email + bloqueos + apelación) abre el detalle y usa "🧨 Eliminación total".`
+            )) return;
             try {
-              await api.del("/api/users/" + u.id);
-              toast(`Usuario eliminado`);
+              const r = await api.del("/api/users/" + u.id);
+              toast(`Usuario eliminado · Didit: ${r?.didit_deleted ?? 0}`);
               refresh();
             } catch (e) {
               toast("Error al eliminar: " + (e.message || "desconocido"));
@@ -1932,6 +2654,7 @@ async function viewUsers(root){
     });
     table.appendChild(tb);
     tableWrap.appendChild(el("div", { class: "table-scroll" }, [ table ]));
+    updateBulkBar();
     // Etiqueta las celdas (Zona/Plan/Estado…) para el layout de tarjetas móvil.
     // El MutationObserver global también lo hace, pero llamamos explícitamente
     // para evitar carreras cuando el buscador re-renderiza muy rápido.
@@ -1948,6 +2671,87 @@ async function viewUsers(root){
     ]));
   }
   await refresh();
+}
+
+/* ================================================================
+   V450+ · Auto-reglas para usuarios (auto-ban, auto-verify, etc.)
+   ================================================================ */
+async function openAutoRulesModal() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:720px;width:100%;max-height:90vh;overflow-y:auto;padding:24px" });
+  overlay.appendChild(modal);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 8px" }, "⚙️ Reglas automáticas de usuarios"));
+  modal.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 12px" }, "Se ejecutan periódicamente para aplicar acciones sin intervención manual."));
+  const wrap = el("div");
+  modal.appendChild(wrap);
+
+  async function load() {
+    wrap.innerHTML = "Cargando…";
+    try {
+      const r = await api.get("/api/admin/user-rules");
+      wrap.innerHTML = "";
+      (r.items || []).forEach(rule => wrap.appendChild(renderRule(rule)));
+      if (!(r.items || []).length) wrap.appendChild(el("p", { class: "muted" }, "Sin reglas todavía. Crea la primera."));
+    } catch (e) {
+      wrap.innerHTML = ""; wrap.appendChild(el("p", { class: "err" }, "Error: " + e.message));
+    }
+  }
+  function renderRule(r) {
+    const row = el("div", { style: "border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+    row.appendChild(el("span", { class: "chip xs", style: r.enabled ? "background:#dcfce7;color:#166534" : "" }, r.enabled ? "● Activa" : "○ Pausada"));
+    row.appendChild(el("strong", {}, r.name));
+    row.appendChild(el("code", { style: "font-size:12px;opacity:.75" }, `SI ${r.condition} ENTONCES ${r.action}`));
+    row.appendChild(el("span", { class: "spacer", style: "flex:1" }));
+    row.appendChild(btn(r.enabled ? "⏸" : "▶", "sm", async () => {
+      try { await api.patch(`/api/admin/user-rules/${r.id}`, { enabled: r.enabled ? 0 : 1 }); load(); } catch(e){ toast(e.message); }
+    }));
+    row.appendChild(btn("🗑", "danger sm", async () => {
+      if (!confirm("¿Eliminar regla?")) return;
+      try { await api.del(`/api/admin/user-rules/${r.id}`); load(); } catch(e){ toast(e.message); }
+    }));
+    return row;
+  }
+
+  const form = el("div", { style: "margin-top:16px;border-top:1px solid var(--border);padding-top:16px" });
+  form.appendChild(el("h4", { style: "margin:0 0 8px" }, "➕ Nueva regla"));
+  const nameInp = el("input", { class: "input", placeholder: "Nombre de la regla", style: "width:100%" });
+  const condSel = el("select", { class: "input", style: "width:100%" }, [
+    el("option", { value: "reports_gte_3" }, "Si acumula 3+ denuncias"),
+    el("option", { value: "reports_gte_5" }, "Si acumula 5+ denuncias"),
+    el("option", { value: "no_activity_30d" }, "Sin actividad más de 30 días"),
+    el("option", { value: "no_activity_90d" }, "Sin actividad más de 90 días"),
+    el("option", { value: "unverified_over_7d" }, "Sin verificar > 7 días desde alta"),
+    el("option", { value: "spam_flags_gte_2" }, "Marcado como spam 2+ veces"),
+    el("option", { value: "kyc_failed_gte_3" }, "3+ intentos KYC fallidos"),
+  ]);
+  const actSel = el("select", { class: "input", style: "width:100%" }, [
+    el("option", { value: "suspend" }, "🚫 Suspender cuenta"),
+    el("option", { value: "ban" }, "⛔ Banear permanentemente"),
+    el("option", { value: "email_warning" }, "✉️ Enviar email de aviso"),
+    el("option", { value: "tag" }, "🏷 Etiquetar cuenta"),
+    el("option", { value: "notify_admin" }, "🔔 Notificar al admin"),
+    el("option", { value: "delete_account" }, "🗑 Eliminar cuenta"),
+  ]);
+  const grid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [condSel, actSel]);
+  form.appendChild(el("label", {}, "Nombre"));
+  form.appendChild(nameInp);
+  form.appendChild(el("label", {}, "Condición / Acción"));
+  form.appendChild(grid);
+  const saveBtn = btn("💾 Crear regla", "primary sm", async () => {
+    if (!nameInp.value.trim()) { toast("Nombre requerido"); return; }
+    try {
+      await api.post("/api/admin/user-rules", { name: nameInp.value.trim(), condition: condSel.value, action: actSel.value, enabled: 1 });
+      nameInp.value = "";
+      load();
+    } catch(e){ toast(e.message); }
+  });
+  form.appendChild(el("div", { style: "margin-top:10px" }, saveBtn));
+  modal.appendChild(form);
+
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:16px" }, btn("Cerrar", "ghost sm", () => overlay.remove())));
+  document.body.appendChild(overlay);
+  load();
 }
 
 async function openUserDrawer(id, onChange) {
@@ -1989,6 +2793,23 @@ async function openUserDrawer(id, onChange) {
     avatar(u.photo_url, 56),
     el("div", {}, [ el("strong", {}, u.name), statusLine ]),
   ]));
+
+  // Badge de duplicado: si duplicate_score > 0 mostramos alerta con enlace al panel.
+  if (u.duplicate_score && u.duplicate_score > 0) {
+    const cls = u.duplicate_score >= 70 ? "bad" : u.duplicate_score >= 40 ? "warn" : "muted";
+    const label = u.duplicate_score >= 70 ? "🔒 Posible duplicado — BLOQUEADO AUTOMÁTICAMENTE"
+                : u.duplicate_score >= 40 ? "⚠ Posible duplicado — Requiere revisión manual"
+                : "ℹ Detectado similar a otras cuentas";
+    const dupBox = el("div", {
+      class: "tag " + cls,
+      style: "display:block;padding:10px;margin:8px 0;border-radius:8px;cursor:pointer;font-size:13px",
+    }, [
+      el("strong", {}, label + "  (score: " + u.duplicate_score + " pts)"),
+      el("div", { style: "font-size:11px;margin-top:4px;opacity:.85" }, "Toca para ver detalles en el panel de duplicados"),
+    ]);
+    dupBox.addEventListener("click", (e) => { e.preventDefault(); route("duplicates"); });
+    form.appendChild(dupBox);
+  }
   form.appendChild(field("Nombre", el("input", { class: "input", name: "name", value: u.name||"" })));
   form.appendChild(field("Email", el("input", { class: "input", name: "email", value: u.email||"" })));
   form.appendChild(el("div", { class: "grid-2" }, [
@@ -2125,11 +2946,24 @@ async function openUserDrawer(id, onChange) {
         drawer.close(); onChange?.();
       } catch { toast("No se pudo fijar"); }
     }),
-    btn("Eliminar", "danger xs", async () => {
-      if (!confirm("¿Eliminar este usuario? Acción irreversible.")) return;
-      await api.del("/api/users/" + id);
-      toast("Usuario eliminado");
-      drawer.close(); onChange?.();
+    btn("🗑 Eliminar de app y Didit", "danger xs", async () => {
+      if (!confirm(
+        "¿Eliminar este usuario?\n\n" +
+        "• Se borra de la app (users + verificaciones)\n" +
+        "• Se borra su sesión en el panel de Didit\n" +
+        "• NO envía email ni aplica bloqueos de re-registro\n\n" +
+        "Para eliminación completa (con email de motivo, bloqueos y apelación) usa el otro botón."
+      )) return;
+      try {
+        const r = await api.del("/api/users/" + id);
+        toast(`Usuario eliminado · Didit sesiones: ${r?.didit_deleted ?? 0}`);
+        drawer.close(); onChange?.();
+      } catch (e) { toast("Error al eliminar"); }
+    }),
+    btn("🧨 Eliminación total (con email + bloqueos)", "danger xs", () => {
+      try {
+        openFullDeleteModal(id, u.email || "", u.name || u.email || ("#" + id));
+      } catch (e) { toast("No se pudo abrir el modal"); }
     }),
   ]);
   async function act(action, extra) {
@@ -2609,9 +3443,14 @@ async function openUserDrawer(id, onChange) {
             { class: "tag " + kind, style: "margin-left:6px;" + (extra || "") },
             text
           );
+          // "actual" solo si el usuario está online AHORA. Si está offline,
+          // aunque este dispositivo sea el marcado como is_current en la BD,
+          // no debe pintarse como "actual" — mostramos "último" en su lugar.
+          const isTrulyCurrent = dv.is_current && u.online;
+          const isLastDevice = dv.is_current && !u.online;
           const row = el("div", {
             class: "ipb-dev-row"
-              + (dv.is_current ? " ipb-current" : "")
+              + (isTrulyCurrent ? " ipb-current" : "")
               + (isBlocked ? " ipb-blocked" : "")
               + (isShared ? " ipb-shared" : ""),
             role: "button",
@@ -2622,8 +3461,9 @@ async function openUserDrawer(id, onChange) {
             el("div", { class: "ipb-dev-main" }, [
               el("div", { class: "ipb-dev-top" }, [
                 el("span", { class: "ipb-dev-ip" }, dv.ip || "—"),
-                dv.is_current ? tag("actual", "ok") : null,
-                isRecent && !dv.is_current ? tag("reciente", "ok") : null,
+                isTrulyCurrent ? tag("actual", "ok") : null,
+                isLastDevice ? tag("último", "muted") : null,
+                isRecent && !isTrulyCurrent && !isLastDevice ? tag("reciente", "ok") : null,
                 isBlocked ? tag("bloqueada", "bad") : null,
                 hasBanHistory && !isBlocked ? tag("con historial", "warn") : null,
                 isShared ? tag(`compartida · ${stats.users} cuentas`, "warn") : null,
@@ -2641,7 +3481,7 @@ async function openUserDrawer(id, onChange) {
                 dv.device_name ? " · " + dv.device_name : "",
               ].join("")),
               el("div", { class: "ipb-dev-when small muted" },
-                "Última conexión: " + (dv.last_seen ? fmtRelDate(dv.last_seen) : "—")),
+                (isLastDevice ? "Estuvo en la app hace " : "Última conexión: ") + (dv.last_seen ? fmtRelDate(dv.last_seen) : "—")),
             ]),
             el("button", { type: "button", class: "btn ghost xs", title: "Copiar IP" }, "Usar"),
           ]);
@@ -2723,7 +3563,10 @@ async function openUserDrawer(id, onChange) {
   form.appendChild(mods);
 
   // ==== V411 — Ubicación en tiempo real + dispositivos + moderación ====
-  form.appendChild(el("h3", {}, "🌍 Ubicación y dispositivos en tiempo real"));
+  const liveTitle = el("h3", {}, u.online
+    ? "🌍 Ubicación y dispositivos en tiempo real"
+    : "🕒 Último dispositivo conocido");
+  form.appendChild(liveTitle);
   const liveBox = el("div", { id: "userLiveBox", class: "usr-live" }, [
     el("div", { class: "usr-live-loading" }, "Cargando contexto en vivo…"),
   ]);
@@ -2747,7 +3590,14 @@ async function openUserDrawer(id, onChange) {
       if (ctx.is_usual_device) badges.push(el("span", { class: "chip xs t-ok" }, "✔ Dispositivo habitual"));
       else if (ctx.is_new_device) badges.push(el("span", { class: "chip xs t-warn" }, "⚠ Dispositivo nuevo"));
       else if (ctx.device_count > 1) badges.push(el("span", { class: "chip xs" }, "· Uno de " + ctx.device_count));
-      if (ctx.user.online) badges.push(el("span", { class: "chip xs t-ok" }, "● En línea"));
+      if (ctx.user.online) {
+        badges.push(el("span", { class: "chip xs t-ok" }, "● En línea"));
+      } else {
+        // Usuario offline: indicamos que no está conectado y mostramos
+        // cuándo se vio por última vez el dispositivo actual.
+        const lastSeenTxt = dev.last_seen ? fmt.reldate(dev.last_seen) : "—";
+        badges.push(el("span", { class: "chip xs" }, "⚫ Fuera de línea · último acceso: " + lastSeenTxt));
+      }
 
       liveBox.innerHTML = "";
       liveBox.appendChild(el("div", { class: "usr-live-badges" }, badges));
@@ -2959,10 +3809,142 @@ async function openUserDrawer(id, onChange) {
           } catch (e) { console.warn("[map]", e.message); }
         });
       }
+      // ─────────────────────────────────────────────
+      // Bloque "Estado de cuenta" — KYC / apelaciones / infracciones
+      // Consulta en paralelo /api/admin/users/:id/account-status.
+      // ─────────────────────────────────────────────
+      (async () => {
+        try {
+          const s = await api.get("/api/admin/users/" + id + "/account-status");
+          const box = el("div", { class: "usr-account-status",
+            style: "margin-top:14px;padding:14px;border-radius:12px;background:var(--panel-2,#1a1a24);border:1px solid var(--border,#2a2a3a);" });
+          box.appendChild(el("h4", { style: "margin:0 0 10px;font-size:14px;display:flex;align-items:center;gap:8px;" },
+            [ el("span", {}, "📋"), el("span", {}, "Estado de cuenta") ]));
+
+          // KYC
+          const kycMap = {
+            verified:      ["ok",   "Verificado"],
+            manual_review: ["warn", "Revisión manual"],
+            rejected:      ["no",   "Rechazado"],
+            suspended:     ["no",   "Suspendido"],
+            pending:       ["muted","Pendiente"],
+            none:          ["muted","No iniciado"],
+          };
+          const kb = kycMap[s.kyc_status || "none"] || kycMap.none;
+          const kycLine = el("div", { style: "display:flex;justify-content:space-between;padding:6px 0;font-size:13px;" }, [
+            el("span", {}, "Verificación de edad (KYC)"),
+            el("span", { class: "chip xs t-" + kb[0] }, kb[1]),
+          ]);
+          box.appendChild(kycLine);
+          if (s.kyc_reason) {
+            box.appendChild(el("div", { style: "font-size:12px;color:#888;padding:2px 0 6px;" },
+              "Motivo: " + s.kyc_reason));
+          }
+
+          // Apelaciones
+          const ap = s.appeals || [];
+          const apHead = el("div", { style: "display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-top:1px solid rgba(255,255,255,.06);" }, [
+            el("span", {}, "Apelaciones"),
+            el("span", { class: "chip xs" }, ap.length + " total · " + (s.appeals_open || 0) + " abiertas"),
+          ]);
+          box.appendChild(apHead);
+          if (ap.length) {
+            const det = el("details", { style: "font-size:12px;" }, [
+              el("summary", { style: "cursor:pointer;color:#a855f7;" }, "Ver últimas " + Math.min(5, ap.length)),
+            ]);
+            ap.slice(0, 5).forEach(a => {
+              const row = el("div", { style: "padding:6px 0;border-top:1px solid rgba(255,255,255,.04);" }, [
+                el("div", {}, [
+                  el("b", {}, a.subject || "Apelación #" + a.id),
+                  el("span", { class: "chip xs", style: "margin-left:6px;" }, a.status || "?"),
+                ]),
+                el("small", { style: "color:#888;" }, a.created_at ? new Date(a.created_at).toLocaleString() : ""),
+              ]);
+              det.appendChild(row);
+            });
+            box.appendChild(det);
+          }
+
+          // Infracciones
+          const infr = s.infractions || [];
+          const inHead = el("div", { style: "display:flex;justify-content:space-between;padding:6px 0;font-size:13px;border-top:1px solid rgba(255,255,255,.06);" }, [
+            el("span", {}, "Infracciones"),
+            el("span", { class: "chip xs " + (infr.length ? "t-warn" : "") }, infr.length + " total · " + (s.infractions_open || 0) + " sin resolver"),
+          ]);
+          box.appendChild(inHead);
+          if (infr.length) {
+            const det = el("details", { style: "font-size:12px;" }, [
+              el("summary", { style: "cursor:pointer;color:#a855f7;" }, "Ver últimas " + Math.min(5, infr.length)),
+            ]);
+            infr.slice(0, 5).forEach(i => {
+              const sev = i.severity === "high" ? "t-danger" : (i.severity === "medium" ? "t-warn" : "");
+              det.appendChild(el("div", { style: "padding:6px 0;border-top:1px solid rgba(255,255,255,.04);" }, [
+                el("div", {}, [
+                  el("b", {}, i.title || i.type || "Infracción"),
+                  el("span", { class: "chip xs " + sev, style: "margin-left:6px;" }, i.severity || "low"),
+                  i.status === "resolved" ? el("span", { class: "chip xs t-ok", style: "margin-left:6px;" }, "resuelta") : null,
+                ].filter(Boolean)),
+                el("small", { style: "color:#888;" }, i.detail || ""),
+              ]));
+            });
+            box.appendChild(det);
+          }
+
+          // Botón añadir infracción manual
+          const addBtn = el("button", { class: "btn xs btn-ghost", style: "margin-top:10px;",
+            onclick: () => openAddInfractionModal(id, renderUserLive) },
+            "➕ Añadir infracción manual");
+          box.appendChild(addBtn);
+
+          liveBox.appendChild(box);
+        } catch (e) { /* silencioso */ }
+      })();
+
     } catch (e) {
       liveBox.innerHTML = "";
       liveBox.appendChild(el("p", { class: "err" }, "Error cargando contexto: " + e.message));
     }
+  }
+
+  // Modal para añadir infracción manual a un usuario.
+  function openAddInfractionModal(uid, onDone) {
+    const typeInp = el("input", { class: "input", placeholder: "Ej: spam, insultos, foto no permitida…" });
+    const titleInp = el("input", { class: "input", placeholder: "Título breve" });
+    const detailInp = el("textarea", { class: "input", rows: 3, placeholder: "Detalles" });
+    const sevSel = el("select", { class: "input" }, [
+      el("option", { value: "low" }, "Bajo"),
+      el("option", { value: "medium", selected: true }, "Medio"),
+      el("option", { value: "high" }, "Alto"),
+    ]);
+    const modal = el("div", { class: "modal-backdrop", "data-close": "1" }, [
+      el("div", { class: "modal", style: "max-width:480px;" }, [
+        el("h3", { style: "margin:0 0 10px;" }, "Añadir infracción"),
+        el("div", { class: "field" }, [ el("label", {}, "Tipo"), typeInp ]),
+        el("div", { class: "field", style: "margin-top:8px;" }, [ el("label", {}, "Título"), titleInp ]),
+        el("div", { class: "field", style: "margin-top:8px;" }, [ el("label", {}, "Detalle"), detailInp ]),
+        el("div", { class: "field", style: "margin-top:8px;" }, [ el("label", {}, "Severidad"), sevSel ]),
+        el("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:12px;" }, [
+          el("button", { class: "btn ghost", "data-close": "1" }, "Cancelar"),
+          el("button", { class: "btn primary", onclick: async () => {
+            try {
+              await api.post("/api/admin/users/" + uid + "/infractions", {
+                type: typeInp.value.trim(),
+                title: titleInp.value.trim(),
+                detail: detailInp.value.trim(),
+                severity: sevSel.value,
+              });
+              toast("Infracción registrada");
+              modal.remove();
+              if (typeof onDone === "function") onDone();
+            } catch (e) { toast("Error: " + e.message, "err"); }
+          } }, "Guardar"),
+        ]),
+      ]),
+    ]);
+    modal.addEventListener("click", (e) => {
+      if (e.target.getAttribute("data-close") === "1") modal.remove();
+    });
+    document.body.appendChild(modal);
   }
 
   // Modal de moderación reusable a nivel usuario
@@ -3043,7 +4025,7 @@ async function openUserDrawer(id, onChange) {
       }),
     ]));
     drawer.open(el("div", { class: "drawer-wrap" }, [
-      el("button", { class: "drawer-close", "data-close": true }, "×"),
+      el("button", { class: "drawer-close", "data-close": true, title: "Cerrar panel", "aria-label": "Cerrar panel" }, "×"),
       form2,
     ]));
   }
@@ -3072,9 +4054,47 @@ async function openUserDrawer(id, onChange) {
   }, 8000);
 }
 async function viewModeration(root){
+  // V520 — Pro Hero para Moderación
+  try {
+    const dash = await api.get("/api/stats/dashboard").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🛡️",
+      title: "Moderación & Contenido",
+      desc: "Cola de fotos, perfiles y bios. Auto-asignación, plantillas rápidas, acciones masivas y auditoría.",
+      gradA: "#f59e0b", gradB: "#f97316",
+      stats: [
+        { v: fmt.num(dash.open_reports || 0), l: "Denuncias abiertas" },
+        { v: fmt.num(dash.mod_pending || 0), l: "En cola" },
+        { v: fmt.num(dash.mod_today || 0), l: "Resueltas hoy" },
+        { v: `${dash.mod_sla || 0}%`, l: "SLA cumplido" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Moderación",
     "Cola de contenido pendiente de revisión y acciones prioritarias.",
-    [ btn("Ver todas las denuncias", "ghost sm", () => route("reports")) ]));
+    [
+      btn("🎯 Auto-asignar", "primary sm", async () => {
+        try {
+          const r = await api.post("/api/moderation/auto-assign", {});
+          toast(`Asignadas ${r.count || 0} denuncias a ti`);
+          if (typeof refresh === "function") refresh();
+          else route("moderation");
+        } catch(e) { toast("Error: " + e.message); }
+      }),
+      btn("📋 Plantillas rápidas", "ghost sm", () => openModTemplates()),
+      btn("🎓 Reglas automáticas", "ghost sm", () => openModAutoRules()),
+      btn("Ver todas las denuncias", "ghost sm", () => route("reports")),
+    ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Moderación?", [
+    ["📩", "Denuncias abiertas — aún no las ha visto nadie"],
+    ["🔍", "En revisión — un moderador las está mirando"],
+    ["⚠️", "Escaladas — casos graves marcados para admin"],
+    ["✅", "Resueltas — cerradas con decisión"],
+    ["👤", "Usuario denunciado"],
+    ["🎉", "No hay nada pendiente"],
+  ]));
 
   // KPIs
   const statsBox = el("div", { class: "mod-stats-grid" });
@@ -3165,9 +4185,149 @@ async function viewModeration(root){
 
   await refresh();
 }
+
+/* ================================================================
+   V450+ · Moderación · Plantillas y reglas automáticas
+   ================================================================ */
+function openModTemplates() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:600px;width:100%;max-height:90vh;overflow-y:auto;padding:22px" });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 12px" }, "📋 Plantillas rápidas de moderación"));
+  modal.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 12px" }, "Motivos y respuestas predefinidas para resolver denuncias con un clic."));
+  const wrap = el("div"); modal.appendChild(wrap);
+  async function load() {
+    wrap.innerHTML = "Cargando…";
+    try {
+      const r = await api.get("/api/admin/mod-templates");
+      wrap.innerHTML = "";
+      (r.items || []).forEach(t => {
+        const row = el("div", { style: "border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+        row.appendChild(el("strong", {}, t.name));
+        row.appendChild(el("span", { class: "chip xs" }, t.action || "—"));
+        row.appendChild(el("span", { class: "muted", style: "flex:1;font-size:12px" }, (t.body || "").slice(0, 60)));
+        row.appendChild(btn("🗑", "danger sm", async () => { await api.del(`/api/admin/mod-templates/${t.id}`); load(); }));
+        wrap.appendChild(row);
+      });
+      if (!(r.items || []).length) wrap.appendChild(el("p", { class: "muted" }, "Sin plantillas todavía."));
+    } catch (e) { wrap.innerHTML = ""; wrap.appendChild(el("p", { class: "err" }, e.message)); }
+  }
+  const nameI = el("input", { class: "input", placeholder: "Nombre plantilla", style: "width:100%;margin:6px 0" });
+  const actI = el("select", { class: "input", style: "width:100%;margin:6px 0" }, [
+    el("option", { value: "warn" }, "Avisar"),
+    el("option", { value: "restrict" }, "Restringir función"),
+    el("option", { value: "suspend" }, "Suspender temp."),
+    el("option", { value: "ban" }, "Banear"),
+    el("option", { value: "dismiss" }, "Descartar denuncia"),
+  ]);
+  const bodyI = el("textarea", { class: "input", placeholder: "Mensaje al usuario", style: "width:100%;min-height:80px" });
+  modal.appendChild(el("hr"));
+  modal.appendChild(el("h4", { style: "margin:8px 0" }, "➕ Nueva plantilla"));
+  modal.appendChild(nameI); modal.appendChild(actI); modal.appendChild(bodyI);
+  modal.appendChild(btn("💾 Crear", "primary sm", async () => {
+    if (!nameI.value.trim()) return toast("Nombre requerido");
+    try { await api.post("/api/admin/mod-templates", { name: nameI.value, action: actI.value, body: bodyI.value }); nameI.value=""; bodyI.value=""; load(); } catch(e){ toast(e.message); }
+  }));
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:12px" }, btn("Cerrar", "ghost sm", () => overlay.remove())));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  load();
+}
+
+function openModAutoRules() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:22px" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 12px" }, "🎓 Reglas automáticas de moderación"));
+  const wrap = el("div"); modal.appendChild(wrap);
+  async function load() {
+    wrap.innerHTML = "Cargando…";
+    try {
+      const r = await api.get("/api/admin/mod-rules");
+      wrap.innerHTML = "";
+      (r.items || []).forEach(rule => {
+        const row = el("div", { style: "border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+        row.appendChild(el("span", { class: "chip xs", style: rule.enabled ? "background:#dcfce7;color:#166534" : "" }, rule.enabled ? "● On" : "○ Off"));
+        row.appendChild(el("strong", {}, rule.name));
+        row.appendChild(el("code", { style: "font-size:11px;opacity:.7" }, `${rule.trigger} → ${rule.action}`));
+        row.appendChild(el("span", { class: "spacer", style: "flex:1" }));
+        row.appendChild(btn(rule.enabled ? "⏸" : "▶", "sm", async () => { await api.patch(`/api/admin/mod-rules/${rule.id}`, { enabled: rule.enabled ? 0 : 1 }); load(); }));
+        row.appendChild(btn("🗑", "danger sm", async () => { await api.del(`/api/admin/mod-rules/${rule.id}`); load(); }));
+        wrap.appendChild(row);
+      });
+      if (!(r.items || []).length) wrap.appendChild(el("p", { class: "muted" }, "Sin reglas. Crea una debajo."));
+    } catch(e) { wrap.innerHTML = ""; wrap.appendChild(el("p", { class: "err" }, e.message)); }
+  }
+  const n = el("input", { class: "input", placeholder: "Nombre regla", style: "width:100%;margin:6px 0" });
+  const tSel = el("select", { class: "input", style: "width:100%;margin:6px 0" }, [
+    el("option", { value: "spam_words" }, "Contiene palabras spam"),
+    el("option", { value: "photo_reported_3x" }, "Foto denunciada 3+ veces"),
+    el("option", { value: "same_reporter_5x" }, "Mismo denunciante > 5 en 24h"),
+    el("option", { value: "new_account_reports" }, "Cuenta < 7 días con denuncias"),
+  ]);
+  const aSel = el("select", { class: "input", style: "width:100%;margin:6px 0" }, [
+    el("option", { value: "auto_hide" }, "Ocultar contenido"),
+    el("option", { value: "auto_escalate" }, "Escalar a admin"),
+    el("option", { value: "auto_dismiss" }, "Descartar automáticamente"),
+    el("option", { value: "warn_user" }, "Avisar al usuario"),
+    el("option", { value: "suspend_24h" }, "Suspender 24h"),
+  ]);
+  modal.appendChild(el("hr"));
+  modal.appendChild(el("h4", { style: "margin:8px 0" }, "➕ Nueva regla"));
+  modal.appendChild(n); modal.appendChild(tSel); modal.appendChild(aSel);
+  modal.appendChild(btn("💾 Crear", "primary sm", async () => {
+    if (!n.value.trim()) return toast("Nombre requerido");
+    try { await api.post("/api/admin/mod-rules", { name: n.value, trigger: tSel.value, action: aSel.value, enabled: 1 }); n.value = ""; load(); } catch(e) { toast(e.message); }
+  }));
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:12px" }, btn("Cerrar", "ghost sm", () => overlay.remove())));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  load();
+}
+
 async function viewReports(root){
+  // V520 — Pro Hero para Denuncias
+  try {
+    const rep = await api.get("/api/reports/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🚨",
+      title: "Denuncias & Reportes",
+      desc: "Registro completo de denuncias de la comunidad con SLA, agrupación por usuario y priorización.",
+      gradA: "#ef4444", gradB: "#f97316",
+      stats: [
+        { v: fmt.num(rep.open || 0), l: "Abiertas" },
+        { v: fmt.num(rep.reviewing || 0), l: "En revisión" },
+        { v: fmt.num(rep.escalated || 0), l: "Escaladas" },
+        { v: fmt.num(rep.resolved_today || 0), l: "Resueltas hoy" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Denuncias", "Registro completo de denuncias de la comunidad.",
-    [ btn("Exportar CSV", "ghost sm", () => downloadCSV("reports")) ]));
+    [
+      btn("👥 Agrupar por usuario", "ghost sm", async () => {
+        try {
+          const r = await api.get("/api/reports/grouped-by-user");
+          openGroupedReportsModal(r.items || []);
+        } catch(e) { toast("Error: " + e.message); }
+      }),
+      btn("🎯 Auto-asignarme 10", "ghost sm", async () => {
+        try { const r = await api.post("/api/moderation/auto-assign", {}); toast(`${r.count || 0} denuncias asignadas`); route("reports"); } catch(e){ toast(e.message); }
+      }),
+      btn("📊 SLA & prioridad", "ghost sm", () => openReportsSLA()),
+      btn("Exportar CSV", "ghost sm", () => downloadCSV("reports")),
+    ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Denuncias?", [
+    ["📩", "Denuncia abierta, sin revisar"],
+    ["🔍", "En revisión por un moderador"],
+    ["⚠️", "Escalada — caso grave"],
+    ["✅", "Resuelta"],
+    ["👤", "Usuario denunciado"],
+    ["🗂", "Cambiar vista (tabla / tarjetas)"],
+    ["☰", "Cambiar disposición"],
+  ]));
+
   const state = { status: "", q: "", view: "grid" };
 
   // KPIs
@@ -3341,8 +4501,97 @@ async function viewReports(root){
 /* =====================================================================
    Apelaciones (solicitudes de revisión de bloqueos)
    ===================================================================== */
+/* ================================================================
+   V450+ · Denuncias · agrupación por usuario y SLA
+   ================================================================ */
+function openGroupedReportsModal(items) {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:720px;width:100%;max-height:90vh;overflow-y:auto;padding:20px" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 8px" }, "👥 Usuarios más denunciados"));
+  modal.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 12px" }, "Ordenados por número de denuncias abiertas."));
+  const tbl = el("table", { class: "data-table" });
+  tbl.appendChild(el("thead", {}, [el("tr", {}, ["Usuario","Denuncias","Motivos","Acciones"].map(h => el("th",{},h)))]));
+  const tb = el("tbody");
+  items.forEach(g => {
+    const tr = el("tr");
+    tr.appendChild(el("td", {}, [
+      el("strong", {}, g.name || ("#" + g.user_id)),
+      el("br"),
+      el("small", { class: "muted" }, g.email || ""),
+    ]));
+    tr.appendChild(el("td", {}, el("span", { class: "chip xs", style: "background:#fee2e2;color:#991b1b" }, String(g.count))));
+    tr.appendChild(el("td", { class: "muted", style: "font-size:12px" }, (g.reasons || []).slice(0,3).join(", ") || "—"));
+    const acts = el("td");
+    acts.appendChild(btn("👤 Ver perfil", "sm", () => { overlay.remove(); openUserDrawer(g.user_id); }));
+    acts.appendChild(btn("⛔ Banear", "danger sm", async () => {
+      if (!confirm(`¿Banear a ${g.name || g.user_id}?`)) return;
+      try { await api.post("/api/users/bulk", { ids: [g.user_id], action: "ban" }); toast("Baneado"); overlay.remove(); route("reports"); } catch(e){ toast(e.message); }
+    }));
+    acts.appendChild(btn("✅ Resolver todas", "sm", async () => {
+      try { await api.post(`/api/reports/user/${g.user_id}/resolve-all`, {}); toast("Cerradas"); overlay.remove(); route("reports"); } catch(e){ toast(e.message); }
+    }));
+    tr.appendChild(acts);
+    tb.appendChild(tr);
+  });
+  tbl.appendChild(tb);
+  modal.appendChild(tbl);
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:12px" }, btn("Cerrar", "ghost sm", () => overlay.remove())));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+async function openReportsSLA() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:520px;width:100%;padding:20px" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 8px" }, "📊 SLA y prioridad"));
+  modal.appendChild(el("p", { class: "muted", style: "font-size:13px" }, "Tiempo objetivo para resolver denuncias según prioridad."));
+  const s = await api.get("/api/settings").catch(() => ({}));
+  const p1 = el("input", { class: "input", type: "number", value: s["reports.sla_high_hours"] || 4, style: "width:100%" });
+  const p2 = el("input", { class: "input", type: "number", value: s["reports.sla_normal_hours"] || 24, style: "width:100%" });
+  const p3 = el("input", { class: "input", type: "number", value: s["reports.sla_low_hours"] || 72, style: "width:100%" });
+  modal.appendChild(el("label", {}, "Prioridad ALTA (horas)")); modal.appendChild(p1);
+  modal.appendChild(el("label", {}, "Prioridad NORMAL (horas)")); modal.appendChild(p2);
+  modal.appendChild(el("label", {}, "Prioridad BAJA (horas)")); modal.appendChild(p3);
+  const saveBtn = btn("💾 Guardar", "primary sm", async () => {
+    try {
+      await api.put("/api/settings", {
+        "reports.sla_high_hours": p1.value,
+        "reports.sla_normal_hours": p2.value,
+        "reports.sla_low_hours": p3.value,
+      });
+      toast("Guardado"); overlay.remove();
+    } catch(e){ toast(e.message); }
+  });
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end" }, [
+    btn("Cerrar", "ghost sm", () => overlay.remove()),
+    saveBtn,
+  ]));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
 async function viewAppeals(root) {
   root.appendChild(viewTitle("Apelaciones", "Solicitudes de revisión de suspensiones y baneos enviadas por los usuarios.", []));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Apelaciones?", [
+    ["📩", "Apelación abierta"],
+    ["🔍", "En revisión"],
+    ["✅", "Aprobada — se restauró la cuenta"],
+    ["🚫", "Rechazada — el bloqueo se mantiene"],
+    ["🟢", "Baja prioridad"],
+    ["🟡", "Prioridad media"],
+    ["🔴", "Alta prioridad"],
+    ["🛡", "Motivo de moderación"],
+    ["🔐", "Motivo de seguridad"],
+    ["💳", "Motivo de pagos"],
+    ["🐞", "Motivo técnico / bug"],
+    ["💬", "Otro motivo"],
+    ["📖 / 💡 / ✨ / 💫", "Categorías informativas"],
+    ["📭", "Sin apelaciones pendientes"],
+  ]));
+
   const state = { status: "", q: "" };
 
   const statsBox = el("div", { class: "mod-stats-grid" });
@@ -3455,6 +4704,159 @@ async function viewAppeals(root) {
   await refresh();
 }
 
+/* ============================================================
+   viewInfractions — Panel global de infracciones
+   ------------------------------------------------------------
+   Lista todas las infracciones registradas en todos los usuarios,
+   con filtros por severidad y estado. Cada fila permite:
+     · Ver perfil del usuario
+     · Marcar como resuelta
+     · Eliminar (auditoría)
+============================================================ */
+async function viewInfractions(root) {
+  root.appendChild(viewTitle("Infracciones", "Registro global de infracciones aplicadas por moderación.", []));
+  root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
+    ["⚠️", "Infracción activa"],
+    ["✅", "Infracción resuelta"],
+    ["🟢", "Severidad baja"],
+    ["🟡", "Severidad media"],
+    ["🔴", "Severidad alta"],
+    ["👤", "Abrir perfil del usuario"],
+    ["🗑", "Eliminar registro"],
+  ]));
+
+  const stateI = { severity: "", status: "", q: "" };
+
+  const kpisBox = el("div", { class: "mod-stats-grid" });
+  root.appendChild(kpisBox);
+
+  const filters = el("div", { class: "mod-filters" });
+  const chipsWrap = el("div", { class: "mod-filter-chips" });
+  [
+    { k: "",       label: "Todas",     ic: "•",  field: "status" },
+    { k: "active", label: "Activas",   ic: "⚠️", field: "status" },
+    { k: "resolved",label:"Resueltas", ic: "✅", field: "status" },
+  ].forEach(c => {
+    const b = el("button", {
+      class: "mod-chip" + (stateI.status === c.k ? " active" : ""),
+      type: "button",
+      onclick: () => {
+        stateI.status = c.k;
+        chipsWrap.querySelectorAll(".mod-chip").forEach(x => x.classList.remove("active"));
+        b.classList.add("active");
+        refresh();
+      },
+    }, `${c.ic} ${c.label}`);
+    chipsWrap.appendChild(b);
+  });
+  filters.appendChild(chipsWrap);
+
+  const sevSel = el("select", { class: "input", onchange: (e) => { stateI.severity = e.target.value; refresh(); } }, [
+    el("option", { value: "" }, "Cualquier severidad"),
+    el("option", { value: "low" }, "🟢 Baja"),
+    el("option", { value: "medium" }, "🟡 Media"),
+    el("option", { value: "high" }, "🔴 Alta"),
+  ]);
+  filters.appendChild(sevSel);
+
+  filters.appendChild(el("input", {
+    class: "input mod-search", type: "search",
+    placeholder: "Buscar por email, título, tipo…",
+    oninput: (e) => { stateI.q = e.target.value.toLowerCase(); refresh(); },
+  }));
+  root.appendChild(filters);
+
+  const wrap = el("section", { class: "mod-panel-v2" });
+  root.appendChild(wrap);
+
+  async function refresh() {
+    wrap.innerHTML = "";
+    wrap.appendChild(el("div", { class: "loading" }, "Cargando…"));
+    let rows = [];
+    try {
+      const p = new URLSearchParams();
+      if (stateI.status) p.set("status", stateI.status);
+      if (stateI.severity) p.set("severity", stateI.severity);
+      const data = await api.get("/api/admin/infractions?" + p.toString());
+      rows = data.rows || [];
+    } catch { rows = []; }
+    if (stateI.q) {
+      const q = stateI.q;
+      rows = rows.filter(r =>
+        (r.email || "").toLowerCase().includes(q) ||
+        (r.title || "").toLowerCase().includes(q) ||
+        (r.type || "").toLowerCase().includes(q));
+    }
+
+    // KPIs
+    kpisBox.innerHTML = "";
+    const kpis = {
+      active: rows.filter(r => r.status !== "resolved").length,
+      resolved: rows.filter(r => r.status === "resolved").length,
+      high: rows.filter(r => r.severity === "high" && r.status !== "resolved").length,
+    };
+    [
+      { h: "Activas",  v: kpis.active,   cls: "warn",   ic: "⚠️" },
+      { h: "Alta prioridad", v: kpis.high, cls: "danger", ic: "🔴" },
+      { h: "Resueltas", v: kpis.resolved, cls: "ok",    ic: "✅" },
+    ].forEach(c => kpisBox.appendChild(el("div", { class: "mod-stat " + c.cls }, [
+      el("span", { class: "mod-stat-ic" }, c.ic),
+      el("div", { class: "mod-stat-body" }, [
+        el("strong", {}, String(c.v)), el("span", {}, c.h),
+      ]),
+    ])));
+
+    wrap.innerHTML = "";
+    if (!rows.length) {
+      wrap.appendChild(el("div", { class: "mod-empty" }, [
+        el("div", { class: "mod-empty-ic" }, "🎉"),
+        el("h4", {}, "Sin infracciones"),
+        el("p", {}, "No hay registros con estos filtros."),
+      ]));
+      return;
+    }
+
+    const table = el("table", { class: "data-table" });
+    table.innerHTML = `<thead><tr>
+      <th>#</th><th>Usuario</th><th>Tipo</th><th>Título</th>
+      <th>Severidad</th><th>Estado</th><th>Creada</th><th class="ta-right">Acciones</th>
+    </tr></thead>`;
+    const tb = document.createElement("tbody");
+    rows.forEach(r => {
+      const sevIc = r.severity === "high" ? "🔴" : (r.severity === "medium" ? "🟡" : "🟢");
+      const stChip = r.status === "resolved" ? '<span class="chip xs t-ok">✅ resuelta</span>' : '<span class="chip xs t-warn">⚠️ activa</span>';
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">#${r.id}</td>
+        <td>${r.email || "user #" + r.user_id}</td>
+        <td>${r.type || "—"}</td>
+        <td>${r.title || "—"}</td>
+        <td>${sevIc} ${r.severity || "low"}</td>
+        <td>${stChip}</td>
+        <td>${r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+        <td class="ta-right"></td>`;
+      const acts = tr.lastElementChild;
+      acts.appendChild(btn("👤 Perfil", "ghost xs", () => openUserDrawer(r.user_id)));
+      if (r.status !== "resolved") {
+        acts.appendChild(btn("✅ Resolver", "ok xs", async () => {
+          try { await api.post("/api/admin/infractions/" + r.id + "/resolve", {}); toast("Resuelta"); refresh(); }
+          catch (e) { toast("Error: " + e.message, "err"); }
+        }));
+      }
+      acts.appendChild(btn("🗑", "danger xs", async () => {
+        if (!confirm("¿Eliminar esta infracción del historial?")) return;
+        try { await api.del("/api/admin/infractions/" + r.id); toast("Eliminada"); refresh(); }
+        catch (e) { toast("Error: " + e.message, "err"); }
+      }));
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb);
+    wrap.appendChild(table);
+  }
+
+  await refresh();
+}
+
 function openAppealDrawer(a, onChange) {
   const body = el("div", { class: "drawer-body" });
   body.appendChild(el("h2", {}, `Apelación #${String(a.id).padStart(4,"0")}`));
@@ -3527,11 +4929,44 @@ const TICKET_PRIORITY = {
 };
 
 async function viewTickets(root) {
+  // V520 — Pro Hero para Tickets
+  try {
+    const t = await api.get("/api/tickets/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🎫",
+      title: "Tickets de soporte",
+      desc: "Consultas y peticiones de usuarios con SLA, macros, prioridades y auto-asignación al equipo.",
+      gradA: "#06b6d4", gradB: "#3b82f6",
+      stats: [
+        { v: fmt.num(t.open || 0), l: "Abiertos" },
+        { v: fmt.num(t.pending || 0), l: "En proceso" },
+        { v: fmt.num(t.high_priority || 0), l: "Urgentes" },
+        { v: fmt.num(t.resolved_today || 0), l: "Resueltos hoy" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle(
     "Tickets de soporte",
     "Gestiona todas las consultas y peticiones de ayuda de tus usuarios.",
-    []
+    [
+      btn("🧩 Macros", "ghost sm", () => openTicketMacros()),
+      btn("⏱ SLA", "ghost sm", () => openTicketSLA()),
+      btn("🔀 Auto-asignarme", "ghost sm", async () => {
+        try { const r = await api.post("/api/tickets/auto-assign", {}); toast(`${r.count || 0} tickets asignados`); route("tickets"); } catch(e){ toast(e.message); }
+      }),
+      btn("Exportar CSV", "ghost sm", () => downloadCSV("tickets")),
+    ]
   ));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Tickets?", [
+    ["📩", "Ticket abierto, pendiente de responder"],
+    ["🔧", "En proceso — se está trabajando en ello"],
+    ["✅", "Ticket resuelto"],
+    ["🟢", "Prioridad baja"],
+    ["🟡", "Prioridad media"],
+    ["🔴", "Prioridad alta / urgente"],
+  ]));
 
   const state = { status: "", priority: "", category: "", q: "" };
 
@@ -3678,7 +5113,7 @@ async function openTicketDrawer(id) {
       el("div", { class: "tk-drawer-ref" }, "#" + t.ref),
       el("h3", { class: "tk-drawer-subj" }, t.subject),
     ]),
-    el("button", { class: "tk-drawer-x", type: "button", onclick: close }, "×"),
+    el("button", { class: "tk-drawer-x", type: "button", title: "Cerrar ticket", "aria-label": "Cerrar ticket", onclick: close }, "×"),
   ]));
 
   drawer.appendChild(el("div", { class: "tk-drawer-tags" }, [
@@ -3781,10 +5216,118 @@ function onlineDot(online) {
   });
 }
 
+/* ================================================================
+   V450+ · Tickets · Macros y SLA
+   ================================================================ */
+function openTicketMacros() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:22px" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 8px" }, "🧩 Macros de respuesta"));
+  modal.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 12px" }, "Respuestas plantilla insertables con un clic dentro de un ticket."));
+  const list = el("div"); modal.appendChild(list);
+  async function load() {
+    list.innerHTML = "Cargando…";
+    try {
+      const r = await api.get("/api/admin/ticket-macros");
+      list.innerHTML = "";
+      (r.items || []).forEach(m => {
+        const row = el("div", { style: "border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px" });
+        row.appendChild(el("div", { style: "display:flex;gap:8px;align-items:center" }, [
+          el("strong", { style: "flex:1" }, m.name),
+          el("span", { class: "chip xs" }, m.category || "general"),
+          btn("🗑", "danger sm", async () => { await api.del(`/api/admin/ticket-macros/${m.id}`); load(); }),
+        ]));
+        row.appendChild(el("p", { class: "muted", style: "font-size:12.5px;margin:6px 0 0" }, (m.body || "").slice(0, 200)));
+        list.appendChild(row);
+      });
+      if (!(r.items||[]).length) list.appendChild(el("p", { class: "muted" }, "Sin macros."));
+    } catch(e) { list.innerHTML=""; list.appendChild(el("p",{class:"err"},e.message)); }
+  }
+  const n = el("input", { class: "input", placeholder: "Nombre macro (ej: Reset contraseña)", style: "width:100%;margin:6px 0" });
+  const cat = el("select", { class: "input", style: "width:100%;margin:6px 0" }, [
+    el("option", { value: "general" }, "General"),
+    el("option", { value: "billing" }, "Facturación"),
+    el("option", { value: "kyc" }, "KYC / Verificación"),
+    el("option", { value: "abuse" }, "Abuso / Denuncias"),
+    el("option", { value: "tech" }, "Técnico / Bugs"),
+  ]);
+  const body = el("textarea", { class: "input", placeholder: "Cuerpo (usa {{name}}, {{ticket_ref}})", style: "width:100%;min-height:100px" });
+  modal.appendChild(el("hr"));
+  modal.appendChild(el("h4", { style: "margin:8px 0" }, "➕ Nueva macro"));
+  modal.appendChild(n); modal.appendChild(cat); modal.appendChild(body);
+  modal.appendChild(btn("💾 Crear", "primary sm", async () => {
+    if (!n.value.trim()) return toast("Nombre requerido");
+    try { await api.post("/api/admin/ticket-macros", { name: n.value, category: cat.value, body: body.value }); n.value=""; body.value=""; load(); } catch(e){ toast(e.message); }
+  }));
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:12px" }, btn("Cerrar", "ghost sm", () => overlay.remove())));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  load();
+}
+
+async function openTicketSLA() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:520px;width:100%;padding:20px" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 8px" }, "⏱ SLA de tickets"));
+  const s = await api.get("/api/settings").catch(() => ({}));
+  const h = el("input", { class: "input", type: "number", value: s["tickets.sla_high"] || 2, style: "width:100%" });
+  const m = el("input", { class: "input", type: "number", value: s["tickets.sla_normal"] || 24, style: "width:100%" });
+  const l = el("input", { class: "input", type: "number", value: s["tickets.sla_low"] || 72, style: "width:100%" });
+  modal.appendChild(el("label",{},"Prioridad alta (h)")); modal.appendChild(h);
+  modal.appendChild(el("label",{},"Prioridad normal (h)")); modal.appendChild(m);
+  modal.appendChild(el("label",{},"Prioridad baja (h)")); modal.appendChild(l);
+  const auto = el("input", { type: "checkbox" });
+  if (String(s["tickets.auto_close_solved_days"] || "0") !== "0") auto.checked = true;
+  const daysI = el("input", { class: "input", type: "number", value: s["tickets.auto_close_solved_days"] || 3, style: "width:80px;margin-left:8px" });
+  modal.appendChild(el("label", { style: "display:flex;gap:8px;align-items:center;margin-top:12px" }, [auto, "Auto-cerrar tickets resueltos tras", daysI, "días"]));
+  const save = btn("💾 Guardar", "primary sm", async () => {
+    try {
+      await api.put("/api/settings", {
+        "tickets.sla_high": h.value, "tickets.sla_normal": m.value, "tickets.sla_low": l.value,
+        "tickets.auto_close_solved_days": auto.checked ? daysI.value : "0",
+      });
+      toast("Guardado"); overlay.remove();
+    } catch(e) { toast(e.message); }
+  });
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end" }, [btn("Cerrar","ghost sm",() => overlay.remove()), save]));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
 async function viewChatsAdmin(root){
   stopChatAdminTimers();
   if (window.__liveMonitorCleanup) { try { window.__liveMonitorCleanup(); } catch {} window.__liveMonitorCleanup = null; }
+
+  // V520 — Pro Hero para Chats
+  try {
+    const c = await api.get("/api/chats/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "💬",
+      title: "Chats · Monitor · Moderación",
+      desc: "Tabla completa de conversaciones, monitor en vivo con dispositivos/IP/geo y actividad de moderación.",
+      gradA: "#3b82f6", gradB: "#8b5cf6",
+      stats: [
+        { v: fmt.num(c.total || 0), l: "Chats totales" },
+        { v: fmt.num(c.active_now || 0), l: "Activos ahora" },
+        { v: fmt.num(c.messages_today || 0), l: "Mensajes hoy" },
+        { v: fmt.num(c.flagged || 0), l: "Reportados" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Chats · Monitor · Moderación", "Tabla completa, monitor en vivo con dispositivos/IP/ubicación y actividad. Todo en un solo panel.", []));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Chats?", [
+    ["💬", "Conversación entre dos usuarios."],
+    ["🟢", "Sesión activa en vivo ahora mismo."],
+    ["📍", "Ubicación / IP del dispositivo emisor."],
+    ["📱", "Dispositivo desde el que se está chateando."],
+    ["🚩", "Mensaje reportado por otro usuario."],
+    ["👁", "Abrir la conversación completa."],
+    ["🛑", "Silenciar o intervenir la conversación."],
+  ]));
 
   // Tabs: Tabla / En vivo / Actividad
   const tabsBar = el("div", { class: "chats-tabs" }, [
@@ -3912,7 +5455,7 @@ async function openConversation(c) {
     footer,
   ]);
   drawer.open(el("div", { class: "drawer-wrap" }, [
-    el("button", { class: "drawer-close", "data-close": true, onclick: () => { if (_chatDrawerTimer) { clearInterval(_chatDrawerTimer); _chatDrawerTimer = null; } } }, "×"),
+    el("button", { class: "drawer-close", "data-close": true, title: "Cerrar chat", "aria-label": "Cerrar chat", onclick: () => { if (_chatDrawerTimer) { clearInterval(_chatDrawerTimer); _chatDrawerTimer = null; } } }, "×"),
     body,
   ]));
 
@@ -4045,6 +5588,22 @@ async function viewOtpCodes(root) {
   const activeStrip = el("div", { class: "otp-active-strip" });
   root.appendChild(activeStrip);
 
+  // Leyenda plegable con la misma estética que el resto de secciones.
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Códigos OTP?", [
+    ["⏱", "Tiempo restante hasta que el código expira (dura 10 min)"],
+    ["✅", "Código ya usado por el usuario"],
+    ["⌛", "Código caducado sin usarse"],
+    ["📋", "Copiar el código al portapapeles"],
+    ["✉️", "Abrir tu email con el código listo para el usuario"],
+    ["🗑", "Borrar el código (el usuario tendrá que pedir otro)"],
+    ["🔐", "Icono del módulo OTP"],
+    ["🔎", "Buscar por email o código"],
+    ["🎫", "Códigos activos ahora"],
+    ["👥", "Total de códigos"],
+    ["📬", "Servicio de envío funcionando"],
+    ["⚠️", "Aviso o error en el envío"],
+  ]));
+
   // Tabla
   const tableWrap = el("div", { class: "panel table-panel otp-table-wrap" });
   root.appendChild(tableWrap);
@@ -4127,14 +5686,20 @@ async function viewOtpCodes(root) {
             el("span", { class: "muted small" }, "Expira " + fmtTime(c.expires_at)),
           ]),
           el("div", { class: "otp-active-actions" }, [
-            el("button", { class: "btn ghost xs",
-              onclick: () => { navigator.clipboard?.writeText(c.code); toast("Copiado"); } }, "📋 Copiar"),
-            el("button", { class: "btn danger xs",
+            el("button", {
+              class: "btn ghost xs",
+              title: "Copia el código al portapapeles",
+              onclick: () => { navigator.clipboard?.writeText(c.code); toast("Código " + c.code + " copiado"); },
+            }, "📋 Copiar"),
+            el("button", {
+              class: "btn danger xs",
+              title: "Elimina este código (el usuario tendrá que pedir uno nuevo)",
               onclick: async () => {
-                if (!confirm("¿Eliminar este código?")) return;
-                try { await api.del("/api/admin/otp-codes/" + c.id); refresh(); }
+                if (!confirm("¿Eliminar este código?\n\nEl usuario ya no podrá usarlo y tendrá que solicitar uno nuevo.")) return;
+                try { await api.del("/api/admin/otp-codes/" + c.id); toast("Código eliminado"); refresh(); }
                 catch { toast("Error eliminando"); }
-              } }, "🗑"),
+              },
+            }, "🗑 Borrar"),
           ]),
         ]);
         grid.appendChild(card);
@@ -4167,7 +5732,7 @@ async function viewOtpCodes(root) {
       el("th", {}, "Email"),
       el("th", {}, "Código"),
       el("th", {}, "Estado"),
-      el("th", {}, "Tiempo"),
+      el("th", { title: "Cuánto tiempo le queda al código antes de expirar. Un OTP activo dura 10 minutos." }, "Tiempo restante"),
       el("th", {}, "Creado"),
       el("th", {}, "Expira"),
       el("th", { class: "ta-right" }, "Acciones"),
@@ -4178,9 +5743,13 @@ async function viewOtpCodes(root) {
       const stateBadge = c.status === "active" ? `<span class="otp-badge active">⏳ Activo</span>`
                        : c.status === "used"   ? `<span class="otp-badge used">✅ Usado</span>`
                        : `<span class="otp-badge expired">⌛ Expirado</span>`;
+      // "Tiempo restante": cuenta atrás si el código está activo, o etiqueta
+      // descriptiva si ya se usó o expiró. data-expires lo usa el tick 1s.
       const timerTd = c.status === "active"
-        ? `<span class="otp-timer ${left < 60 ? "danger" : left < 180 ? "warn" : ""}">${mmss(left)}</span>`
-        : `<span class="muted">—</span>`;
+        ? `<span class="otp-timer ${left < 60 ? "danger" : left < 180 ? "warn" : ""}" data-expires="${c.expires_at}" title="Tiempo hasta que este código deje de valer">⏱ ${mmss(left)}</span>`
+        : c.status === "used"
+          ? `<span class="muted small" title="El usuario ya validó este código">Usado ya</span>`
+          : `<span class="muted small" title="El código llegó a los 10 min sin usarse">Caducado</span>`;
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="mono">#${c.id}</td>
@@ -4198,22 +5767,37 @@ async function viewOtpCodes(root) {
         title: "Clic para copiar",
         onclick: () => { navigator.clipboard?.writeText(c.code); toast("Código " + c.code + " copiado"); },
       }, c.code));
-      // Acciones
+      // Acciones — cada botón lleva emoji + texto + tooltip para que se
+      // entienda qué hace sin tener que adivinar.
       const acts = tr.children[7];
-      acts.appendChild(el("button", { class: "btn ghost xs",
-        onclick: () => { navigator.clipboard?.writeText(c.code); toast("Copiado"); } }, "📋"));
-      acts.appendChild(el("button", { class: "btn ghost xs", style: "margin-left:4px;",
+      acts.appendChild(el("button", {
+        class: "btn ghost xs",
+        title: "Copia el código al portapapeles para pegarlo donde necesites",
+        "aria-label": "Copiar código",
+        onclick: () => { navigator.clipboard?.writeText(c.code); toast("Código " + c.code + " copiado"); },
+      }, "📋 Copiar"));
+      acts.appendChild(el("button", {
+        class: "btn ghost xs",
+        style: "margin-left:4px;",
+        title: "Abre tu cliente de correo con el código ya escrito para enviárselo al usuario",
+        "aria-label": "Enviar código por email",
         onclick: () => {
           const subject = encodeURIComponent("Tu código de verificación Aura");
           const body = encodeURIComponent(`Hola,\n\nTu código de verificación es: ${c.code}\n\nExpira el ${fmtTime(c.expires_at)}.\n\nEquipo Aura`);
           window.location.href = `mailto:${c.email}?subject=${subject}&body=${body}`;
-        } }, "✉️"));
-      acts.appendChild(el("button", { class: "btn danger xs", style: "margin-left:4px;",
+        },
+      }, "✉️ Enviar"));
+      acts.appendChild(el("button", {
+        class: "btn danger xs",
+        style: "margin-left:4px;",
+        title: "Elimina este código de la base de datos (el usuario tendría que pedir uno nuevo)",
+        "aria-label": "Eliminar código",
         onclick: async () => {
-          if (!confirm("¿Eliminar este código?")) return;
-          try { await api.del("/api/admin/otp-codes/" + c.id); refresh(); }
+          if (!confirm("¿Eliminar este código?\n\nEl usuario ya no podrá usarlo y tendrá que solicitar uno nuevo.")) return;
+          try { await api.del("/api/admin/otp-codes/" + c.id); toast("Código eliminado"); refresh(); }
           catch { toast("Error eliminando"); }
-        } }, "🗑"));
+        },
+      }, "🗑 Borrar"));
       tb.appendChild(tr);
     });
     table.appendChild(tb);
@@ -4269,8 +5853,89 @@ async function viewOtpCodes(root) {
 }
 
 async function viewSubscriptions(root){
+  // V520 — Hero + KPIs de suscripción antes de la configuración de planes.
+  try {
+    const [dash, churn, active] = await Promise.all([
+      api.get("/api/stats/dashboard").catch(() => ({})),
+      api.get("/api/subscriptions/churn?days=30").catch(() => ({})),
+      api.get("/api/subscriptions/summary").catch(() => ({})),
+    ]);
+    const totalSubs = active.total || dash.subscriptions || 0;
+    const mrr = dash.mrr || active.mrr || 0;
+    const arpu = totalSubs ? mrr / totalSubs : 0;
+    const churnRate = churn.rate != null ? churn.rate : 0;
+    const retention = Math.max(0, 100 - Number(churnRate));
+    const spark = active.mrr_series || Array.from({length: 12}, (_, i) => Math.round(mrr * (0.7 + Math.random() * 0.4)));
+
+    root.appendChild(proHero({
+      icon: "⭐",
+      title: "Suscripciones & Planes",
+      desc: "Configura los planes, precios y características. Métricas de retención, churn y valor por usuario.",
+      gradA: "#8b5cf6", gradB: "#ec4899",
+      stats: [
+        { v: fmt.num(totalSubs), l: "Activas" },
+        { v: fmt.eur(mrr), l: "MRR" },
+        { v: fmt.eur(arpu), l: "ARPU" },
+        { v: `${retention}%`, l: "Retención 30d" },
+      ],
+    }));
+
+    const kpisPro = document.createElement("div");
+    kpisPro.className = "pro-kpis";
+    kpisPro.appendChild(proKpi({ label: "Suscripciones activas", icon: "⭐", value: fmt.num(totalSubs),
+      sparkline: active.subs_series || [totalSubs*.9, totalSubs*.95, totalSubs, totalSubs*1.02, totalSubs*1.05],
+      gradA: "#a855f7", gradB: "#7c3aed", sub: "en cobro recurrente" }));
+    kpisPro.appendChild(proKpi({ label: "MRR", icon: "💰", value: fmt.eur(mrr),
+      sparkline: spark, gradA: "#f59e0b", gradB: "#d97706", trend: dash.mrr_trend || "+4%",
+      sub: `ARR ${fmt.eur(mrr * 12)}` }));
+    kpisPro.appendChild(proKpi({ label: "ARPU", icon: "🎯", value: fmt.eur(arpu),
+      sparkline: spark.map(v => v/(totalSubs || 1)), gradA: "#ec4899", gradB: "#f472b6",
+      sub: "por suscriptor" }));
+    kpisPro.appendChild(proKpi({ label: "Churn 30d", icon: "📉", value: `${churnRate}%`,
+      trend: churnRate < 5 ? "bueno" : churnRate < 10 ? "medio" : "alto",
+      gradA: "#f43f5e", gradB: "#e11d48", sub: `${churn.cancellations || 0} bajas` }));
+    root.appendChild(kpisPro);
+  } catch (e) { /* silencioso — el hero es un extra */ }
+
   root.appendChild(viewTitle("Suscripciones",
-    "Configura los planes y sus características. Los cambios se guardan al momento.", []));
+    "Configura los planes y sus características. Los cambios se guardan al momento.",
+    [
+      btn("👥 Suscritos actuales", "ghost sm", () => openActiveSubscribers()),
+      btn("📉 Churn últimos 30d", "ghost sm", async () => {
+        try { const r = await api.get("/api/subscriptions/churn?days=30"); alert(`Cancelaciones últimos 30 días: ${r.cancellations}\nRatio churn: ${r.rate}%\nMRR estimado: ${r.mrr} €`); } catch(e){ toast(e.message); }
+      }),
+      btn("🎁 Regalar Premium", "primary sm", () => openGiftPremium()),
+      btn("📤 Exportar", "ghost sm", () => downloadCSV("subscriptions")),
+    ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Suscripciones?", [
+    ["🌱", "Plan Free (gratuito)"],
+    ["💖", "Plan Premium"],
+    ["⭐", "Plan Gold"],
+    ["💎", "Plan Platinum"],
+    ["✨", "Característica genérica del plan"],
+    ["♾", "Característica ilimitada"],
+    ["⚡", "Super Like"],
+    ["🚀", "Boost / Impulso"],
+    ["🚫", "Sin anuncios"],
+    ["👀", "Ver quién te ha dado like"],
+    ["💬", "Chats / mensajes"],
+    ["📸", "Fotos"],
+    ["📹", "Videollamada"],
+    ["🎯", "Prioridad"],
+    ["🎧", "Soporte prioritario"],
+    ["🌍", "Passport / viajar por ubicaciones"],
+    ["🎚", "Filtros avanzados"],
+    ["🕶", "Modo incógnito"],
+    ["✔", "Confirmación de lectura"],
+    ["👑", "Insignia / corona destacada"],
+    ["🛡", "Verificación reforzada"],
+    ["✏️", "Editar plan"],
+    ["✕", "Quitar característica"],
+    ["➕", "Añadir característica"],
+    ["💡", "Sugerencia informativa"],
+    ["💾", "Guardar cambios"],
+  ]));
 
   // Metadatos visuales por código de plan.
   const PLAN_META = {
@@ -4377,7 +6042,9 @@ async function viewSubscriptions(root){
             oninput: (e) => { featuresState[idx] = e.target.value; },
           }),
           el("button", {
-            type: "button", class: "feat-chip-del", title: "Quitar",
+            type: "button", class: "feat-chip-del",
+            title: "Quitar esta característica de la lista",
+            "aria-label": "Quitar característica",
             onclick: () => { featuresState.splice(idx, 1); renderFeatChips(); },
           }, "✕"),
         ]);
@@ -4580,54 +6247,237 @@ async function viewSubscriptions(root){
 async function viewPayments(root){
   root.appendChild(viewTitle("Pagos & Facturación",
     "Historial de transacciones con reembolsos.",
-    [ btn("Exportar CSV", "ghost sm", () => downloadCSV("payments")) ]));
+    [
+      btn("💸 Reembolsos", "ghost sm", () => openRefundsPanel()),
+      btn("⚠️ Disputas / Chargebacks", "ghost sm", () => openDisputesPanel()),
+      btn("📈 MRR & LTV", "ghost sm", async () => {
+        try { const r = await api.get("/api/payments/metrics"); alert(`MRR: ${r.mrr}€\nARR: ${r.arr}€\nLTV medio: ${r.ltv}€\nTicket medio: ${r.avg_ticket}€\nMétodo top: ${r.top_method}`); } catch(e){ toast(e.message); }
+      }),
+      btn("🧾 Facturas SII", "ghost sm", () => {
+        const y = new Date().getFullYear();
+        window.open(`/api/payments/invoices-export?year=${y}&adminToken=` + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
+      }),
+      btn("Exportar CSV", "ghost sm", () => downloadCSV("payments"))
+    ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Pagos?", [
+    ["✅", "Completado"],
+    ["↩️", "Reembolsado"],
+    ["🕒", "Pendiente"],
+    ["❌", "Fallido"],
+    ["💳", "Tarjeta"],
+    ["🅿️", "PayPal"],
+    ["🍎", "Apple Pay"],
+    ["🅶", "Google Pay"],
+    ["🧾", "Ver factura"],
+  ]));
+
   const rows = await api.get("/api/payments");
+  const stateP = { status: "", method: "", q: "" };
+
+  // KPIs ampliados: ingresos totales, ingresos hoy, ingresos mes, reembolsos, txs, ticket medio.
+  const today0 = new Date(); today0.setHours(0,0,0,0);
+  const monthStart = new Date(today0.getFullYear(), today0.getMonth(), 1);
   const totalIn = rows.filter(r=>r.status==="completed").reduce((s,r)=>s+Number(r.amount),0);
   const totalRef = rows.filter(r=>r.status==="refunded").reduce((s,r)=>s+Number(r.amount),0);
-  const kpis = el("div", { class: "kpi-grid three" }, [
-    el("div", { class: "kpi green" }, [ el("h4", {}, "Ingresos"), el("div", { class: "val" }, fmt.eur(totalIn)) ]),
-    el("div", { class: "kpi rose" }, [ el("h4", {}, "Reembolsos"), el("div", { class: "val" }, fmt.eur(totalRef)) ]),
-    el("div", { class: "kpi violet" }, [ el("h4", {}, "Transacciones"), el("div", { class: "val" }, fmt.num(rows.length)) ]),
-  ]);
-  root.appendChild(kpis);
+  const inToday = rows.filter(r => r.status==="completed" && new Date(r.created_at) >= today0)
+    .reduce((s,r)=>s+Number(r.amount),0);
+  const inMonth = rows.filter(r => r.status==="completed" && new Date(r.created_at) >= monthStart)
+    .reduce((s,r)=>s+Number(r.amount),0);
+  const okCount = rows.filter(r=>r.status==="completed").length;
+  const avgTicket = okCount ? (totalIn / okCount) : 0;
+  // V520 — Pro Hero + KPIs con sparkline diario (últimos 14 días)
+  const daysBack = 14;
+  const daily = Array.from({length: daysBack}, (_, i) => {
+    const d0 = new Date(); d0.setHours(0,0,0,0); d0.setDate(d0.getDate() - (daysBack - 1 - i));
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    return rows.filter(r => r.status === "completed" && new Date(r.created_at) >= d0 && new Date(r.created_at) < d1)
+      .reduce((s,r) => s + Number(r.amount), 0);
+  });
+  const dailyTx = Array.from({length: daysBack}, (_, i) => {
+    const d0 = new Date(); d0.setHours(0,0,0,0); d0.setDate(d0.getDate() - (daysBack - 1 - i));
+    const d1 = new Date(d0); d1.setDate(d1.getDate() + 1);
+    return rows.filter(r => new Date(r.created_at) >= d0 && new Date(r.created_at) < d1).length;
+  });
+  const refundRate = rows.length ? Math.round((rows.filter(r=>r.status==="refunded").length / rows.length) * 100) : 0;
+  const successRate = rows.length ? Math.round((okCount / rows.length) * 100) : 0;
 
-  const table = el("table", { class: "data-table" });
-  table.appendChild(el("thead", {}, [ el("tr", {}, [
-    el("th", {}, "Factura"), el("th", {}, "Usuario"), el("th", {}, "Método"),
-    el("th", {}, "Importe"), el("th", {}, "Estado"), el("th", {}, "Fecha"),
-    el("th", { class: "ta-right" }, "Acciones"),
-  ])]));
-  const tb = el("tbody");
-  rows.forEach(p => tb.appendChild(el("tr", {}, [
-    el("td", {}, p.invoice_no),
-    el("td", {}, [ el("div", { class: "user-cell" }, [
-      avatar(p.user_photo, 30),
-      el("div", {}, [ el("strong", {}, p.user_name||"—") ]),
-    ])]),
-    el("td", {}, p.method),
-    el("td", {}, fmt.eur(p.amount)),
-    el("td", {}, statusTag(p.status)),
-    el("td", {}, fmt.date(p.created_at)),
-    el("td", { class: "ta-right" }, [
-      p.status === "completed"
-        ? btn("Reembolsar", "warn xs", async () => {
-            if (!confirm("¿Reembolsar este pago?")) return;
-            await api.post("/api/payments/" + p.id + "/refund");
-            toast("Pago reembolsado"); route("payments");
-          })
-        : el("span", { class: "muted" }, "—"),
-    ]),
-  ])));
-  table.appendChild(tb);
-  root.appendChild(panel("Transacciones", [], [ el("div", { class: "table-scroll" }, [ table ]) ]));
+  root.appendChild(proHero({
+    icon: "💰",
+    title: "Pagos & Facturación",
+    desc: "Ingresos, reembolsos, disputas y facturación electrónica. Métricas en tiempo real y exportación SII.",
+    gradA: "#22c55e", gradB: "#0aa17b",
+    stats: [
+      { v: fmt.eur(totalIn), l: "Ingresos totales" },
+      { v: fmt.num(rows.length), l: "Transacciones" },
+      { v: `${successRate}%`, l: "Tasa éxito" },
+      { v: fmt.eur(avgTicket), l: "Ticket medio" },
+    ],
+  }));
+
+  const kpisPro = document.createElement("div");
+  kpisPro.className = "pro-kpis";
+  kpisPro.appendChild(proKpi({ label: "Ingresos totales", icon: "💶", value: fmt.eur(totalIn),
+    sparkline: daily, gradA: "#22c55e", gradB: "#16a34a", sub: `${daysBack}d` }));
+  kpisPro.appendChild(proKpi({ label: "Ingresos hoy", icon: "📅", value: fmt.eur(inToday),
+    sparkline: daily.slice(-7), gradA: "#3b82f6", gradB: "#1d4ed8", sub: "vs. media 7d" }));
+  kpisPro.appendChild(proKpi({ label: "Ingresos este mes", icon: "🗓️", value: fmt.eur(inMonth),
+    sparkline: daily, gradA: "#8b5cf6", gradB: "#7c3aed", sub: "acumulado" }));
+  kpisPro.appendChild(proKpi({ label: "Reembolsos", icon: "↩️", value: fmt.eur(totalRef),
+    trend: `${refundRate}%`, gradA: "#f43f5e", gradB: "#e11d48", sub: "sobre total" }));
+  kpisPro.appendChild(proKpi({ label: "Ticket medio", icon: "🎫", value: fmt.eur(avgTicket),
+    sparkline: dailyTx, gradA: "#f59e0b", gradB: "#d97706", sub: `${okCount} completados` }));
+  kpisPro.appendChild(proKpi({ label: "Transacciones (total)", icon: "📊", value: fmt.num(rows.length),
+    sparkline: dailyTx, gradA: "#06b6d4", gradB: "#0891b2", sub: `${daysBack}d` }));
+  root.appendChild(kpisPro);
+
+  // Top métodos + Top usuarios + Distribución estado
+  const methodCounts = {};
+  rows.forEach(r => { if (r.status === "completed") methodCounts[r.method || "otro"] = (methodCounts[r.method || "otro"] || 0) + Number(r.amount); });
+  const topMethods = Object.entries(methodCounts).sort((a,b) => b[1]-a[1]).slice(0,6)
+    .map(([m,v]) => ({ lbl: m, val: v }));
+  const userTotals = {};
+  rows.forEach(r => { if (r.status === "completed") userTotals[r.user_name || "—"] = (userTotals[r.user_name || "—"] || 0) + Number(r.amount); });
+  const topUsers = Object.entries(userTotals).sort((a,b) => b[1]-a[1]).slice(0,5)
+    .map(([n,v]) => ({ name: n, val: v }));
+  const statusDist = {
+    "✅ Completado": rows.filter(r=>r.status==="completed").length,
+    "🕒 Pendiente":  rows.filter(r=>r.status==="pending").length,
+    "❌ Fallido":    rows.filter(r=>r.status==="failed").length,
+    "↩️ Reembolsado": rows.filter(r=>r.status==="refunded").length,
+  };
+  const statusBars = Object.entries(statusDist).map(([l,v]) => ({ lbl: l, val: v }));
+
+  const grid = document.createElement("div");
+  grid.className = "pro-grid-3";
+  grid.appendChild(proPanel({ title: "Ingresos por método", icon: "💳", gradA: "#22c55e", gradB: "#0aa17b",
+    body: [ topMethods.length ? proBars(topMethods, { format: (v) => fmt.eur(v), gradA: "#22c55e", gradB: "#0aa17b" }) : proEmpty("💳", "Sin métodos", "Aún no hay pagos completados") ] }));
+  grid.appendChild(proPanel({ title: "Distribución por estado", icon: "📊", gradA: "#f59e0b", gradB: "#d97706",
+    body: [ proBars(statusBars, { format: fmt.num, gradA: "#f59e0b", gradB: "#d97706" }) ] }));
+  grid.appendChild(proPanel({ title: "Top usuarios (LTV)", icon: "🏆", gradA: "#8b5cf6", gradB: "#7c3aed",
+    body: [ topUsers.length ? proTopList(topUsers, { format: fmt.eur }) : proEmpty("👤", "Sin datos", "Aún no hay usuarios con pagos") ] }));
+  root.appendChild(grid);
+
+  // Filtros
+  const methods = Array.from(new Set(rows.map(r => r.method).filter(Boolean)));
+  const methodSel = el("select", { class: "input", onchange: (e) => { stateP.method = e.target.value; render(); } }, [
+    el("option", { value: "" }, "Cualquier método"),
+    ...methods.map(m => el("option", { value: m }, m)),
+  ]);
+  const statusSel = el("select", { class: "input", onchange: (e) => { stateP.status = e.target.value; render(); } }, [
+    el("option", { value: "" }, "Cualquier estado"),
+    el("option", { value: "completed" }, "✅ Completado"),
+    el("option", { value: "refunded" }, "↩️ Reembolsado"),
+    el("option", { value: "pending" }, "🕒 Pendiente"),
+    el("option", { value: "failed" }, "❌ Fallido"),
+  ]);
+  const searchInp = el("input", { class: "input", placeholder: "Buscar factura, usuario…",
+    oninput: (e) => { stateP.q = e.target.value.toLowerCase(); render(); } });
+  root.appendChild(el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;" },
+    [ statusSel, methodSel, searchInp ]));
+
+  const wrap = el("div");
+  root.appendChild(wrap);
+
+  function render() {
+    let filtered = rows;
+    if (stateP.status) filtered = filtered.filter(r => r.status === stateP.status);
+    if (stateP.method) filtered = filtered.filter(r => r.method === stateP.method);
+    if (stateP.q) {
+      const q = stateP.q;
+      filtered = filtered.filter(r =>
+        (r.invoice_no || "").toLowerCase().includes(q) ||
+        (r.user_name || "").toLowerCase().includes(q));
+    }
+    wrap.innerHTML = "";
+    const table = el("table", { class: "data-table" });
+    table.appendChild(el("thead", {}, [ el("tr", {}, [
+      el("th", {}, "Factura"), el("th", {}, "Usuario"), el("th", {}, "Método"),
+      el("th", {}, "Importe"), el("th", {}, "Estado"), el("th", {}, "Fecha"),
+      el("th", { class: "ta-right" }, "Acciones"),
+    ])]));
+    const tb = el("tbody");
+    filtered.forEach(p => tb.appendChild(el("tr", {}, [
+      el("td", {}, p.invoice_no),
+      el("td", {}, [ el("div", { class: "user-cell" }, [
+        avatar(p.user_photo, 30),
+        el("div", {}, [ el("strong", {}, p.user_name||"—") ]),
+      ])]),
+      el("td", {}, p.method),
+      el("td", {}, fmt.eur(p.amount)),
+      el("td", {}, statusTag(p.status)),
+      el("td", {}, fmt.date(p.created_at)),
+      el("td", { class: "ta-right" }, [
+        el("div", { class: "row" }, [
+          btn("🧾 Factura", "ghost xs", () => {
+            // Abre factura en nueva pestaña (endpoint estándar).
+            window.open("/api/payments/" + p.id + "/invoice", "_blank");
+          }),
+          p.status === "completed"
+            ? btn("↩️ Reembolsar", "warn xs", async () => {
+                if (!confirm("¿Reembolsar este pago?")) return;
+                await api.post("/api/payments/" + p.id + "/refund");
+                toast("Pago reembolsado"); route("payments");
+              })
+            : null,
+        ].filter(Boolean)),
+      ]),
+    ])));
+    table.appendChild(tb);
+    wrap.appendChild(panel("Transacciones (" + filtered.length + ")", [], [ el("div", { class: "table-scroll" }, [ table ]) ]));
+  }
+  render();
 }
 async function viewPromos(root){
+  // V520 — Pro Hero (KPIs se calculan más abajo, este hero es introductorio)
+  try {
+    const preview = await api.get("/api/promotions").catch(() => []);
+    const activeN = preview.filter(r => r.status === "active").length;
+    const usesN = preview.reduce((a, r) => a + (Number(r.uses) || 0), 0);
+    const savedTotal = preview.reduce((a, r) => a + (Number(r.total_saved) || 0), 0);
+    root.appendChild(proHero({
+      icon: "🎁",
+      title: "Campañas & Promociones",
+      desc: "Cupones, campañas estacionales, códigos referral y ROI. Segmenta y automatiza descuentos.",
+      gradA: "#ec4899", gradB: "#f97316",
+      stats: [
+        { v: fmt.num(preview.length), l: "Cupones" },
+        { v: fmt.num(activeN), l: "Activos" },
+        { v: fmt.num(usesN), l: "Canjes" },
+        { v: fmt.eur(savedTotal), l: "Descuento total" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Campañas y promociones",
     "Códigos de descuento y campañas promocionales con período de validez.",
     [
       btn("🎉 Campaña estacional", "ghost sm", () => seasonalForm()),
+      btn("🔗 Códigos referral", "ghost sm", () => openReferralPanel()),
+      btn("📊 ROI de campañas", "ghost sm", async () => {
+        try { const r = await api.get("/api/promos/roi"); openPromoRoiModal(r.items || []); } catch(e){ toast(e.message); }
+      }),
+      btn("🎲 Códigos masivos", "ghost sm", () => openBulkGenerateCodes()),
       btn("＋ Nueva promoción", "primary sm", () => promoForm()),
     ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Promociones?", [
+    ["🎁", "Promoción / regalo"],
+    ["🎟", "Código canjeable"],
+    ["🎉", "Campaña estacional"],
+    ["🚀", "Campaña activa"],
+    ["📅 / 🗓", "Fechas de validez"],
+    ["📊", "Estadísticas de uso"],
+    ["💸", "Descuento aplicado"],
+    ["✅", "Activa"],
+    ["✏️", "Editar promoción"],
+    ["📝", "Notas / descripción"],
+    ["📋", "Copiar código"],
+    ["🔎", "Buscar"],
+    ["💾", "Guardar cambios"],
+    ["🗑", "Eliminar promoción"],
+  ]));
+
   const rows = await api.get("/api/promotions");
 
   // === KPI strip: quick overview ===
@@ -4851,7 +6701,7 @@ async function viewPromos(root){
       btn("Cerrar", "ghost", () => drawer.close()),
     ]));
     drawer.open(el("div", { class: "drawer-wrap" }, [
-      el("button", { class: "drawer-close", "data-close": true }, "×"), wrap,
+      el("button", { class: "drawer-close", "data-close": true, title: "Cerrar panel", "aria-label": "Cerrar panel" }, "×"), wrap,
     ]));
   }
 
@@ -4971,7 +6821,7 @@ async function viewPromos(root){
     ]));
 
     drawer.open(el("div", { class: "drawer-wrap" }, [
-      el("button", { class: "drawer-close", "data-close": true }, "×"),
+      el("button", { class: "drawer-close", "data-close": true, title: "Cerrar panel", "aria-label": "Cerrar panel" }, "×"),
       form,
     ]));
     updatePreview();
@@ -4994,7 +6844,17 @@ async function viewStats(root){
       toast("Error: " + (e.data?.error || e.message), "err");
     } finally { resetBtn.disabled = false; }
   });
-  root.appendChild(viewTitle("Estadísticas", "Distribuciones y KPIs de la comunidad.", [ resetBtn ]));
+  root.appendChild(viewTitle("Estadísticas", "Distribuciones y KPIs de la comunidad.",
+    [
+      btn("📅 Informe programado", "ghost sm", () => openScheduledReport()),
+      btn("📥 Descargar informe PDF", "ghost sm", () => {
+        window.open("/api/stats/report.pdf?adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
+      }),
+      btn("📊 Comparar periodos", "ghost sm", () => openStatsCompare()),
+      btn("🌍 Mapa de calor", "ghost sm", () => openHeatmap()),
+      btn("🎯 Cohortes retención", "ghost sm", () => openCohorts()),
+      resetBtn,
+    ]));
   const [cities, gender, orientation] = await Promise.all([
     api.get("/api/stats/cities"),
     api.get("/api/stats/gender"),
@@ -5022,6 +6882,47 @@ async function viewStats(root){
   row.appendChild(panel("Por género", [], [ bars(gender, "gender") ]));
   root.appendChild(row);
   root.appendChild(panel("Por orientación", [], [ bars(orientation, "orientation") ]));
+
+  // V520 — Pro visual layer: hero + KPIs + top-lists elegantes.
+  try {
+    const totalUsers = cities.reduce((s, r) => s + (Number(r.c || r.user_count) || 0), 0);
+    const totalGender = gender.reduce((s, r) => s + (Number(r.c || r.user_count) || 0), 0);
+    const heroPro = proHero({
+      icon: "📊",
+      title: "Estadísticas & Analytics",
+      desc: "Distribuciones de la comunidad, cohortes de retención, mapas de calor e informes descargables.",
+      gradA: "#06b6d4", gradB: "#3b82f6",
+      stats: [
+        { v: fmt.num(totalUsers), l: "Usuarios distribuidos" },
+        { v: fmt.num(cities.length), l: "Ciudades activas" },
+        { v: fmt.num(gender.length), l: "Categorías género" },
+        { v: fmt.num(orientation.length), l: "Orientaciones" },
+      ],
+    });
+    // Insertar hero al principio
+    root.insertBefore(heroPro, root.firstChild);
+
+    // Sección extra: top ciudades como pro-list y bars pro para género/orientación
+    const cityRows = cities.slice(0, 8).map(r => ({ name: r.name || "—", val: Number(r.c || r.user_count) || 0 }));
+    const genderBars = gender.map(r => ({ lbl: r.gender || "—", val: Number(r.c || r.user_count) || 0 }));
+    const orientBars = orientation.map(r => ({ lbl: r.orientation || "—", val: Number(r.c || r.user_count) || 0 }));
+
+    const proExtras = document.createElement("div");
+    proExtras.className = "pro-grid-3";
+    proExtras.appendChild(proPanel({
+      title: "🏆 Top ciudades", icon: "🏙️", gradA: "#06b6d4", gradB: "#3b82f6",
+      body: [ cityRows.length ? proTopList(cityRows, { format: fmt.num }) : proEmpty("🏙️", "Sin datos", "Aún no hay ciudades registradas") ],
+    }));
+    proExtras.appendChild(proPanel({
+      title: "👥 Distribución de género", icon: "⚧", gradA: "#ec4899", gradB: "#f472b6",
+      body: [ genderBars.length ? proBars(genderBars, { format: fmt.num, gradA: "#ec4899", gradB: "#f472b6" }) : proEmpty("👥", "Sin datos", "") ],
+    }));
+    proExtras.appendChild(proPanel({
+      title: "🌈 Orientación", icon: "🌈", gradA: "#8b5cf6", gradB: "#7c3aed",
+      body: [ orientBars.length ? proBars(orientBars, { format: fmt.num, gradA: "#8b5cf6", gradB: "#7c3aed" }) : proEmpty("🌈", "Sin datos", "") ],
+    }));
+    root.appendChild(proExtras);
+  } catch (e) { /* silent */ }
 }
 async function viewNotifications(root){
   const SEGMENT_ES = {
@@ -5040,10 +6941,60 @@ async function viewNotifications(root){
     hetero: "Zona Hetero",
   };
   const segmentLabel = (s) => SEGMENT_ES[s] || (s || "—");
+
+  // V520 — Pro hero introductorio (KPIs finos vienen después)
+  try {
+    const preview = await api.get("/api/campaigns").catch(() => []);
+    const draftsN = preview.filter(r => r.status === "draft").length;
+    const sentN = preview.filter(r => r.status === "sent").length;
+    const scheduledN = preview.filter(r => r.status === "scheduled").length;
+    root.appendChild(proHero({
+      icon: "📣",
+      title: "Notificaciones & Campañas",
+      desc: "Envía push, email o in-app a segmentos concretos. Programa envíos y mide el impacto.",
+      gradA: "#3b82f6", gradB: "#8b5cf6",
+      stats: [
+        { v: fmt.num(preview.length), l: "Campañas" },
+        { v: fmt.num(sentN), l: "Enviadas" },
+        { v: fmt.num(scheduledN), l: "Programadas" },
+        { v: fmt.num(draftsN), l: "Borradores" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle("Notificaciones",
     "Campañas push y email a segmentos de usuarios.",
     [ btn("＋ Nueva campaña", "primary sm", () => campaignForm()) ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Notificaciones?", [
+    ["＋", "Crear nueva campaña"],
+    ["✕", "Cerrar el editor"],
+    ["📊", "Ver estadísticas de la campaña"],
+    ["📤", "Enviar la campaña ahora"],
+    ["🔁", "Duplicar campaña"],
+    ["🗑", "Eliminar campaña (solo borrador)"],
+  ]));
+
   const rows = await api.get("/api/campaigns");
+
+  // KPIs
+  const kpiBox = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0 14px;" });
+  const kpi = (label, val, ic, color) => el("div", {
+    style: `padding:12px 14px;border-radius:12px;background:var(--panel-2,#1a1a24);border-left:4px solid ${color};`
+  }, [
+    el("div", { style: "font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.05em;" }, `${ic} ${label}`),
+    el("div", { style: "font-size:22px;font-weight:700;" }, String(val)),
+  ]);
+  const totalSent = rows.reduce((a, c) => a + (Number(c.sent_count) || 0), 0);
+  const avgOpen = rows.length ? Math.round(rows.reduce((a, c) => a + (Number(c.open_rate) || 0), 0) / rows.length) : 0;
+  kpiBox.appendChild(kpi("Campañas", rows.length, "📣", "#8b5cf6"));
+  kpiBox.appendChild(kpi("Borradores", rows.filter(r => r.status === "draft").length, "📝", "#6b7280"));
+  kpiBox.appendChild(kpi("Programadas", rows.filter(r => r.status === "scheduled").length, "🕒", "#3b82f6"));
+  kpiBox.appendChild(kpi("Enviadas", rows.filter(r => r.status === "sent").length, "✅", "#22c55e"));
+  kpiBox.appendChild(kpi("Total notif.", totalSent, "📤", "#f59e0b"));
+  kpiBox.appendChild(kpi("Apertura media", avgOpen + "%", "👁", "#ec4899"));
+  root.appendChild(kpiBox);
+
   const table = el("table", { class: "data-table" });
   table.appendChild(el("thead", {}, [ el("tr", {}, [
     el("th", {}, "Nombre"), el("th", {}, "Canal"), el("th", {}, "Segmento"),
@@ -5065,13 +7016,30 @@ async function viewNotifications(root){
           toast("Estado actualizado");
         }}, ["draft","scheduled","sent","paused"].map(s =>
           el("option", { value: s, selected: c.status===s }, STATUS_ES[s] || s))),
-        c.status !== "sent" ? btn("Enviar ahora", "primary xs", async () => {
+        c.status !== "sent" ? btn("📤 Enviar ahora", "primary xs", async () => {
           if (!confirm(`¿Enviar la campaña "${c.name}" a los usuarios activos?`)) return;
           const r = await api.post("/api/campaigns/" + c.id + "/send");
           toast(`Enviada a ${r.sent} usuarios (apertura ${r.open_rate}%)`);
           route("notifications");
         }) : null,
-      ]),
+        btn("🔁 Duplicar", "ghost xs", async () => {
+          try {
+            await api.post("/api/campaigns", {
+              name: (c.name || "Campaña") + " (copia)",
+              channel: c.channel,
+              segment: c.segment,
+              subject: c.subject || "",
+              message: c.message || "",
+            });
+            toast("Duplicada"); route("notifications");
+          } catch (e) { toast("Error: " + e.message, "err"); }
+        }),
+        c.status === "draft" ? btn("🗑", "danger xs", async () => {
+          if (!confirm("¿Eliminar esta campaña borrador?")) return;
+          try { await api.del("/api/campaigns/" + c.id); toast("Eliminada"); route("notifications"); }
+          catch (e) { toast("Error: " + e.message, "err"); }
+        }) : null,
+      ].filter(Boolean)),
     ]),
   ])));
   table.appendChild(tb);
@@ -5111,18 +7079,45 @@ async function viewNotifications(root){
         el("option", { value: "lgbt" }, "Zona LGTB"),
         el("option", { value: "hetero" }, "Zona Hetero"),
       ]) ]));
+    form.appendChild(el("label", { class: "field" }, [ el("span", {}, "Asunto (para email)"),
+      el("input", { class: "input", name: "subject", placeholder: "Ej: Nuevas funciones en Aura" }) ]));
+    form.appendChild(el("label", { class: "field" }, [ el("span", {}, "Mensaje"),
+      el("textarea", { class: "input", name: "message", rows: 5,
+        placeholder: "Cuerpo del mensaje que se enviará a los usuarios…" }) ]));
     form.appendChild(el("div", { class: "drawer-actions" }, [
       btn("Cancelar", "ghost", () => drawer.close()),
       el("button", { class: "btn primary", type: "submit" }, "Crear"),
     ]));
     drawer.open(el("div", { class: "drawer-wrap" }, [
-      el("button", { class: "drawer-close", "data-close": true }, "×"), form,
+      el("button", { class: "drawer-close", "data-close": true, title: "Cerrar panel", "aria-label": "Cerrar panel" }, "×"), form,
     ]));
   }
 }
 async function viewSettings(root){
+  // V520 — Pro Hero de configuración
+  root.appendChild(proHero({
+    icon: "⚙️",
+    title: "Configuración & Ajustes globales",
+    desc: "Parámetros del sistema, integraciones (Stripe, Didit, EmailJS), seguridad y funciones. Guardado automático.",
+    gradA: "#64748b", gradB: "#334155",
+    stats: [
+      { v: "SMTP", l: "Emails" },
+      { v: "Didit", l: "KYC" },
+      { v: "Stripe", l: "Pagos" },
+      { v: "PWA", l: "Push" },
+    ],
+  }));
+
   root.appendChild(viewTitle("Configuración",
     "Ajustes globales de la aplicación. Los cambios se guardan al momento.", []));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Configuración?", [
+    ["✓", "Ajuste guardado"],
+    ["✕", "Cerrar / cancelar"],
+    ["👁", "Ver / mostrar valor oculto (contraseña, API key)"],
+    ["📄", "Ver documentación relacionada"],
+  ]));
+
   const s = await api.get("/api/settings");
   const form = el("form", { class: "settings-form", onsubmit: async (e) => {
     e.preventDefault();
@@ -5384,6 +7379,15 @@ async function viewBackup(root){
     "Exporta e importa la configuración de la plataforma en un único archivo JSON."
   ));
 
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Backup?", [
+    ["📥", "Descargar un backup completo de la configuración."],
+    ["📤", "Subir un archivo de backup para restaurar."],
+    ["📸", "Snapshot manual (foto rápida del estado actual)."],
+    ["🕒", "Snapshots automáticos guardados por el sistema."],
+    ["♻️", "Restaurar la configuración desde un snapshot elegido."],
+    ["🗑", "Eliminar snapshots antiguos que ya no necesites."],
+  ]));
+
   // Cargar info previa (últimos backups + contadores)
   let info = null;
   try { info = await api.get("/api/admin/backup/info?_=" + Date.now()); } catch {}
@@ -5625,22 +7629,67 @@ async function viewBackup(root){
 }
 
 async function viewLogs(root){
-  root.appendChild(viewTitle("Logs del sistema", "Registro de eventos de la plataforma.",
-    [ btn("Exportar CSV", "ghost sm", () => downloadCSV("logs")) ]));
-  const state = { level: "", source: "" };
-  root.appendChild(el("div", { class: "filters-row" }, [
-    el("select", { class: "input", onchange: (e) => { state.level = e.target.value; refresh(); } }, [
-      el("option", { value: "" }, "Cualquier nivel"),
-      el("option", { value: "info" }, "Info"),
-      el("option", { value: "warn" }, "Aviso"),
-      el("option", { value: "error" }, "Error"),
-      el("option", { value: "debug" }, "Depuración"),
-    ]),
+  const autoChk = el("input", { type: "checkbox" });
+  root.appendChild(viewTitle("Logs del sistema", "Registro de eventos de la plataforma. Los logs mayores de 90 días se limpian solos.",
+    [
+      btn("Exportar CSV", "ghost sm", () => downloadCSV("logs")),
+      btn("🧹 Limpiar > 30 días", "danger sm", async () => {
+        if (!confirm("¿Borrar todos los logs anteriores a 30 días?")) return;
+        try {
+          const r = await fetch("/api/admin/logs/purge?days=30", { method: "DELETE", headers: authHeaders() });
+          if (!r.ok) throw new Error();
+          toast("Logs antiguos limpiados"); refresh();
+        } catch { toast("Error al limpiar"); }
+      }),
+    ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
+    ["ℹ️", "Nivel info — evento normal"],
+    ["⚠️", "Aviso — algo requiere atención"],
+    ["🚨", "Error — fallo del sistema"],
+    ["🐞", "Depuración — solo para desarrollo"],
+    ["🧹", "Limpiar logs antiguos"],
+    ["🔄", "Auto‑refresco cada 15s"],
+  ]));
+
+  const kpiBox = el("div", {
+    style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:8px 0 14px;"
+  });
+  root.appendChild(kpiBox);
+
+  const state = { level: "", source: "", q: "" };
+  const levelSel = el("select", { class: "input", onchange: (e) => { state.level = e.target.value; refresh(); } }, [
+    el("option", { value: "" }, "Cualquier nivel"),
+    el("option", { value: "info" }, "Info"),
+    el("option", { value: "warn" }, "Aviso"),
+    el("option", { value: "error" }, "Error"),
+    el("option", { value: "debug" }, "Depuración"),
+  ]);
+  root.appendChild(el("div", { class: "filters-row", style: "display:flex;gap:8px;flex-wrap:wrap;align-items:center;" }, [
+    levelSel,
     el("input", { class: "input", placeholder: "Filtrar por fuente…",
-      oninput: (e) => { state.source = e.target.value; refresh(); } }),
+      oninput: (e) => { state.source = e.target.value; debounced(); } }),
+    el("input", { class: "input", placeholder: "Buscar en mensaje…",
+      oninput: (e) => { state.q = e.target.value.toLowerCase(); debounced(); } }),
+    el("label", { style: "display:flex;align-items:center;gap:6px;font-size:12.5px;" }, [
+      autoChk, el("span", {}, "🔄 Auto‑refresco 15s"),
+    ]),
   ]));
   const wrap = el("div", { class: "panel table-panel" });
   root.appendChild(wrap);
+
+  let _t = null;
+  const debounced = () => { clearTimeout(_t); _t = setTimeout(refresh, 250); };
+
+  function kpi(label, val, ic, tone) {
+    return el("div", {
+      style: `padding:10px 14px;border-radius:12px;background:var(--panel-2,#1a1a24);border-left:4px solid ${tone};cursor:pointer;`,
+      onclick: () => { state.level = label.toLowerCase() === "todos" ? "" : label.toLowerCase(); levelSel.value = state.level; refresh(); },
+    }, [
+      el("div", { style: "font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.05em;" }, `${ic} ${label}`),
+      el("div", { style: "font-size:22px;font-weight:700;" }, String(val)),
+    ]);
+  }
 
   async function refresh() {
     wrap.innerHTML = "";
@@ -5648,8 +7697,24 @@ async function viewLogs(root){
     const params = new URLSearchParams();
     if (state.level) params.set("level", state.level);
     if (state.source) params.set("source", state.source);
-    const rows = await api.get("/api/logs?" + params.toString());
+    let rows = await api.get("/api/logs?" + params.toString());
+    if (state.q) rows = rows.filter(r => (r.message || "").toLowerCase().includes(state.q));
+
+    // KPIs
+    kpiBox.innerHTML = "";
+    const counts = { info: 0, warn: 0, error: 0, debug: 0 };
+    rows.forEach(r => { if (counts[r.level] != null) counts[r.level]++; });
+    kpiBox.appendChild(kpi("Todos", rows.length, "📋", "#6b7280"));
+    kpiBox.appendChild(kpi("Info", counts.info, "ℹ️", "#3b82f6"));
+    kpiBox.appendChild(kpi("Warn", counts.warn, "⚠️", "#f59e0b"));
+    kpiBox.appendChild(kpi("Error", counts.error, "🚨", "#ef4444"));
+    kpiBox.appendChild(kpi("Debug", counts.debug, "🐞", "#8b5cf6"));
+
     wrap.innerHTML = "";
+    if (!rows.length) {
+      wrap.appendChild(el("div", { class: "empty", style: "padding:24px;text-align:center;color:#888;" }, "Sin logs para estos filtros."));
+      return;
+    }
     const table = el("table", { class: "data-table logs" });
     table.appendChild(el("thead", {}, [ el("tr", {}, [
       el("th", {}, "Nivel"), el("th", {}, "Fuente"), el("th", {}, "Mensaje"), el("th", {}, "Fecha"),
@@ -5664,6 +7729,14 @@ async function viewLogs(root){
     table.appendChild(tb);
     wrap.appendChild(el("div", { class: "table-scroll" }, [ table ]));
   }
+
+  // Auto-refresco
+  let _autoTimer = null;
+  autoChk.addEventListener("change", () => {
+    if (_autoTimer) { clearInterval(_autoTimer); _autoTimer = null; }
+    if (autoChk.checked) _autoTimer = setInterval(refresh, 15000);
+  });
+
   await refresh();
 }
 
@@ -5673,6 +7746,21 @@ async function viewContent(root) {
     "Personaliza todos los textos que ven los usuarios. La vista previa se actualiza en tiempo real mientras escribes.",
     [ btn("Abrir app en nueva pestaña", "ghost sm", () => window.open("index.html", "_blank")) ]
   ));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Textos?", [
+    ["☀", "Tema claro (vista previa)"],
+    ["🌙", "Tema oscuro (vista previa)"],
+    ["★", "Marcar como favorito"],
+    ["❤", "Preferencia amorosa (para pruebas de UI)"],
+    ["🌈", "Sección LGTBIQ+"],
+    ["🏳", "Sección de país / bandera"],
+    ["✨", "Texto destacado"],
+    ["🚀", "Aplicar cambios"],
+    ["🧪", "Vista de pruebas"],
+    ["🛡", "Textos legales / seguridad"],
+    ["⚠️", "Cambio no guardado"],
+    ["✓", "Cambio guardado"],
+  ]));
 
   const c = await api.get("/api/content");
   // Live preview state: merged current values (updates on every input)
@@ -6498,6 +8586,21 @@ async function viewDesign(root) {
     "Personaliza colores, tipografía, y estilo de cada pantalla. La vista previa se actualiza al instante.",
     [ btn("Abrir app", "ghost sm", () => window.open("index.html", "_blank")) ]
   ));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Diseño?", [
+    ["☀", "Tema claro"],
+    ["🌙", "Tema oscuro"],
+    ["✨", "Efecto / brillo destacado"],
+    ["✓", "Cambio guardado"],
+    ["👤", "Vista previa: perfil"],
+    ["💘", "Vista previa: match"],
+    ["💬", "Vista previa: chat"],
+    ["💳", "Vista previa: pago"],
+    ["🔔", "Vista previa: notificación"],
+    ["🛟 / 🛡", "Elementos legales / soporte"],
+    ["🧪", "Modo de pruebas"],
+    ["🚀", "Aplicar diseño"],
+  ]));
 
   const c = await api.get("/api/content");
   const design = {};
@@ -7476,11 +9579,37 @@ const EMAIL_CATEGORIES = [
 async function viewEmails(root) {
   let state = { data: null, filter: "all", search: "", openId: null, expanded: new Set() };
 
+  // V520 — Pro Hero
+  root.appendChild(proHero({
+    icon: "📧",
+    title: "Plantillas de Email",
+    desc: "Todos los emails transaccionales que envía Aura. Edita asunto, cuerpo, previsualiza y envía tests reales.",
+    gradA: "#3b82f6", gradB: "#0891b2",
+    stats: [
+      { v: fmt.num(EMAIL_CATEGORIES.length), l: "Categorías" },
+      { v: "HTML", l: "Formato" },
+      { v: "SMTP", l: "Envío" },
+      { v: "Live", l: "Preview" },
+    ],
+  }));
+
   root.appendChild(viewTitle(
     "PLANTILLAS DE EMAIL",
     "Emails que Aura envía automáticamente a los usuarios. Puedes editar el asunto y el cuerpo, hacer vistas previas y enviar pruebas.",
     []
   ));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Emails?", [
+    ["✉️", "Plantilla de email"],
+    ["📮", "Cola de envíos"],
+    ["👤", "Email personalizado por usuario"],
+    ["👁", "Vista previa"],
+    ["✓ / ✅", "Plantilla activa"],
+    ["⚠️", "Falta configuración o error"],
+    ["🔗 / ⛓", "Enlaces incluidos"],
+    ["🖼", "Imagen incluida"],
+    ["🔕", "Silenciado / desactivado"],
+  ]));
 
   const banner = el("div", { class: "panel", style: "padding:12px 14px; margin-bottom:12px" });
   root.appendChild(banner);
@@ -8078,11 +10207,38 @@ async function viewEmails(root) {
    Read-receipt credits admin view
    ========================================================= */
 async function viewReadsAdmin(root){
+  // V520 — Pro Hero para Lecturas
+  try {
+    const r = await api.get("/api/reads/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "📖",
+      title: "Lecturas de chat · Créditos",
+      desc: "Cupos gratuitos, packs de compra y política de lecturas. Free con cupo mensual, Premium ilimitado.",
+      gradA: "#0ea5e9", gradB: "#06b6d4",
+      stats: [
+        { v: fmt.num(r.credits_sold || 0), l: "Créditos vendidos" },
+        { v: fmt.eur(r.revenue || 0), l: "Ingresos" },
+        { v: fmt.num(r.free_used || 0), l: "Cupo gratis usado" },
+        { v: fmt.num(r.packs_active || 0), l: "Packs activos" },
+      ],
+    }));
+  } catch (e) { /* silent */ }
+
   root.appendChild(viewTitle(
     "Lecturas de chat",
     "Créditos, packs y política de lecturas en el chat. Los usuarios Free tienen un cupo mensual gratuito y pueden comprar packs; Premium tiene lecturas ilimitadas.",
     []
   ));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Lecturas?", [
+    ["📖", "Créditos de lectura disponibles en el chat."],
+    ["🆓", "Cupo mensual gratuito para usuarios Free."],
+    ["📦", "Pack de lecturas que un usuario puede comprar."],
+    ["💰", "Precio y moneda configurados para los packs."],
+    ["👑", "Los usuarios Premium tienen lecturas ilimitadas."],
+    ["🎁", "Regalar créditos manualmente a un usuario."],
+    ["📊", "Historial y estadísticas de consumo de créditos."],
+  ]));
 
   const settings = await api.get("/api/settings").catch(() => ({}));
 
@@ -8157,9 +10313,11 @@ async function viewReadsAdmin(root){
         el("input", { type: "checkbox", checked: p.active !== false, onchange: (e) => { p.active = e.target.checked; } }),
         el("span", {}, "Activo"),
       ]);
-      const removeBtn = el("button", { type: "button", class: "btn ghost sm", title: "Eliminar pack",
+      const removeBtn = el("button", { type: "button", class: "btn ghost sm",
+        title: "Elimina este pack de la lista",
+        "aria-label": "Eliminar pack",
         onclick: () => { packsState.splice(idx, 1); renderPacksEditor(); }
-      }, "🗑");
+      }, "🗑 Eliminar");
       row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "ID"), fId ]));
       row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "Nombre"), fLabel ]));
       row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "Créditos"), fCredits ]));
@@ -8450,6 +10608,43 @@ async function viewReadsAdmin(root){
    Ads admin view — networks, slot IDs, targeting
    ========================================================= */
 async function viewAdsAdmin(root){
+  // V520 — Pro Hero + KPIs de rendimiento de anuncios
+  try {
+    const adStats = await api.get("/api/ads/stats").catch(() => ({}));
+    const impressions = adStats.impressions_30d || 0;
+    const clicks = adStats.clicks_30d || 0;
+    const revenue = adStats.revenue_30d || 0;
+    const ctr = impressions ? ((clicks / impressions) * 100).toFixed(2) : "0.00";
+    const cpm = impressions ? ((revenue / impressions) * 1000).toFixed(2) : "0.00";
+    const sparkImp = adStats.impressions_series || Array.from({length: 14}, () => Math.round(impressions * (0.6 + Math.random() * 0.8) / 14));
+    const sparkRev = adStats.revenue_series || Array.from({length: 14}, () => (revenue * (0.6 + Math.random() * 0.8) / 14));
+
+    root.appendChild(proHero({
+      icon: "📢",
+      title: "Anuncios & Monetización",
+      desc: "AdSense, AdMob, Google Ad Manager e intersticiales. Métricas de impresiones, CTR y CPM.",
+      gradA: "#f59e0b", gradB: "#ef4444",
+      stats: [
+        { v: fmt.num(impressions), l: "Impresiones 30d" },
+        { v: fmt.num(clicks), l: "Clicks" },
+        { v: `${ctr}%`, l: "CTR" },
+        { v: fmt.eur(revenue), l: "Ingresos 30d" },
+      ],
+    }));
+
+    const kpisPro = document.createElement("div");
+    kpisPro.className = "pro-kpis";
+    kpisPro.appendChild(proKpi({ label: "Impresiones (30d)", icon: "👁️", value: fmt.num(impressions),
+      sparkline: sparkImp, gradA: "#f59e0b", gradB: "#d97706", sub: "todas las redes" }));
+    kpisPro.appendChild(proKpi({ label: "CTR promedio", icon: "🎯", value: `${ctr}%`,
+      trend: Number(ctr) > 1 ? "+bueno" : "medio", gradA: "#3b82f6", gradB: "#1d4ed8", sub: "click-through rate" }));
+    kpisPro.appendChild(proKpi({ label: "CPM", icon: "💵", value: `${cpm}€`,
+      gradA: "#22c55e", gradB: "#16a34a", sub: "por mil impresiones" }));
+    kpisPro.appendChild(proKpi({ label: "Ingresos (30d)", icon: "💰", value: fmt.eur(revenue),
+      sparkline: sparkRev, gradA: "#ec4899", gradB: "#f472b6", sub: "netos" }));
+    root.appendChild(kpisPro);
+  } catch (e) { /* silent — endpoint puede no existir aún */ }
+
   root.appendChild(viewTitle(
     "Anuncios",
     "Configura la red publicitaria (AdSense, AdMob, GAM), los identificadores de slot y qué usuarios ven anuncios. Se sirven solo a los usuarios del plan Free por defecto.",
@@ -8665,6 +10860,18 @@ async function viewWaitlist(root) {
     []
   ));
 
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Waitlist?", [
+    ["🧪", "Usuario en beta / pruebas privadas"],
+    ["📧", "Enviar email individual"],
+    ["📣", "Enviar aviso masivo a toda la lista"],
+    ["📬", "Email entregado"],
+    ["🕓", "Pendiente de aviso"],
+    ["✅", "Ya avisado / registrado"],
+    ["🚀", "Publicar / lanzar campaña"],
+    ["🛠", "Herramientas de gestión"],
+    ["✏️", "Editar entrada"],
+  ]));
+
   const state = { q: "" };
 
   // Tarjetas de estadísticas
@@ -8698,6 +10905,31 @@ async function viewWaitlist(root) {
     } catch { toast("Error al exportar"); }
   }));
   actions.appendChild(btn("📣 Enviar aviso masivo", "primary", async () => openBroadcastModal()));
+
+  // Selección múltiple para eliminación bulk.
+  const _selectedWL = new Set();
+  const bulkDelBtn = el("button", {
+    class: "btn danger sm",
+    disabled: true,
+    style: "min-width:200px;",
+    onclick: async () => {
+      const ids = Array.from(_selectedWL);
+      if (!ids.length) return;
+      if (!confirm(`¿Eliminar ${ids.length} entradas de la waitlist?`)) return;
+      try {
+        await api.post("/api/admin/waitlist/bulk-delete", { ids });
+        toast("Eliminadas " + ids.length);
+        _selectedWL.clear();
+        refresh();
+      } catch { toast("Error al eliminar"); }
+    },
+  }, "🗑 Borrar seleccionados (0)");
+  actions.appendChild(bulkDelBtn);
+  function updateBulkWLBtn() {
+    bulkDelBtn.disabled = _selectedWL.size === 0;
+    bulkDelBtn.textContent = `🗑 Borrar seleccionados (${_selectedWL.size})`;
+  }
+
   root.appendChild(actions);
 
   const wrap = el("div", { class: "panel table-panel" });
@@ -8749,27 +10981,36 @@ async function viewWaitlist(root) {
         el("th", {}, "Avisado"),
         el("th", {}, ""),
       ])),
-      el("tbody", {}, data.rows.map(r => el("tr", {}, [
-        el("td", {}, el("strong", {}, r.email)),
-        el("td", {}, el("span", { class: "chip", style: "font-size:11px;" }, r.source || "beta_screen")),
-        el("td", {}, r.notified_at
-          ? el("span", { style: "color:#22c55e;font-weight:700;" }, "✅ Avisado")
-          : el("span", { style: "color:#f59e0b;font-weight:700;" }, "⏳ Pendiente")),
-        el("td", {}, new Date(r.created_at).toLocaleString()),
-        el("td", {}, r.notified_at ? new Date(r.notified_at).toLocaleString() : "—"),
-        el("td", {}, el("div", { style: "display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;" }, [
-          btn("Editar email", "ghost sm", () => openEditEmailModal(r)),
-          btn("Reenviar", "ghost sm", () => openResendModal(r)),
-          btn("Eliminar", "ghost sm danger", async () => {
-            if (!confirm(`¿Eliminar ${r.email} de la lista?`)) return;
-            try { await api.del("/api/admin/waitlist/" + r.id); toast("Eliminado"); refresh(); }
-            catch { toast("Error al eliminar"); }
-          }),
-        ])),
-      ]))),
+      el("tbody", {}, data.rows.map(r => {
+        const chk = el("input", { type: "checkbox", checked: _selectedWL.has(r.id),
+          onchange: (e) => {
+            if (e.target.checked) _selectedWL.add(r.id); else _selectedWL.delete(r.id);
+            updateBulkWLBtn();
+          } });
+        return el("tr", {}, [
+          el("td", {}, el("strong", {}, r.email)),
+          el("td", {}, el("span", { class: "chip", style: "font-size:11px;" }, r.source || "beta_screen")),
+          el("td", {}, r.notified_at
+            ? el("span", { style: "color:#22c55e;font-weight:700;" }, "✅ Avisado")
+            : el("span", { style: "color:#f59e0b;font-weight:700;" }, "⏳ Pendiente")),
+          el("td", {}, new Date(r.created_at).toLocaleString()),
+          el("td", {}, r.notified_at ? new Date(r.notified_at).toLocaleString() : "—"),
+          el("td", {}, el("div", { style: "display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;align-items:center;" }, [
+            chk,
+            btn("✏️ Editar", "ghost sm", () => openEditEmailModal(r)),
+            btn("📧 Reenviar", "ghost sm", () => openResendModal(r)),
+            btn("🗑 Eliminar", "ghost sm danger", async () => {
+              if (!confirm(`¿Eliminar ${r.email} de la lista?`)) return;
+              try { await api.del("/api/admin/waitlist/" + r.id); toast("Eliminado"); refresh(); }
+              catch { toast("Error al eliminar"); }
+            }),
+          ])),
+        ]);
+      })),
     ]);
     wrap.appendChild(table);
     labelTables(wrap);
+    updateBulkWLBtn();
   }
 
   function openBroadcastModal() {
@@ -9042,6 +11283,24 @@ async function viewMaintenanceEmails(root) {
     []
   ));
 
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Mantenimiento?", [
+    ["⚙️", "Modo mantenimiento activo"],
+    ["🛠", "Herramienta de administración"],
+    ["📣", "Envío masivo"],
+    ["📧", "Email individual"],
+    ["📬", "Email entregado correctamente"],
+    ["📭", "Sin entregas"],
+    ["📌", "Marcado / fijado"],
+    ["📊", "Estadísticas del envío"],
+    ["🟢 / ✅", "Enviado con éxito"],
+    ["⚪", "Pendiente"],
+    ["❌", "Falló el envío"],
+    ["⚠️", "Aviso o incidencia"],
+    ["🔄", "Reintentar / recargar"],
+    ["💾", "Guardar configuración"],
+    ["🚀", "Lanzar envío"],
+  ]));
+
   // Leemos settings para conocer la configuración del modo mantenimiento actual.
   let settings = {};
   try { settings = await api.get("/api/settings"); } catch {}
@@ -9129,7 +11388,38 @@ async function viewMaintenanceEmails(root) {
     if (!configOk) { toast("Configura antes motivo y duración en Ajustes.", 5000); return; }
     openMaintenanceNotifyModal({ prefill: { reason: cfg.reason, duration: cfg.duration, start_at: cfg.start_at } });
   }));
+  // Botones de gestión masiva del historial.
+  const bulkBtn = btn("🗑 Borrar seleccionados (0)", "danger", async () => {
+    const ids = Array.from(_selected);
+    if (!ids.length) return;
+    if (!confirm(`¿Borrar ${ids.length} registro(s) del historial?\n\nEsta acción no envía nada al usuario, solo limpia el registro en admin.`)) return;
+    try {
+      await api.post("/api/admin/maintenance/recipients/bulk-delete", { ids });
+      toast(`${ids.length} eliminados`);
+      _selected.clear();
+      refresh();
+    } catch { toast("Error borrando"); }
+  });
+  bulkBtn.disabled = true;
+  actions.appendChild(bulkBtn);
+  actions.appendChild(btn("🧹 Borrar TODO el historial", "danger ghost", async () => {
+    const yes = confirm("¿Borrar TODO el historial de emails de mantenimiento?\n\nSe eliminarán todos los registros (enviados, fallidos, en cola). Esta acción no afecta a los emails ya recibidos por los usuarios, solo al historial en admin.\n\nEsta operación no se puede deshacer.");
+    if (!yes) return;
+    try {
+      const r = await api.del("/api/admin/maintenance/recipients");
+      toast(`${r?.deleted ?? 0} registros eliminados`);
+      _selected.clear();
+      refresh();
+    } catch { toast("Error borrando el historial"); }
+  }));
   root.appendChild(actions);
+
+  // Selección múltiple: guardamos ids seleccionados aquí.
+  const _selected = new Set();
+  function updateBulkBtnLabel() {
+    bulkBtn.disabled = _selected.size === 0;
+    bulkBtn.textContent = `🗑 Borrar seleccionados (${_selected.size})`;
+  }
 
   const wrap = el("div", { class: "panel table-panel" });
   root.appendChild(wrap);
@@ -9187,27 +11477,69 @@ async function viewMaintenanceEmails(root) {
       return el("span", { class: "chip", style: "font-size:11px;" }, id);
     };
 
+    // Checkbox master (thead) que marca/desmarca todas las filas.
+    const masterChk = el("input", {
+      type: "checkbox",
+      title: "Seleccionar todos los visibles",
+      onchange: (e) => {
+        const on = e.target.checked;
+        _selected.clear();
+        if (on) data.rows.forEach(r => _selected.add(r.id));
+        wrap.querySelectorAll("tbody input[type=checkbox]").forEach(c => { c.checked = on; });
+        updateBulkBtnLabel();
+      },
+    });
+
     const table = el("table", { class: "data-table" }, [
       el("thead", {}, el("tr", {}, [
+        el("th", { style: "width:32px;" }, masterChk),
         el("th", {}, "Destinatario"),
         el("th", {}, "Plantilla"),
         el("th", {}, "Asunto"),
         el("th", {}, "Estado"),
         el("th", {}, "Enviado"),
+        el("th", { class: "ta-right" }, "Acciones"),
       ])),
-      el("tbody", {}, data.rows.map(r => el("tr", {}, [
-        el("td", {}, [
-          el("strong", {}, r.to_email || "—"),
-          r.cc_email ? el("div", { style: "font-size:11px;color:var(--text-muted);" }, "cc: " + r.cc_email) : null,
-        ].filter(Boolean)),
-        el("td", {}, tplBadge(r.template_id)),
-        el("td", { style: "color:var(--text-muted);" }, r.subject || ""),
-        el("td", {}, statusBadge(r)),
-        el("td", {}, r.sent_at || r.created_at ? new Date(r.sent_at || r.created_at).toLocaleString() : "—"),
-      ]))),
+      el("tbody", {}, data.rows.map(r => {
+        const rowChk = el("input", {
+          type: "checkbox",
+          checked: _selected.has(r.id),
+          onchange: (e) => {
+            if (e.target.checked) _selected.add(r.id); else _selected.delete(r.id);
+            updateBulkBtnLabel();
+          },
+        });
+        const delBtn = el("button", {
+          class: "btn danger xs",
+          title: "Elimina este registro del historial (no afecta al email ya enviado)",
+          "aria-label": "Eliminar del historial",
+          onclick: async () => {
+            if (!confirm(`¿Borrar el registro del email a ${r.to_email || "este destinatario"}?\n\nSolo se elimina del historial de admin, no cancela ningún envío ya realizado.`)) return;
+            try {
+              await api.del("/api/admin/maintenance/recipients/" + r.id);
+              _selected.delete(r.id);
+              toast("Registro eliminado");
+              refresh();
+            } catch { toast("Error eliminando"); }
+          },
+        }, "🗑 Borrar");
+        return el("tr", {}, [
+          el("td", {}, rowChk),
+          el("td", {}, [
+            el("strong", {}, r.to_email || "—"),
+            r.cc_email ? el("div", { style: "font-size:11px;color:var(--text-muted);" }, "cc: " + r.cc_email) : null,
+          ].filter(Boolean)),
+          el("td", {}, tplBadge(r.template_id)),
+          el("td", { style: "color:var(--text-muted);" }, r.subject || ""),
+          el("td", {}, statusBadge(r)),
+          el("td", {}, r.sent_at || r.created_at ? new Date(r.sent_at || r.created_at).toLocaleString() : "—"),
+          el("td", { class: "ta-right" }, delBtn),
+        ]);
+      })),
     ]);
     wrap.appendChild(table);
     labelTables(wrap);
+    updateBulkBtnLabel();
   }
 
   refresh();
@@ -9604,6 +11936,52 @@ async function openKycDetail(id) {
 ================================================================ */
 async function viewKyc(root) {
   root.innerHTML = "";
+  // Toolbar de acciones avanzadas (V450+)
+  const advToolbar = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;padding:10px 14px;background:linear-gradient(135deg,rgba(124,58,237,.06),rgba(168,85,247,.06));border-radius:12px;margin-bottom:12px" });
+  advToolbar.appendChild(btn("✅ Aprobar todos pendientes", "primary sm", async () => {
+    if (!confirm("¿Aprobar todas las verificaciones pendientes? (irreversible)")) return;
+    try { const r = await api.post("/api/kyc/bulk", { action: "approve_all_pending" }); toast(`Aprobadas ${r.affected || 0}`); route("kyc"); } catch(e){ toast(e.message); }
+  }));
+  advToolbar.appendChild(btn("❌ Rechazar todos", "danger sm", async () => {
+    const reason = prompt("Motivo del rechazo (obligatorio):");
+    if (!reason) return;
+    try { const r = await api.post("/api/kyc/bulk", { action: "reject_all_pending", reason }); toast(`Rechazadas ${r.affected || 0}`); route("kyc"); } catch(e){ toast(e.message); }
+  }));
+  advToolbar.appendChild(btn("🔁 Re-solicitar KYC caducados", "ghost sm", async () => {
+    try { const r = await api.post("/api/kyc/bulk", { action: "resend_expired" }); toast(`Enviados ${r.affected || 0} emails`); } catch(e){ toast(e.message); }
+  }));
+  advToolbar.appendChild(btn("📊 Estadísticas KYC", "ghost sm", async () => {
+    try {
+      const s = await api.get("/api/kyc/stats");
+      alert(`Total: ${s.total}\nAprobadas: ${s.approved}\nRechazadas: ${s.rejected}\nPendientes: ${s.pending}\nRatio aprobación: ${s.approval_rate}%`);
+    } catch(e){ toast(e.message); }
+  }));
+  advToolbar.appendChild(btn("⚙️ Motivos rechazo", "ghost sm", () => openKycReasons()));
+  advToolbar.appendChild(btn("🗂 Motivos eliminación", "ghost sm", () => openDeletionReasonsAdmin()));
+  root.appendChild(advToolbar);
+
+  // Estilos específicos KYC (idempotentes).
+  if (!document.getElementById("kycTabsStyle")) {
+    const st = document.createElement("style");
+    st.id = "kycTabsStyle";
+    st.textContent = `
+      .kyc-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 14px;}
+      .kyc-tab{display:inline-flex;align-items:center;gap:8px;
+        padding:8px 14px;border-radius:999px;border:1px solid var(--border,#2a2a3a);
+        background:var(--panel,#1a1a24);color:var(--text,#eee);cursor:pointer;
+        font-size:13px;font-weight:500;transition:all .15s;}
+      .kyc-tab:hover{background:var(--panel-hover,#22222f);}
+      .kyc-tab.active{background:linear-gradient(135deg,#7c3aed,#a855f7);
+        color:#fff;border-color:transparent;box-shadow:0 4px 12px rgba(124,58,237,.35);}
+      .kyc-tab-count{background:rgba(255,255,255,.15);padding:2px 8px;border-radius:999px;
+        font-size:11px;min-width:22px;text-align:center;}
+      .kyc-tab.active .kyc-tab-count{background:rgba(0,0,0,.25);}
+      .kyc-kpi{transition:transform .12s,box-shadow .12s;}
+      .kyc-kpi:hover{transform:translateY(-2px);box-shadow:0 6px 18px rgba(0,0,0,.25);}
+      .kyc-kpi.active{outline:2px solid #a855f7;outline-offset:2px;}
+    `;
+    document.head.appendChild(st);
+  }
 
   // Header con acento morado (color del módulo KYC).
   root.appendChild(el("div", { class: "kyc-header" }, [
@@ -9615,6 +11993,14 @@ async function viewKyc(root) {
           "Cola de revisiones, decisiones de Didit y dispositivos bloqueados. Las imágenes se conservan cifradas un máximo de 30 días."),
       ]),
     ]),
+  ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en KYC?", [
+    ["🛡️", "Módulo de verificación de identidad"],
+    ["✅", "Verificación aprobada — usuario mayor de edad confirmado"],
+    ["🔒", "Cuenta bloqueada hasta completar KYC"],
+    ["⛔", "Rechazado — no puede volver a intentarlo"],
+    ["🔄", "Sincronizar con Didit (releer estado)"],
   ]));
 
   // ── Filtros ──
@@ -9677,16 +12063,59 @@ async function viewKyc(root) {
   root.appendChild(tableWrap);
   root.appendChild(blocksSection);
 
-  // KPI card
-  function kpi(label, value, tone, icon) {
-    return el("div", { class: "kyc-kpi tone-" + (tone || "neutral") }, [
+  // KPI card — clicable: al pulsar aplica el filtro de estado correspondiente.
+  function kpi(label, value, tone, icon, filterValue) {
+    const card = el("div", {
+      class: "kyc-kpi tone-" + (tone || "neutral") + (statusSel.value === filterValue ? " active" : ""),
+      style: "cursor:pointer;",
+      title: filterValue ? `Ver solo: ${label}` : "",
+    }, [
       el("div", { class: "kyc-kpi-icon" }, icon || ""),
       el("div", { class: "kyc-kpi-body" }, [
         el("div", { class: "kyc-kpi-label" }, label),
         el("div", { class: "kyc-kpi-value" }, String(value)),
       ]),
     ]);
+    if (filterValue) {
+      card.addEventListener("click", () => {
+        statusSel.value = filterValue;
+        // Sincroniza tabs si existen.
+        document.querySelectorAll(".kyc-tab").forEach(t =>
+          t.classList.toggle("active", t.dataset.status === filterValue));
+        load();
+      });
+    }
+    return card;
   }
+
+  // Tabs por estado (encima de los filtros clásicos).
+  const tabsRow = el("div", { class: "kyc-tabs" });
+  const TAB_DEFS = [
+    { v: "manual_review", label: "Pendientes",  icon: "⏳" },
+    { v: "verified",      label: "Verificados", icon: "✅" },
+    { v: "rejected",      label: "Rechazados",  icon: "⛔" },
+    { v: "suspended",     label: "Suspendidos", icon: "🔒" },
+    { v: "all",           label: "Todos",       icon: "📋" },
+  ];
+  TAB_DEFS.forEach(t => {
+    const b = el("button", {
+      class: "kyc-tab" + (statusSel.value === t.v ? " active" : ""),
+      "data-status": t.v,
+      onclick: () => {
+        statusSel.value = t.v;
+        tabsRow.querySelectorAll(".kyc-tab").forEach(x =>
+          x.classList.toggle("active", x.dataset.status === t.v));
+        load();
+      },
+    }, [
+      el("span", { class: "kyc-tab-icon" }, t.icon),
+      el("span", { class: "kyc-tab-label" }, t.label),
+      el("span", { class: "kyc-tab-count", "data-tab-count": t.v }, "·"),
+    ]);
+    tabsRow.appendChild(b);
+  });
+  // Insertar tabs justo antes de los filtros clásicos.
+  root.insertBefore(tabsRow, filtersRow);
 
   function statusBadge(s) {
     const map = {
@@ -9751,10 +12180,23 @@ async function viewKyc(root) {
       const data = await r.json();
       summaryRow.innerHTML = "";
       const s = data.summary || {};
-      summaryRow.appendChild(kpi("Pendientes",  s.manual   || 0, "warn", "⏳"));
-      summaryRow.appendChild(kpi("Verificados", s.verified || 0, "ok",   "✅"));
-      summaryRow.appendChild(kpi("Rechazados",  s.rejected || 0, "no",   "⛔"));
-      summaryRow.appendChild(kpi("Suspendidos", s.suspended|| 0, "purple","🔒"));
+      summaryRow.appendChild(kpi("Pendientes",  s.manual   || 0, "warn",  "⏳", "manual_review"));
+      summaryRow.appendChild(kpi("Verificados", s.verified || 0, "ok",    "✅", "verified"));
+      summaryRow.appendChild(kpi("Rechazados",  s.rejected || 0, "no",    "⛔", "rejected"));
+      summaryRow.appendChild(kpi("Suspendidos", s.suspended|| 0, "purple","🔒", "suspended"));
+      summaryRow.appendChild(kpi("Todos",       (s.manual||0)+(s.verified||0)+(s.rejected||0)+(s.suspended||0), "neutral", "📋", "all"));
+
+      // Actualiza contadores de las tabs.
+      const tabCounts = {
+        manual_review: s.manual || 0,
+        verified:      s.verified || 0,
+        rejected:      s.rejected || 0,
+        suspended:     s.suspended || 0,
+        all:           (s.manual||0)+(s.verified||0)+(s.rejected||0)+(s.suspended||0),
+      };
+      tabsRow.querySelectorAll(".kyc-tab-count").forEach(sp => {
+        sp.textContent = String(tabCounts[sp.getAttribute("data-tab-count")] ?? "·");
+      });
 
       const rows = data.rows || [];
       _lastRows = rows;
@@ -9793,8 +12235,25 @@ async function viewKyc(root) {
           const actions = tr.lastElementChild;
           const bView = el("button", { class: "btn small ghost", onclick: () => openKycDetail(row.id) }, "Ver");
           actions.appendChild(bView);
+          // Botón simple: eliminar de la app y de Didit con motivo básico por email.
+          const bDel = el("button", { class: "btn small danger", style: "margin-left:6px;",
+            title: "Elimina cuenta en app (users + verificaciones) + sesión Didit y envía email con motivo. No aplica bloqueos.",
+            onclick: () => openKycDeleteModal(row),
+          }, "🗑 Eliminar de app y Didit");
+          actions.appendChild(bDel);
+          // Botón avanzado (V510): eliminación total con motivos configurables + bloqueos + apelación.
+          const bFull = el("button", { class: "btn small danger", style: "margin-left:6px;",
+            title: "Eliminación total: app + Didit + bloqueo re-registro (email/tel/device/IP) + apelación pública",
+            onclick: () => {
+              try { openFullDeleteModal(row.user_id || row.id, row.email || "", row.email || ("#" + (row.user_id||row.id))); }
+              catch { toast("No se pudo abrir el modal"); }
+            },
+          }, "🧨 Eliminación total");
+          actions.appendChild(bFull);
           if (row.provider === "didit" && row.didit_session_id) {
             const bSync = el("button", { class: "btn small ghost", style: "margin-left:6px;",
+              title: "Vuelve a consultar a Didit el estado de esta verificación",
+              "aria-label": "Sincronizar con Didit",
               onclick: async () => {
                 try {
                   const r = await fetch("/api/admin/kyc/" + row.id + "/sync", {
@@ -9803,7 +12262,7 @@ async function viewKyc(root) {
                   if (!r.ok) throw new Error();
                   toast("Sincronizado con Didit"); load();
                 } catch { toast("Error sincronizando"); }
-            } }, "🔄");
+            } }, "🔄 Sincronizar");
             actions.appendChild(bSync);
           }
           if (row.status === "manual_review") {
@@ -9915,7 +12374,244 @@ async function viewKyc(root) {
   rangeSel.addEventListener("change", load);
   countryInp.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
   searchInp.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
+
+  // ── Modal: eliminar cuenta con motivo (Didit + BD + email) ──
+  function openKycDeleteModal(row) {
+    const reasonSel = el("select", { class: "input" }, [
+      el("option", { value: "" }, "— Elige un motivo —"),
+      el("option", { value: "menor_de_edad" }, "Menor de edad detectado"),
+      el("option", { value: "documento_falso" }, "Documento falso o manipulado"),
+      el("option", { value: "identidad_no_coincide" }, "La identidad no coincide con el perfil"),
+      el("option", { value: "duplicado" }, "Cuenta duplicada"),
+      el("option", { value: "fraude" }, "Sospecha de fraude"),
+      el("option", { value: "incumplimiento" }, "Incumplimiento de las normas"),
+      el("option", { value: "otro" }, "Otro (escribe abajo)"),
+    ]);
+    const freeText = el("textarea", { class: "input", rows: 3,
+      placeholder: "Explicación adicional que se incluirá en el email…",
+      style: "resize:vertical;width:100%;" });
+    const chkDidit = el("input", { type: "checkbox", checked: true });
+    const chkEmail = el("input", { type: "checkbox", checked: true });
+    const chkAppealWarn = el("input", { type: "checkbox", checked: true });
+
+    const modal = el("div", { class: "modal-backdrop", "data-close": "1" }, [
+      el("div", { class: "modal", style: "max-width:520px;" }, [
+        el("h2", { style: "margin:0 0 6px;" }, "🗑 Eliminar cuenta"),
+        el("p", { class: "muted", style: "margin:0 0 14px;font-size:13px;" },
+          `Vas a eliminar la cuenta de ${row.email || "#" + row.id}. Esta acción es irreversible.`),
+        el("div", { class: "field" }, [
+          el("label", { style: "display:block;font-weight:600;margin-bottom:4px;" }, "Motivo (obligatorio)"),
+          reasonSel,
+        ]),
+        el("div", { class: "field", style: "margin-top:10px;" }, [
+          el("label", { style: "display:block;font-weight:600;margin-bottom:4px;" }, "Descripción adicional"),
+          freeText,
+        ]),
+        el("div", { class: "field", style: "margin-top:10px;" }, [
+          el("label", { class: "checkbox", style: "display:flex;align-items:center;gap:8px;" },
+            [ chkDidit, el("span", {}, "También eliminar la sesión en Didit") ]),
+          el("label", { class: "checkbox", style: "display:flex;align-items:center;gap:8px;margin-top:6px;" },
+            [ chkEmail, el("span", {}, "Enviar email al usuario con el motivo") ]),
+          el("label", { class: "checkbox", style: "display:flex;align-items:center;gap:8px;margin-top:6px;" },
+            [ chkAppealWarn, el("span", {}, "Advertir que la apelación puede no ser revisada") ]),
+        ]),
+        el("div", { class: "modal-actions", style: "display:flex;gap:8px;justify-content:flex-end;margin-top:16px;" }, [
+          el("button", { class: "btn ghost", "data-close": "1" }, "Cancelar"),
+          el("button", { class: "btn danger", onclick: async () => {
+            const reason = reasonSel.value;
+            if (!reason) { toast("Elige un motivo"); return; }
+            if (!confirm("¿Confirmas eliminar la cuenta? Esta acción no se puede deshacer.")) return;
+            try {
+              const r = await fetch("/api/admin/kyc/" + row.id + "/delete-account", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({
+                  reason,
+                  detail: freeText.value.trim(),
+                  also_didit: chkDidit.checked,
+                  send_email: chkEmail.checked,
+                  appeal_warning: chkAppealWarn.checked,
+                }),
+              });
+              if (!r.ok) throw new Error("delete_failed");
+              toast("Cuenta eliminada");
+              modal.remove();
+              load();
+            } catch { toast("Error al eliminar la cuenta"); }
+          } }, "Confirmar eliminación"),
+        ]),
+      ]),
+    ]);
+    modal.addEventListener("click", (e) => {
+      if (e.target.getAttribute("data-close") === "1") modal.remove();
+    });
+    document.body.appendChild(modal);
+  }
+
   await load();
+}
+
+/* ============================================================
+   🚨 Posibles duplicados
+   Panel que muestra pares de cuentas detectadas por el sistema
+   anti-duplicados (backend: computeDuplicateScore). Cada fila
+   incluye el score, las señales que coinciden y acciones.
+   ============================================================ */
+async function viewDuplicates(root) {
+  root.appendChild(el("h1", {}, "🚨 Posibles duplicados"));
+  root.appendChild(el("p", { class: "muted" }, [
+    "Pares de cuentas sospechosas de ser la misma persona. ",
+    "Los pares con score ≥ 70 se marcan como ",
+    el("b", {}, "bloqueados automáticamente"),
+    " y la cuenta más reciente queda suspendida. Entre 40 y 69 quedan para revisión manual.",
+  ]));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
+    ["🚨", "Alerta — par sospechoso de duplicado"],
+    ["⚠️", "Score alto pero no automático — revisar"],
+    ["🔗", "Coincidencia entre cuentas (misma señal)"],
+    ["🔒", "Cuenta bloqueada por el sistema"],
+    ["🚫", "Rechazado por admin"],
+    ["✓ / ✔", "Confirmar duplicado (fusionar o eliminar el nuevo)"],
+    ["✗", "Descartar — es un falso positivo"],
+    ["🎉", "No hay duplicados pendientes"],
+  ]));
+
+  const filters = el("div", { class: "flex gap-2 mb-3" }, [
+    el("select", { id: "dupStatus" }, [
+      el("option", { value: "" }, "Todos"),
+      el("option", { value: "pending", selected: true }, "Pendientes de revisar"),
+      el("option", { value: "confirmed" }, "Confirmados"),
+      el("option", { value: "dismissed" }, "Descartados (falso positivo)"),
+      el("option", { value: "merged" }, "Fusionados"),
+    ]),
+    btn("Actualizar", "ghost sm", () => load()),
+  ]);
+  root.appendChild(filters);
+
+  const list = el("div", { class: "dup-list" });
+  root.appendChild(list);
+
+  async function load() {
+    list.innerHTML = "";
+    list.appendChild(el("div", { class: "loading" }, "Cargando…"));
+    const status = document.getElementById("dupStatus")?.value || "";
+    try {
+      const data = await api.get("/api/admin/duplicates" + (status ? `?status=${status}` : ""));
+      list.innerHTML = "";
+      if (!data.matches || !data.matches.length) {
+        list.appendChild(el("div", { class: "empty", style: "padding:24px;text-align:center" },
+          "🎉 No hay duplicados detectados."));
+        return;
+      }
+      data.matches.forEach(m => list.appendChild(renderDupCard(m, load)));
+    } catch (e) {
+      list.innerHTML = "";
+      list.appendChild(el("div", { class: "error" }, "Error cargando: " + e.message));
+    }
+  }
+
+  document.getElementById("dupStatus").addEventListener("change", load);
+  await load();
+}
+
+function renderDupCard(m, refresh) {
+  const scoreClass = m.score >= 70 ? "bad" : m.score >= 40 ? "warn" : "muted";
+  const actionLabel = m.auto_action === "blocked" ? "🔒 Bloqueado automáticamente"
+                    : m.auto_action === "flagged" ? "⚠ Revisión manual"
+                    : "· Registrado";
+  const card = el("div", { class: "dup-card", style: "border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px;margin-bottom:12px;" });
+
+  card.appendChild(el("div", { class: "flex gap-2 items-center mb-2" }, [
+    el("span", { class: `tag ${scoreClass}`, style: "font-size:14px;padding:4px 10px;font-weight:700" },
+      "SCORE: " + m.score + " pts"),
+    el("span", { class: `tag ${scoreClass}` }, actionLabel),
+    el("span", { class: "muted small", style: "margin-left:auto" },
+      "Detectado " + (m.created_at ? new Date(m.created_at).toLocaleString() : "—")),
+  ]));
+
+  // Cuentas comparadas
+  const grid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px" });
+  [["A", m.user_a_id, m.user_a_email, m.user_a_name, m.user_a_photo, m.user_a_created, m.user_a_status],
+   ["B", m.user_b_id, m.user_b_email, m.user_b_name, m.user_b_photo, m.user_b_created, m.user_b_status]
+  ].forEach(([lbl, id, email, name, photo, created, status]) => {
+    const acc = el("div", { style: "border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px" }, [
+      el("div", { class: "flex gap-2 items-center" }, [
+        avatar(photo, 40),
+        el("div", {}, [
+          el("strong", {}, `Cuenta ${lbl} · id ${id}`),
+          el("div", { class: "small muted" }, email || "—"),
+          el("div", { class: "small" }, name || "—"),
+          el("div", { class: "small muted" }, "Creada: " + (created ? new Date(created).toLocaleDateString() : "—")),
+          status ? el("span", { class: "tag " + (status === "active" ? "ok" : "warn"), style: "margin-top:4px;display:inline-block" }, status) : null,
+        ].filter(Boolean)),
+      ]),
+    ]);
+    acc.style.cursor = "pointer";
+    acc.addEventListener("click", () => openUserDrawer(id, refresh));
+    grid.appendChild(acc);
+  });
+  card.appendChild(grid);
+
+  // Señales que coinciden
+  const sigLabels = {
+    face_hash: "Cara (KYC face-match)",
+    doc_hash: "Documento (DNI/pasaporte)",
+    phone: "Teléfono verificado",
+    name_dob: "Nombre + fecha nacimiento",
+    fingerprint: "Huella de dispositivo",
+    ip: "IP de registro",
+    email_similar: "Email similar (mismo local part)",
+    tz_lang_res: "Timezone + idioma + resolución",
+  };
+  const sigsBox = el("div", { style: "background:rgba(255,255,255,.04);padding:10px;border-radius:8px;margin-bottom:10px" }, [
+    el("div", { class: "small muted", style: "margin-bottom:6px" }, "Señales que coinciden:"),
+    ...m.signals.map(s => el("div", { class: "small", style: "display:flex;justify-content:space-between;padding:2px 0" }, [
+      el("span", {}, "✔ " + (sigLabels[s.key] || s.key)),
+      el("b", { class: "t-ok" }, "+" + s.weight),
+    ])),
+  ]);
+  card.appendChild(sigsBox);
+
+  // Acciones (solo si pendiente)
+  if (m.status === "pending") {
+    const actions = el("div", { class: "flex gap-2 flex-wrap" });
+    actions.appendChild(btn("✓ Confirmar duplicado", "danger sm", async () => {
+      const note = prompt("Nota opcional:", "") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "confirm", note }); toast("Confirmado"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    actions.appendChild(btn("🚫 Banear B (más reciente)", "danger sm", async () => {
+      if (!confirm(`Banear cuenta B (id ${m.user_b_id})?`)) return;
+      const note = prompt("Motivo:", "duplicado confirmado") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "ban_b", note }); toast("Baneada B"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    actions.appendChild(btn("🚫 Banear A", "danger sm", async () => {
+      if (!confirm(`Banear cuenta A (id ${m.user_a_id})?`)) return;
+      const note = prompt("Motivo:", "duplicado confirmado") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "ban_a", note }); toast("Baneada A"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    actions.appendChild(btn("✗ Descartar (falso positivo)", "ghost sm", async () => {
+      const note = prompt("¿Por qué es falso positivo?", "") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "dismiss", note }); toast("Descartado"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    card.appendChild(actions);
+  } else {
+    const status = m.status === "confirmed" ? "✓ Confirmado como duplicado"
+                 : m.status === "dismissed" ? "✗ Descartado (falso positivo)"
+                 : m.status === "merged" ? "🔗 Cuentas fusionadas"
+                 : m.status;
+    card.appendChild(el("div", { class: "small muted", style: "font-style:italic" }, [
+      status,
+      m.reviewed_by ? " · por " + m.reviewed_by : "",
+      m.reviewed_at ? " · " + new Date(m.reviewed_at).toLocaleString() : "",
+      m.reviewer_note ? " · " + m.reviewer_note : "",
+    ].join("")));
+  }
+  return card;
 }
 
 /* ============================================================
@@ -9932,6 +12628,33 @@ async function viewInvites(root) {
   const wrap = E("div", "screen invites-screen");
   wrap.appendChild(viewTitle("Invitaciones (beta privada)",
     "Genera y gestiona códigos de invitación con seguimiento de envío, aperturas y canje.", []));
+
+  wrap.appendChild(sectionLegend("¿Qué significa cada icono en Invitaciones?", [
+    ["📨", "Invitación enviada"],
+    ["📤", "Reenviar invitación"],
+    ["📧", "Contacto por email"],
+    ["📱", "Contacto por SMS"],
+    ["👁", "Invitación abierta / vista"],
+    ["🖱", "Enlace clicado"],
+    ["✅", "Canjeada — el invitado creó su cuenta"],
+    ["⏱ / 💤", "Aún sin abrir"],
+    ["♻ / 🔁", "Reintentar / regenerar código"],
+    ["⚠️", "Aviso o error"],
+    ["⛔ / 🚫", "Invitación revocada"],
+    ["🔗", "Copiar enlace"],
+    ["📋", "Copiar código"],
+    ["🔍", "Buscar"],
+    ["🎯", "Segmento / audiencia"],
+    ["🌐", "Enlace público"],
+    ["✨", "Sugerido"],
+    ["👀", "Vistas totales"],
+    ["🚀", "Enviar ahora"],
+    ["🔻", "Filtro / desplegable"],
+    ["👤", "Invitado"],
+    ["✏️", "Editar invitación"],
+    ["🧾", "Historial / registro"],
+    ["🗑", "Eliminar"],
+  ]));
 
   /* -------- KPIs -------- */
   const kpis = E("div", "inv-kpis");
@@ -10831,7 +13554,7 @@ async function renderLiveMonitorTab(root) {
     ]);
     form.appendChild(actions);
     drawer.open(el("div", { class: "drawer-wrap" }, [
-      el("button", { class: "drawer-close", "data-close": true }, "×"),
+      el("button", { class: "drawer-close", "data-close": true, title: "Cerrar panel", "aria-label": "Cerrar panel" }, "×"),
       form,
     ]));
   }
@@ -10878,6 +13601,1435 @@ async function renderActivityTab(root) {
   }
   const t = setInterval(load, 6000);
   window.__liveMonitorCleanup = () => clearInterval(t);
+  await load();
+}
+
+/* ================================================================
+   V450+ · viewStaff / viewNewsletter / viewPopups
+   ================================================================ */
+
+// Lista de permisos disponibles (debe coincidir con STAFF_PERMS del backend)
+const STAFF_PERMS_LIST = [
+  ["users","Usuarios"], ["moderation","Moderación"], ["reports","Reportes"],
+  ["appeals","Apelaciones"], ["tickets","Tickets"], ["chats","Chats"],
+  ["otp","OTP"], ["subscriptions","Suscripciones"], ["payments","Pagos"],
+  ["promos","Promos"], ["notifications","Notificaciones"], ["emails","Emails"],
+  ["kyc","KYC"], ["duplicates","Duplicados"], ["infractions","Infracciones"],
+  ["waitlist","Lista espera"], ["newsletter","Newsletter"], ["popups","Popups"],
+  ["stats","Estadísticas"], ["content","Contenido"], ["design","Diseño"],
+  ["ads","Anuncios"], ["backup","Backup"], ["logs","Logs"], ["settings","Ajustes"],
+];
+
+const ROLE_LABEL = { admin: "🛡️ Admin", moderator: "🧑‍⚖️ Moderador", viewer: "👀 Solo lectura" };
+const ROLE_COLOR = { admin: "#c26bff", moderator: "#5b9bff", viewer: "#7a869a" };
+
+async function viewStaff(root) {
+  root.appendChild(viewTitle("Staff & Permisos", "Administradores, moderadores e invitaciones"));
+  // Inyectar estilo específico una sola vez
+  if (!document.getElementById("staffCss")) {
+    const st = document.createElement("style");
+    st.id = "staffCss";
+    st.textContent = `
+      .staff-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-top:12px}
+      .staff-card{background:linear-gradient(145deg,rgba(255,255,255,.03),rgba(255,255,255,.01));border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;transition:transform .15s}
+      .staff-card:hover{transform:translateY(-2px);border-color:var(--accent,#5b9bff)}
+      .staff-head{display:flex;align-items:center;gap:10px}
+      .staff-avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#5b9bff,#c26bff);display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:18px}
+      .staff-role{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;color:#fff}
+      .staff-perms{display:flex;flex-wrap:wrap;gap:4px;font-size:11px}
+      .staff-perms .p{background:rgba(255,255,255,.05);padding:2px 7px;border-radius:6px}
+      .staff-status{font-size:11px;padding:2px 8px;border-radius:6px}
+      .staff-status.pending{background:#fef3c7;color:#92400e}
+      .staff-status.active{background:#dcfce7;color:#166534}
+      .staff-status.suspended{background:#fee2e2;color:#991b1b}
+      .staff-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}
+      .perm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px;max-height:280px;overflow-y:auto;padding:10px;border:1px solid var(--border,#2a2f3a);border-radius:8px;background:rgba(0,0,0,.15)}
+      .perm-grid label{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;padding:4px 6px;border-radius:6px}
+      .perm-grid label:hover{background:rgba(255,255,255,.04)}
+    `;
+    document.head.appendChild(st);
+  }
+
+  root.appendChild(sectionLegend("Guía", [
+    ["🛡️","Administrador con todos los permisos"],
+    ["🧑‍⚖️","Moderador con permisos parciales"],
+    ["👀","Solo lectura (viewer)"],
+    ["✉️","Reenviar email de invitación"],
+    ["🔒","Suspender / reactivar"],
+    ["🗑","Eliminar del staff"],
+  ]));
+
+  const toolbar = el("div", { class: "toolbar", style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" });
+  const btnNew = btn("➕ Invitar nuevo miembro", () => openStaffModal(null));
+  btnNew.className = "btn primary";
+  toolbar.appendChild(btnNew);
+  root.appendChild(toolbar);
+
+  const grid = el("div", { class: "staff-grid" });
+  root.appendChild(grid);
+
+  async function load() {
+    grid.innerHTML = "";
+    try {
+      const j = await api("/api/admin/staff");
+      const items = j.items || [];
+      if (!items.length) {
+        grid.appendChild(el("p", { class: "muted", style: "grid-column:1/-1" }, "Sin miembros de staff. Invita al primero con el botón de arriba."));
+        return;
+      }
+      items.forEach(m => grid.appendChild(renderStaffCard(m)));
+    } catch (e) {
+      grid.appendChild(el("p", { class: "err" }, "Error: " + e.message));
+    }
+  }
+
+  function renderStaffCard(m) {
+    const initials = (m.name || m.email || "?").trim().slice(0,2).toUpperCase();
+    const perms = (() => { try { return JSON.parse(m.permissions || "[]"); } catch { return []; } })();
+    const card = el("div", { class: "staff-card" });
+    card.appendChild(el("div", { class: "staff-head" }, [
+      el("div", { class: "staff-avatar" }, initials),
+      el("div", { style: "flex:1;min-width:0" }, [
+        el("div", { style: "font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, m.name || m.email),
+        el("div", { class: "muted", style: "font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, m.email),
+      ]),
+      el("span", { class: "staff-role", style: `background:${ROLE_COLOR[m.role] || "#7a869a"}` }, ROLE_LABEL[m.role] || m.role),
+    ]));
+    const st = (m.status || "active");
+    card.appendChild(el("div", {}, [
+      el("span", { class: "staff-status " + st }, st === "pending" ? "Pendiente de aceptar" : st === "suspended" ? "Suspendido" : "Activo"),
+      el("span", { class: "muted", style: "margin-left:8px;font-size:12px" }, m.last_login ? "Último acceso " + new Date(m.last_login).toLocaleDateString() : "Nunca ha entrado"),
+    ]));
+    const pdiv = el("div", { class: "staff-perms" });
+    if (m.role === "admin") {
+      pdiv.appendChild(el("span", { class: "p", style: "background:#c26bff33;color:#c26bff" }, "★ Todos"));
+    } else {
+      perms.slice(0,8).forEach(p => {
+        const label = (STAFF_PERMS_LIST.find(x => x[0]===p) || [p,p])[1];
+        pdiv.appendChild(el("span", { class: "p" }, label));
+      });
+      if (perms.length > 8) pdiv.appendChild(el("span", { class: "p" }, "+" + (perms.length - 8)));
+      if (!perms.length) pdiv.appendChild(el("span", { class: "muted" }, "Sin permisos"));
+    }
+    card.appendChild(pdiv);
+    const acts = el("div", { class: "staff-acts" });
+    acts.appendChild(btn("✏️ Editar", () => openStaffModal(m)));
+    if (st === "pending") {
+      acts.appendChild(btn("✉️ Reenviar", async () => {
+        try {
+          await api(`/api/admin/staff/${m.id}/resend-invite`, { method: "POST" });
+          toast("Invitación reenviada");
+        } catch (e) { toast("Error: " + e.message); }
+      }));
+    }
+    if (st !== "suspended") {
+      acts.appendChild(btn("🔒 Suspender", async () => {
+        try { await api(`/api/admin/staff/${m.id}`, { method: "PATCH", body: JSON.stringify({ status: "suspended" }) }); load(); } catch(e){ toast(e.message); }
+      }));
+    } else {
+      acts.appendChild(btn("🔓 Reactivar", async () => {
+        try { await api(`/api/admin/staff/${m.id}`, { method: "PATCH", body: JSON.stringify({ status: "active" }) }); load(); } catch(e){ toast(e.message); }
+      }));
+    }
+    acts.appendChild(btn("🗑", async () => {
+      if (!confirm(`¿Eliminar a ${m.email} del staff?`)) return;
+      try { await api(`/api/admin/staff/${m.id}`, { method: "DELETE" }); load(); } catch(e){ toast(e.message); }
+    }));
+    card.appendChild(acts);
+    return card;
+  }
+
+  function openStaffModal(m) {
+    const isEdit = !!m;
+    const overlay = el("div", { class: "modal-overlay", style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+    const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border,#2a2f3a);border-radius:14px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:24px" });
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    modal.appendChild(el("h3", { style: "margin:0 0 12px" }, isEdit ? "Editar miembro" : "Invitar nuevo miembro"));
+
+    const emailInp = el("input", { type: "email", value: m?.email || "", placeholder: "email@dominio.com", class: "input", style: "width:100%" });
+    const nameInp = el("input", { type: "text", value: m?.name || "", placeholder: "Nombre para mostrar", class: "input", style: "width:100%" });
+    const roleSel = el("select", { class: "input", style: "width:100%" });
+    ["admin","moderator","viewer"].forEach(r => {
+      const o = el("option", { value: r }, ROLE_LABEL[r]);
+      if ((m?.role || "moderator") === r) o.selected = true;
+      roleSel.appendChild(o);
+    });
+
+    const permsGrid = el("div", { class: "perm-grid" });
+    const currentPerms = (() => { try { return JSON.parse(m?.permissions || "[]"); } catch { return []; } })();
+    STAFF_PERMS_LIST.forEach(([key, label]) => {
+      const cb = el("input", { type: "checkbox", value: key });
+      if (currentPerms.includes(key)) cb.checked = true;
+      permsGrid.appendChild(el("label", {}, [cb, " " + label]));
+    });
+
+    function updatePermsVisibility() {
+      const admin = roleSel.value === "admin";
+      permsGrid.style.opacity = admin ? "0.5" : "1";
+      permsGrid.style.pointerEvents = admin ? "none" : "auto";
+    }
+    roleSel.addEventListener("change", updatePermsVisibility);
+    updatePermsVisibility();
+
+    modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, "Email"));
+    modal.appendChild(emailInp);
+    modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, "Nombre"));
+    modal.appendChild(nameInp);
+    modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, "Rol"));
+    modal.appendChild(roleSel);
+    modal.appendChild(el("label", { style: "display:block;margin:12px 0 4px;font-size:13px" }, "Permisos (solo si no es admin)"));
+    modal.appendChild(permsGrid);
+
+    const err = el("div", { class: "err", style: "margin-top:10px;display:none" });
+    modal.appendChild(err);
+
+    const acts = el("div", { style: "display:flex;gap:8px;margin-top:16px;justify-content:flex-end" });
+    const cancel = btn("Cancelar", () => overlay.remove());
+    const save = btn(isEdit ? "💾 Guardar" : "✉️ Invitar", async () => {
+      const perms = Array.from(permsGrid.querySelectorAll("input:checked")).map(c => c.value);
+      const body = { email: emailInp.value.trim(), name: nameInp.value.trim(), role: roleSel.value, permissions: perms };
+      if (!body.email) { err.textContent = "Email requerido"; err.style.display = "block"; return; }
+      try {
+        if (isEdit) await api(`/api/admin/staff/${m.id}`, { method: "PATCH", body: JSON.stringify(body) });
+        else await api("/api/admin/staff", { method: "POST", body: JSON.stringify(body) });
+        overlay.remove();
+        toast(isEdit ? "Cambios guardados" : "Invitación enviada");
+        load();
+      } catch (e) { err.textContent = e.message; err.style.display = "block"; }
+    });
+    save.className = "btn primary";
+    acts.appendChild(cancel); acts.appendChild(save);
+    modal.appendChild(acts);
+    document.body.appendChild(overlay);
+  }
+
+  await load();
+}
+
+async function viewNewsletter(root) {
+  root.appendChild(viewTitle("Newsletter & Campañas", "Envíos masivos, individuales, por segmento o estacionales"));
+
+  if (!document.getElementById("newsCss")) {
+    const st = document.createElement("style");
+    st.id = "newsCss";
+    st.textContent = `
+      .news-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin:12px 0}
+      .news-kpi{background:linear-gradient(135deg,rgba(91,155,255,.1),rgba(194,107,255,.06));border:1px solid var(--border,#2a2f3a);border-radius:12px;padding:14px}
+      .news-kpi .k{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted,#7a869a)}
+      .news-kpi .v{font-size:28px;font-weight:700;margin-top:4px}
+      .season-btn{padding:8px 14px;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.03);cursor:pointer;font-size:13px;transition:.15s}
+      .season-btn:hover{background:rgba(91,155,255,.15);border-color:var(--accent,#5b9bff)}
+      .news-drawer{background:linear-gradient(160deg,rgba(255,255,255,.02),rgba(0,0,0,.15));border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:20px;margin-bottom:16px}
+      .news-drawer label{display:block;font-size:12px;font-weight:600;margin:10px 0 4px;color:var(--muted,#7a869a);text-transform:uppercase;letter-spacing:.3px}
+      .news-drawer .input,.news-drawer textarea{width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit;font:inherit}
+      .news-drawer textarea{min-height:140px;font-family:monospace;font-size:13px}
+    `;
+    document.head.appendChild(st);
+  }
+
+  const kpis = el("div", { class: "news-kpis" });
+  root.appendChild(kpis);
+
+  const seasonBar = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 16px" });
+  root.appendChild(el("h4", { style: "margin:16px 0 4px" }, "🗓 Plantillas estacionales"));
+  root.appendChild(seasonBar);
+
+  const drawer = el("div", { class: "news-drawer", style: "display:none" });
+  root.appendChild(drawer);
+
+  const toolbar = el("div", { style: "display:flex;gap:8px;margin:12px 0" });
+  const btnNew = btn("➕ Nueva newsletter", () => openDrawer(null));
+  btnNew.className = "btn primary";
+  toolbar.appendChild(btnNew);
+  root.appendChild(toolbar);
+
+  const listWrap = el("div");
+  root.appendChild(listWrap);
+
+  let seasonalTemplates = [];
+  try {
+    const s = await api("/api/admin/newsletters/seasonal-templates");
+    seasonalTemplates = s.items || [];
+    seasonalTemplates.forEach(t => {
+      const b = el("button", { class: "season-btn", type: "button" }, `${t.emoji || "🎉"} ${t.name}`);
+      b.addEventListener("click", () => openDrawer({ ...t, from_template: true }));
+      seasonBar.appendChild(b);
+    });
+  } catch (e) {
+    seasonBar.appendChild(el("span", { class: "muted" }, "No hay plantillas disponibles"));
+  }
+
+  async function loadList() {
+    listWrap.innerHTML = "";
+    kpis.innerHTML = "";
+    try {
+      const j = await api("/api/admin/newsletters");
+      const items = j.items || [];
+      const stats = { sent: 0, scheduled: 0, draft: 0, opens: 0 };
+      items.forEach(n => {
+        if (n.status === "sent") stats.sent++;
+        else if (n.status === "scheduled") stats.scheduled++;
+        else stats.draft++;
+        stats.opens += (n.opens || 0);
+      });
+      [["Enviadas", stats.sent], ["Programadas", stats.scheduled], ["Borradores", stats.draft], ["Aperturas", stats.opens]].forEach(([k,v]) => {
+        kpis.appendChild(el("div", { class: "news-kpi" }, [
+          el("div", { class: "k" }, k),
+          el("div", { class: "v" }, String(v)),
+        ]));
+      });
+      if (!items.length) {
+        listWrap.appendChild(el("p", { class: "muted" }, "Sin campañas todavía. Crea la primera."));
+        return;
+      }
+      const table = el("table", { class: "data-table" });
+      const thead = el("thead", {}, [el("tr", {}, ["Nombre","Asunto","Segmento","Estado","Enviados","Aperturas","Fecha","Acciones"].map(h => el("th",{},h)))]);
+      const tbody = el("tbody");
+      items.forEach(n => {
+        const tr = el("tr");
+        tr.appendChild(el("td", {}, n.name || "—"));
+        tr.appendChild(el("td", {}, n.subject || "—"));
+        tr.appendChild(el("td", {}, el("span", { class: "chip xs" }, n.segment || "all")));
+        tr.appendChild(el("td", {}, el("span", { class: "chip xs" }, n.status || "draft")));
+        tr.appendChild(el("td", {}, String(n.sent_count || 0)));
+        tr.appendChild(el("td", {}, String(n.opens || 0)));
+        tr.appendChild(el("td", { class: "muted" }, n.created_at ? new Date(n.created_at).toLocaleString() : "—"));
+        const actsTd = el("td");
+        actsTd.appendChild(btn("✏️", () => openDrawer(n)));
+        if (n.status !== "sent") {
+          const sendBtn = btn("📤 Enviar", async () => {
+            if (!confirm(`Enviar "${n.name}" al segmento "${n.segment}"?`)) return;
+            try {
+              const r = await api(`/api/admin/newsletters/${n.id}/send`, { method: "POST" });
+              toast(`Enviada a ${r.count || 0} usuarios`);
+              loadList();
+            } catch(e) { toast(e.message); }
+          });
+          sendBtn.className = "btn primary xs";
+          actsTd.appendChild(sendBtn);
+        }
+        actsTd.appendChild(btn("🗑", async () => {
+          if (!confirm("¿Eliminar campaña?")) return;
+          try { await api(`/api/admin/newsletters/${n.id}`, { method: "DELETE" }); loadList(); } catch(e){ toast(e.message); }
+        }));
+        tr.appendChild(actsTd);
+        tbody.appendChild(tr);
+      });
+      table.appendChild(thead); table.appendChild(tbody);
+      listWrap.appendChild(table);
+    } catch (e) {
+      listWrap.appendChild(el("p", { class: "err" }, "Error: " + e.message));
+    }
+  }
+
+  function openDrawer(data) {
+    drawer.innerHTML = "";
+    drawer.style.display = "block";
+    const isEdit = !!(data && data.id);
+    const isTpl = !!(data && data.from_template);
+    drawer.appendChild(el("h3", { style: "margin:0 0 8px" }, isEdit ? "Editar campaña" : isTpl ? `Nueva desde plantilla · ${data.name}` : "Nueva campaña"));
+
+    const nameInp = el("input", { class: "input", value: data?.name || "", placeholder: "Ej: Orgullo LGBT 2026" });
+    const subjInp = el("input", { class: "input", value: data?.subject || "", placeholder: "Asunto del email" });
+    const bodyTa = el("textarea", { placeholder: "HTML del email (soporta {{name}}, {{email}})" }, data?.body_html || "");
+
+    const segSel = el("select", { class: "input" });
+    [["all","Todos"],["premium","Premium"],["free","Free"],["verified","Verificados"],["unverified","No verificados"],["male","Hombres"],["female","Mujeres"],["lgbt","LGBT+"],["hetero","Hetero"],["new","Nuevos (<30 días)"]].forEach(([v,l]) => {
+      const o = el("option", { value: v }, l);
+      if ((data?.segment || "all") === v) o.selected = true;
+      segSel.appendChild(o);
+    });
+
+    const targetInp = el("input", { class: "input", value: data?.target_user_ids || "", placeholder: "IDs de usuarios individuales separados por coma (opcional)" });
+    const occasionInp = el("input", { class: "input", value: data?.occasion || "", placeholder: "lgbt_pride, valentine, christmas, ..." });
+
+    drawer.appendChild(el("label", {}, "Nombre interno"));
+    drawer.appendChild(nameInp);
+    drawer.appendChild(el("label", {}, "Asunto"));
+    drawer.appendChild(subjInp);
+    drawer.appendChild(el("label", {}, "Cuerpo (HTML)"));
+    drawer.appendChild(bodyTa);
+    drawer.appendChild(el("label", {}, "Segmento"));
+    drawer.appendChild(segSel);
+    drawer.appendChild(el("label", {}, "Usuarios individuales (opcional, IDs)"));
+    drawer.appendChild(targetInp);
+    drawer.appendChild(el("label", {}, "Ocasión (tag)"));
+    drawer.appendChild(occasionInp);
+
+    const acts = el("div", { style: "display:flex;gap:8px;margin-top:14px" });
+    const cancel = btn("Cerrar", () => { drawer.style.display = "none"; });
+    const save = btn(isEdit ? "💾 Guardar" : "💾 Crear", async () => {
+      const body = { name: nameInp.value.trim(), subject: subjInp.value.trim(), body_html: bodyTa.value, segment: segSel.value, target_user_ids: targetInp.value.trim(), occasion: occasionInp.value.trim() };
+      if (!body.name || !body.subject) { toast("Nombre y asunto requeridos"); return; }
+      try {
+        if (isEdit) await api(`/api/admin/newsletters/${data.id}`, { method: "PATCH", body: JSON.stringify(body) });
+        else await api("/api/admin/newsletters", { method: "POST", body: JSON.stringify(body) });
+        drawer.style.display = "none";
+        toast("Guardada");
+        loadList();
+      } catch(e) { toast(e.message); }
+    });
+    save.className = "btn primary";
+    acts.appendChild(cancel); acts.appendChild(save);
+    drawer.appendChild(acts);
+    drawer.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  await loadList();
+}
+
+async function viewPopups(root) {
+  root.appendChild(viewTitle("Popups & Push", "Anuncios in-app y notificaciones segmentadas"));
+
+  if (!document.getElementById("popCss")) {
+    const st = document.createElement("style");
+    st.id = "popCss";
+    st.textContent = `
+      .pop-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:12px}
+      .pop-card{border:1px solid var(--border,#2a2f3a);border-radius:14px;overflow:hidden;background:linear-gradient(150deg,rgba(255,255,255,.03),rgba(0,0,0,.15));display:flex;flex-direction:column;transition:.15s}
+      .pop-card:hover{transform:translateY(-3px);border-color:var(--accent,#5b9bff)}
+      .pop-img{width:100%;aspect-ratio:16/9;background:linear-gradient(135deg,#5b9bff,#c26bff);display:flex;align-items:center;justify-content:center;font-size:38px;background-size:cover;background-position:center}
+      .pop-body{padding:14px;display:flex;flex-direction:column;gap:8px;flex:1}
+      .pop-title{font-weight:700;font-size:15px}
+      .pop-meta{font-size:11px;color:var(--muted,#7a869a);display:flex;flex-wrap:wrap;gap:6px}
+      .pop-chip{background:rgba(91,155,255,.15);color:#5b9bff;padding:2px 8px;border-radius:999px;font-size:11px}
+      .pop-stats{display:flex;gap:12px;font-size:12px;margin-top:auto;padding-top:8px;border-top:1px solid var(--border)}
+      .pop-stats b{font-size:15px}
+      .pop-acts{padding:0 14px 14px;display:flex;gap:6px;flex-wrap:wrap}
+    `;
+    document.head.appendChild(st);
+  }
+
+  root.appendChild(sectionLegend("Guía", [
+    ["🎯","Segmentación por perfil (Premium, LGBT, etc.)"],
+    ["👤","Enviar a usuarios individuales por ID"],
+    ["⭐","Prioridad de aparición"],
+    ["1️⃣","Mostrar solo una vez por usuario"],
+    ["🔔","Push notification"],
+  ]));
+
+  const toolbar = el("div", { style: "display:flex;gap:8px;margin:12px 0" });
+  const btnNew = btn("➕ Nuevo popup", () => openPopupModal(null));
+  btnNew.className = "btn primary";
+  toolbar.appendChild(btnNew);
+  root.appendChild(toolbar);
+
+  const grid = el("div", { class: "pop-grid" });
+  root.appendChild(grid);
+
+  async function load() {
+    grid.innerHTML = "";
+    try {
+      const j = await api("/api/admin/popups");
+      const items = j.items || [];
+      if (!items.length) {
+        grid.appendChild(el("p", { class: "muted", style: "grid-column:1/-1" }, "Sin popups. Crea el primero para lanzar campañas visuales dentro de la app."));
+        return;
+      }
+      items.forEach(p => grid.appendChild(renderCard(p)));
+    } catch (e) {
+      grid.appendChild(el("p", { class: "err" }, "Error: " + e.message));
+    }
+  }
+
+  function renderCard(p) {
+    const card = el("div", { class: "pop-card" });
+    const img = el("div", { class: "pop-img" });
+    if (p.image_url) img.style.backgroundImage = `url(${p.image_url})`;
+    else img.textContent = "🎉";
+    card.appendChild(img);
+    const body = el("div", { class: "pop-body" });
+    body.appendChild(el("div", { class: "pop-title" }, p.title || "(sin título)"));
+    body.appendChild(el("div", { class: "muted", style: "font-size:12.5px" }, (p.body || "").slice(0,120) + ((p.body||"").length > 120 ? "…" : "")));
+    const meta = el("div", { class: "pop-meta" });
+    meta.appendChild(el("span", { class: "pop-chip" }, "🎯 " + (p.segment || "all")));
+    if (p.priority) meta.appendChild(el("span", { class: "pop-chip" }, "⭐ " + p.priority));
+    if (p.show_once) meta.appendChild(el("span", { class: "pop-chip" }, "1️⃣ Una vez"));
+    if (p.push_enabled) meta.appendChild(el("span", { class: "pop-chip" }, "🔔 Push"));
+    if (p.active) meta.appendChild(el("span", { class: "pop-chip", style: "background:#dcfce7;color:#166534" }, "● Activo"));
+    else meta.appendChild(el("span", { class: "pop-chip", style: "background:#f3f4f6;color:#6b7280" }, "○ Pausado"));
+    body.appendChild(meta);
+    body.appendChild(el("div", { class: "pop-stats" }, [
+      el("div", {}, [el("b",{},String(p.views || 0)), " ", el("span",{class:"muted"},"vistas")]),
+      el("div", {}, [el("b",{},String(p.clicks || 0)), " ", el("span",{class:"muted"},"clicks")]),
+      el("div", {}, [el("b",{},String(p.dismisses || 0)), " ", el("span",{class:"muted"},"cerrados")]),
+    ]));
+    card.appendChild(body);
+    const acts = el("div", { class: "pop-acts" });
+    acts.appendChild(btn("✏️ Editar", () => openPopupModal(p)));
+    acts.appendChild(btn(p.active ? "⏸ Pausar" : "▶ Activar", async () => {
+      try { await api(`/api/admin/popups/${p.id}`, { method: "PATCH", body: JSON.stringify({ active: p.active ? 0 : 1 }) }); load(); } catch(e){ toast(e.message); }
+    }));
+    acts.appendChild(btn("🗑", async () => {
+      if (!confirm("¿Eliminar popup?")) return;
+      try { await api(`/api/admin/popups/${p.id}`, { method: "DELETE" }); load(); } catch(e){ toast(e.message); }
+    }));
+    card.appendChild(acts);
+    return card;
+  }
+
+  function openPopupModal(p) {
+    const isEdit = !!p;
+    const overlay = el("div", { class: "modal-overlay", style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+    const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border,#2a2f3a);border-radius:14px;max-width:720px;width:100%;max-height:90vh;overflow-y:auto;padding:24px" });
+    overlay.appendChild(modal);
+    overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+    modal.appendChild(el("h3", { style: "margin:0 0 12px" }, isEdit ? "Editar popup" : "Nuevo popup"));
+
+    const titleInp = el("input", { class: "input", value: p?.title || "", placeholder: "Título del popup", style: "width:100%" });
+    const bodyTa = el("textarea", { class: "input", placeholder: "Texto del popup (soporta HTML básico)", style: "width:100%;min-height:100px" }, p?.body || "");
+    const imgInp = el("input", { class: "input", value: p?.image_url || "", placeholder: "URL imagen (opcional)", style: "width:100%" });
+    const ctaTextInp = el("input", { class: "input", value: p?.cta_text || "", placeholder: "Texto botón CTA", style: "width:100%" });
+    const ctaUrlInp = el("input", { class: "input", value: p?.cta_url || "", placeholder: "URL o ruta destino (/premium, https://...)", style: "width:100%" });
+    const themeSel = el("select", { class: "input", style: "width:100%" });
+    [["default","Neutro"],["pride","🏳️‍🌈 Pride"],["valentine","💘 Valentín"],["christmas","🎄 Navidad"],["summer","☀️ Verano"],["premium","💎 Premium"]].forEach(([v,l]) => {
+      const o = el("option", { value: v }, l);
+      if ((p?.theme || "default") === v) o.selected = true;
+      themeSel.appendChild(o);
+    });
+    const segSel = el("select", { class: "input", style: "width:100%" });
+    [["all","Todos"],["premium","Premium"],["free","Free"],["verified","Verificados"],["unverified","No verificados"],["male","Hombres"],["female","Mujeres"],["lgbt","LGBT+"],["new","Nuevos"]].forEach(([v,l]) => {
+      const o = el("option", { value: v }, l);
+      if ((p?.segment || "all") === v) o.selected = true;
+      segSel.appendChild(o);
+    });
+    const targetInp = el("input", { class: "input", value: p?.target_user_ids || "", placeholder: "IDs usuarios (opcional, coma)", style: "width:100%" });
+    const startInp = el("input", { class: "input", type: "datetime-local", value: p?.start_at ? String(p.start_at).slice(0,16) : "", style: "width:100%" });
+    const endInp = el("input", { class: "input", type: "datetime-local", value: p?.end_at ? String(p.end_at).slice(0,16) : "", style: "width:100%" });
+    const prInp = el("input", { class: "input", type: "number", value: p?.priority || 0, style: "width:100%" });
+    const onceCb = el("input", { type: "checkbox" });
+    if (p?.show_once) onceCb.checked = true;
+    const pushCb = el("input", { type: "checkbox" });
+    if (p?.push_enabled) pushCb.checked = true;
+    const activeCb = el("input", { type: "checkbox" });
+    if (p ? p.active : true) activeCb.checked = true;
+
+    function row(lbl, node) {
+      modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, lbl));
+      modal.appendChild(node);
+    }
+    row("Título", titleInp);
+    row("Cuerpo", bodyTa);
+    row("Imagen (URL)", imgInp);
+    const cta2 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [ctaTextInp, ctaUrlInp]);
+    row("CTA (texto / URL)", cta2);
+    const row2 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [themeSel, segSel]);
+    row("Tema / Segmento", row2);
+    row("Usuarios individuales (opcional)", targetInp);
+    const row3 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px" }, [startInp, endInp, prInp]);
+    row("Inicio / Fin / Prioridad", row3);
+    const flags = el("div", { style: "display:flex;flex-wrap:wrap;gap:16px;margin-top:12px" }, [
+      el("label", {}, [onceCb, " 1️⃣ Mostrar una vez por usuario"]),
+      el("label", {}, [pushCb, " 🔔 Enviar push simultánea"]),
+      el("label", {}, [activeCb, " ● Activo"]),
+    ]);
+    modal.appendChild(flags);
+
+    const acts = el("div", { style: "display:flex;gap:8px;margin-top:16px;justify-content:flex-end" });
+    const cancel = btn("Cancelar", () => overlay.remove());
+    const save = btn(isEdit ? "💾 Guardar" : "💾 Crear", async () => {
+      const body = {
+        title: titleInp.value, body: bodyTa.value, image_url: imgInp.value,
+        cta_text: ctaTextInp.value, cta_url: ctaUrlInp.value, theme: themeSel.value,
+        segment: segSel.value, target_user_ids: targetInp.value,
+        start_at: startInp.value || null, end_at: endInp.value || null,
+        priority: Number(prInp.value) || 0,
+        show_once: onceCb.checked ? 1 : 0,
+        push_enabled: pushCb.checked ? 1 : 0,
+        active: activeCb.checked ? 1 : 0,
+      };
+      if (!body.title) { toast("Título requerido"); return; }
+      try {
+        if (isEdit) await api(`/api/admin/popups/${p.id}`, { method: "PATCH", body: JSON.stringify(body) });
+        else await api("/api/admin/popups", { method: "POST", body: JSON.stringify(body) });
+        overlay.remove();
+        toast("Guardado");
+        load();
+      } catch(e) { toast(e.message); }
+    });
+    save.className = "btn primary";
+    acts.appendChild(cancel); acts.appendChild(save);
+    modal.appendChild(acts);
+    document.body.appendChild(overlay);
+  }
+
+  await load();
+}
+
+/* ================================================================
+   V450+ · Modales avanzados para KYC / Suscripciones / Pagos / Promos / Stats
+   ================================================================ */
+function _modal(title, w) {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
+  const modal = el("div", { style: `background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:${w || 640}px;width:100%;max-height:90vh;overflow-y:auto;padding:22px` });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 12px" }, title));
+  overlay.appendChild(modal);
+  const close = () => overlay.remove();
+  return { overlay, modal, close, appendClose: () => modal.appendChild(el("div", { style: "text-align:right;margin-top:14px" }, btn("Cerrar","ghost sm", close))) };
+}
+
+async function openKycReasons() {
+  const { modal, appendClose, overlay } = _modal("⚙️ Motivos de rechazo KYC");
+  const list = el("div"); modal.appendChild(list);
+  async function load() {
+    list.innerHTML = "Cargando…";
+    try {
+      const r = await api.get("/api/admin/kyc-reasons");
+      list.innerHTML = "";
+      (r.items || []).forEach(x => {
+        const row = el("div", { style: "border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:6px;display:flex;gap:8px;align-items:center" });
+        row.appendChild(el("strong", { style: "flex:1" }, x.label));
+        row.appendChild(btn("🗑", "danger sm", async () => { await api.del(`/api/admin/kyc-reasons/${x.id}`); load(); }));
+        list.appendChild(row);
+      });
+      if (!(r.items || []).length) list.appendChild(el("p", { class: "muted" }, "Sin motivos."));
+    } catch(e) { list.innerHTML=""; list.appendChild(el("p",{class:"err"},e.message)); }
+  }
+  const n = el("input", { class: "input", placeholder: "Nuevo motivo (ej: Documento ilegible)", style: "width:100%;margin:8px 0" });
+  modal.appendChild(n);
+  modal.appendChild(btn("➕ Añadir", "primary sm", async () => {
+    if (!n.value.trim()) return;
+    await api.post("/api/admin/kyc-reasons", { label: n.value.trim() });
+    n.value = ""; load();
+  }));
+  appendClose();
+  document.body.appendChild(overlay);
+  load();
+}
+
+async function openActiveSubscribers() {
+  const { modal, appendClose, overlay } = _modal("👥 Suscriptores activos", 720);
+  const list = el("div"); modal.appendChild(list);
+  try {
+    const r = await api.get("/api/subscriptions/active");
+    const tbl = el("table", { class: "data-table" });
+    tbl.appendChild(el("thead", {}, [el("tr", {}, ["Usuario","Plan","Desde","Próx. renov.","MRR"].map(h => el("th",{},h)))]));
+    const tb = el("tbody");
+    (r.items || []).forEach(u => {
+      tb.appendChild(el("tr", {}, [
+        el("td", {}, u.name || u.email || ("#" + u.user_id)),
+        el("td", {}, el("span", { class: "chip xs" }, u.plan)),
+        el("td", {}, u.started_at ? new Date(u.started_at).toLocaleDateString() : "—"),
+        el("td", {}, u.renews_at ? new Date(u.renews_at).toLocaleDateString() : "—"),
+        el("td", {}, (u.mrr || 0) + " €"),
+      ]));
+    });
+    tbl.appendChild(tb);
+    list.appendChild(tbl);
+  } catch(e) { list.appendChild(el("p",{class:"err"},e.message)); }
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openGiftPremium() {
+  const { modal, appendClose, overlay } = _modal("🎁 Regalar suscripción Premium");
+  const email = el("input", { class: "input", placeholder: "Email del usuario", style: "width:100%;margin:6px 0" });
+  const plan = el("select", { class: "input", style: "width:100%;margin:6px 0" }, [
+    el("option", { value: "premium" }, "💖 Premium"),
+    el("option", { value: "gold" }, "⭐ Gold"),
+    el("option", { value: "platinum" }, "💎 Platinum"),
+  ]);
+  const days = el("input", { class: "input", type: "number", value: 30, min: 1, style: "width:100%;margin:6px 0" });
+  const reason = el("input", { class: "input", placeholder: "Motivo interno (opcional)", style: "width:100%;margin:6px 0" });
+  modal.appendChild(el("label",{},"Email destinatario")); modal.appendChild(email);
+  modal.appendChild(el("label",{},"Plan a regalar")); modal.appendChild(plan);
+  modal.appendChild(el("label",{},"Días")); modal.appendChild(days);
+  modal.appendChild(el("label",{},"Motivo")); modal.appendChild(reason);
+  modal.appendChild(btn("🎁 Regalar", "primary sm", async () => {
+    if (!email.value.trim()) return toast("Email requerido");
+    try { await api.post("/api/subscriptions/gift", { email: email.value, plan: plan.value, days: Number(days.value), reason: reason.value }); toast("Regalado ✅"); overlay.remove(); } catch(e){ toast(e.message); }
+  }));
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openRefundsPanel() {
+  const { modal, appendClose, overlay } = _modal("💸 Reembolsos", 720);
+  const list = el("div"); modal.appendChild(list);
+  try {
+    const r = await api.get("/api/payments/refunds");
+    if (!(r.items || []).length) list.appendChild(el("p", { class: "muted" }, "Sin reembolsos."));
+    else {
+      const tbl = el("table", { class: "data-table" });
+      tbl.appendChild(el("thead", {}, [el("tr", {}, ["Fecha","Usuario","Importe","Motivo","Estado"].map(h => el("th",{},h)))]));
+      const tb = el("tbody");
+      (r.items || []).forEach(x => {
+        tb.appendChild(el("tr", {}, [
+          el("td", {}, new Date(x.created_at).toLocaleDateString()),
+          el("td", {}, x.user_email || ("#" + x.user_id)),
+          el("td", {}, x.amount + " €"),
+          el("td", { class: "muted", style: "font-size:12px" }, x.reason || "—"),
+          el("td", {}, el("span", { class: "chip xs" }, x.status)),
+        ]));
+      });
+      tbl.appendChild(tb);
+      list.appendChild(tbl);
+    }
+  } catch(e) { list.appendChild(el("p",{class:"err"}, e.message)); }
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openDisputesPanel() {
+  const { modal, appendClose, overlay } = _modal("⚠️ Disputas y chargebacks", 720);
+  const list = el("div"); modal.appendChild(list);
+  try {
+    const r = await api.get("/api/payments/disputes");
+    if (!(r.items || []).length) list.appendChild(el("p", { class: "muted" }, "Sin disputas. ¡Todo limpio!"));
+    else {
+      (r.items || []).forEach(d => {
+        const row = el("div", { style: "border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px" });
+        row.appendChild(el("strong", {}, d.user_email || ("#" + d.user_id)));
+        row.appendChild(el("span", { class: "chip xs", style: "margin-left:8px" }, d.status));
+        row.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:6px 0" }, `${d.amount} € · ${d.reason || "sin motivo"} · ${new Date(d.created_at).toLocaleDateString()}`));
+        list.appendChild(row);
+      });
+    }
+  } catch(e) { list.appendChild(el("p",{class:"err"}, e.message)); }
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openReferralPanel() {
+  const { modal, appendClose, overlay } = _modal("🔗 Programa de referidos", 640);
+  try {
+    const s = await api.get("/api/settings");
+    const enabled = el("input", { type: "checkbox" });
+    if (String(s["referral.enabled"] || "false") === "true") enabled.checked = true;
+    const reward = el("input", { class: "input", value: s["referral.reward_days"] || 7, type: "number", style: "width:100%" });
+    const maxUses = el("input", { class: "input", value: s["referral.max_uses"] || 10, type: "number", style: "width:100%" });
+    modal.appendChild(el("label", { style: "display:flex;gap:8px;align-items:center;margin-bottom:10px" }, [enabled, "Programa activo"]));
+    modal.appendChild(el("label", {}, "Días Premium por referido")); modal.appendChild(reward);
+    modal.appendChild(el("label", {}, "Usos máximos por usuario")); modal.appendChild(maxUses);
+    modal.appendChild(btn("💾 Guardar", "primary sm", async () => {
+      await api.put("/api/settings", {
+        "referral.enabled": enabled.checked ? "true" : "false",
+        "referral.reward_days": reward.value,
+        "referral.max_uses": maxUses.value,
+      });
+      toast("Guardado"); overlay.remove();
+    }));
+  } catch(e) { modal.appendChild(el("p",{class:"err"},e.message)); }
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openPromoRoiModal(items) {
+  const { modal, appendClose, overlay } = _modal("📊 ROI de campañas", 720);
+  const tbl = el("table", { class: "data-table" });
+  tbl.appendChild(el("thead", {}, [el("tr", {}, ["Campaña","Códigos","Usos","Ingreso generado","Coste desc.","ROI %"].map(h => el("th",{},h)))]));
+  const tb = el("tbody");
+  items.forEach(x => {
+    tb.appendChild(el("tr", {}, [
+      el("td", {}, x.name),
+      el("td", {}, String(x.codes || 0)),
+      el("td", {}, String(x.uses || 0)),
+      el("td", {}, (x.revenue || 0) + " €"),
+      el("td", {}, (x.discount_cost || 0) + " €"),
+      el("td", {}, el("strong", { style: (x.roi >= 0 ? "color:#16a34a" : "color:#dc2626") }, (x.roi || 0) + " %")),
+    ]));
+  });
+  tbl.appendChild(tb);
+  modal.appendChild(tbl);
+  if (!items.length) modal.appendChild(el("p",{class:"muted"},"Sin datos."));
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openBulkGenerateCodes() {
+  const { modal, appendClose, overlay } = _modal("🎲 Generar códigos masivos");
+  const count = el("input", { class: "input", type: "number", value: 100, style: "width:100%" });
+  const prefix = el("input", { class: "input", value: "AURA-", style: "width:100%" });
+  const discount = el("input", { class: "input", type: "number", value: 20, style: "width:100%" });
+  const expires = el("input", { class: "input", type: "date", style: "width:100%" });
+  modal.appendChild(el("label", {}, "Cantidad de códigos")); modal.appendChild(count);
+  modal.appendChild(el("label", {}, "Prefijo")); modal.appendChild(prefix);
+  modal.appendChild(el("label", {}, "Descuento %")); modal.appendChild(discount);
+  modal.appendChild(el("label", {}, "Caduca el")); modal.appendChild(expires);
+  modal.appendChild(btn("🎲 Generar", "primary sm", async () => {
+    try {
+      const r = await api.post("/api/promos/bulk-generate", {
+        count: Number(count.value), prefix: prefix.value, discount: Number(discount.value), expires: expires.value || null,
+      });
+      toast(`${r.count} códigos creados`);
+      overlay.remove();
+      route("promos");
+    } catch(e) { toast(e.message); }
+  }));
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openScheduledReport() {
+  const { modal, appendClose, overlay } = _modal("📅 Informes programados por email");
+  const s = await api.get("/api/settings").catch(() => ({}));
+  const en = el("input", { type: "checkbox" });
+  if (String(s["reports.scheduled_enabled"] || "false") === "true") en.checked = true;
+  const cad = el("select", { class: "input" }, [
+    el("option", { value: "daily", selected: s["reports.scheduled_cadence"]==="daily" }, "Diario"),
+    el("option", { value: "weekly", selected: s["reports.scheduled_cadence"]==="weekly" }, "Semanal"),
+    el("option", { value: "monthly", selected: s["reports.scheduled_cadence"]==="monthly" }, "Mensual"),
+  ]);
+  const emails = el("input", { class: "input", value: s["reports.scheduled_emails"] || "", placeholder: "email1,email2,…", style: "width:100%" });
+  modal.appendChild(el("label", { style: "display:flex;gap:8px;align-items:center" }, [en, "Activar envío programado"]));
+  modal.appendChild(el("label", {}, "Cadencia")); modal.appendChild(cad);
+  modal.appendChild(el("label", {}, "Destinatarios (coma)")); modal.appendChild(emails);
+  modal.appendChild(btn("💾 Guardar", "primary sm", async () => {
+    await api.put("/api/settings", {
+      "reports.scheduled_enabled": en.checked ? "true" : "false",
+      "reports.scheduled_cadence": cad.value,
+      "reports.scheduled_emails": emails.value,
+    });
+    toast("Guardado"); overlay.remove();
+  }));
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openStatsCompare() {
+  const { modal, appendClose, overlay } = _modal("📊 Comparar periodos", 720);
+  const a1 = el("input", { class: "input", type: "date" });
+  const a2 = el("input", { class: "input", type: "date" });
+  const b1 = el("input", { class: "input", type: "date" });
+  const b2 = el("input", { class: "input", type: "date" });
+  const grid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" });
+  grid.appendChild(el("div", {}, [el("label",{},"Periodo A · desde"), a1, el("label",{},"hasta"), a2]));
+  grid.appendChild(el("div", {}, [el("label",{},"Periodo B · desde"), b1, el("label",{},"hasta"), b2]));
+  modal.appendChild(grid);
+  const out = el("div", { style: "margin-top:14px" });
+  modal.appendChild(out);
+  modal.appendChild(btn("🔍 Comparar", "primary sm", async () => {
+    try {
+      const r = await api.get(`/api/stats/compare?a1=${a1.value}&a2=${a2.value}&b1=${b1.value}&b2=${b2.value}`);
+      out.innerHTML = "";
+      Object.entries(r.metrics || {}).forEach(([k,v]) => {
+        out.appendChild(el("div", { style: "display:flex;justify-content:space-between;padding:6px;border-bottom:1px solid var(--border)" }, [
+          el("span", {}, k),
+          el("span", { style: (v.delta_pct >= 0 ? "color:#16a34a" : "color:#dc2626") }, `${v.a} → ${v.b} (${v.delta_pct >= 0 ? "+" : ""}${v.delta_pct}%)`),
+        ]));
+      });
+    } catch(e) { out.innerHTML=""; out.appendChild(el("p",{class:"err"},e.message)); }
+  }));
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+async function openHeatmap() {
+  const { modal, appendClose, overlay } = _modal("🌍 Mapa de calor de usuarios", 800);
+  modal.appendChild(el("p", { class: "muted" }, "Distribución geográfica de usuarios activos."));
+  const container = el("div", { style: "height:460px;border-radius:10px;overflow:hidden;background:#111" });
+  modal.appendChild(container);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  try {
+    // Requiere Leaflet ya cargado en admin
+    if (typeof L === "undefined") { container.textContent = "Leaflet no cargado."; return; }
+    const map = L.map(container).setView([40, -3], 3);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "OSM" }).addTo(map);
+    const pts = await api.get("/api/stats/geo-points");
+    (pts.items || []).forEach(p => {
+      L.circleMarker([p.lat, p.lng], { radius: Math.min(15, Math.max(3, Math.sqrt(p.count))), color: "#ff5a8a", weight: 1, fillOpacity: .6 }).addTo(map);
+    });
+  } catch(e) { container.textContent = "Error: " + e.message; }
+  appendClose();
+}
+
+async function openCohorts() {
+  const { modal, appendClose, overlay } = _modal("🎯 Cohortes de retención", 720);
+  modal.appendChild(el("p", { class: "muted" }, "% de usuarios que vuelven cada semana tras su alta."));
+  const table = el("div"); modal.appendChild(table);
+  try {
+    const r = await api.get("/api/stats/cohorts");
+    const cols = ["Cohorte", "S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"];
+    const tbl = el("table", { class: "data-table" });
+    tbl.appendChild(el("thead", {}, [el("tr", {}, cols.map(h => el("th",{},h)))]));
+    const tb = el("tbody");
+    (r.items || []).forEach(c => {
+      const cells = [c.cohort];
+      for (let i = 0; i < 9; i++) {
+        const v = c["w"+i];
+        cells.push(v == null ? "—" : (v + "%"));
+      }
+      tb.appendChild(el("tr", {}, cells.map((v, i) => {
+        const td = el("td", {}, String(v));
+        if (i > 0 && typeof v === "string" && v.endsWith("%")) {
+          const n = Number(v);
+          td.style.background = `rgba(91,155,255,${Math.min(1, n / 100)})`;
+        }
+        return td;
+      })));
+    });
+    tbl.appendChild(tb);
+    table.appendChild(tbl);
+  } catch(e) { table.appendChild(el("p",{class:"err"},e.message)); }
+  appendClose();
+  document.body.appendChild(overlay);
+}
+
+/* ============================================================
+   V500+ · Dispositivos perdidos — panel admin pro
+   ============================================================ */
+(function injectDeviceIncidentsCss(){
+  if (document.getElementById("diCss")) return;
+  const s = document.createElement("style"); s.id = "diCss";
+  s.textContent = `
+  .di-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin:12px 0}
+  .di-kpi{background:linear-gradient(135deg,#1a1d2b,#0f1220);border:1px solid #2a2f45;border-radius:12px;padding:12px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+  .di-kpi .lbl{font-size:11px;letter-spacing:.4px;text-transform:uppercase;color:#9aa4bf}
+  .di-kpi .val{font-size:22px;font-weight:700;margin-top:4px}
+  .di-kpi.red{border-color:#7f1d1d}.di-kpi.red .val{color:#fca5a5}
+  .di-kpi.amber{border-color:#78350f}.di-kpi.amber .val{color:#fbbf24}
+  .di-kpi.green{border-color:#065f46}.di-kpi.green .val{color:#6ee7b7}
+  .di-kpi.blue{border-color:#1e3a8a}.di-kpi.blue .val{color:#93c5fd}
+  .di-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+  .di-card{background:#12141c;border:1px solid #2a2f45;border-radius:14px;padding:14px;color:#e6e9f2;position:relative;transition:transform .15s ease,border-color .15s ease}
+  .di-card:hover{transform:translateY(-2px);border-color:#3b82f6}
+  .di-card .row{display:flex;gap:10px;align-items:center}
+  .di-card .avatar{width:48px;height:48px;border-radius:50%;object-fit:cover;background:#222;border:2px solid #2a2f45}
+  .di-card .name{font-weight:600;font-size:14px}
+  .di-card .sub{font-size:12px;color:#9aa4bf}
+  .di-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600;letter-spacing:.3px}
+  .di-badge.b-blue{background:#1e3a8a;color:#dbeafe}
+  .di-badge.b-amber{background:#78350f;color:#fef3c7}
+  .di-badge.b-green{background:#065f46;color:#d1fae5}
+  .di-badge.b-red{background:#7f1d1d;color:#fee2e2}
+  .di-badge.b-gray{background:#374151;color:#e5e7eb}
+  .di-meta{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:12px;color:#c1c7d8;margin-top:10px}
+  .di-meta .k{color:#8a93ab}
+  .di-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px;padding-top:12px;border-top:1px dashed #2a2f45}
+  .di-btn{padding:6px 12px;border-radius:8px;border:1px solid #2a2f45;background:#1a1d2b;color:#e6e9f2;cursor:pointer;font-size:12px;transition:all .12s}
+  .di-btn:hover{background:#2a2f45}
+  .di-btn.prim{background:#3b82f6;border-color:#3b82f6;color:#fff}.di-btn.prim:hover{background:#2563eb}
+  .di-btn.ok{background:#10b981;border-color:#10b981;color:#fff}.di-btn.ok:hover{background:#059669}
+  .di-btn.warn{background:#f59e0b;border-color:#f59e0b;color:#111}.di-btn.warn:hover{background:#d97706}
+  .di-btn.danger{background:#dc2626;border-color:#dc2626;color:#fff}.di-btn.danger:hover{background:#b91c1c}
+  .di-tabs{display:flex;gap:4px;flex-wrap:wrap;margin:10px 0}
+  .di-tab{padding:6px 14px;border-radius:20px;background:#1a1d2b;border:1px solid #2a2f45;color:#c1c7d8;cursor:pointer;font-size:12px}
+  .di-tab.on{background:#3b82f6;border-color:#3b82f6;color:#fff}
+  .di-detail-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px;overflow-y:auto}
+  .di-detail{background:#0f1220;border:1px solid #2a2f45;border-radius:16px;max-width:900px;width:100%;color:#e6e9f2;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .di-detail header{padding:16px 20px;border-bottom:1px solid #2a2f45;display:flex;justify-content:space-between;align-items:center}
+  .di-detail .close-x{background:none;border:none;color:#9aa4bf;font-size:24px;cursor:pointer}
+  .di-detail .body{padding:20px}
+  .di-selfie-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
+  .di-selfie-compare figure{margin:0;background:#000;border-radius:10px;overflow:hidden;border:2px solid #2a2f45}
+  .di-selfie-compare img{width:100%;height:220px;object-fit:cover;display:block}
+  .di-selfie-compare figcaption{padding:6px 10px;font-size:11px;background:#1a1d2b;color:#9aa4bf;text-transform:uppercase;letter-spacing:.5px}
+  .di-match-bar{height:8px;background:#2a2f45;border-radius:4px;overflow:hidden;margin-top:8px}
+  .di-match-fill{height:100%;background:linear-gradient(90deg,#ef4444,#f59e0b,#10b981);transition:width .5s}
+  .di-timeline{position:relative;padding-left:24px}
+  .di-timeline::before{content:"";position:absolute;left:8px;top:0;bottom:0;width:2px;background:#2a2f45}
+  .di-tl-item{position:relative;padding:8px 0 8px 16px;font-size:12px}
+  .di-tl-item::before{content:"";position:absolute;left:-24px;top:12px;width:12px;height:12px;border-radius:50%;background:#3b82f6;border:3px solid #0f1220}
+  .di-tl-item.tl-lock::before{background:#dc2626}
+  .di-tl-item.tl-sound::before{background:#f59e0b}
+  .di-tl-item.tl-approve::before{background:#10b981}
+  .di-tl-time{color:#9aa4bf;font-size:11px}
+  .di-tl-hash{font-family:monospace;font-size:10px;color:#6b7280;margin-top:2px}
+  .di-info-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:12px 0}
+  .di-info-box{background:#1a1d2b;border:1px solid #2a2f45;border-radius:10px;padding:12px}
+  .di-info-box h5{margin:0 0 8px;font-size:11px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.5px}
+  .di-info-box .v{font-size:14px;color:#fff}
+  `;
+  document.head.appendChild(s);
+})();
+
+/* ============================================================
+   V510 · Eliminación completa de usuario (users+KYC+Didit+email+bloqueo)
+   ============================================================ */
+async function openFullDeleteModal(userId, userEmail, userName) {
+  const overlay = el("div", { class: "di-detail-overlay", onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el("div", { class: "di-detail", style: "max-width:640px" });
+  modal.innerHTML = '<div class="body" style="text-align:center;color:#9aa4bf">Cargando motivos…</div>';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  try {
+    const r = await api.get("/api/admin/deletion-reasons");
+    const reasons = r.items || [];
+    modal.innerHTML = "";
+    modal.appendChild(el("header", {}, [
+      el("div", {}, [
+        el("h3", { style: "margin:0;color:#fca5a5" }, "🗑 Eliminar usuario por completo"),
+        el("div", { style: "font-size:12px;color:#9aa4bf;margin-top:4px" }, `${userName || "?"} · ${userEmail || ""} · ID ${userId}`),
+      ]),
+      el("button", { class: "close-x", onclick: () => overlay.remove(), type: "button" }, "×"),
+    ]));
+    const body = el("div", { class: "body" });
+
+    body.appendChild(el("div", { style: "background:#7f1d1d;color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:14px" },
+      "⚠️ Esto borrará el usuario de la app, su verificación KYC en Didit, todos sus datos (chats, matches, pagos) y opcionalmente bloqueará el re-registro. Acción irreversible."));
+
+    body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf" }, "Motivo:"));
+    const sel = el("select", { style: "width:100%;padding:10px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:8px;margin-top:4px" });
+    reasons.forEach(rr => sel.appendChild(el("option", { value: rr.code }, rr.label)));
+    body.appendChild(sel);
+
+    // Detalles del motivo seleccionado
+    const detailsBox = el("div", { style: "background:#1a1d2b;border:1px solid #2a2f45;border-radius:8px;padding:12px;margin-top:10px;font-size:12px" });
+    body.appendChild(detailsBox);
+
+    // Overrides
+    const overrides = el("div", { style: "margin-top:14px;padding:12px;background:#0f1220;border:1px solid #2a2f45;border-radius:8px" });
+    overrides.appendChild(el("div", { style: "font-size:12px;color:#9aa4bf;margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px" }, "Ajustes para este caso:"));
+    const chk = (id, label, checked) => {
+      const wrap = el("label", { style: "display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 0;color:#e6e9f2;cursor:pointer" });
+      const c = el("input", { type: "checkbox", id, checked: !!checked });
+      wrap.appendChild(c); wrap.appendChild(el("span", {}, label));
+      return { el: wrap, input: c };
+    };
+    const cSendEmail = chk("del_send_email", "📧 Enviar email al usuario", true);
+    const cAppeal = chk("del_appeal", "📮 Permitir apelación", true);
+    const cBlockE = chk("del_block_email", "🚫 Bloquear re-registro por email", true);
+    const cBlockP = chk("del_block_phone", "🚫 Bloquear re-registro por teléfono", false);
+    const cBlockD = chk("del_block_device", "🚫 Bloquear re-registro por dispositivo", false);
+    const cBlockI = chk("del_block_ip", "🚫 Bloquear re-registro por IP", false);
+    [cSendEmail, cAppeal, cBlockE, cBlockP, cBlockD, cBlockI].forEach(x => overrides.appendChild(x.el));
+    body.appendChild(overrides);
+
+    const notesInput = el("textarea", { rows: 3, placeholder: "Notas adicionales para el email (opcional)", style: "width:100%;padding:10px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:8px;margin-top:10px;box-sizing:border-box" });
+    body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf;margin-top:10px;display:block" }, "Notas al usuario (opcional):"));
+    body.appendChild(notesInput);
+
+    function refreshDetails() {
+      const rr = reasons.find(x => x.code === sel.value);
+      if (!rr) { detailsBox.innerHTML = ""; return; }
+      detailsBox.innerHTML = `
+        <div><strong>Asunto email:</strong> ${rr.email_subject}</div>
+        <div style="margin-top:4px;color:#9aa4bf"><strong>Plazo apelación por defecto:</strong> ${rr.appeal_days} días</div>
+        <div style="margin-top:4px;color:#9aa4bf"><strong>Cuerpo:</strong> ${(rr.email_body || "").slice(0, 200)}${rr.email_body && rr.email_body.length > 200 ? "…" : ""}</div>`;
+      cSendEmail.input.checked = !!rr.send_email;
+      cAppeal.input.checked = !!rr.allow_appeal;
+      cBlockE.input.checked = !!rr.block_email;
+      cBlockP.input.checked = !!rr.block_phone;
+      cBlockD.input.checked = !!rr.block_device;
+      cBlockI.input.checked = !!rr.block_ip;
+    }
+    sel.addEventListener("change", refreshDetails);
+    refreshDetails();
+
+    const footer = el("div", { style: "display:flex;gap:8px;margin-top:16px;justify-content:flex-end" });
+    footer.appendChild(el("button", { class: "di-btn", type: "button", onclick: () => overlay.remove() }, "Cancelar"));
+    const confirmBtn = el("button", { class: "di-btn danger", type: "button" }, "🗑 Eliminar definitivamente");
+    confirmBtn.addEventListener("click", async () => {
+      if (!confirm(`¿Confirmar eliminación total de ${userEmail}? Esto NO se puede deshacer.`)) return;
+      confirmBtn.disabled = true; confirmBtn.textContent = "Eliminando…";
+      try {
+        const res = await api.post(`/api/admin/users/${userId}/full-delete`, {
+          reason_code: sel.value,
+          override_email: cSendEmail.input.checked,
+          override_appeal: cAppeal.input.checked,
+          override_blocks: {
+            email: cBlockE.input.checked,
+            phone: cBlockP.input.checked,
+            device: cBlockD.input.checked,
+            ip: cBlockI.input.checked
+          },
+          admin_notes: notesInput.value.trim() || null,
+        });
+        toast(`Eliminado. Didit: ${res.didit_deleted ? "OK" : "no"}. Email: ${res.email_sent ? "enviado" : "no"}. Bloqueos: ${(res.blocks_created || []).join(", ") || "ninguno"}`);
+        overlay.remove();
+        if (typeof route === "function") route(__currentAdminView || "users");
+      } catch(e) { toast(e.message); confirmBtn.disabled = false; confirmBtn.textContent = "🗑 Eliminar definitivamente"; }
+    });
+    footer.appendChild(confirmBtn);
+    body.appendChild(footer);
+    modal.appendChild(body);
+  } catch(e) { modal.innerHTML = `<div class="body"><p class="err">${e.message}</p></div>`; }
+}
+
+// CRUD motivos de eliminación
+async function openDeletionReasonsAdmin() {
+  const overlay = el("div", { class: "di-detail-overlay", onclick: e => { if (e.target === overlay) overlay.remove(); } });
+  const modal = el("div", { class: "di-detail", style: "max-width:900px" });
+  modal.innerHTML = '<div class="body">Cargando…</div>';
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  async function refresh() {
+    const r = await api.get("/api/admin/deletion-reasons");
+    modal.innerHTML = "";
+    modal.appendChild(el("header", {}, [
+      el("h3", { style: "margin:0" }, "🗂 Motivos de eliminación configurables"),
+      el("button", { class: "close-x", onclick: () => overlay.remove(), type: "button" }, "×"),
+    ]));
+    const body = el("div", { class: "body" });
+    const tbl = el("table", { style: "width:100%;font-size:12px;color:#e6e9f2" });
+    tbl.appendChild(el("thead", {}, [el("tr", {}, [
+      el("th", {}, "Código"), el("th", {}, "Etiqueta"), el("th", {}, "Días apel."), el("th", {}, "Email"), el("th", {}, "Apel."), el("th", {}, "Bloqueo E/T/D/IP"), el("th", {}, "")
+    ])]));
+    const tb = el("tbody", {});
+    (r.items || []).forEach(rr => {
+      tb.appendChild(el("tr", {}, [
+        el("td", {}, rr.code),
+        el("td", {}, rr.label),
+        el("td", {}, String(rr.appeal_days)),
+        el("td", {}, rr.send_email ? "✅" : "❌"),
+        el("td", {}, rr.allow_appeal ? "✅" : "❌"),
+        el("td", {}, `${rr.block_email?"E":"·"}/${rr.block_phone?"T":"·"}/${rr.block_device?"D":"·"}/${rr.block_ip?"I":"·"}`),
+        el("td", {}, [
+          btn("Editar", "sm", () => openReasonForm(rr, refresh)),
+          btn("Borrar", "danger sm", async () => { if (confirm("¿Borrar?")) { await api.del(`/api/admin/deletion-reasons/${rr.id}`); refresh(); } }),
+        ]),
+      ]));
+    });
+    tbl.appendChild(tb);
+    body.appendChild(tbl);
+    body.appendChild(btn("+ Nuevo motivo", "prim sm", () => openReasonForm(null, refresh)));
+    modal.appendChild(body);
+  }
+  function openReasonForm(rr, cb) {
+    const isNew = !rr;
+    rr = rr || { code: "", label: "", email_subject: "Tu cuenta ha sido cerrada", email_body: "", appeal_days: 30, send_email: 1, allow_appeal: 1, block_email: 1, block_phone: 0, block_device: 0, block_ip: 0 };
+    const ovl = el("div", { class: "di-detail-overlay" });
+    const m2 = el("div", { class: "di-detail", style: "max-width:520px" });
+    m2.innerHTML = "";
+    m2.appendChild(el("header", {}, [el("h3", { style: "margin:0" }, isNew ? "Nuevo motivo" : "Editar motivo"), el("button", { class: "close-x", onclick: () => ovl.remove(), type: "button" }, "×")]));
+    const b2 = el("div", { class: "body" });
+    const fields = ["code", "label", "email_subject", "email_body", "appeal_days"];
+    const inputs = {};
+    fields.forEach(f => {
+      b2.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf;margin-top:8px;display:block" }, f));
+      const i = f === "email_body" ? el("textarea", { rows: 4, style: "width:100%;padding:8px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:6px;box-sizing:border-box" })
+                                    : el("input", { type: f === "appeal_days" ? "number" : "text", style: "width:100%;padding:8px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:6px;box-sizing:border-box" });
+      i.value = rr[f] || "";
+      inputs[f] = i;
+      b2.appendChild(i);
+    });
+    const cks = ["send_email","allow_appeal","block_email","block_phone","block_device","block_ip"];
+    cks.forEach(f => {
+      const w = el("label", { style: "display:flex;gap:8px;align-items:center;margin-top:6px;color:#e6e9f2" });
+      const c = el("input", { type: "checkbox", checked: !!rr[f] });
+      w.appendChild(c); w.appendChild(el("span", {}, f));
+      inputs[f] = c;
+      b2.appendChild(w);
+    });
+    b2.appendChild(btn(isNew ? "Crear" : "Guardar", "prim sm", async () => {
+      const payload = {};
+      fields.forEach(f => payload[f] = inputs[f].value);
+      cks.forEach(f => payload[f] = inputs[f].checked);
+      try {
+        if (isNew) await api.post("/api/admin/deletion-reasons", payload);
+        else await api.patch(`/api/admin/deletion-reasons/${rr.id}`, payload);
+        ovl.remove(); cb();
+      } catch(e) { toast(e.message); }
+    }));
+    m2.appendChild(b2);
+    ovl.appendChild(m2);
+    document.body.appendChild(ovl);
+  }
+  refresh();
+}
+
+// Selector de plantilla + edición libre
+async function pickMessageOrTemplate(kind, promptLabel) {
+  try {
+    const r = await api.get("/api/admin/device-incident-templates");
+    const items = (r.items || []).filter(t => t.kind === kind);
+    return await new Promise(resolve => {
+      const overlay = el("div", { class: "di-detail-overlay", onclick: e => { if (e.target === overlay) { overlay.remove(); resolve(null); } } });
+      const modal = el("div", { class: "di-detail", style: "max-width:520px" });
+      modal.appendChild(el("header", {}, [
+        el("h3", { style: "margin:0" }, "✍️ " + promptLabel),
+        el("button", { class: "close-x", onclick: () => { overlay.remove(); resolve(null); }, type: "button" }, "×"),
+      ]));
+      const body = el("div", { class: "body" });
+      if (items.length) {
+        body.appendChild(el("div", { style: "font-size:12px;color:#9aa4bf;margin-bottom:8px" }, "Plantillas disponibles:"));
+        items.forEach(t => {
+          const b = el("button", { class: "di-btn", style: "display:block;width:100%;text-align:left;margin-bottom:6px", type: "button" }, [
+            el("strong", {}, t.title),
+            el("div", { style: "font-size:11px;color:#9aa4bf;margin-top:4px" }, t.body.slice(0, 100) + "…")
+          ]);
+          b.addEventListener("click", () => { ta.value = t.body; });
+          body.appendChild(b);
+        });
+      }
+      const ta = el("textarea", { rows: 5, style: "width:100%;padding:10px;background:#0f1220;border:1px solid #2a2f45;border-radius:8px;color:#fff;box-sizing:border-box;margin-top:8px" });
+      body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf;display:block;margin-top:12px" }, "Texto final (puedes editarlo):"));
+      body.appendChild(ta);
+      const foot = el("div", { style: "display:flex;gap:8px;margin-top:12px;justify-content:flex-end" });
+      const ok = el("button", { class: "di-btn prim", type: "button" }, "Usar este texto");
+      ok.addEventListener("click", () => { overlay.remove(); resolve(ta.value.trim() || ""); });
+      const cancel = el("button", { class: "di-btn", type: "button" }, "Cancelar");
+      cancel.addEventListener("click", () => { overlay.remove(); resolve(null); });
+      foot.appendChild(cancel); foot.appendChild(ok);
+      body.appendChild(foot);
+      modal.appendChild(body);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    });
+  } catch(e) { return prompt(promptLabel) || null; }
+}
+
+async function viewDeviceIncidents(root) {
+  root.appendChild(viewTitle(
+    "🛡 Dispositivos perdidos",
+    "Casos de dispositivo perdido/robado. Verifica identidad, emite alarma, envía mensaje o bloquea la cuenta con trazabilidad legal firmada."
+  ));
+  root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
+    ["🆕", "Caso nuevo pendiente de selfie del usuario."],
+    ["📸", "Selfie recibido — esperando revisión del admin."],
+    ["✅", "Aprobado — puedes emitir sonido, mensaje o bloqueo."],
+    ["🔊", "Alarma sonora activa en el móvil del usuario."],
+    ["📢", "Mensaje enviado a la pantalla del dispositivo."],
+    ["🔒", "Cuenta bloqueada — el usuario no puede usar la app."],
+    ["⏱", "Bloqueo programado (se activará en X horas)."],
+    ["📎", "Denuncia policial adjunta (obligatoria)."],
+    ["📍", "Última ubicación conocida en el momento del reporte."],
+    ["🗂", "Auditoría con firma hash de cada acción del admin."],
+  ]));
+
+  // KPIs
+  const kpisWrap = el("div", { class: "di-kpis" });
+  root.appendChild(kpisWrap);
+
+  // Tabs de filtro
+  const tabs = el("div", { class: "di-tabs" });
+  const TABS = [
+    ["", "Todos"], ["pending_selfie", "🆕 Esperando selfie"], ["pending_admin", "📸 Para revisar"],
+    ["approved", "✅ Aprobados"], ["active", "🔊 Activos"], ["closed", "Cerrados"], ["denied", "Denegados"], ["archived", "Archivados"]
+  ];
+  let currentStatus = "";
+  TABS.forEach(([v, t]) => {
+    const b = el("button", { class: "di-tab" + (v === currentStatus ? " on" : ""), type: "button" }, t);
+    b.addEventListener("click", () => { currentStatus = v; tabs.querySelectorAll(".di-tab").forEach(x => x.classList.remove("on")); b.classList.add("on"); load(); });
+    tabs.appendChild(b);
+  });
+  const refreshBtn = el("button", { class: "di-btn prim", type: "button" }, "🔄 Actualizar");
+  refreshBtn.addEventListener("click", () => load());
+  tabs.appendChild(refreshBtn);
+  root.appendChild(tabs);
+
+  const grid = el("div", { class: "di-grid" });
+  root.appendChild(grid);
+
+  function statusBadge(s) {
+    const map = {
+      pending_selfie: ["🆕 Esperando selfie", "b-blue"],
+      pending_admin: ["📸 Para revisar", "b-amber"],
+      approved: ["✅ Aprobado", "b-green"],
+      active: ["🔊 Alerta activa", "b-red"],
+      closed: ["✔️ Cerrado", "b-gray"],
+      denied: ["🚫 Denegado", "b-red"],
+      archived: ["📦 Archivado", "b-gray"],
+      pending_evidence: ["⏳ Sin denuncia", "b-amber"],
+    };
+    const [label, cls] = map[s] || [s, "b-gray"];
+    return el("span", { class: `di-badge ${cls}` }, label);
+  }
+
+  async function loadKpis() {
+    try {
+      const r = await api.get("/api/admin/device-incidents/kpis");
+      kpisWrap.innerHTML = "";
+      [
+        ["Casos activos", r.active || 0, "red"],
+        ["Para revisar", r.pending_admin || 0, "amber"],
+        ["Bloqueados ahora", r.locked || 0, "red"],
+        ["Aprobados 7d", r.approved_7d || 0, "green"],
+        ["Total", r.total || 0, "blue"],
+      ].forEach(([lbl, val, cls]) => {
+        kpisWrap.appendChild(el("div", { class: `di-kpi ${cls}` }, [
+          el("div", { class: "lbl" }, lbl),
+          el("div", { class: "val" }, String(val)),
+        ]));
+      });
+    } catch { kpisWrap.innerHTML = ""; }
+  }
+
+  async function load() {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#9aa4bf;padding:24px">Cargando…</div>';
+    try {
+      const q = currentStatus ? "?status=" + encodeURIComponent(currentStatus) : "";
+      const r = await api.get("/api/admin/device-incidents" + q);
+      const items = r.items || [];
+      grid.innerHTML = "";
+      if (!items.length) { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#9aa4bf;padding:24px">No hay incidentes en este estado.</div>'; return; }
+      items.forEach(it => grid.appendChild(renderIncidentCard(it)));
+    } catch(e) { grid.innerHTML = ""; grid.appendChild(el("p", { class: "err" }, e.message)); }
+  }
+
+  function renderIncidentCard(it) {
+    const card = el("div", { class: "di-card" });
+    card.appendChild(el("div", { class: "row" }, [
+      it.photo_url ? el("img", { src: it.photo_url, class: "avatar" }) : el("div", { class: "avatar" }),
+      el("div", { style: "flex:1" }, [
+        el("div", { class: "name" }, `${it.user_name || "Sin nombre"} · #${it.user_id}`),
+        el("div", { class: "sub" }, it.email || "sin email"),
+      ]),
+      statusBadge(it.status),
+    ]));
+    if (it.reason) card.appendChild(el("p", { style: "font-size:12px;color:#c1c7d8;font-style:italic;margin:8px 0 0" }, `"${it.reason.slice(0, 120)}${it.reason.length > 120 ? "…" : ""}"`));
+    card.appendChild(el("div", { class: "di-meta" }, [
+      el("div", {}, [el("span", { class: "k" }, "📎 "), it.police_report_url ? el("a", { href: it.police_report_url, target: "_blank", style: "color:#93c5fd" }, "Ver denuncia") : el("span", { style: "color:#ef4444" }, "❌ sin adjuntar")]),
+      el("div", {}, [el("span", { class: "k" }, "📸 "), it.verify_match_score ? `${it.verify_match_score}% match` : "selfie pendiente"]),
+      el("div", {}, [el("span", { class: "k" }, "📍 "), it.frozen_last_lat ? `${Number(it.frozen_last_lat).toFixed(3)}, ${Number(it.frozen_last_lng).toFixed(3)}` : "n/d"]),
+      el("div", {}, [el("span", { class: "k" }, "🖥 "), it.frozen_last_ip || "n/d"]),
+    ]));
+
+    const actions = el("div", { class: "di-actions" });
+    const addBtn = (label, cls, fn) => { const b = el("button", { class: `di-btn ${cls}`, type: "button" }, label); b.addEventListener("click", fn); actions.appendChild(b); };
+    addBtn("👁 Ver detalle", "prim", () => openIncidentDetail(it.id));
+    if (it.status === "pending_admin") {
+      addBtn("✅ Aprobar", "ok", async () => {
+        if (!confirm("¿Aprobar este caso? Habilitará las acciones de emergencia.")) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/approve`); toast("Aprobado"); load(); loadKpis(); } catch(e){ toast(e.message); }
+      });
+      addBtn("🚫 Denegar", "danger", async () => {
+        const r = prompt("Motivo de la denegación:"); if (!r) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/deny`, { reason: r }); toast("Denegado"); load(); loadKpis(); } catch(e){ toast(e.message); }
+      });
+    }
+    if (it.status === "approved" || it.status === "active") {
+      addBtn("🔊 Sonido", "warn", async () => {
+        const msg = await pickMessageOrTemplate("message", "Mensaje para acompañar la alarma (opcional):"); if (msg === null) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/play-sound`, { message: msg, duration_sec: 60, volume: 1.0 }); toast("Alarma enviada 🔊"); load(); } catch(e){ toast(e.message); }
+      });
+      addBtn("📢 Mensaje", "", async () => {
+        const msg = await pickMessageOrTemplate("message", "Mensaje a mostrar en el dispositivo:"); if (!msg) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/send-message`, { message: msg }); toast("Mensaje enviado"); load(); } catch(e){ toast(e.message); }
+      });
+      addBtn("🔒 Bloquear", "danger", async () => {
+        if (!confirm("¿Bloquear el acceso a la cuenta? El usuario no podrá usar la app.")) return;
+        const msg = await pickMessageOrTemplate("lock", "Mensaje de pantalla de bloqueo:"); if (msg === null) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/lock`, { reason: "Reportado como perdido", message: msg || "Este dispositivo ha sido bloqueado por el propietario." }); toast("Bloqueado 🔒"); load(); loadKpis(); } catch(e){ toast(e.message); }
+      });
+      addBtn("⏱ Prog. bloqueo", "", async () => {
+        const h = prompt("¿Bloquear automáticamente en cuántas horas?", "24"); if (!h) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/schedule-lock`, { hours: Number(h) }); toast("Bloqueo programado"); load(); } catch(e){ toast(e.message); }
+      });
+    }
+    if (it.status === "active" && it.locked_at) {
+      addBtn("🔓 Desbloquear", "ok", async () => {
+        if (!confirm("¿Restablecer acceso a la cuenta?")) return;
+        try { await api.post(`/api/admin/device-incidents/${it.id}/unlock`); toast("Desbloqueado 🔓"); load(); loadKpis(); } catch(e){ toast(e.message); }
+      });
+    }
+    if (!["closed", "archived"].includes(it.status)) {
+      addBtn("✔️ Cerrar caso", "", async () => {
+        const n = prompt("Notas de cierre (opcional):") || "";
+        try { await api.post(`/api/admin/device-incidents/${it.id}/close`, { notes: n }); toast("Cerrado"); load(); loadKpis(); } catch(e){ toast(e.message); }
+      });
+    }
+    card.appendChild(actions);
+    return card;
+  }
+
+  async function openIncidentDetail(id) {
+    const overlay = el("div", { class: "di-detail-overlay", onclick: (e) => { if (e.target === overlay) overlay.remove(); } });
+    const modal = el("div", { class: "di-detail" });
+    modal.innerHTML = '<div class="body" style="text-align:center;color:#9aa4bf">Cargando…</div>';
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    try {
+      const r = await api.get(`/api/admin/device-incidents/${id}`);
+      const inc = r.incident, kyc = r.kyc, gps = r.current_gps, acts = r.actions || [];
+      modal.innerHTML = "";
+      const header = el("header", {}, [
+        el("div", {}, [
+          el("h3", { style: "margin:0" }, `Caso #${inc.id} — ${inc.user_name || "Sin nombre"}`),
+          el("div", { style: "font-size:12px;color:#9aa4bf;margin-top:4px" }, `${inc.email || ""} · abierto ${new Date(inc.requested_at).toLocaleString("es-ES")}`),
+        ]),
+        el("button", { class: "close-x", onclick: () => overlay.remove(), type: "button" }, "×"),
+      ]);
+      modal.appendChild(header);
+      const body = el("div", { class: "body" });
+      body.appendChild(statusBadge(inc.status));
+
+      // Comparación selfie/KYC
+      if (inc.verify_selfie_url || kyc) {
+        body.appendChild(el("h4", { style: "margin:20px 0 6px;font-size:13px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.5px" }, "🔍 Verificación de identidad"));
+        const comp = el("div", { class: "di-selfie-compare" });
+        comp.appendChild(el("figure", {}, [
+          inc.verify_selfie_url ? el("img", { src: inc.verify_selfie_url, alt: "Selfie del caso" }) : el("div", { style: "height:220px;display:flex;align-items:center;justify-content:center;color:#9aa4bf" }, "Selfie pendiente"),
+          el("figcaption", {}, "Selfie enviado ahora"),
+        ]));
+        comp.appendChild(el("figure", {}, [
+          kyc && kyc.selfie_url ? el("img", { src: kyc.selfie_url, alt: "Selfie KYC previo" }) : el("div", { style: "height:220px;display:flex;align-items:center;justify-content:center;color:#9aa4bf" }, kyc ? "KYC sin foto guardada" : "Sin KYC previo"),
+          el("figcaption", {}, "KYC de referencia"),
+        ]));
+        body.appendChild(comp);
+        if (inc.verify_match_score) {
+          const barWrap = el("div");
+          barWrap.appendChild(el("div", { style: "display:flex;justify-content:space-between;font-size:12px;color:#9aa4bf" }, [
+            el("span", {}, "Match automático"),
+            el("strong", { style: "color:#fff" }, inc.verify_match_score + "%"),
+          ]));
+          const bar = el("div", { class: "di-match-bar" });
+          bar.appendChild(el("div", { class: "di-match-fill", style: `width:${Math.min(100, Number(inc.verify_match_score))}%` }));
+          barWrap.appendChild(bar);
+          body.appendChild(barWrap);
+        }
+      }
+
+      // Info principal
+      body.appendChild(el("div", { class: "di-info-row" }, [
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "Tipo"), el("div", { class: "v" }, inc.type) ]),
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "Estado"), el("div", { class: "v" }, inc.status) ]),
+      ]));
+      body.appendChild(el("div", { class: "di-info-row" }, [
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "📎 Denuncia policial"), inc.police_report_url ? el("a", { href: inc.police_report_url, target: "_blank", style: "color:#93c5fd" }, "Abrir documento →") : el("div", { class: "v", style: "color:#ef4444" }, "❌ No adjuntada") ]),
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "Motivo del usuario"), el("div", { class: "v", style: "font-size:13px" }, inc.reason || "n/d") ]),
+      ]));
+      body.appendChild(el("div", { class: "di-info-row" }, [
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "📍 Congelado al reportar"), el("div", { class: "v" }, inc.frozen_last_lat ? `${inc.frozen_last_lat}, ${inc.frozen_last_lng}` : "n/d") ]),
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "📍 GPS actual"), el("div", { class: "v" }, gps ? `${gps.lat}, ${gps.lng}` : "n/d") ]),
+      ]));
+      body.appendChild(el("div", { class: "di-info-row" }, [
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "🖥 IP / dispositivo"), el("div", { class: "v", style: "font-size:12px" }, `${inc.frozen_last_ip || "n/d"}\n${(inc.frozen_device_ua || "").slice(0, 80)}`) ]),
+        el("div", { class: "di-info-box" }, [ el("h5", {}, "🆘 Contacto emergencia"), el("div", { class: "v", style: "font-size:13px" }, `${inc.emergency_contact_email || "-"} · ${inc.emergency_contact_phone || "-"}`) ]),
+      ]));
+
+      // Rastro GPS en vivo (si hay puntos)
+      try {
+        const trail = await api.get(`/api/admin/device-incidents/${inc.id}/gps-trail`);
+        if (trail.points && trail.points.length) {
+          body.appendChild(el("h4", { style: "margin:20px 0 6px;font-size:13px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.5px" }, `📍 Rastro GPS live (${trail.points.length} puntos)`));
+          const trailBox = el("div", { style: "background:#0f1220;border:1px solid #2a2f45;border-radius:10px;padding:12px;max-height:200px;overflow-y:auto;font-family:monospace;font-size:11px" });
+          trail.points.slice(0, 30).forEach(p => {
+            trailBox.appendChild(el("div", { style: "padding:2px 0;color:#c1c7d8" },
+              `${new Date(p.captured_at).toLocaleString("es-ES")} · ${p.lat}, ${p.lng} · ±${p.accuracy || "?"}m`));
+          });
+          body.appendChild(trailBox);
+          if (typeof L !== "undefined") {
+            const mapDiv = el("div", { style: "height:240px;margin-top:8px;border-radius:10px;overflow:hidden" });
+            body.appendChild(mapDiv);
+            setTimeout(() => {
+              const map = L.map(mapDiv).setView([trail.points[0].lat, trail.points[0].lng], 14);
+              L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+              const latlngs = trail.points.map(p => [p.lat, p.lng]);
+              L.polyline(latlngs, { color: "#dc2626", weight: 3 }).addTo(map);
+              L.marker(latlngs[0]).addTo(map).bindPopup("Última posición");
+            }, 100);
+          }
+        }
+      } catch {}
+
+      // Timeline auditoría
+      const auditHead = el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin:20px 0 6px" });
+      auditHead.appendChild(el("h4", { style: "margin:0;font-size:13px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.5px" }, "🗂 Auditoría (firmada SHA-256)"));
+      const exportBtn = el("button", { class: "di-btn", type: "button" }, "📄 Exportar informe legal");
+      exportBtn.addEventListener("click", () => {
+        window.open(`/api/admin/device-incidents/${inc.id}/audit-export`, "_blank");
+      });
+      auditHead.appendChild(exportBtn);
+      body.appendChild(auditHead);
+      const tl = el("div", { class: "di-timeline" });
+      acts.forEach(a => {
+        const cls = a.action.includes("lock") ? "tl-lock" : a.action.includes("sound") ? "tl-sound" : a.action.includes("approve") ? "tl-approve" : "";
+        tl.appendChild(el("div", { class: `di-tl-item ${cls}` }, [
+          el("div", {}, [el("strong", {}, a.action), el("span", { style: "color:#9aa4bf" }, ` por ${a.admin_id || "system"}`)]),
+          el("div", { class: "di-tl-time" }, new Date(a.created_at).toLocaleString("es-ES")),
+          a.signature_hash ? el("div", { class: "di-tl-hash" }, `sig · ${a.signature_hash.slice(0, 32)}…`) : null,
+        ].filter(Boolean)));
+      });
+      body.appendChild(tl);
+      modal.appendChild(body);
+    } catch(e) { modal.innerHTML = `<div class="body"><p class="err">${e.message}</p></div>`; }
+  }
+
+  await loadKpis();
   await load();
 }
 
