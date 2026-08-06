@@ -5766,14 +5766,52 @@ function routeCcAddress(templateId, category) {
   }
 }
 
+function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote }) {
+  const brand = "Aura";
+  return `<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>${title}</title>
+</head>
+<body style="margin:0;padding:0;background:#f5f3fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e">
+<div style="display:none;max-height:0;overflow:hidden;color:transparent">${preheader || ""}</div>
+<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3fa;padding:32px 16px">
+  <tr><td align="center">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;background:#ffffff;border-radius:20px;box-shadow:0 10px 40px rgba(124,58,237,.08);overflow:hidden">
+      <tr><td style="background:linear-gradient(135deg,#7c3aed,#ec4899);padding:28px 32px;text-align:center">
+        <div style="display:inline-block;width:56px;height:56px;border-radius:16px;background:rgba(255,255,255,.2);line-height:56px;font-size:32px;margin-bottom:10px">💜</div>
+        <div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:.3px">${brand}</div>
+      </td></tr>
+      <tr><td style="padding:32px 32px 24px">
+        <h1 style="margin:0 0 8px;font-size:20px;font-weight:800;color:#1a1a2e">${title}</h1>
+        ${bodyHtml}
+        ${cta ? `<div style="text-align:center;margin:24px 0 8px"><a href="${ctaUrl || "#"}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:700;font-size:15px;box-shadow:0 10px 30px rgba(124,58,237,.35)">${cta}</a></div>` : ""}
+      </td></tr>
+      <tr><td style="padding:16px 32px 28px;border-top:1px solid #eee6f7;color:#88839a;font-size:12px;line-height:1.5;text-align:center">
+        ${footerNote || `¿Necesitas ayuda? Escríbenos a <a href="mailto:soporte@citasaura.es" style="color:#7c3aed;text-decoration:none">soporte@citasaura.es</a>`}
+        <div style="margin-top:12px;color:#b5b0c5">© ${new Date().getFullYear()} ${brand} · citasaura.es</div>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`;
+}
+
 function otpEmailHTML(code) {
-  return `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#fdf2f5;padding:24px">
-  <div style="max-width:480px;margin:auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 24px rgba(0,0,0,.06)">
-    <h1 style="margin:0 0 8px;color:#ff3b6b">Aura</h1>
-    <p style="color:#555">Tu código de verificación es:</p>
-    <div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#111;background:#fff5f7;border-radius:12px;padding:16px;text-align:center;margin:16px 0">${code}</div>
-    <p style="color:#777;font-size:13px">Este código expira en 10 minutos. Si no lo solicitaste, ignora este correo.</p>
-  </div></body></html>`;
+  const body = `
+    <p style="margin:0 0 18px;color:#4a475b;font-size:15px;line-height:1.6">Introduce este código para continuar en Aura. Es válido durante 10 minutos.</p>
+    <div style="background:linear-gradient(135deg,#faf5ff,#fdf2f8);border:1px solid #ede4fb;border-radius:16px;padding:22px;text-align:center;margin:8px 0 4px">
+      <div style="font-size:38px;font-weight:900;letter-spacing:12px;color:#7c3aed;font-family:'Courier New',monospace">${code}</div>
+    </div>
+    <p style="margin:20px 0 0;color:#88839a;font-size:13px;line-height:1.5">Si no solicitaste este código, ignora este email. Tu cuenta sigue segura.</p>
+  `;
+  return _emailBase({
+    title: "Tu código de verificación",
+    preheader: `Tu código Aura es ${code}`,
+    bodyHtml: body,
+  });
 }
 
 async function sendOtpEmail(email, code) {
