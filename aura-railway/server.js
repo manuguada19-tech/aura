@@ -5489,11 +5489,37 @@ if (SMTP_URL) {
 const SMTP_MAILERS = new Map();
 let SMTP_CFG = null;
 function loadSmtpConfig() {
+  // Try file first
   try {
     const p = require("path").join(__dirname, "data", "smtp.json");
     const raw = require("fs").readFileSync(p, "utf8");
     return JSON.parse(raw);
-  } catch (e) { return null; }
+  } catch (e) {}
+  // Fallback: build config from environment variables
+  if (process.env.SMTP_HOST) {
+    const cfg = {
+      host: process.env.SMTP_HOST,
+      port: parseInt(process.env.SMTP_PORT || "587", 10),
+      secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
+      requireTLS: String(process.env.SMTP_REQUIRE_TLS || "true").toLowerCase() === "true",
+      shared_password: process.env.SMTP_SHARED_PASS || "",
+      boxes: {},
+    };
+    // Read known Arsys boxes from env
+    const knownBoxes = [
+      ["hola@citasaura.es", "Aura", "SMTP_PASS_HOLA"],
+      ["seguridad@citasaura.es", "Aura Seguridad", "SMTP_PASS_SEGURIDAD"],
+      ["soporte@citasaura.es", "Aura Soporte", "SMTP_PASS_SOPORTE"],
+      ["suscripciones@citasaura.es", "Aura Suscripciones", "SMTP_PASS_SUSCRIPCIONES"],
+      ["no-reply@citasaura.es", "Aura", "SMTP_PASS_NOREPLY"],
+    ];
+    for (const [addr, name, envKey] of knownBoxes) {
+      const pass = process.env[envKey] || cfg.shared_password;
+      if (pass) cfg.boxes[addr] = { name, password: pass };
+    }
+    if (Object.keys(cfg.boxes).length > 0) return cfg;
+  }
+  return null;
 }
 function initSmtpMailers() {
   SMTP_CFG = loadSmtpConfig();
