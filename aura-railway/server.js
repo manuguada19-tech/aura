@@ -5537,6 +5537,10 @@ function initSmtpMailers() {
   const requireTLS = !secure && (SMTP_CFG.requireTLS !== false);
   const boxes = SMTP_CFG.boxes || {};
   const sharedPass = SMTP_CFG.shared_password || "";
+  // Login SMTP compartido: si SMTP_LOGIN_USER está definido (Brevo/SendGrid), lo
+  // usamos como user para todos los buzones. El "From" sigue siendo la dirección
+  // real del buzón para que el email salga con "hola@citasaura.es" etc.
+  const smtpLoginUser = process.env.SMTP_LOGIN_USER || "";
   Object.keys(boxes).forEach((addr) => {
     const b = boxes[addr] || {};
     const envKey = "SMTP_PASS_" + addr.replace(/[^a-z0-9]/gi, "_").toUpperCase();
@@ -5545,7 +5549,7 @@ function initSmtpMailers() {
     try {
       const t = nodemailer.createTransport({
         host, port, secure, requireTLS,
-        auth: { user: addr, pass },
+        auth: { user: smtpLoginUser || addr, pass },
         tls: { rejectUnauthorized: false },
         connectionTimeout: 15000,
         greetingTimeout: 15000,
