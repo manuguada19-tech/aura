@@ -325,6 +325,14 @@ const PUBLIC_API = new Set([
   "GET /api/my/restrictions",
   "GET /api/my/restrictions/stream",
   "GET /api/my/ads-context",
+  // GPS opcional (autenticado por X-User-Id, no por admin token)
+  "POST /api/my/gps/consent",
+  "POST /api/my/gps/report",
+  "GET /api/my/gps/state",
+  "POST /api/my/gps/reask-ack",
+  // Preferencias de idioma y tracking del usuario
+  "POST /api/my/lang",
+  "POST /api/my/track",
   // Social login demo helper — cuenta a la que entran Google/Apple/Facebook
   "GET /api/social/demo",
   // Support tickets (public creation)
