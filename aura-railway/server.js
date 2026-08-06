@@ -5961,7 +5961,7 @@ app.post("/api/admin/login", wrap(async (req, res) => {
     if (!totp_code) return res.status(200).json({ needs_2fa: true });
     let speakeasy;
     try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-    const ok = speakeasy.totp.verify({ secret: totpSecret, encoding: "base32", token: String(totp_code).replace(/\s+/g,""), window: 1 });
+    const ok = speakeasy.totp.verify({ secret: totpSecret, encoding: "base32", token: String(totp_code).replace(/\s+/g,""), window: 2 });
     if (!ok) return res.status(401).json({ error: "invalid_2fa" });
   }
   const token = await issueAdminToken(activeEmail);
@@ -6038,7 +6038,7 @@ app.post("/api/admin/2fa/enable", wrap(async (req, res) => {
   if (!pending) return res.status(400).json({ error: "no_pending_setup" });
   let speakeasy;
   try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const ok = speakeasy.totp.verify({ secret: pending, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 1 });
+  const ok = speakeasy.totp.verify({ secret: pending, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 2 });
   if (!ok) return res.status(400).json({ error: "invalid_code" });
   await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
     ["admin.totp_secret", pending]);
@@ -6061,7 +6061,7 @@ app.post("/api/admin/2fa/disable", wrap(async (req, res) => {
   if (secret && code) {
     let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){}
     if (speakeasy) {
-      const ok = speakeasy.totp.verify({ secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 1 });
+      const ok = speakeasy.totp.verify({ secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 2 });
       if (!ok) return res.status(400).json({ error: "invalid_code" });
     }
   }
@@ -6100,7 +6100,7 @@ app.post("/api/2fa/enable", wrap(async (req, res) => {
   const [[u]] = await pool.query("SELECT totp_secret FROM users WHERE id=? LIMIT 1", [uid]);
   if (!u || !u.totp_secret) return res.status(400).json({ error: "no_pending_setup" });
   let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 1 });
+  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 2 });
   if (!ok) return res.status(400).json({ error: "invalid_code" });
   await pool.execute("UPDATE users SET totp_enabled=1, totp_enabled_at=NOW() WHERE id=?", [uid]);
   res.json({ ok: true });
@@ -6114,7 +6114,7 @@ app.post("/api/2fa/disable", wrap(async (req, res) => {
   if (u && u.totp_enabled && u.totp_secret) {
     let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){}
     if (speakeasy) {
-      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 1 });
+      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 2 });
       if (!ok) return res.status(400).json({ error: "invalid_code" });
     }
   }
@@ -6129,7 +6129,7 @@ app.post("/api/2fa/verify-login", wrap(async (req, res) => {
   const [[u]] = await pool.query("SELECT totp_secret, totp_enabled FROM users WHERE id=? LIMIT 1", [Number(user_id)]);
   if (!u || !u.totp_enabled || !u.totp_secret) return res.json({ ok: true, skipped: true });
   let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 1 });
+  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 2 });
   if (!ok) return res.status(401).json({ error: "invalid_code" });
   res.json({ ok: true });
 }));
@@ -8004,7 +8004,7 @@ app.post("/api/login", wrap(async (req, res) => {
       await pool.execute("UPDATE verifications SET used=1 WHERE id=?", [vrows[0].id]);
     } else if (totpCode) {
       let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: totpCode, window: 1 });
+      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: totpCode, window: 2 });
       if (!ok) return res.status(401).json({ error: "invalid_2fa" });
     } else {
       return res.json({ needs_2fa: true, user_id: u.id });
