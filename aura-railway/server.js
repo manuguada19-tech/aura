@@ -5616,12 +5616,66 @@ function _sanitizeDemoRecipients(to, cc, subject) {
   return { to: newTo, cc: newCc, subject: newSubject };
 }
 
+// Brevo HTTP API fallback (para hostings con SMTP saliente bloqueado)
+const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
+async function sendViaBrevoAPI({ from, fromName, to, cc, subject, html, replyTo }) {
+  const https = require("https");
+  const body = JSON.stringify({
+    sender: { email: from, name: fromName || "Aura" },
+    to: [{ email: to }],
+    cc: cc ? String(cc).split(",").map(e => ({ email: e.trim() })).filter(x => x.email) : undefined,
+    replyTo: replyTo ? { email: replyTo } : undefined,
+    subject,
+    htmlContent: html,
+  });
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: "api.brevo.com",
+      port: 443,
+      path: "/v3/smtp/email",
+      method: "POST",
+      headers: {
+        "api-key": BREVO_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+      timeout: 15000,
+    }, (res) => {
+      let data = "";
+      res.on("data", (c) => data += c);
+      res.on("end", () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try { resolve(JSON.parse(data)); } catch { resolve({ ok: true }); }
+        } else {
+          reject(new Error("brevo_api_" + res.statusCode + ":" + data));
+        }
+      });
+    });
+    req.on("timeout", () => { req.destroy(); reject(new Error("brevo_api_timeout")); });
+    req.on("error", reject);
+    req.write(body);
+    req.end();
+  });
+}
+
 async function sendMailByRoute({ templateId, category, to, cc, subject, html, replyTo }) {
   const boxAddr = pickSmtpBoxAddress(templateId, category);
-  const box = SMTP_MAILERS.get(boxAddr);
-  if (!box) throw new Error("smtp_box_not_configured:" + boxAddr);
   const s = _sanitizeDemoRecipients(to, cc, subject);
   to = s.to; cc = s.cc; subject = s.subject;
+  // Si hay BREVO_API_KEY, usar API HTTPS (bypass SMTP bloqueado)
+  if (BREVO_API_KEY) {
+    const boxCfg = (SMTP_CFG && SMTP_CFG.boxes && SMTP_CFG.boxes[boxAddr]) || { name: "Aura" };
+    const info = await sendViaBrevoAPI({
+      from: boxAddr,
+      fromName: boxCfg.name || "Aura",
+      to, cc, subject, html,
+      replyTo: replyTo || boxAddr,
+    });
+    return { ok: true, messageId: info && info.messageId };
+  }
+  const box = SMTP_MAILERS.get(boxAddr);
+  if (!box) throw new Error("smtp_box_not_configured:" + boxAddr);
   const fromStr = `"${box.name}" <${box.address}>`;
   const info = await box.transporter.sendMail({
     from: fromStr,
@@ -5633,7 +5687,7 @@ async function sendMailByRoute({ templateId, category, to, cc, subject, html, re
   });
   return { ok: true, messageId: info && info.messageId };
 }
-function isSmtpReady() { return SMTP_MAILERS.size > 0; }
+function isSmtpReady() { return SMTP_MAILERS.size > 0 || !!BREVO_API_KEY; }
 
 // --- Routing por categoría hacia los buzones de Arsys ---
 // Cada categoría de plantilla se envía "desde" un buzón concreto y sus
