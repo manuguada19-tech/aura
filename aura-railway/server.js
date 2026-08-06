@@ -914,7 +914,38 @@ async function migrate() {
        ADD COLUMN IF NOT EXISTS didit_session_url VARCHAR(500) NULL AFTER didit_session_id,
        ADD COLUMN IF NOT EXISTS didit_status      VARCHAR(40)  NULL AFTER didit_session_url,
        ADD COLUMN IF NOT EXISTS didit_decision    VARCHAR(40)  NULL AFTER didit_status,
-       ADD COLUMN IF NOT EXISTS didit_country     VARCHAR(8)   NULL AFTER didit_decision`,
+       ADD COLUMN IF NOT EXISTS didit_country     VARCHAR(8)   NULL AFTER didit_decision,
+       ADD COLUMN IF NOT EXISTS face_hash         VARCHAR(190) NULL AFTER doc_hash,
+       ADD COLUMN IF NOT EXISTS face_descriptor   TEXT NULL AFTER face_hash,
+       ADD INDEX IF NOT EXISTS idx_facehash (face_hash)`,
+    /* Sistema anti-duplicados: pares detectados con puntuación. Cada fila
+       relaciona 2 usuarios sospechosos de ser la misma persona. */
+    `CREATE TABLE IF NOT EXISTS duplicate_matches (
+      id             INT AUTO_INCREMENT PRIMARY KEY,
+      user_a_id      INT NOT NULL,
+      user_b_id      INT NOT NULL,
+      score          INT NOT NULL DEFAULT 0,
+      signals        TEXT NULL,          -- JSON con lista de señales que coinciden y sus puntos
+      status         ENUM('pending','confirmed','dismissed','merged') NOT NULL DEFAULT 'pending',
+      auto_action    ENUM('none','flagged','blocked') NOT NULL DEFAULT 'none',
+      created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      reviewed_by    VARCHAR(190) NULL,
+      reviewed_at    TIMESTAMP NULL,
+      reviewer_note  VARCHAR(500) NULL,
+      UNIQUE KEY uk_pair (user_a_id, user_b_id),
+      INDEX idx_score (score DESC),
+      INDEX idx_status (status),
+      INDEX idx_created (created_at DESC)
+    )`,
+    /* Añadir columnas a users para el fingerprint de registro y el badge de duplicado */
+    `ALTER TABLE users
+       ADD COLUMN IF NOT EXISTS register_fingerprint VARCHAR(190) NULL,
+       ADD COLUMN IF NOT EXISTS register_ip          VARCHAR(64)  NULL,
+       ADD COLUMN IF NOT EXISTS duplicate_score      INT NOT NULL DEFAULT 0,
+       ADD COLUMN IF NOT EXISTS duplicate_status     ENUM('none','flagged','blocked','confirmed_dup','dismissed') NOT NULL DEFAULT 'none',
+       ADD INDEX IF NOT EXISTS idx_regfp (register_fingerprint),
+       ADD INDEX IF NOT EXISTS idx_regip (register_ip),
+       ADD INDEX IF NOT EXISTS idx_dupscore (duplicate_score DESC)`,
     `CREATE TABLE IF NOT EXISTS blocked_devices (
       id           INT AUTO_INCREMENT PRIMARY KEY,
       ip           VARCHAR(64)  NULL,
@@ -2456,6 +2487,18 @@ async function applyDiditDecision(verId, dec) {
     }
   }
 
+  // Face hash: si Didit devuelve descriptor/embedding lo guardamos íntegro,
+  // y calculamos un SHA-256 estable para comparación rápida en BD. Si no
+  // hay descriptor pero sí un image_hash o photo URL, usamos eso como proxy.
+  let faceHash = null; let faceDescriptor = null;
+  const faceDesc = face.descriptor || face.embedding || face.template || null;
+  if (faceDesc) {
+    faceDescriptor = typeof faceDesc === "string" ? faceDesc : JSON.stringify(faceDesc);
+    faceHash = _sha256(faceDescriptor).slice(0, 64);
+  } else if (face.image_hash || face.reference_hash) {
+    faceHash = String(face.image_hash || face.reference_hash).slice(0, 64);
+  }
+
   const patch = {
     didit_status:   status,
     didit_decision: mapped,
@@ -2465,6 +2508,8 @@ async function applyDiditDecision(verId, dec) {
     extracted_age:  age,
     doc_type:       docType ? String(docType).slice(0, 40) : null,
     doc_hash:       docHash ? String(docHash).slice(0, 190) : null,
+    face_hash:      faceHash,
+    face_descriptor: faceDescriptor,
     doc_score:          Number(idv.score || idv.confidence || 0) || null,
     selfie_match_score: Number(face.score || face.confidence || 0) || null,
     liveness_score:     Number(live.score || live.confidence || 0) || null,
@@ -2472,6 +2517,43 @@ async function applyDiditDecision(verId, dec) {
     last_reason: (dec.reasons || dec.decline_reasons || []).join(",").slice(0, 255) || null,
   };
   await kycUpdate(verId, patch);
+
+  // Sistema anti-duplicados: al aprobar el KYC ejecutamos el scoring
+  // contra el resto de usuarios. Si el score >= 70 la cuenta se suspende
+  // automáticamente y queda listada para revisión del admin.
+  if (mapped === "verified") {
+    try {
+      const [[iv]] = await pool.query(
+        `SELECT user_id, email, ip, fingerprint FROM identity_verifications WHERE id=?`, [verId]);
+      if (iv && iv.user_id) {
+        const [[u]] = await pool.query(
+          `SELECT id, email, name, birth_date FROM users WHERE id=?`, [iv.user_id]);
+        // Guardar fingerprint/IP de registro en users si aún no están
+        if (u) {
+          try {
+            await pool.execute(
+              `UPDATE users SET
+                register_fingerprint = COALESCE(NULLIF(register_fingerprint,''), ?),
+                register_ip          = COALESCE(NULLIF(register_ip,''), ?),
+                birth_date           = COALESCE(birth_date, ?)
+               WHERE id=?`,
+              [iv.fingerprint || null, iv.ip || null, dob || null, u.id]);
+          } catch {}
+          await computeDuplicateScore({
+            user_id: u.id,
+            email: u.email,
+            name: name || u.name,
+            birth_date: dob || u.birth_date,
+            register_fingerprint: iv.fingerprint,
+            register_ip: iv.ip,
+            doc_hash: docHash,
+            face_hash: faceHash,
+            phone: null,
+          });
+        }
+      }
+    } catch (e) { console.warn("[duplicates] compute failed:", e.message); }
+  }
 
   // Bloqueo automático si menor de edad
   if (age != null && age < KYC_MIN_AGE) {
@@ -7967,6 +8049,267 @@ app.get("/api/public-config", (req, res) => {
     },
   });
 });
+
+/* ==================================================================
+   SISTEMA ANTI-DUPLICADOS (scoring de sospecha)
+   ------------------------------------------------------------------
+   Idea: cuando un usuario completa el KYC, comparamos sus datos con
+   los de todos los usuarios existentes y calculamos un score con 8
+   señales. Umbrales:
+     ≥70: bloqueo automático (marca duplicate_status='blocked')
+     ≥40: revisión manual (marca duplicate_status='flagged')
+     ≥20: registro silencioso (queda listado en /api/admin/duplicates)
+     <20: sin acción
+   Cada par (user_a, user_b) se guarda una única vez en
+   duplicate_matches con el desglose de señales.
+================================================================== */
+const DUP_WEIGHTS = {
+  face_hash: 50,        // Misma cara detectada por Didit
+  doc_hash: 30,         // Mismo DNI/pasaporte
+  phone: 25,            // Mismo teléfono verificado
+  name_dob: 20,         // Mismo nombre + fecha nacimiento
+  fingerprint: 15,      // Misma huella de dispositivo
+  ip: 10,               // Misma IP en registro
+  email_similar: 10,    // Emails similares (mismo local part)
+  tz_lang_res: 5,       // Timezone + idioma + resolución iguales
+};
+
+function _sha256(str) {
+  return require("crypto").createHash("sha256").update(String(str || "")).digest("hex");
+}
+
+// Extrae el "local part" del email (todo antes de @). Se usa para detectar
+// duplicados con dominios distintos: "manu@gmail" vs "manu@outlook".
+function _emailLocal(email) {
+  return String(email || "").toLowerCase().split("@")[0].replace(/[.+_-]/g, "");
+}
+
+async function computeDuplicateScore(newUser) {
+  // newUser: { user_id, email, name, birth_date, register_fingerprint,
+  //   register_ip, doc_hash, face_hash, phone }
+  const signals = [];
+  const matches = new Map(); // user_id -> { score, signals: [] }
+
+  function bump(otherId, signalKey, extraInfo) {
+    if (!otherId || otherId === newUser.user_id) return;
+    if (!matches.has(otherId)) matches.set(otherId, { score: 0, signals: [] });
+    const m = matches.get(otherId);
+    m.score += DUP_WEIGHTS[signalKey] || 0;
+    m.signals.push({ key: signalKey, weight: DUP_WEIGHTS[signalKey] || 0, ...extraInfo });
+  }
+
+  // 1) FACE HASH — buscamos otros users con misma face_hash en identity_verifications
+  if (newUser.face_hash) {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT user_id FROM identity_verifications
+        WHERE face_hash = ? AND user_id IS NOT NULL AND user_id <> ?`,
+      [newUser.face_hash, newUser.user_id]);
+    for (const r of rows) bump(r.user_id, "face_hash", { value: newUser.face_hash });
+  }
+
+  // 2) DOC HASH — mismo documento
+  if (newUser.doc_hash) {
+    const [rows] = await pool.query(
+      `SELECT DISTINCT user_id FROM identity_verifications
+        WHERE doc_hash = ? AND user_id IS NOT NULL AND user_id <> ?`,
+      [newUser.doc_hash, newUser.user_id]);
+    for (const r of rows) bump(r.user_id, "doc_hash", { value: newUser.doc_hash });
+  }
+
+  // 3) TELÉFONO — si guardamos phone verificado
+  if (newUser.phone) {
+    try {
+      const [rows] = await pool.query(
+        "SELECT id FROM users WHERE phone = ? AND id <> ?", [newUser.phone, newUser.user_id]);
+      for (const r of rows) bump(r.id, "phone", { value: newUser.phone });
+    } catch {} // columna phone puede no existir
+  }
+
+  // 4) NOMBRE + FECHA NACIMIENTO
+  if (newUser.name && newUser.birth_date) {
+    const [rows] = await pool.query(
+      `SELECT id FROM users
+        WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
+          AND birth_date = ?
+          AND id <> ?`,
+      [newUser.name, newUser.birth_date, newUser.user_id]);
+    for (const r of rows) bump(r.id, "name_dob", { name: newUser.name, dob: newUser.birth_date });
+  }
+
+  // 5) HUELLA DISPOSITIVO
+  if (newUser.register_fingerprint) {
+    const [rows] = await pool.query(
+      `SELECT id FROM users WHERE register_fingerprint = ? AND id <> ?`,
+      [newUser.register_fingerprint, newUser.user_id]);
+    for (const r of rows) bump(r.id, "fingerprint", { value: newUser.register_fingerprint });
+  }
+
+  // 6) IP DE REGISTRO
+  if (newUser.register_ip) {
+    const [rows] = await pool.query(
+      `SELECT id FROM users WHERE register_ip = ? AND id <> ?`,
+      [newUser.register_ip, newUser.user_id]);
+    for (const r of rows) bump(r.id, "ip", { value: newUser.register_ip });
+  }
+
+  // 7) EMAIL SIMILAR (mismo local part antes del @)
+  if (newUser.email) {
+    const localNew = _emailLocal(newUser.email);
+    if (localNew && localNew.length >= 3) {
+      const [rows] = await pool.query(
+        `SELECT id, email FROM users WHERE id <> ? AND email IS NOT NULL AND email <> ?`,
+        [newUser.user_id, newUser.email]);
+      for (const r of rows) {
+        if (_emailLocal(r.email) === localNew) bump(r.id, "email_similar", { new: newUser.email, existing: r.email });
+      }
+    }
+  }
+
+  // Guarda cada par en duplicate_matches. INSERT ... ON DUPLICATE KEY para
+  // ir sumando puntos si aparece más señal en otro momento.
+  const results = [];
+  for (const [otherId, m] of matches.entries()) {
+    // Normaliza el par para que (a,b) y (b,a) sean la misma fila
+    const [a, b] = newUser.user_id < otherId ? [newUser.user_id, otherId] : [otherId, newUser.user_id];
+    const autoAction = m.score >= 70 ? "blocked" : m.score >= 40 ? "flagged" : "none";
+    try {
+      await pool.execute(
+        `INSERT INTO duplicate_matches (user_a_id, user_b_id, score, signals, auto_action)
+         VALUES (?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE
+           score = GREATEST(score, VALUES(score)),
+           signals = VALUES(signals),
+           auto_action = VALUES(auto_action)`,
+        [a, b, m.score, JSON.stringify(m.signals), autoAction]);
+    } catch (e) { /* silent */ }
+    results.push({ other_user_id: otherId, score: m.score, signals: m.signals, auto_action: autoAction });
+  }
+
+  // Retorna el máximo score para poder aplicar a users.duplicate_score
+  const maxScore = results.reduce((mx, r) => Math.max(mx, r.score), 0);
+  const maxAction = maxScore >= 70 ? "blocked" : maxScore >= 40 ? "flagged" : "none";
+  if (maxScore > 0) {
+    try {
+      const newStatus = maxScore >= 70 ? "blocked" : maxScore >= 40 ? "flagged" : "none";
+      await pool.execute(
+        "UPDATE users SET duplicate_score=?, duplicate_status=? WHERE id=?",
+        [maxScore, newStatus, newUser.user_id]);
+      // Si es bloqueo automático → suspendemos la cuenta y logeamos.
+      if (maxScore >= 70) {
+        try {
+          await pool.execute(
+            "UPDATE users SET status='suspended' WHERE id=? AND status='active'",
+            [newUser.user_id]);
+          await logActivity("security",
+            `Cuenta ${newUser.user_id} suspendida automáticamente por posible duplicado (score=${maxScore})`);
+        } catch {}
+      }
+    } catch {}
+  }
+  return { max_score: maxScore, max_action: maxAction, matches: results };
+}
+
+// GET /api/admin/duplicates?status=pending  → lista pares detectados
+app.get("/api/admin/duplicates", wrap(async (req, res) => {
+  const status = String(req.query.status || "").trim();
+  const limit  = Math.min(200, Math.max(10, parseInt(req.query.limit, 10) || 100));
+  let where = "1=1"; const params = [];
+  if (status && ["pending","confirmed","dismissed","merged"].includes(status)) {
+    where = "dm.status = ?"; params.push(status);
+  }
+  const [rows] = await pool.query(
+    `SELECT dm.*,
+            ua.email AS user_a_email, ua.name AS user_a_name, ua.photo_url AS user_a_photo,
+            ua.created_at AS user_a_created, ua.status AS user_a_status,
+            ub.email AS user_b_email, ub.name AS user_b_name, ub.photo_url AS user_b_photo,
+            ub.created_at AS user_b_created, ub.status AS user_b_status
+       FROM duplicate_matches dm
+       LEFT JOIN users ua ON ua.id = dm.user_a_id
+       LEFT JOIN users ub ON ub.id = dm.user_b_id
+       WHERE ${where}
+       ORDER BY dm.score DESC, dm.created_at DESC
+       LIMIT ${limit}`,
+    params);
+  // Parsea signals JSON
+  for (const r of rows) {
+    try { r.signals = JSON.parse(r.signals || "[]"); } catch { r.signals = []; }
+  }
+  res.json({ ok: true, matches: rows });
+}));
+
+// POST /api/admin/duplicates/:id/action  { action: 'confirm'|'dismiss'|'merge'|'ban_b', note? }
+app.post("/api/admin/duplicates/:id/action", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const action = String(req.body?.action || "").trim();
+  const note = String(req.body?.note || "").slice(0, 500);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  if (!["confirm","dismiss","merge","ban_b","ban_a"].includes(action)) {
+    return res.status(400).json({ error: "bad_action" });
+  }
+  const [[m]] = await pool.query("SELECT * FROM duplicate_matches WHERE id=?", [id]);
+  if (!m) return res.status(404).json({ error: "not_found" });
+  const reviewer = String(req.headers["x-admin-email"] || req.body?.reviewer || "admin");
+
+  if (action === "dismiss") {
+    await pool.execute(
+      "UPDATE duplicate_matches SET status='dismissed', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
+      [note, reviewer, id]);
+    // Reset badge en los users si no tenían otros duplicados activos
+    for (const uid of [m.user_a_id, m.user_b_id]) {
+      const [[other]] = await pool.query(
+        `SELECT MAX(score) AS mx FROM duplicate_matches
+          WHERE (user_a_id=? OR user_b_id=?) AND status IN ('pending','confirmed')`, [uid, uid]);
+      const mx = other?.mx || 0;
+      const st = mx >= 70 ? "blocked" : mx >= 40 ? "flagged" : "none";
+      await pool.execute("UPDATE users SET duplicate_score=?, duplicate_status=? WHERE id=?", [mx, st, uid]);
+    }
+  } else if (action === "confirm") {
+    await pool.execute(
+      "UPDATE duplicate_matches SET status='confirmed', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
+      [note, reviewer, id]);
+    await pool.execute("UPDATE users SET duplicate_status='confirmed_dup' WHERE id IN (?,?)",
+      [m.user_a_id, m.user_b_id]);
+  } else if (action === "ban_a" || action === "ban_b") {
+    const target = action === "ban_a" ? m.user_a_id : m.user_b_id;
+    await pool.execute("UPDATE users SET status='banned' WHERE id=?", [target]);
+    await pool.execute(
+      "UPDATE duplicate_matches SET status='confirmed', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
+      [`Baneo cuenta ${target}: ${note}`, reviewer, id]);
+    await logActivity("admin", `Duplicado ${id}: baneada cuenta ${target} por admin ${reviewer}`);
+  } else if (action === "merge") {
+    // Merge: no borra datos automáticamente, solo marca. La fusión real la
+    // decide el admin migrando manualmente (matches, mensajes, etc).
+    await pool.execute(
+      "UPDATE duplicate_matches SET status='merged', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
+      [note, reviewer, id]);
+  }
+  res.json({ ok: true });
+}));
+
+// POST /api/admin/duplicates/rescan/:userId  → recalcula duplicados de un user
+app.post("/api/admin/duplicates/rescan/:userId", wrap(async (req, res) => {
+  const uid = parseInt(req.params.userId, 10);
+  if (!uid) return res.status(400).json({ error: "bad_id" });
+  const [[u]] = await pool.query(
+    `SELECT u.id AS user_id, u.email, u.name, u.birth_date, u.register_fingerprint, u.register_ip
+       FROM users u WHERE u.id=?`, [uid]);
+  if (!u) return res.status(404).json({ error: "not_found" });
+  const [[iv]] = await pool.query(
+    `SELECT doc_hash, face_hash FROM identity_verifications
+      WHERE user_id=? AND status='verified' ORDER BY id DESC LIMIT 1`, [uid]);
+  const result = await computeDuplicateScore({
+    user_id: u.user_id,
+    email: u.email,
+    name: u.name,
+    birth_date: u.birth_date,
+    register_fingerprint: u.register_fingerprint,
+    register_ip: u.register_ip,
+    doc_hash: iv?.doc_hash || null,
+    face_hash: iv?.face_hash || null,
+    phone: null,
+  });
+  res.json({ ok: true, ...result });
+}));
 
 // Public admin-panel branding (no auth): only used by the login page and by
 // admin.js on load to render the logo. Deliberately does NOT expose any other
