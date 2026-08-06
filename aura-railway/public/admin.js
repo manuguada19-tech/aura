@@ -533,7 +533,8 @@ async function openTwoFaSetup(box) {
       <details style="margin:6px 0 14px"><summary style="cursor:pointer;font-size:12px;color:#888">¿No puedes escanear? Introducir clave manual</summary>
         <div style="font-family:monospace;font-size:13px;background:#0f0f14;padding:10px;border-radius:8px;margin-top:6px;word-break:break-all;user-select:all">${data.secret}</div>
       </details>
-      <label class="field"><span>Código de 6 dígitos</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:22px;letter-spacing:6px" /></label>
+      <label class="field"><span>Introduce el código de tu app de autenticación</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700" /></label>
+      <p class="muted" style="font-size:12px;text-align:center;margin:6px 0 0">¿Problemas? <a href="mailto:soporte@citasaura.es?subject=Ayuda%20con%202FA" style="color:#ff8a3b;text-decoration:none">Contactar soporte</a></p>
       <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
       <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
         <button type="button" class="btn ghost ac-cancel">Cancelar</button>
@@ -1345,16 +1346,15 @@ if (typeof MutationObserver !== "undefined") {
    ]));
    Se pliega por defecto para no ocupar espacio; el usuario la abre si duda. */
 function sectionLegend(title, items) {
-  const details = el("details", {
+  const wrap = el("div", {
     class: "section-legend",
-    style: "margin:8px 0 12px;border:1px solid var(--border,#2a2f3a);border-radius:10px;background:rgba(255,255,255,0.02);",
+    style: "margin:8px 0 12px;border:1px solid var(--border,#2a2f3a);border-radius:10px;background:rgba(255,255,255,0.02);padding:12px 14px;",
   });
-  const summary = el("summary", {
-    style: "cursor:pointer;padding:10px 14px;font-size:13px;font-weight:600;user-select:none;list-style:none;",
-  }, "❓ " + (title || "¿Qué significa cada icono?"));
-  details.appendChild(summary);
+  wrap.appendChild(el("div", {
+    style: "font-size:13px;font-weight:600;margin-bottom:8px;",
+  }, "❓ " + (title || "¿Qué significa cada icono?")));
   const body = el("div", {
-    style: "display:flex;flex-wrap:wrap;gap:8px 16px;padding:0 14px 12px;font-size:12.5px;line-height:1.5;",
+    style: "display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12.5px;line-height:1.5;",
   });
   (items || []).forEach(([ico, desc]) => {
     body.appendChild(el("span", { style: "display:inline-flex;align-items:center;gap:6px;" }, [
@@ -1362,8 +1362,8 @@ function sectionLegend(title, items) {
       el("span", { style: "opacity:.85;" }, "→ " + desc),
     ]));
   });
-  details.appendChild(body);
-  return details;
+  wrap.appendChild(body);
+  return wrap;
 }
 
 /* Reusable pieces */
