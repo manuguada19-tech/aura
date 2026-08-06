@@ -1109,6 +1109,7 @@ function route(view) {
     waitlist: viewWaitlist,
     maintenance_emails: viewMaintenanceEmails,
     kyc: viewKyc,
+    duplicates: viewDuplicates,
     invites: viewInvites,
     // Legacy: 'live' redirige a chats (fusionado en V410)
     live: viewChatsAdmin,
@@ -1373,6 +1374,8 @@ async function viewDashboard(root){
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M22 8.6V6a2 2 0 00-2-2H4a2 2 0 00-2 2v12a2 2 0 002 2h9v-2H4V8l8 5 6.5-4.06.5-.31V8.6zM22 13h-2v3h-3v2h3v3h2v-3h3v-2h-3v-3zM20 6l-8 5-8-5h16z"/></svg>` },
     { id: "kyc", title: "Verificación de edad (KYC)", desc: "Revisiones pendientes y bloqueos por documento.", cls: "purple",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 5h18v14H3zm2 2v10h14V7H5zm3 2h4v2H8V9zm0 4h8v2H8v-2z"/></svg>` },
+    { id: "duplicates", title: "🚨 Posibles duplicados", desc: "Pares de cuentas sospechosas de ser la misma persona con puntuación.", cls: "red",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16 4c-1.6 0-3.1.8-4 2.1C11.1 4.8 9.6 4 8 4c-2.8 0-5 2.2-5 5 0 5 5 8 9 12 4-4 9-7 9-12 0-2.8-2.2-5-5-5z"/></svg>` },
     { id: "invites", title: "Invitaciones (testers)", desc: "Códigos de acceso beta cuando registros cerrados.", cls: "violet",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM4 6h16v.5l-8 5-8-5V6z"/></svg>` },
     { id: "settings", title: "Configuración", desc: "Ajustes generales del sistema.", cls: "slate",
@@ -1989,6 +1992,23 @@ async function openUserDrawer(id, onChange) {
     avatar(u.photo_url, 56),
     el("div", {}, [ el("strong", {}, u.name), statusLine ]),
   ]));
+
+  // Badge de duplicado: si duplicate_score > 0 mostramos alerta con enlace al panel.
+  if (u.duplicate_score && u.duplicate_score > 0) {
+    const cls = u.duplicate_score >= 70 ? "bad" : u.duplicate_score >= 40 ? "warn" : "muted";
+    const label = u.duplicate_score >= 70 ? "🔒 Posible duplicado — BLOQUEADO AUTOMÁTICAMENTE"
+                : u.duplicate_score >= 40 ? "⚠ Posible duplicado — Requiere revisión manual"
+                : "ℹ Detectado similar a otras cuentas";
+    const dupBox = el("div", {
+      class: "tag " + cls,
+      style: "display:block;padding:10px;margin:8px 0;border-radius:8px;cursor:pointer;font-size:13px",
+    }, [
+      el("strong", {}, label + "  (score: " + u.duplicate_score + " pts)"),
+      el("div", { style: "font-size:11px;margin-top:4px;opacity:.85" }, "Toca para ver detalles en el panel de duplicados"),
+    ]);
+    dupBox.addEventListener("click", (e) => { e.preventDefault(); route("duplicates"); });
+    form.appendChild(dupBox);
+  }
   form.appendChild(field("Nombre", el("input", { class: "input", name: "name", value: u.name||"" })));
   form.appendChild(field("Email", el("input", { class: "input", name: "email", value: u.email||"" })));
   form.appendChild(el("div", { class: "grid-2" }, [
@@ -9932,6 +9952,158 @@ async function viewKyc(root) {
   countryInp.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
   searchInp.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
   await load();
+}
+
+/* ============================================================
+   🚨 Posibles duplicados
+   Panel que muestra pares de cuentas detectadas por el sistema
+   anti-duplicados (backend: computeDuplicateScore). Cada fila
+   incluye el score, las señales que coinciden y acciones.
+   ============================================================ */
+async function viewDuplicates(root) {
+  root.appendChild(el("h1", {}, "🚨 Posibles duplicados"));
+  root.appendChild(el("p", { class: "muted" }, [
+    "Pares de cuentas sospechosas de ser la misma persona. ",
+    "Los pares con score ≥ 70 se marcan como ",
+    el("b", {}, "bloqueados automáticamente"),
+    " y la cuenta más reciente queda suspendida. Entre 40 y 69 quedan para revisión manual.",
+  ]));
+
+  const filters = el("div", { class: "flex gap-2 mb-3" }, [
+    el("select", { id: "dupStatus" }, [
+      el("option", { value: "" }, "Todos"),
+      el("option", { value: "pending", selected: true }, "Pendientes de revisar"),
+      el("option", { value: "confirmed" }, "Confirmados"),
+      el("option", { value: "dismissed" }, "Descartados (falso positivo)"),
+      el("option", { value: "merged" }, "Fusionados"),
+    ]),
+    btn("Actualizar", "ghost sm", () => load()),
+  ]);
+  root.appendChild(filters);
+
+  const list = el("div", { class: "dup-list" });
+  root.appendChild(list);
+
+  async function load() {
+    list.innerHTML = "";
+    list.appendChild(el("div", { class: "loading" }, "Cargando…"));
+    const status = document.getElementById("dupStatus")?.value || "";
+    try {
+      const data = await api.get("/api/admin/duplicates" + (status ? `?status=${status}` : ""));
+      list.innerHTML = "";
+      if (!data.matches || !data.matches.length) {
+        list.appendChild(el("div", { class: "empty", style: "padding:24px;text-align:center" },
+          "🎉 No hay duplicados detectados."));
+        return;
+      }
+      data.matches.forEach(m => list.appendChild(renderDupCard(m, load)));
+    } catch (e) {
+      list.innerHTML = "";
+      list.appendChild(el("div", { class: "error" }, "Error cargando: " + e.message));
+    }
+  }
+
+  document.getElementById("dupStatus").addEventListener("change", load);
+  await load();
+}
+
+function renderDupCard(m, refresh) {
+  const scoreClass = m.score >= 70 ? "bad" : m.score >= 40 ? "warn" : "muted";
+  const actionLabel = m.auto_action === "blocked" ? "🔒 Bloqueado automáticamente"
+                    : m.auto_action === "flagged" ? "⚠ Revisión manual"
+                    : "· Registrado";
+  const card = el("div", { class: "dup-card", style: "border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:14px;margin-bottom:12px;" });
+
+  card.appendChild(el("div", { class: "flex gap-2 items-center mb-2" }, [
+    el("span", { class: `tag ${scoreClass}`, style: "font-size:14px;padding:4px 10px;font-weight:700" },
+      "SCORE: " + m.score + " pts"),
+    el("span", { class: `tag ${scoreClass}` }, actionLabel),
+    el("span", { class: "muted small", style: "margin-left:auto" },
+      "Detectado " + (m.created_at ? new Date(m.created_at).toLocaleString() : "—")),
+  ]));
+
+  // Cuentas comparadas
+  const grid = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px" });
+  [["A", m.user_a_id, m.user_a_email, m.user_a_name, m.user_a_photo, m.user_a_created, m.user_a_status],
+   ["B", m.user_b_id, m.user_b_email, m.user_b_name, m.user_b_photo, m.user_b_created, m.user_b_status]
+  ].forEach(([lbl, id, email, name, photo, created, status]) => {
+    const acc = el("div", { style: "border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:10px" }, [
+      el("div", { class: "flex gap-2 items-center" }, [
+        avatar(photo, 40),
+        el("div", {}, [
+          el("strong", {}, `Cuenta ${lbl} · id ${id}`),
+          el("div", { class: "small muted" }, email || "—"),
+          el("div", { class: "small" }, name || "—"),
+          el("div", { class: "small muted" }, "Creada: " + (created ? new Date(created).toLocaleDateString() : "—")),
+          status ? el("span", { class: "tag " + (status === "active" ? "ok" : "warn"), style: "margin-top:4px;display:inline-block" }, status) : null,
+        ].filter(Boolean)),
+      ]),
+    ]);
+    acc.style.cursor = "pointer";
+    acc.addEventListener("click", () => openUserDrawer(id, refresh));
+    grid.appendChild(acc);
+  });
+  card.appendChild(grid);
+
+  // Señales que coinciden
+  const sigLabels = {
+    face_hash: "Cara (KYC face-match)",
+    doc_hash: "Documento (DNI/pasaporte)",
+    phone: "Teléfono verificado",
+    name_dob: "Nombre + fecha nacimiento",
+    fingerprint: "Huella de dispositivo",
+    ip: "IP de registro",
+    email_similar: "Email similar (mismo local part)",
+    tz_lang_res: "Timezone + idioma + resolución",
+  };
+  const sigsBox = el("div", { style: "background:rgba(255,255,255,.04);padding:10px;border-radius:8px;margin-bottom:10px" }, [
+    el("div", { class: "small muted", style: "margin-bottom:6px" }, "Señales que coinciden:"),
+    ...m.signals.map(s => el("div", { class: "small", style: "display:flex;justify-content:space-between;padding:2px 0" }, [
+      el("span", {}, "✔ " + (sigLabels[s.key] || s.key)),
+      el("b", { class: "t-ok" }, "+" + s.weight),
+    ])),
+  ]);
+  card.appendChild(sigsBox);
+
+  // Acciones (solo si pendiente)
+  if (m.status === "pending") {
+    const actions = el("div", { class: "flex gap-2 flex-wrap" });
+    actions.appendChild(btn("✓ Confirmar duplicado", "danger sm", async () => {
+      const note = prompt("Nota opcional:", "") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "confirm", note }); toast("Confirmado"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    actions.appendChild(btn("🚫 Banear B (más reciente)", "danger sm", async () => {
+      if (!confirm(`Banear cuenta B (id ${m.user_b_id})?`)) return;
+      const note = prompt("Motivo:", "duplicado confirmado") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "ban_b", note }); toast("Baneada B"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    actions.appendChild(btn("🚫 Banear A", "danger sm", async () => {
+      if (!confirm(`Banear cuenta A (id ${m.user_a_id})?`)) return;
+      const note = prompt("Motivo:", "duplicado confirmado") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "ban_a", note }); toast("Baneada A"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    actions.appendChild(btn("✗ Descartar (falso positivo)", "ghost sm", async () => {
+      const note = prompt("¿Por qué es falso positivo?", "") || "";
+      try { await api.post(`/api/admin/duplicates/${m.id}/action`, { action: "dismiss", note }); toast("Descartado"); refresh(); }
+      catch (e) { toast("Error: " + e.message); }
+    }));
+    card.appendChild(actions);
+  } else {
+    const status = m.status === "confirmed" ? "✓ Confirmado como duplicado"
+                 : m.status === "dismissed" ? "✗ Descartado (falso positivo)"
+                 : m.status === "merged" ? "🔗 Cuentas fusionadas"
+                 : m.status;
+    card.appendChild(el("div", { class: "small muted", style: "font-style:italic" }, [
+      status,
+      m.reviewed_by ? " · por " + m.reviewed_by : "",
+      m.reviewed_at ? " · " + new Date(m.reviewed_at).toLocaleString() : "",
+      m.reviewer_note ? " · " + m.reviewer_note : "",
+    ].join("")));
+  }
+  return card;
 }
 
 /* ============================================================

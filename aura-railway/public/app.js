@@ -3903,7 +3903,9 @@ function showNotRegisteredScreen(opts) {
   });
   wrap.appendChild(card);
 
-  if (email) {
+  // Solo mostramos el email si es real (no email demo de @aura.app).
+  const _isDemoEmailBox = !email || /@aura\.app$/i.test(email) || /^sofia@/i.test(email);
+  if (email && !_isDemoEmailBox) {
     const emailBox = el("div", { class: "beta-form" });
     emailBox.appendChild(el("label", { class: "beta-label" }, "Cuenta social usada"));
     emailBox.appendChild(el("div", { class: "beta-input", style: "opacity:.75; cursor:default;" }, email));
@@ -3914,11 +3916,17 @@ function showNotRegisteredScreen(opts) {
   const actions = el("div", { class: "beta-actions" });
   const registerBtn = el("button", { class: "btn btn-primary btn-block beta-cta" }, "✨ Crear cuenta ahora");
   registerBtn.addEventListener("click", () => {
-    // Pre-rellena el email si venía de una cuenta social
+    // Pre-rellena el email si venía de una cuenta social, PERO ignoramos
+    // los emails demo de @aura.app (Google/Apple/Facebook devuelven emails
+    // demo en modo dev que no son del usuario real).
     try {
-      if (email) {
+      const isDemoEmail = !email || /@aura\.app$/i.test(email) || /^sofia@/i.test(email);
+      if (email && !isDemoEmail) {
         state.registration = state.registration || {};
         state.registration.email = email;
+      } else {
+        // Limpiar el email pre-rellenado si hubiera basura de intentos previos
+        if (state.registration) state.registration.email = "";
       }
     } catch {}
     try { render(screenRegisterEmail); } catch { try { render(screenWelcome); } catch {} }
@@ -4187,13 +4195,17 @@ function screenRegisterEmail(root) {
       kyc_version:     "2026-08-03",
     };
     state.registration.email = emailInput.value.trim().toLowerCase();
+    // Huella de dispositivo para el sistema anti-duplicados
+    let _regFp = null;
+    try { _regFp = await computeDeviceFingerprint(); state.registration.fingerprint = _regFp; } catch {}
     try {
       const r = await fetch("/api/verify/send", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...(_regFp ? { "X-Fingerprint": _regFp } : {}) },
         body: JSON.stringify({
           email: state.registration.email,
           invite_code: state.registration.invite_code || null,
           lang: currentLang,
+          fingerprint: _regFp,
         }),
       });
       const data = await r.json();
@@ -4366,23 +4378,72 @@ function screenRegisterOTP(root) {
      1) Documento    2) Selfie con reconocimiento facial    3) Video
    Si falla → 2 intentos de revisión manual → suspensión.
 ================================================================ */
+/* Huella de dispositivo enriquecida usada para el sistema anti-duplicados.
+   Combina múltiples señales del dispositivo para producir un hash estable
+   por dispositivo/navegador. Se envía al backend en registro + KYC + login
+   para que server.js pueda comparar contra otras cuentas y detectar
+   duplicados con el sistema de scoring. */
+async function computeDeviceFingerprint() {
+  const parts = [];
+  try { parts.push("ua:" + navigator.userAgent); } catch {}
+  try { parts.push("lang:" + (navigator.language || "")); } catch {}
+  try { parts.push("langs:" + ((navigator.languages || []).join(","))); } catch {}
+  try { parts.push("res:" + screen.width + "x" + screen.height + "x" + (screen.colorDepth || 0)); } catch {}
+  try { parts.push("avail:" + (screen.availWidth||0) + "x" + (screen.availHeight||0)); } catch {}
+  try { parts.push("dpr:" + (window.devicePixelRatio || 1)); } catch {}
+  try { parts.push("tz:" + new Date().getTimezoneOffset()); } catch {}
+  try { parts.push("tzname:" + (Intl.DateTimeFormat().resolvedOptions().timeZone || "")); } catch {}
+  try { parts.push("cores:" + (navigator.hardwareConcurrency || 0)); } catch {}
+  try { parts.push("mem:" + (navigator.deviceMemory || 0)); } catch {}
+  try { parts.push("touch:" + (navigator.maxTouchPoints || 0)); } catch {}
+  try { parts.push("plat:" + (navigator.platform || "")); } catch {}
+  // Canvas fingerprint
+  try {
+    const c = document.createElement("canvas");
+    c.width = 240; c.height = 60;
+    const ctx = c.getContext("2d");
+    ctx.textBaseline = "top";
+    ctx.font = "14px 'Arial'";
+    ctx.fillStyle = "#f60"; ctx.fillRect(0, 0, 100, 40);
+    ctx.fillStyle = "#069"; ctx.fillText("aura-fp-🔒", 2, 15);
+    ctx.strokeStyle = "rgba(102,204,0,.7)"; ctx.beginPath();
+    ctx.arc(50, 30, 20, 0, Math.PI * 2); ctx.stroke();
+    parts.push("canvas:" + c.toDataURL().slice(-100));
+  } catch {}
+  // WebGL fingerprint (vendor+renderer del GPU)
+  try {
+    const c = document.createElement("canvas");
+    const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    if (gl) {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      if (dbg) {
+        parts.push("gpu:" + gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + "|" + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+      }
+      parts.push("glver:" + gl.getParameter(gl.VERSION));
+    }
+  } catch {}
+  const seed = parts.join("‖");
+  try {
+    const buf = new TextEncoder().encode(seed);
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    let h = 0; for (let i = 0; i < seed.length; i++) { h = ((h<<5)-h) + seed.charCodeAt(i); h |= 0; }
+    return "fp_" + Math.abs(h).toString(36);
+  }
+}
+
 async function kycFingerprint() {
   try {
     if (state.kyc && state.kyc.fingerprint) return state.kyc.fingerprint;
-    const seed = [
-      navigator.userAgent, navigator.language, screen.width + "x" + screen.height,
-      new Date().getTimezoneOffset(), navigator.hardwareConcurrency || 0,
-      navigator.deviceMemory || 0,
-    ].join("|");
-    const buf = new TextEncoder().encode(seed);
-    const digest = await crypto.subtle.digest("SHA-256", buf);
-    const hex = Array.from(new Uint8Array(digest))
-      .map(b => b.toString(16).padStart(2, "0")).join("");
+    const hex = await computeDeviceFingerprint();
     state.kyc = state.kyc || {};
     state.kyc.fingerprint = hex;
     return hex;
   } catch { return "fp_" + Date.now().toString(36); }
 }
+try { window.computeDeviceFingerprint = computeDeviceFingerprint; } catch {}
 
 async function kycFetch(path, body) {
   const fp = await kycFingerprint();
