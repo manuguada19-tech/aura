@@ -259,7 +259,11 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
       <button class="btn" type="submit">Entrar</button>
       <p class="err" id="err"></p>
     </form>
-    <p class="foot"><a href="/">← Volver a la app</a> · <a href="#" id="backToLoginStep">Volver al login</a></p>
+    <div class="foot" style="display:flex;gap:16px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:18px">
+      <a href="/" style="color:#ff8a3b;text-decoration:none">← Volver a la app</a>
+      <span style="color:#333">|</span>
+      <a href="#" id="backToLoginStep" style="color:#ff8a3b;text-decoration:none">↺ Volver al login</a>
+    </div>
   </div>
   <script>
     // Load admin branding (logo + name) from public endpoint so the login
