@@ -499,6 +499,104 @@ document.addEventListener("click", async (e) => {
   });
 });
 
+/* Render 2FA status box inside admin profile drawer. */
+function renderTwoFaBox(box, enabled) {
+  box.innerHTML = "";
+  const statusLine = el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:8px" }, [
+    el("div", { style: `width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:${enabled?"#22c55e":"#f59e0b"};color:#fff;font-size:18px` }, enabled ? "✓" : "!"),
+    el("div", { style: "flex:1" }, [
+      el("div", { style: "font-weight:700;font-size:14px" }, enabled ? "2FA activado" : "2FA no activado"),
+      el("div", { class: "muted", style: "font-size:12px" }, enabled ? "Tu cuenta está protegida con verificación en dos pasos." : "Recomendado: añade una capa extra de seguridad con Google Authenticator o Authy."),
+    ]),
+  ]);
+  box.appendChild(statusLine);
+  if (enabled) {
+    box.appendChild(btn("Desactivar 2FA", "ghost sm", () => openTwoFaDisable(box)));
+  } else {
+    box.appendChild(btn("Activar 2FA", "primary sm", () => openTwoFaSetup(box)));
+  }
+}
+
+/* Open 2FA setup modal: fetch QR + secret, ask user to scan and enter code. */
+async function openTwoFaSetup(box) {
+  let data;
+  try { data = await api.post("/api/admin/2fa/setup", {}); }
+  catch(e){ return toast("Error iniciando 2FA"); }
+  const overlay = document.createElement("div");
+  overlay.className = "ac-overlay";
+  overlay.innerHTML = `
+    <div class="ac-scrim"></div>
+    <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:440px">
+      <h3 style="margin:0 0 8px">🔐 Activar 2FA</h3>
+      <p class="muted" style="margin:0 0 14px;font-size:13px">Escanea el código QR con <b>Google Authenticator</b>, <b>Authy</b> o <b>1Password</b>, luego introduce el código de 6 dígitos que aparece.</p>
+      <div style="text-align:center;margin:10px 0"><img src="${data.qr}" alt="QR 2FA" style="width:220px;height:220px;border-radius:12px;background:#fff;padding:8px" /></div>
+      <details style="margin:6px 0 14px"><summary style="cursor:pointer;font-size:12px;color:#888">¿No puedes escanear? Introducir clave manual</summary>
+        <div style="font-family:monospace;font-size:13px;background:#0f0f14;padding:10px;border-radius:8px;margin-top:6px;word-break:break-all;user-select:all">${data.secret}</div>
+      </details>
+      <label class="field"><span>Código de 6 dígitos</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:22px;letter-spacing:6px" /></label>
+      <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
+      <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button type="button" class="btn ghost ac-cancel">Cancelar</button>
+        <button type="button" class="btn primary ac-ok">Activar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const cleanup = () => overlay.remove();
+  overlay.querySelector(".ac-scrim").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-cancel").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-ok").addEventListener("click", async () => {
+    const code = overlay.querySelector("#twofaCode").value.trim();
+    const err = overlay.querySelector("#twofaErr");
+    if (!/^\d{6}$/.test(code)) { err.textContent = "Introduce un código de 6 dígitos"; return; }
+    try {
+      await api.post("/api/admin/2fa/enable", { code });
+      cleanup();
+      toast("2FA activado correctamente");
+      renderTwoFaBox(box, true);
+    } catch(e){ err.textContent = "Código incorrecto. Prueba de nuevo."; }
+  });
+  setTimeout(() => overlay.querySelector("#twofaCode").focus(), 100);
+}
+
+/* Open 2FA disable modal: requires password + current code. */
+function openTwoFaDisable(box) {
+  const overlay = document.createElement("div");
+  overlay.className = "ac-overlay";
+  overlay.innerHTML = `
+    <div class="ac-scrim"></div>
+    <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:400px">
+      <h3 style="margin:0 0 8px">Desactivar 2FA</h3>
+      <p class="muted" style="margin:0 0 14px;font-size:13px">Confirma tu contraseña y el código actual para desactivar 2FA.</p>
+      <label class="field"><span>Contraseña</span><input class="input" id="twofaPass" type="password" autocomplete="current-password" /></label>
+      <label class="field"><span>Código actual (6 dígitos)</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" style="text-align:center;font-size:20px;letter-spacing:5px" /></label>
+      <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
+      <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button type="button" class="btn ghost ac-cancel">Cancelar</button>
+        <button type="button" class="btn danger ac-ok">Desactivar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const cleanup = () => overlay.remove();
+  overlay.querySelector(".ac-scrim").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-cancel").addEventListener("click", cleanup);
+  overlay.querySelector(".ac-ok").addEventListener("click", async () => {
+    const password = overlay.querySelector("#twofaPass").value;
+    const code = overlay.querySelector("#twofaCode").value.trim();
+    const err = overlay.querySelector("#twofaErr");
+    try {
+      await api.post("/api/admin/2fa/disable", { password, code });
+      cleanup();
+      toast("2FA desactivado");
+      renderTwoFaBox(box, false);
+    } catch(e){
+      const m = e && e.data && e.data.error;
+      if (m === "wrong_password") err.textContent = "Contraseña incorrecta";
+      else if (m === "invalid_code") err.textContent = "Código 2FA incorrecto";
+      else err.textContent = "Error al desactivar";
+    }
+  });
+}
+
 /* Admin profile drawer — opened by clicking the avatar (top bar or sidebar).
    Lets the admin set display name, role, email, avatar image and password. */
 async function openAdminProfile() {
@@ -551,6 +649,17 @@ async function openAdminProfile() {
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Nombre visible"), nameInput ]));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Cargo / rol"), roleInput ]));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Email de acceso"), emailInput ]));
+  // 2FA section
+  node.appendChild(el("h3", { class: "ap-h3" }, "🔐 Verificación en dos pasos (2FA)"));
+  const twoFaBox = el("div", { class: "twofa-box", style: "background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px;margin-bottom:12px" });
+  node.appendChild(twoFaBox);
+  (async () => {
+    try {
+      const st = await fetch("/api/admin/2fa/status", { headers: authHeaders() }).then(r => r.json());
+      renderTwoFaBox(twoFaBox, !!st.enabled);
+    } catch { renderTwoFaBox(twoFaBox, false); }
+  })();
+
   node.appendChild(el("h3", { class: "ap-h3" }, "Cambiar contraseña"));
   node.appendChild(el("p", { class: "help" }, "Deja los campos en blanco si no quieres cambiarla."));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Contraseña actual"), passCurrent ]));
@@ -675,6 +784,21 @@ function applyAdminBranding(partial) {
 }
 applyAdminBranding();
 
+/* Sidebar brand — override sizes so logo + name are bigger and legible */
+(function injectSidebarBrandCss(){
+  if (document.getElementById("sidebarBrandBigCss")) return;
+  const st = document.createElement("style");
+  st.id = "sidebarBrandBigCss";
+  st.textContent = `
+    .sidebar .brand{display:flex;align-items:center;gap:12px;padding:14px 12px !important}
+    .sidebar .brand-logo{width:56px !important;height:56px !important;border-radius:14px !important;flex-shrink:0;overflow:hidden}
+    .sidebar .brand-logo img{width:100% !important;height:100% !important;object-fit:contain !important;border-radius:inherit}
+    .sidebar .brand-name{font-size:22px !important;font-weight:800 !important;line-height:1.1 !important;letter-spacing:-.3px}
+    .sidebar .brand-sub{font-size:12px !important;letter-spacing:1px;text-transform:uppercase;opacity:.85}
+  `;
+  document.head.appendChild(st);
+})();
+
 /* Sidebar badges — populate from real data, hide when zero */
 function fmtNum(n) {
   if (n == null || isNaN(n)) return "";
@@ -715,7 +839,7 @@ refreshNavBadges();
 setInterval(refreshNavBadges, 30000);
 
 /* Theme */
-document.documentElement.dataset.theme = localStorage.getItem("aura-admin-theme") || "light";
+document.documentElement.dataset.theme = localStorage.getItem("aura-admin-theme") || "dark";
 function updateThemeBtnIcon() {
   const btn = document.getElementById("themeBtn");
   if (!btn) return;
