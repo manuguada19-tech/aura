@@ -233,7 +233,29 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
     <form id="loginForm" autocomplete="off">
       <label class="field"><span>Email</span><input class="input" type="email" name="email" required autofocus autocomplete="username" /></label>
       <label class="field"><span>Contraseña</span><input class="input" type="password" name="password" required autocomplete="current-password" /></label>
-      <label class="field" id="totpField" style="display:none"><span>Código 2FA (6 dígitos)</span><input class="input" type="text" name="totp_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" /></label>
+      <div id="totpField" style="display:none;margin-top:6px">
+        <div style="text-align:center;margin:10px 0 14px">
+          <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:16px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;font-size:28px;box-shadow:0 10px 30px rgba(124,58,237,.35)">🔐</div>
+          <div style="font-weight:700;font-size:16px;margin-bottom:4px">Verificación en dos pasos</div>
+          <div style="font-size:12px;color:#aab;line-height:1.5">Introduce el código de 6 dígitos que aparece<br/>en tu app de autenticación (Google Authenticator, Authy, 1Password…)</div>
+        </div>
+        <input class="input" type="text" name="totp_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700" />
+        <div style="text-align:center;margin-top:12px;font-size:12px;color:#888">
+          ¿Perdiste el acceso a tu app? <a href="#" id="useEmailLink" style="color:#ff8a3b;text-decoration:none">Recibir código por email</a>
+        </div>
+      </div>
+      <div id="emailField" style="display:none;margin-top:6px">
+        <div style="text-align:center;margin:10px 0 14px">
+          <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:16px;background:linear-gradient(135deg,#3b82f6,#7c3aed);display:grid;place-items:center;font-size:28px;box-shadow:0 10px 30px rgba(59,130,246,.35)">📧</div>
+          <div style="font-weight:700;font-size:16px;margin-bottom:4px">Acceso por correo</div>
+          <div id="emailFieldDesc" style="font-size:12px;color:#aab;line-height:1.5">Enviaremos un código de 6 dígitos a tu email de administrador. Introduce ese código para entrar.</div>
+        </div>
+        <input class="input" type="text" name="email_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700;display:none" id="emailCodeInput" />
+        <button type="button" id="sendEmailBtn" class="btn" style="width:100%;margin-top:8px">Enviar código a mi correo</button>
+        <div style="text-align:center;margin-top:14px;font-size:12px;color:#888">
+          ¿Sin acceso al email también? <a href="mailto:soporte@citasaura.es?subject=Ayuda%20con%20acceso%20admin" style="color:#ff8a3b;text-decoration:none">Contactar soporte</a>
+        </div>
+      </div>
       <button class="btn" type="submit">Entrar</button>
       <p class="err" id="err"></p>
     </form>
@@ -269,14 +291,59 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
       }
       var f = document.getElementById("loginForm");
       var err = document.getElementById("err");
+      // Email fallback flow (send code + verify code)
+      var emailStep = 0; // 0=idle, 1=sent
+      document.getElementById("useEmailLink").addEventListener("click", function(ev){
+        ev.preventDefault();
+        document.getElementById("totpField").style.display = "none";
+        document.getElementById("emailField").style.display = "";
+        f.email.parentElement.style.display = "";
+        f.password.parentElement.style.display = "none";
+      });
+      document.getElementById("sendEmailBtn").addEventListener("click", async function(){
+        var email = f.email.value.trim();
+        if (!email) { err.textContent = "Escribe tu email primero"; return; }
+        var b = document.getElementById("sendEmailBtn");
+        b.disabled = true; b.textContent = "Enviando…";
+        try {
+          var r = await fetch("/api/admin/email-login/send", {
+            method: "POST", headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({email: email})
+          });
+          if (!r.ok) throw new Error("send_failed");
+          document.getElementById("emailFieldDesc").textContent = "Revisa tu correo. Introduce el código de 6 dígitos que te enviamos.";
+          document.getElementById("emailCodeInput").style.display = "";
+          document.getElementById("emailCodeInput").focus();
+          b.style.display = "none";
+          emailStep = 1;
+          err.textContent = "";
+        } catch(ex){
+          err.textContent = "No se pudo enviar el código"; b.disabled = false; b.textContent = "Enviar código a mi correo";
+        }
+      });
       f.addEventListener("submit", async function(e){
         e.preventDefault();
         err.textContent = "";
         var email = f.email.value.trim();
         var password = f.password.value;
         var totpCode = f.totp_code ? f.totp_code.value.trim() : "";
+        var emailCode = f.email_code ? f.email_code.value.trim() : "";
         var btn = f.querySelector(".btn");
         btn.disabled = true; btn.textContent = "Entrando…";
+        // Email login path
+        if (emailStep === 1 && emailCode) {
+          try {
+            var r2 = await fetch("/api/admin/email-login/verify", {
+              method: "POST", headers: {"Content-Type":"application/json"},
+              body: JSON.stringify({email: email, code: emailCode})
+            });
+            var d2 = await r2.json();
+            if (!r2.ok) { err.textContent = "Código incorrecto"; btn.disabled = false; btn.textContent = "Verificar código"; return; }
+            localStorage.setItem("adminToken", d2.token);
+            location.replace("/admin.html?adminToken=" + encodeURIComponent(d2.token));
+            return;
+          } catch(_){ err.textContent = "Error de red"; btn.disabled = false; btn.textContent = "Verificar código"; return; }
+        }
         try {
           var body = {email: email, password: password};
           if (totpCode) body.totp_code = totpCode;
@@ -288,9 +355,11 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
           var data = await r.json();
           if (r.ok && data.needs_2fa) {
             document.getElementById("totpField").style.display = "";
+            f.email.parentElement.style.display = "none";
+            f.password.parentElement.style.display = "none";
             f.totp_code.focus();
-            err.textContent = "Introduce el código de tu app autenticadora";
-            btn.disabled = false; btn.textContent = "Verificar";
+            err.textContent = "";
+            btn.disabled = false; btn.textContent = "Verificar código";
             return;
           }
           if (!r.ok) {
@@ -5877,6 +5946,43 @@ app.post("/api/admin/login", wrap(async (req, res) => {
   res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS, totp_enabled: totpEnabled });
 }));
 
+/* ============ Admin Email Login (recovery when 2FA is lost) ============ */
+// Sends a 6-digit code to the admin email. Then verify to receive a full session token.
+app.post("/api/admin/email-login/send", wrap(async (req, res) => {
+  const { email } = req.body || {};
+  const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
+  const activeEmail = overrideEmail || ADMIN_EMAIL;
+  if (String(email || "").toLowerCase() !== activeEmail) {
+    return res.status(400).json({ error: "invalid_email" });
+  }
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  await pool.execute(
+    "INSERT INTO verifications (email, code, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))",
+    [activeEmail, code]
+  );
+  try { await sendOtpEmail(activeEmail, code); } catch(e){}
+  await logActivity("admin", `Envío de código por email para acceso admin (${activeEmail})`);
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/email-login/verify", wrap(async (req, res) => {
+  const { email, code } = req.body || {};
+  const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
+  const activeEmail = overrideEmail || ADMIN_EMAIL;
+  if (String(email || "").toLowerCase() !== activeEmail) {
+    return res.status(400).json({ error: "invalid_email" });
+  }
+  const [rows] = await pool.query(
+    "SELECT id FROM verifications WHERE email=? AND code=? AND used=0 AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
+    [activeEmail, String(code || "").trim()]
+  );
+  if (!rows.length) return res.status(401).json({ error: "invalid_code" });
+  await pool.execute("UPDATE verifications SET used=1 WHERE id=?", [rows[0].id]);
+  const token = await issueAdminToken(activeEmail);
+  await logActivity("admin", `Acceso admin por código email (${activeEmail})`);
+  res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS });
+}));
+
 /* ============ 2FA (TOTP) — Admin ============ */
 app.get("/api/admin/2fa/status", wrap(async (req, res) => {
   const entry = await verifyAdminToken(readAdminToken(req));
@@ -7848,25 +7954,63 @@ function isAccessLockedFor(email) {
 // Simple demo login (no password — demo mode)
 app.post("/api/login", wrap(async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase();
+  const totpCode = String(req.body?.totp_code || "").replace(/\s+/g, "");
+  const emailCode = String(req.body?.email_code || "").trim();
   if (!email) return res.status(400).json({ error: "email_required" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes","15"),10) });
   // Bloqueo unificado: IP + estado + restricción login
   if (await enforceAccess(req, res, { email })) return;
-  const [rows] = await pool.query("SELECT id, email, name, role, plan, zone, photo_url FROM users WHERE email=? LIMIT 1", [email]);
+  const [rows] = await pool.query("SELECT id, email, name, role, plan, zone, photo_url, totp_enabled, totp_secret FROM users WHERE email=? LIMIT 1", [email]);
   if (!rows.length) {
     recordLoginFail(email);
     const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
     await logActivity("system", `Intento de login fallido para ${email}${ipMsg}`);
     return res.status(404).json({ error: "not_found" });
   }
+  const u = rows[0];
+  // 2FA check
+  if (u.totp_enabled && u.totp_secret) {
+    // Email recovery path
+    if (emailCode) {
+      const [vrows] = await pool.query(
+        "SELECT id FROM verifications WHERE email=? AND code=? AND used=0 AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
+        [email, emailCode]
+      );
+      if (!vrows.length) return res.status(401).json({ error: "invalid_email_code" });
+      await pool.execute("UPDATE verifications SET used=1 WHERE id=?", [vrows[0].id]);
+    } else if (totpCode) {
+      let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
+      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: totpCode, window: 1 });
+      if (!ok) return res.status(401).json({ error: "invalid_2fa" });
+    } else {
+      return res.json({ needs_2fa: true, user_id: u.id });
+    }
+  }
   clearLoginFails(email);
-  await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
-  await touchUserDevice(req, rows[0].id);
+  await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
+  await touchUserDevice(req, u.id);
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
-  await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
-  try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
-  res.json({ ok: true, user: rows[0] });
+  await logActivity("user", `Login ${u.email}${ipMsg}`);
+  try { await logStream(u.id, "login", { detail: u.email, req }); } catch {}
+  const { totp_enabled, totp_secret, ...userSafe } = u;
+  res.json({ ok: true, user: userSafe });
+}));
+
+// User email recovery for 2FA — sends a 6-digit code to their registered email
+app.post("/api/login/email-recovery/send", wrap(async (req, res) => {
+  const email = String(req.body?.email || "").toLowerCase();
+  if (!email) return res.status(400).json({ error: "email_required" });
+  const [rows] = await pool.query("SELECT id, totp_enabled FROM users WHERE email=? LIMIT 1", [email]);
+  if (!rows.length || !rows[0].totp_enabled) return res.status(400).json({ error: "invalid_request" });
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  await pool.execute(
+    "INSERT INTO verifications (email, code, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))",
+    [email, code]
+  );
+  try { await sendOtpEmail(email, code); } catch(e){}
+  await logActivity("user", `Código 2FA por email enviado a ${email}`);
+  res.json({ ok: true });
 }));
 
 /* ============================================================
