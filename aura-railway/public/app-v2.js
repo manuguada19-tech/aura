@@ -5209,10 +5209,16 @@ function screenSubscriptions(root) {
 function infoPage(root, title, content) {
   root.classList.add("screen-info");
   document.body.classList.add("info-open");
-  root.appendChild(topbar(title, () => {
+  // Si venimos de una pantalla de registro (o cualquiera guardada en
+  // window.__infoBackTo), volvemos a ella al pulsar atrás. Si no, vamos a Welcome.
+  const backFn = () => {
     document.body.classList.remove("info-open");
-    render(screenWelcome);
-  }));
+    const prev = window.__infoBackTo;
+    window.__infoBackTo = null;
+    if (typeof prev === "function") { render(prev); }
+    else { render(screenWelcome); }
+  };
+  root.appendChild(topbar(title, backFn));
   const wrap = el("div", { class: "info-wrap" });
   wrap.appendChild(content);
   root.appendChild(wrap);

@@ -2833,6 +2833,15 @@ async function openUserDrawer(id, onChange) {
             renderUserLive();
           } catch (e) { toast("Error: " + e.message, "err"); }
         }),
+        btn("🗑 Eliminar usuario", "danger xs", async () => {
+          if (!confirm("ELIMINAR PERMANENTEMENTE al usuario " + (ctx.user.name || ctx.user.email) + "?\n\nBorra también sus verificaciones de identidad. No se puede deshacer.")) return;
+          try {
+            await api.del("/api/users/" + id);
+            toast("Usuario eliminado");
+            // Volver al listado de usuarios
+            location.hash = "#/usuarios";
+          } catch (e) { toast("Error: " + e.message, "err"); }
+        }),
       ]);
       liveBox.appendChild(mod);
 
@@ -2898,6 +2907,12 @@ async function openUserDrawer(id, onChange) {
       const mapLat = useGps ? gps.lat : geo.lat;
       const mapLng = useGps ? gps.lng : geo.lon;
       if (mapLat != null && mapLng != null) {
+        // Crear contenedor del mapa (antes no se creaba y por eso no aparecía nunca)
+        const mapDiv = el("div", {
+          id: mapDomId,
+          style: "width:100%;height:280px;margin-top:12px;border-radius:12px;overflow:hidden;background:#111;",
+        });
+        liveBox.appendChild(mapDiv);
         _ensureLeaflet().then(L => {
           if (!L) return;
           try {

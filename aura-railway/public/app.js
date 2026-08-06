@@ -3955,12 +3955,15 @@ function screenRegisterEmail(root) {
       "Quiero recibir novedades por email <span class='muted'>(opcional)</span>."),
   ]));
 
-  // Delegar apertura de las pantallas legales sin dejar el formulario
+  // Delegar apertura de las pantallas legales sin dejar el formulario.
+  // Guardamos la pantalla de origen para que el botón atrás vuelva aquí en
+  // lugar de a la pantalla de bienvenida (comportamiento por defecto de infoPage).
   form.addEventListener("click", (ev) => {
     const a = ev.target.closest("a.legal-link");
     if (!a) return;
     ev.preventDefault();
     const target = a.dataset.goto;
+    window.__infoBackTo = screenRegisterEmail;
     if (target === "terms")   render(screenInfoTerms);
     if (target === "privacy") render(screenInfoPrivacy);
     if (target === "kyc")     render(screenInfoKycPolicy);
@@ -7693,10 +7696,16 @@ function screenSubscriptions(root) {
 function infoPage(root, title, content) {
   root.classList.add("screen-info");
   document.body.classList.add("info-open");
-  root.appendChild(topbar(title, () => {
+  // Si venimos de una pantalla concreta guardada en window.__infoBackTo,
+  // volvemos a ella al pulsar atrás. Si no, vamos a Welcome.
+  const backFn = () => {
     document.body.classList.remove("info-open");
-    render(screenWelcome);
-  }));
+    const prev = window.__infoBackTo;
+    window.__infoBackTo = null;
+    if (typeof prev === "function") { render(prev); }
+    else { render(screenWelcome); }
+  };
+  root.appendChild(topbar(title, backFn));
   const wrap = el("div", { class: "info-wrap" });
   wrap.appendChild(content);
   root.appendChild(wrap);
