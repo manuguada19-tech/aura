@@ -1770,8 +1770,19 @@ app.post("/api/users/:id/action", wrap(async (req, res) => {
 }));
 
 app.delete("/api/users/:id", wrap(async (req, res) => {
-  await pool.execute("DELETE FROM users WHERE id=?", [req.params.id]);
-  await logActivity("admin", `Usuario eliminado (id ${req.params.id})`);
+  const id = req.params.id;
+  // Recuperar email antes de borrar para limpiar identity_verifications
+  const [ur] = await pool.query("SELECT email FROM users WHERE id=?", [id]);
+  const email = ur.length ? ur[0].email : null;
+  await pool.execute("DELETE FROM users WHERE id=?", [id]);
+  // Borrar verificaciones asociadas por user_id o por email
+  try {
+    await pool.execute(
+      "DELETE FROM identity_verifications WHERE user_id=? OR (email IS NOT NULL AND email=?)",
+      [id, email]
+    );
+  } catch {}
+  await logActivity("admin", `Usuario eliminado (id ${id}${email ? " · " + email : ""})`);
   res.json({ ok: true });
 }));
 
