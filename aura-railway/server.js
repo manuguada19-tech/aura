@@ -1848,6 +1848,20 @@ app.delete("/api/users/:id", wrap(async (req, res) => {
   // Recuperar email antes de borrar para limpiar identity_verifications
   const [ur] = await pool.query("SELECT email FROM users WHERE id=?", [id]);
   const email = ur.length ? ur[0].email : null;
+  // V510 — Eliminar también sesiones de Didit ANTES de borrar identity_verifications
+  let diditDeleted = 0;
+  try {
+    const [kycRows] = await pool.query(
+      "SELECT didit_session_id FROM identity_verifications WHERE user_id=? OR (email IS NOT NULL AND email=?)",
+      [id, email]
+    );
+    for (const k of kycRows) {
+      if (k.didit_session_id && typeof deleteDiditSession === "function") {
+        const ok = await deleteDiditSession(k.didit_session_id);
+        if (ok) diditDeleted++;
+      }
+    }
+  } catch (e) { console.warn("Didit delete on user delete:", e.message); }
   await pool.execute("DELETE FROM users WHERE id=?", [id]);
   // Borrar verificaciones asociadas por user_id o por email
   try {
@@ -1856,8 +1870,8 @@ app.delete("/api/users/:id", wrap(async (req, res) => {
       [id, email]
     );
   } catch {}
-  await logActivity("admin", `Usuario eliminado (id ${id}${email ? " · " + email : ""})`);
-  res.json({ ok: true });
+  await logActivity("admin", `Usuario eliminado (id ${id}${email ? " · " + email : ""}) · Didit sesiones borradas: ${diditDeleted}`);
+  res.json({ ok: true, didit_deleted: diditDeleted });
 }));
 
 // Plans
@@ -8914,6 +8928,16 @@ app.use(express.static(path.join(__dirname, "public"), {
 
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
+// Public appeal page (V510): /appeal/:token → sirve appeal.html
+app.get("/appeal/:token", (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.sendFile(path.join(__dirname, "public", "appeal.html"));
+});
+app.get("/appeal", (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.sendFile(path.join(__dirname, "public", "appeal.html"));
+});
+
 // SPA fallback: rutas cliente (deep-links de emails y navegación interna)
 // como /likes, /chats/123, /verify, /me, /subscription, etc. sirven index.html
 // para que app.js resuelva la vista según location.pathname.
@@ -9309,6 +9333,16 @@ app.post("/api/users/bulk", requireAdmin, wrap(async (req, res) => {
         } catch {}
       }
     } else if (action === "delete") {
+      // V510 — Borrar también sesiones Didit antes de eliminar identity_verifications
+      try {
+        const [kycRows] = await pool.query(
+          `SELECT didit_session_id FROM identity_verifications WHERE user_id IN (${inClause})`, ids);
+        for (const k of kycRows) {
+          if (k.didit_session_id && typeof deleteDiditSession === "function") {
+            await deleteDiditSession(k.didit_session_id);
+          }
+        }
+      } catch (e) { console.warn("Bulk Didit delete:", e.message); }
       const [r] = await pool.execute(`DELETE FROM users WHERE id IN (${inClause})`, ids);
       affected = r.affectedRows;
       try { await pool.execute(`DELETE FROM identity_verifications WHERE user_id IN (${inClause})`, ids); } catch {}
@@ -10590,6 +10624,277 @@ app.get("/api/my/device-status", wrap(async (req, res) => {
   res.json({ locked: !!(u && u.device_locked), reason: u ? u.device_locked_reason : null });
 }));
 
+/* ============================================================
+   V510 · Eliminación completa de usuario (users + KYC + Didit + email + bloqueo re-registro)
+   ============================================================ */
+async function ensureDeletionTables() {
+  await pool.query(`CREATE TABLE IF NOT EXISTS deletion_reasons (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(40) UNIQUE,
+    label VARCHAR(200) NOT NULL,
+    email_subject VARCHAR(200) DEFAULT 'Tu cuenta en Aura ha sido cerrada',
+    email_body TEXT,
+    appeal_days INT DEFAULT 30,
+    send_email TINYINT(1) DEFAULT 1,
+    allow_appeal TINYINT(1) DEFAULT 1,
+    block_email TINYINT(1) DEFAULT 1,
+    block_phone TINYINT(1) DEFAULT 0,
+    block_device TINYINT(1) DEFAULT 0,
+    block_ip TINYINT(1) DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS deleted_users_log (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    name VARCHAR(190),
+    email VARCHAR(190),
+    phone VARCHAR(40),
+    device_fingerprint VARCHAR(190),
+    ip VARCHAR(64),
+    reason_code VARCHAR(40),
+    reason_label VARCHAR(200),
+    admin_id VARCHAR(190),
+    email_sent TINYINT(1) DEFAULT 0,
+    appeal_deadline TIMESTAMP NULL,
+    didit_deleted TINYINT(1) DEFAULT 0,
+    hash_signature VARCHAR(120),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_email (email),
+    INDEX idx_phone (phone),
+    INDEX idx_device (device_fingerprint),
+    INDEX idx_ip (ip)
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS registration_blocks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    block_type ENUM('email','phone','device','ip') NOT NULL,
+    value VARCHAR(190) NOT NULL,
+    reason_code VARCHAR(40),
+    expires_at TIMESTAMP NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_block (block_type, value)
+  )`);
+  await pool.query(`CREATE TABLE IF NOT EXISTS user_appeals_public (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    deletion_log_id INT NOT NULL,
+    email VARCHAR(190) NOT NULL,
+    message TEXT NOT NULL,
+    status ENUM('pending','approved','denied') DEFAULT 'pending',
+    admin_notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP NULL
+  )`);
+  // Seed motivos por defecto
+  const [rc] = await pool.query("SELECT COUNT(*) c FROM deletion_reasons");
+  if (rc[0].c === 0) {
+    const defaults = [
+      ["fraud", "Fraude o suplantación de identidad", "Tu cuenta en Aura ha sido cerrada", "Hemos detectado indicios de suplantación de identidad o fraude en tu cuenta. Se ha cerrado de forma inmediata.", 30, 1, 1, 1, 1, 1, 1],
+      ["underage", "Edad no válida (menor de edad)", "Cuenta cerrada por edad no válida", "Detectamos que no cumples la edad mínima requerida (18 años). No es posible mantener la cuenta abierta.", 0, 1, 0, 1, 1, 1, 0],
+      ["rules_violation", "Incumplimiento grave de normas", "Tu cuenta ha sido cerrada", "Tu comportamiento en la plataforma incumple nuestras normas de comunidad. Puedes apelar en 30 días.", 30, 1, 1, 1, 0, 0, 0],
+      ["duplicate", "Cuenta duplicada", "Cuenta cerrada por duplicidad", "Se ha detectado que ya tienes otra cuenta activa. Solo se permite una cuenta por persona.", 15, 1, 1, 1, 1, 0, 0],
+      ["user_request", "Solicitud del propio usuario", "Cuenta cerrada a petición", "Tu cuenta ha sido cerrada tal como solicitaste. Si quieres volver, puedes registrarte de nuevo.", 0, 1, 0, 0, 0, 0, 0],
+      ["kyc_failed", "KYC fallido repetidamente", "Cuenta cerrada por verificación fallida", "No hemos podido verificar tu identidad después de varios intentos. Puedes apelar si crees que es un error.", 15, 1, 1, 1, 0, 0, 0],
+      ["other", "Otro motivo", "Tu cuenta ha sido cerrada", "Tu cuenta ha sido cerrada. Contacta con soporte para más información.", 30, 1, 1, 1, 0, 0, 0],
+    ];
+    for (const d of defaults) {
+      await pool.execute(
+        "INSERT INTO deletion_reasons (code,label,email_subject,email_body,appeal_days,send_email,allow_appeal,block_email,block_phone,block_device,block_ip) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        d
+      );
+    }
+  }
+}
+
+/* ---- CRUD motivos ---- */
+app.get("/api/admin/deletion-reasons", wrap(async (_req, res) => {
+  const [rows] = await pool.query("SELECT * FROM deletion_reasons ORDER BY id");
+  res.json({ items: rows });
+}));
+app.post("/api/admin/deletion-reasons", wrap(async (req, res) => {
+  const b = req.body || {};
+  await pool.execute(
+    "INSERT INTO deletion_reasons (code,label,email_subject,email_body,appeal_days,send_email,allow_appeal,block_email,block_phone,block_device,block_ip) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+    [b.code, b.label, b.email_subject || null, b.email_body || null, b.appeal_days || 30,
+     b.send_email ? 1 : 0, b.allow_appeal ? 1 : 0, b.block_email ? 1 : 0, b.block_phone ? 1 : 0, b.block_device ? 1 : 0, b.block_ip ? 1 : 0]
+  );
+  res.json({ ok: true });
+}));
+app.patch("/api/admin/deletion-reasons/:id", wrap(async (req, res) => {
+  const b = req.body || {};
+  const fields = ["code","label","email_subject","email_body","appeal_days","send_email","allow_appeal","block_email","block_phone","block_device","block_ip"];
+  const updates = [], params = [];
+  for (const f of fields) if (f in b) { updates.push(`${f}=?`); params.push(typeof b[f] === "boolean" ? (b[f] ? 1 : 0) : b[f]); }
+  if (!updates.length) return res.json({ ok: true });
+  params.push(req.params.id);
+  await pool.execute(`UPDATE deletion_reasons SET ${updates.join(", ")} WHERE id=?`, params);
+  res.json({ ok: true });
+}));
+app.delete("/api/admin/deletion-reasons/:id", wrap(async (req, res) => {
+  await pool.execute("DELETE FROM deletion_reasons WHERE id=?", [req.params.id]);
+  res.json({ ok: true });
+}));
+
+/* ---- Eliminar usuario completamente ---- */
+async function deleteDiditSession(sessionId) {
+  if (!sessionId || !process.env.DIDIT_API_KEY) return false;
+  try {
+    const url = `${process.env.DIDIT_BASE_URL || "https://verification.didit.me"}/v1/session/${sessionId}`;
+    const r = await fetch(url, { method: "DELETE", headers: { "X-Api-Key": process.env.DIDIT_API_KEY } });
+    return r.ok;
+  } catch(e) { console.warn("Didit delete:", e.message); return false; }
+}
+
+app.post("/api/admin/users/:id/full-delete", wrap(async (req, res) => {
+  const uid = Number(req.params.id);
+  const { reason_code, override_email, override_appeal, override_blocks, admin_notes } = req.body || {};
+  const adminId = (req.admin && req.admin.email) || "admin";
+
+  const [[user]] = await pool.query("SELECT * FROM users WHERE id=?", [uid]);
+  if (!user) return res.status(404).json({ error: "user_not_found" });
+
+  const [[reason]] = await pool.query("SELECT * FROM deletion_reasons WHERE code=?", [reason_code || "other"]);
+  const r = reason || { code: "other", label: "Otro motivo", send_email: 1, allow_appeal: 1, appeal_days: 30, block_email: 1, block_phone: 0, block_device: 0, block_ip: 0, email_subject: "Cuenta cerrada", email_body: "Tu cuenta ha sido cerrada." };
+
+  // Overrides desde admin en el momento
+  const sendEmail = override_email !== undefined ? !!override_email : !!r.send_email;
+  const allowAppeal = override_appeal !== undefined ? !!override_appeal : !!r.allow_appeal;
+  const blocks = override_blocks || { email: !!r.block_email, phone: !!r.block_phone, device: !!r.block_device, ip: !!r.block_ip };
+
+  // 1) Borrar sesiones Didit
+  const [kycRows] = await pool.query("SELECT didit_session_id FROM identity_verifications WHERE user_id=?", [uid]);
+  let diditDeleted = false;
+  for (const k of kycRows) { if (k.didit_session_id) { const ok = await deleteDiditSession(k.didit_session_id); diditDeleted = diditDeleted || ok; } }
+
+  // 2) Borrar de identity_verifications
+  await pool.execute("DELETE FROM identity_verifications WHERE user_id=?", [uid]);
+
+  // 3) Registrar en deleted_users_log ANTES de borrar
+  const crypto = require("crypto");
+  const sig = crypto.createHash("sha256").update(`${uid}|${user.email}|${reason_code}|${adminId}|${Date.now()}`).digest("hex").slice(0, 64);
+  const deadline = allowAppeal && r.appeal_days > 0 ? new Date(Date.now() + r.appeal_days * 86400 * 1000) : null;
+  const fingerprint = user.device_fingerprint || null;
+  const lastIp = user.last_ip || null;
+  const [ins] = await pool.execute(
+    `INSERT INTO deleted_users_log (user_id,name,email,phone,device_fingerprint,ip,reason_code,reason_label,admin_id,email_sent,appeal_deadline,didit_deleted,hash_signature)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [uid, user.name, user.email, user.phone, fingerprint, lastIp, r.code, r.label, adminId, 0, deadline, diditDeleted ? 1 : 0, sig]
+  );
+  const logId = ins.insertId;
+
+  // 4) Registrar bloqueos re-registro
+  const inserts = [];
+  if (blocks.email && user.email) inserts.push(["email", user.email]);
+  if (blocks.phone && user.phone) inserts.push(["phone", user.phone]);
+  if (blocks.device && fingerprint) inserts.push(["device", fingerprint]);
+  if (blocks.ip && lastIp) inserts.push(["ip", lastIp]);
+  for (const [t, v] of inserts) {
+    try { await pool.execute("INSERT IGNORE INTO registration_blocks (block_type,value,reason_code) VALUES (?,?,?)", [t, v, r.code]); } catch {}
+  }
+
+  // 5) Enviar email si aplica
+  if (sendEmail && user.email && typeof sendMailSafe === "function") {
+    const appealLink = allowAppeal && deadline ? `${process.env.APP_URL || ""}/appeal.html?token=${sig}` : null;
+    const bodyHtml = `<div style="font-family:system-ui,sans-serif;max-width:600px;padding:20px;color:#111">
+      <h2 style="color:#dc2626">${r.email_subject}</h2>
+      <p>${(r.email_body || "").replace(/\n/g, "<br>")}</p>
+      <p><strong>Motivo:</strong> ${r.label}</p>
+      ${admin_notes ? `<p><strong>Notas del equipo:</strong> ${admin_notes}</p>` : ""}
+      ${appealLink ? `<p style="margin-top:20px"><a href="${appealLink}" style="background:#3b82f6;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Presentar apelación</a></p><p style="font-size:12px;color:#666">Plazo: ${r.appeal_days} días. Es posible que tu apelación no sea revisada si no aporta información nueva.</p>` : ""}
+      <hr><p style="font-size:11px;color:#666">Aura · citasaura.es</p>
+    </div>`;
+    try {
+      await sendMailSafe({ to: user.email, subject: r.email_subject, html: bodyHtml });
+      await pool.execute("UPDATE deleted_users_log SET email_sent=1 WHERE id=?", [logId]);
+    } catch(e) { console.warn("Email delete send:", e.message); }
+  }
+
+  // 6) Borrar de tablas relacionadas
+  const tables = ["user_gps","user_notification_prefs","user_push_subscriptions","notifications","payments","subscriptions","matches","conversations","messages","likes","reports","tickets","appeals","infractions","device_incidents"];
+  for (const t of tables) { try { await pool.execute(`DELETE FROM ${t} WHERE user_id=?`, [uid]); } catch {} }
+  // Finalmente el usuario
+  await pool.execute("DELETE FROM users WHERE id=?", [uid]);
+
+  await logActivity("admin", `Usuario ${user.email} eliminado completamente. Motivo: ${r.label}. Didit: ${diditDeleted ? "borrado" : "no"}. Bloqueos: ${inserts.map(x=>x[0]).join(",") || "ninguno"}.`);
+  res.json({ ok: true, log_id: logId, didit_deleted: diditDeleted, blocks_created: inserts.map(x=>x[0]), email_sent: sendEmail && !!user.email });
+}));
+
+app.get("/api/admin/deleted-users", wrap(async (_req, res) => {
+  const [rows] = await pool.query("SELECT * FROM deleted_users_log ORDER BY id DESC LIMIT 500");
+  res.json({ items: rows });
+}));
+
+app.get("/api/admin/registration-blocks", wrap(async (_req, res) => {
+  const [rows] = await pool.query("SELECT * FROM registration_blocks ORDER BY id DESC LIMIT 500");
+  res.json({ items: rows });
+}));
+app.delete("/api/admin/registration-blocks/:id", wrap(async (req, res) => {
+  await pool.execute("DELETE FROM registration_blocks WHERE id=?", [req.params.id]);
+  res.json({ ok: true });
+}));
+
+// Middleware: comprobar bloqueos al registrar
+async function isRegistrationBlocked({ email, phone, device_fingerprint, ip }) {
+  const checks = [];
+  if (email) checks.push(["email", email]);
+  if (phone) checks.push(["phone", phone]);
+  if (device_fingerprint) checks.push(["device", device_fingerprint]);
+  if (ip) checks.push(["ip", ip]);
+  for (const [t, v] of checks) {
+    const [[r]] = await pool.query(
+      "SELECT id, reason_code FROM registration_blocks WHERE block_type=? AND value=? AND (expires_at IS NULL OR expires_at > NOW())",
+      [t, v]
+    );
+    if (r) return { blocked: true, by: t, reason_code: r.reason_code };
+  }
+  return { blocked: false };
+}
+
+app.post("/api/auth/check-blocked", wrap(async (req, res) => {
+  const { email, phone } = req.body || {};
+  const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
+  const fp = req.headers["x-device-fingerprint"] || null;
+  const r = await isRegistrationBlocked({ email, phone, device_fingerprint: fp, ip });
+  res.json(r);
+}));
+
+/* ---- Apelación pública (sin login) ---- */
+app.get("/api/public/appeal/:token", wrap(async (req, res) => {
+  const [[row]] = await pool.query("SELECT id, name, email, reason_label, appeal_deadline FROM deleted_users_log WHERE hash_signature=?", [req.params.token]);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  if (row.appeal_deadline && new Date(row.appeal_deadline) < new Date()) return res.status(410).json({ error: "expired" });
+  res.json(row);
+}));
+app.post("/api/public/appeal/:token", wrap(async (req, res) => {
+  const { message } = req.body || {};
+  if (!message || message.length < 20) return res.status(400).json({ error: "message_too_short" });
+  const [[log]] = await pool.query("SELECT id, email, appeal_deadline FROM deleted_users_log WHERE hash_signature=?", [req.params.token]);
+  if (!log) return res.status(404).json({ error: "not_found" });
+  if (log.appeal_deadline && new Date(log.appeal_deadline) < new Date()) return res.status(410).json({ error: "expired" });
+  await pool.execute("INSERT INTO user_appeals_public (deletion_log_id,email,message) VALUES (?,?,?)", [log.id, log.email, message]);
+  res.json({ ok: true });
+}));
+
+app.get("/api/admin/public-appeals", wrap(async (_req, res) => {
+  const [rows] = await pool.query(`
+    SELECT a.*, d.name, d.reason_label, d.admin_id
+    FROM user_appeals_public a
+    LEFT JOIN deleted_users_log d ON d.id=a.deletion_log_id
+    ORDER BY a.id DESC LIMIT 200`);
+  res.json({ items: rows });
+}));
+app.post("/api/admin/public-appeals/:id/resolve", wrap(async (req, res) => {
+  const { status, notes } = req.body || {};
+  await pool.execute(
+    "UPDATE user_appeals_public SET status=?, admin_notes=?, resolved_at=NOW() WHERE id=?",
+    [status || "denied", notes || null, req.params.id]
+  );
+  if (status === "approved") {
+    // Desbloquear registro para ese email
+    const [[a]] = await pool.query("SELECT email FROM user_appeals_public WHERE id=?", [req.params.id]);
+    if (a && a.email) await pool.execute("DELETE FROM registration_blocks WHERE block_type='email' AND value=?", [a.email]);
+  }
+  res.json({ ok: true });
+}));
+
 /* ---- Contactos de emergencia por defecto ---- */
 app.get("/api/my/emergency-contacts", wrap(async (req, res) => {
   const uid = Number(req.headers["x-user-id"] || 0);
@@ -10766,6 +11071,7 @@ setInterval(runIncidentCrons, 15 * 60 * 1000);
     await ensureStaffAndNotifTables();
     await ensureAdvancedTables();
     await ensureDeviceIncidentsTables();
+    await ensureDeletionTables();
     await loadRuntimeSettings();
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT));
