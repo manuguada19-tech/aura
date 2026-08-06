@@ -2609,9 +2609,14 @@ async function openUserDrawer(id, onChange) {
             { class: "tag " + kind, style: "margin-left:6px;" + (extra || "") },
             text
           );
+          // "actual" solo si el usuario está online AHORA. Si está offline,
+          // aunque este dispositivo sea el marcado como is_current en la BD,
+          // no debe pintarse como "actual" — mostramos "último" en su lugar.
+          const isTrulyCurrent = dv.is_current && u.online;
+          const isLastDevice = dv.is_current && !u.online;
           const row = el("div", {
             class: "ipb-dev-row"
-              + (dv.is_current ? " ipb-current" : "")
+              + (isTrulyCurrent ? " ipb-current" : "")
               + (isBlocked ? " ipb-blocked" : "")
               + (isShared ? " ipb-shared" : ""),
             role: "button",
@@ -2622,8 +2627,9 @@ async function openUserDrawer(id, onChange) {
             el("div", { class: "ipb-dev-main" }, [
               el("div", { class: "ipb-dev-top" }, [
                 el("span", { class: "ipb-dev-ip" }, dv.ip || "—"),
-                dv.is_current ? tag("actual", "ok") : null,
-                isRecent && !dv.is_current ? tag("reciente", "ok") : null,
+                isTrulyCurrent ? tag("actual", "ok") : null,
+                isLastDevice ? tag("último", "muted") : null,
+                isRecent && !isTrulyCurrent && !isLastDevice ? tag("reciente", "ok") : null,
                 isBlocked ? tag("bloqueada", "bad") : null,
                 hasBanHistory && !isBlocked ? tag("con historial", "warn") : null,
                 isShared ? tag(`compartida · ${stats.users} cuentas`, "warn") : null,
@@ -2641,7 +2647,7 @@ async function openUserDrawer(id, onChange) {
                 dv.device_name ? " · " + dv.device_name : "",
               ].join("")),
               el("div", { class: "ipb-dev-when small muted" },
-                "Última conexión: " + (dv.last_seen ? fmtRelDate(dv.last_seen) : "—")),
+                (isLastDevice ? "Estuvo en la app hace " : "Última conexión: ") + (dv.last_seen ? fmtRelDate(dv.last_seen) : "—")),
             ]),
             el("button", { type: "button", class: "btn ghost xs", title: "Copiar IP" }, "Usar"),
           ]);
@@ -2723,7 +2729,10 @@ async function openUserDrawer(id, onChange) {
   form.appendChild(mods);
 
   // ==== V411 — Ubicación en tiempo real + dispositivos + moderación ====
-  form.appendChild(el("h3", {}, "🌍 Ubicación y dispositivos en tiempo real"));
+  const liveTitle = el("h3", {}, u.online
+    ? "🌍 Ubicación y dispositivos en tiempo real"
+    : "🕒 Último dispositivo conocido");
+  form.appendChild(liveTitle);
   const liveBox = el("div", { id: "userLiveBox", class: "usr-live" }, [
     el("div", { class: "usr-live-loading" }, "Cargando contexto en vivo…"),
   ]);
@@ -2747,7 +2756,14 @@ async function openUserDrawer(id, onChange) {
       if (ctx.is_usual_device) badges.push(el("span", { class: "chip xs t-ok" }, "✔ Dispositivo habitual"));
       else if (ctx.is_new_device) badges.push(el("span", { class: "chip xs t-warn" }, "⚠ Dispositivo nuevo"));
       else if (ctx.device_count > 1) badges.push(el("span", { class: "chip xs" }, "· Uno de " + ctx.device_count));
-      if (ctx.user.online) badges.push(el("span", { class: "chip xs t-ok" }, "● En línea"));
+      if (ctx.user.online) {
+        badges.push(el("span", { class: "chip xs t-ok" }, "● En línea"));
+      } else {
+        // Usuario offline: indicamos que no está conectado y mostramos
+        // cuándo se vio por última vez el dispositivo actual.
+        const lastSeenTxt = dev.last_seen ? fmt.reldate(dev.last_seen) : "—";
+        badges.push(el("span", { class: "chip xs" }, "⚫ Fuera de línea · último acceso: " + lastSeenTxt));
+      }
 
       liveBox.innerHTML = "";
       liveBox.appendChild(el("div", { class: "usr-live-badges" }, badges));

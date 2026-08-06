@@ -1823,6 +1823,49 @@ const GPS = {
         },
         { enableHighAccuracy: true, maximumAge: 30_000, timeout: 20_000 }
       );
+      // Envía una posición al minimizar/cerrar la pestaña, para que en admin
+      // aparezca la última posición conocida aunque el usuario cierre la app.
+      // Los navegadores móviles pausan watchPosition en background — con este
+      // "flush" al pasar a hidden capturamos la posición final antes de perder
+      // el evento. Fetch usa keepalive para que sobreviva al unload.
+      if (!this._visListenerBound) {
+        this._visListenerBound = true;
+        const flush = () => {
+          if (!("geolocation" in navigator) || !state.user?.id) return;
+          if (document.visibilityState !== "hidden") return;
+          try {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => this._reportKeepalive(pos),
+              () => {},
+              { enableHighAccuracy: false, maximumAge: 60_000, timeout: 5_000 }
+            );
+          } catch {}
+        };
+        document.addEventListener("visibilitychange", flush);
+        window.addEventListener("pagehide", flush);
+      }
+    } catch {}
+  },
+  async _reportKeepalive(pos) {
+    if (!state.user?.id || !pos?.coords) return;
+    try {
+      // fetch keepalive permite que la petición termine aunque la pestaña se
+      // esté descargando (unload). Máx 64 KB — suficiente para un JSON GPS.
+      await fetch("/api/my/gps/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        body: JSON.stringify({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy || null,
+          heading: pos.coords.heading || null,
+          speed: pos.coords.speed || null,
+          bg: true,
+        }),
+        keepalive: true,
+      });
+      this._lastSent = Date.now();
+      this._lastCoords = pos.coords;
     } catch {}
   },
   stopWatching() {
@@ -2066,6 +2109,65 @@ const GPS = {
 };
 try { window.GPS = GPS; } catch {}
 
+/* ------------------------------------------------------------------
+   Service Worker: registro y comunicación bidireccional.
+   - Instala sw.js para permitir PWA e ubicación en background (Android).
+   - Envía el user_id al SW para que pueda hacer heartbeats con auth.
+   - Solicita Periodic Background Sync si el navegador lo soporta.
+   - Escucha mensajes del SW (por ejemplo, cuando el SW pide una
+     posición GPS al despertar): la app la manda si tiene watcher activo.
+   ------------------------------------------------------------------ */
+let _swReg = null;
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    _swReg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    // Enviar el user_id al SW para heartbeats en background
+    const sendUser = () => {
+      if (!state.user?.id) return;
+      const send = (target) => target && target.postMessage({ type: "set-user", user_id: state.user.id });
+      send(navigator.serviceWorker.controller);
+      if (_swReg && _swReg.active) send(_swReg.active);
+    };
+    // Cuando el SW ya esté activo, enviamos user
+    if (_swReg.active) sendUser();
+    if (navigator.serviceWorker.controller) sendUser();
+    navigator.serviceWorker.addEventListener("controllerchange", sendUser);
+
+    // Escuchar peticiones del SW (por ejemplo, pedirnos una posición GPS)
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      const data = event.data || {};
+      if (data.type === "sw-request-gps") {
+        // El SW se ha despertado y quiere una posición. Si hay permiso, la mandamos.
+        if (!("geolocation" in navigator) || !state.user?.id) return;
+        try {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => { try { GPS._reportKeepalive(pos); } catch {} },
+            () => {},
+            { enableHighAccuracy: false, maximumAge: 60_000, timeout: 8_000 }
+          );
+        } catch {}
+      }
+    });
+
+    // Periodic Background Sync (solo Chrome/Android con PWA instalada)
+    if ("periodicSync" in _swReg) {
+      try {
+        const status = await navigator.permissions.query({ name: "periodic-background-sync" });
+        if (status.state === "granted") {
+          await _swReg.periodicSync.register("gps-tick", {
+            // El navegador decide la frecuencia real (mínima ~12 h en muchos casos).
+            minInterval: 60 * 60 * 1000, // 1 h ideal, Chrome lo escala si no le da
+          });
+        }
+      } catch {}
+    }
+  } catch (err) {
+    // SW no soportado o bloqueado; no es crítico.
+    try { console.log("[SW] register failed", err && err.message); } catch {}
+  }
+}
+
 // Global heartbeat loop: keeps the current user "online" for the admin panel.
 let _heartbeatTimer = null;
 let _restrictionTimer = null;
@@ -2079,6 +2181,8 @@ function startHeartbeat() {
   refreshRestrictions();
   // GPS: dispara el modal de consentimiento la 1ª vez tras login
   try { GPS.boot(); } catch {}
+  // Registro del Service Worker para PWA + Periodic Background Sync (Android)
+  try { registerServiceWorker(); } catch {}
   // Push en tiempo real vía Server-Sent Events. Al recibir un evento,
   // refresca inmediatamente y el banner desaparece/aparece al instante.
   try {
@@ -3299,8 +3403,8 @@ async function quickLogin(provider) {
       }
       if (data && data.error === "not_registered") {
         // Cuenta social sin usuario real en la BD. No es beta: solo no existe.
-        toast("Esta cuenta no está registrada. Regístrate primero.", 3800);
-        try { render(screenWelcome); } catch {}
+        try { showNotRegisteredScreen({ email, provider }); }
+        catch { toast("Esta cuenta no está registrada. Regístrate primero.", 3800); try { render(screenWelcome); } catch {} }
         return;
       }
       if (data && data.user_id) {
@@ -3743,6 +3847,96 @@ function showPrivateBetaScreen(opts) {
 
   root.appendChild(wrap);
   // Micro-animación de entrada
+  requestAnimationFrame(() => wrap.classList.add("beta-in"));
+}
+
+// Pantalla bonita "Esta cuenta no está registrada" cuando el usuario intenta
+// entrar por Google/Apple/Facebook con un email que no existe en la BD.
+// Reutiliza los estilos beta-* para mantener consistencia visual.
+function showNotRegisteredScreen(opts) {
+  const email = (opts && opts.email) || "";
+  const provider = (opts && opts.provider) || "";
+  try { localStorage.removeItem("aura-session"); } catch {}
+  state.user = null;
+
+  const root = document.getElementById("viewport");
+  if (!root) { toast("Esta cuenta no está registrada. Regístrate primero.", 4200); return; }
+  hideApp();
+  root.innerHTML = "";
+
+  const wrap = el("div", { class: "beta-screen" });
+
+  // Hero
+  const hero = el("div", { class: "beta-hero" });
+  const badge = el("div", { class: "beta-badge" });
+  badge.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>
+      <line x1="18" y1="4" x2="22" y2="8"/>
+      <line x1="22" y1="4" x2="18" y2="8"/>
+    </svg>`;
+  hero.appendChild(badge);
+  hero.appendChild(el("div", { class: "beta-pill" }, "👤 Cuenta no encontrada"));
+  hero.appendChild(el("h2", { class: "beta-title" }, "Aún no tienes cuenta en Aura"));
+  hero.appendChild(el("p", { class: "beta-sub" },
+    "El email de tu cuenta " + (provider ? provider.charAt(0).toUpperCase()+provider.slice(1) : "social") +
+    " no está registrado en Aura. Crea tu cuenta en unos pasos y podrás iniciar sesión."
+  ));
+  wrap.appendChild(hero);
+
+  // Card informativa
+  const card = el("div", { class: "beta-card" });
+  const points = [
+    { ic: "📝", h: "Registro rápido", p: "Solo necesitamos tu email, un código de verificación y tus datos básicos." },
+    { ic: "🛡️", h: "Verificación de identidad", p: "Un paso corto con tu DNI y un selfie para que la comunidad sea segura." },
+    { ic: "💖", h: "Empieza a conocer gente", p: "Configura tu perfil y descubre personas afines cerca de ti." },
+  ];
+  points.forEach(pt => {
+    const row = el("div", { class: "beta-point" });
+    row.appendChild(el("div", { class: "beta-point-ic" }, pt.ic));
+    const txt = el("div", { class: "beta-point-txt" });
+    txt.appendChild(el("div", { class: "beta-point-h" }, pt.h));
+    txt.appendChild(el("div", { class: "beta-point-p" }, pt.p));
+    row.appendChild(txt);
+    card.appendChild(row);
+  });
+  wrap.appendChild(card);
+
+  if (email) {
+    const emailBox = el("div", { class: "beta-form" });
+    emailBox.appendChild(el("label", { class: "beta-label" }, "Cuenta social usada"));
+    emailBox.appendChild(el("div", { class: "beta-input", style: "opacity:.75; cursor:default;" }, email));
+    wrap.appendChild(emailBox);
+  }
+
+  // Acciones
+  const actions = el("div", { class: "beta-actions" });
+  const registerBtn = el("button", { class: "btn btn-primary btn-block beta-cta" }, "✨ Crear cuenta ahora");
+  registerBtn.addEventListener("click", () => {
+    // Pre-rellena el email si venía de una cuenta social
+    try {
+      if (email) {
+        state.registration = state.registration || {};
+        state.registration.email = email;
+      }
+    } catch {}
+    try { render(screenRegisterEmail); } catch { try { render(screenWelcome); } catch {} }
+  });
+  actions.appendChild(registerBtn);
+
+  const backBtn = el("button", { class: "btn btn-ghost btn-block" }, "← Volver al inicio");
+  backBtn.addEventListener("click", () => { try { render(screenWelcome); } catch {} });
+  actions.appendChild(backBtn);
+  wrap.appendChild(actions);
+
+  // Footer
+  wrap.appendChild(el("p", { class: "beta-foot" }, [
+    "¿Problemas? Escribe a ",
+    el("a", { href: "mailto:soporte@citasaura.es" }, "soporte@citasaura.es"),
+  ]));
+
+  root.appendChild(wrap);
   requestAnimationFrame(() => wrap.classList.add("beta-in"));
 }
 

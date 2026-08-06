@@ -1,0 +1,151 @@
+/* Aura Service Worker
+   ----------------------------------------------------------
+   Objetivos:
+   1. Registrar la app como PWA instalable.
+   2. Habilitar Periodic Background Sync (solo Chrome/Android)
+      para pedir GPS cuando Chrome despierte el SW y enviarlo
+      al backend, mientras la app esté instalada como PWA.
+   3. Manejar mensajes desde la app (guardar user_id para que
+      el SW pueda hacer llamadas /api/my/gps/report con auth).
+   ----------------------------------------------------------
+   Notas:
+   - iOS Safari NO soporta Periodic Sync. En iOS solo el flush
+     en visibilitychange (que ya está en app.js) funciona.
+   - El navegador decide la frecuencia real (mínima ~12 h en
+     muchos casos). No es tiempo real, pero garantiza que si el
+     usuario dejó la app instalada, se registre su última zona.
+*/
+
+const CACHE_VERSION = "aura-v1";
+const CORE_ASSETS = [
+  "./index.html",
+  "./styles.css",
+  "./app.js",
+  "./manifest.json",
+];
+
+// ---- Install / Activate ----------------------------------------------
+self.addEventListener("install", (event) => {
+  self.skipWaiting();
+  event.waitUntil(
+    caches.open(CACHE_VERSION).then((cache) => cache.addAll(CORE_ASSETS).catch(() => {}))
+  );
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)));
+      await self.clients.claim();
+    })()
+  );
+});
+
+// ---- Fetch: red primero para HTML/JS, cache primero para assets estáticos
+self.addEventListener("fetch", (event) => {
+  const req = event.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
+  // No cacheamos llamadas al backend
+  if (url.pathname.startsWith("/api/")) return;
+  // Estrategia network-first para navegación
+  if (req.mode === "navigate" || (req.destination === "document")) {
+    event.respondWith(
+      fetch(req).catch(() => caches.match(req).then((r) => r || caches.match("./index.html")))
+    );
+    return;
+  }
+  // Cache-first para el resto
+  event.respondWith(
+    caches.match(req).then((cached) => cached || fetch(req).then((resp) => {
+      // Guardamos copia de recursos GET 200 en la cache
+      if (resp && resp.status === 200 && resp.type === "basic") {
+        const clone = resp.clone();
+        caches.open(CACHE_VERSION).then((c) => c.put(req, clone)).catch(() => {});
+      }
+      return resp;
+    }).catch(() => cached))
+  );
+});
+
+// ---- Estado compartido con la app (IndexedDB simple) -----------------
+const DB_NAME = "aura-sw";
+const STORE = "kv";
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+  });
+}
+async function kvGet(k) {
+  const db = await openDB();
+  return new Promise((res) => {
+    const tx = db.transaction(STORE, "readonly");
+    const rq = tx.objectStore(STORE).get(k);
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => res(undefined);
+  });
+}
+async function kvSet(k, v) {
+  const db = await openDB();
+  return new Promise((res) => {
+    const tx = db.transaction(STORE, "readwrite");
+    tx.objectStore(STORE).put(v, k);
+    tx.oncomplete = () => res(true);
+    tx.onerror = () => res(false);
+  });
+}
+
+// ---- Mensajes desde la app ------------------------------------------
+self.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.type === "set-user") {
+    kvSet("user_id", data.user_id).catch(() => {});
+  } else if (data.type === "clear-user") {
+    kvSet("user_id", null).catch(() => {});
+  }
+});
+
+// ---- Periodic Background Sync ----------------------------------------
+// Registrado desde la app con:
+//   reg.periodicSync.register("gps-tick", { minInterval: 15*60*1000 })
+// El navegador decide cuándo lanzarlo (mínimo real ~12 h a veces).
+async function pingGpsInBackground() {
+  const userId = await kvGet("user_id");
+  if (!userId) return;
+  // Pedir posición desde el SW no es posible directamente (geolocation
+  // API sólo existe en window). Alternativa: pedir a la app cliente que
+  // envíe posición si tiene alguna client vivo. Si no hay clientes, el
+  // navegador acaba de despertar el SW pero no hay ventana — en ese caso,
+  // no hay ubicación fresca disponible en web. Registramos "heartbeat"
+  // para que el backend sepa que la app sigue instalada.
+  try {
+    await fetch("/api/my/gps/heartbeat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-User-Id": String(userId) },
+      body: JSON.stringify({ ts: Date.now(), source: "sw-periodic" }),
+    });
+  } catch {}
+  // Si hay algún cliente (ventana) vivo, pedirle una posición.
+  const clientsList = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (clientsList.length) {
+    clientsList[0].postMessage({ type: "sw-request-gps" });
+  }
+}
+
+self.addEventListener("periodicsync", (event) => {
+  if (event.tag === "gps-tick") {
+    event.waitUntil(pingGpsInBackground());
+  }
+});
+
+// Fallback: background sync (one-shot) para cuando la app pierda conexión
+// mientras enviaba GPS y volvió; solo si se usa desde la app.
+self.addEventListener("sync", (event) => {
+  if (event.tag === "gps-flush") {
+    event.waitUntil(pingGpsInBackground());
+  }
+});
