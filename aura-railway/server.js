@@ -5767,7 +5767,15 @@ function routeCcAddress(templateId, category) {
 }
 
 function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote }) {
-  const brand = "Aura";
+  const brand = getSetting("content.brand.name","Aura") || "Aura";
+  const brand1 = getSetting("content.design.brand1","#7c3aed") || "#7c3aed";
+  const brand2 = getSetting("content.design.brand2","#ec4899") || "#ec4899";
+  const logoImg = getSetting("admin.logo_image","")
+    || getSetting("content.design.logo_image","")
+    || "";
+  const logoHtml = logoImg
+    ? `<img src="${logoImg}" alt="${brand}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;background:rgba(255,255,255,.2);margin-bottom:10px;display:inline-block"/>`
+    : `<div style="display:inline-block;width:56px;height:56px;border-radius:16px;background:rgba(255,255,255,.2);line-height:56px;font-size:32px;margin-bottom:10px">💜</div>`;
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -5780,8 +5788,8 @@ function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote }) {
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3fa;padding:32px 16px">
   <tr><td align="center">
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;background:#ffffff;border-radius:20px;box-shadow:0 10px 40px rgba(124,58,237,.08);overflow:hidden">
-      <tr><td style="background:linear-gradient(135deg,#7c3aed,#ec4899);padding:28px 32px;text-align:center">
-        <div style="display:inline-block;width:56px;height:56px;border-radius:16px;background:rgba(255,255,255,.2);line-height:56px;font-size:32px;margin-bottom:10px">💜</div>
+      <tr><td style="background:linear-gradient(135deg,${brand1},${brand2});padding:28px 32px;text-align:center">
+        ${logoHtml}
         <div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:.3px">${brand}</div>
       </td></tr>
       <tr><td style="padding:32px 32px 24px">
