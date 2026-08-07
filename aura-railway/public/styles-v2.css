@@ -4146,3 +4146,31 @@ html[data-theme="dark"] .stage {
     min-height: auto !important;
   }
 }
+
+/* ============================================================
+   MODO PRUEBAS / BETA privada — welcome más compacto
+   ============================================================ */
+.welcome-logo.welcome-logo-compact {
+  margin-top: 18px;
+  margin-bottom: 8px;
+}
+.welcome-logo.welcome-logo-compact .welcome-heart,
+.welcome-logo.welcome-logo-compact .welcome-heart.logo-transparent {
+  width: min(var(--logo-size, 88px), 88px) !important;
+  height: min(var(--logo-size, 88px), 88px) !important;
+  max-width: 88px !important;
+  max-height: 88px !important;
+}
+.screen-hero-beta .welcome-sub { margin: 8px 0 12px; font-size: 14px; }
+.screen-hero-beta .welcome-cta { gap: 8px; margin-top: 4px; }
+.screen-hero-beta .welcome-terms { margin-top: 10px; font-size: 12px; }
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
+  .welcome-logo.welcome-logo-compact { margin-top: 8px !important; margin-bottom: 4px !important; }
+  .welcome-logo.welcome-logo-compact .welcome-heart,
+  .welcome-logo.welcome-logo-compact .welcome-heart.logo-transparent {
+    width: min(var(--logo-size, 76px), 76px) !important;
+    height: min(var(--logo-size, 76px), 76px) !important;
+    max-width: 76px !important;
+    max-height: 76px !important;
+  }
+}
