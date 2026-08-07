@@ -6769,7 +6769,15 @@ async function enqueueEmail(templateId, userId, vars = {}) {
     let subject = interpolate(subjectTemplate, vars);
     if (vars.__test_redirect_prefix) subject = String(vars.__test_redirect_prefix) + subject;
     // Interpolar el HTML en español y luego traducir su cuerpo con el diccionario.
-    const htmlEs  = interpolate(tpl.html, vars);
+    let htmlEs  = interpolate(tpl.html, vars);
+    // Fallback para nota adicional (__extra_html): si el bloque no acabó
+    // presente porque la plantilla no usaba {{extra_note_html}}, lo inyectamos
+    // antes del pie del email o del cierre de body.
+    if (vars.__extra_html && !htmlEs.includes(vars.__extra_html)) {
+      const anchor = /(<hr\b|<footer\b|©|<\/body>)/i;
+      if (anchor.test(htmlEs)) htmlEs = htmlEs.replace(anchor, vars.__extra_html + "$1");
+      else htmlEs = htmlEs + vars.__extra_html;
+    }
     const bodyHtml = emailTx.translateBody(htmlEs, userLang);
     // Envolver con la cabecera de marca (logo Aura sobre fondo blanco).
     const html    = wrapEmailHtml(bodyHtml, { preheader: subject });
@@ -7109,7 +7117,7 @@ app.post("/api/admin/invites", wrap(async (req, res) => {
 
 /* Envío del email de invitación (usa enqueueEmail si existe, si no registra el
    evento de envío para permitir seguir el flujo de tracking manualmente). */
-async function sendInviteEmail(inv) {
+async function sendInviteEmail(inv, extraNote) {
   if (!inv || !inv.email) return;
   const baseUrl = process.env.PUBLIC_BASE_URL || "https://citasaura.es";
   const token = inv.track_token || genTrackToken();
@@ -7118,12 +7126,31 @@ async function sendInviteEmail(inv) {
   }
   const openPixel = `${baseUrl}/t/o/${token}.png`;
   const clickUrl = `${baseUrl}/t/c/${token}`;
+  // Sanitiza nota adicional (permite saltos de línea, escapa HTML)
+  const rawNote = String(extraNote || "").trim();
+  let noteHtml = "";
+  if (rawNote) {
+    const esc = rawNote
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br/>");
+    noteHtml = `<div style="margin:18px 0;padding:16px 18px;background:#fff8e1;border:1px solid #ffe082;border-left:4px solid #ffb300;border-radius:12px;color:#3f2c00;font-size:14px;line-height:1.55">
+      <div style="font-weight:700;margin-bottom:4px;color:#8a5b00">📝 Nota del equipo:</div>
+      ${esc}
+    </div>`;
+  }
   const vars = {
     code: inv.code,
     invite_url: clickUrl,
     pixel: openPixel,
     role: inv.role || "tester",
     campaign: inv.campaign || "beta",
+    extra_note: rawNote,
+    extra_note_html: noteHtml,
+    // Fallback: si la plantilla no contiene {{extra_note_html}}, enqueueEmail
+    // insertará este bloque antes del pie del email.
+    __extra_html: noteHtml,
     __lang: null,
   };
   try {
@@ -7132,16 +7159,22 @@ async function sendInviteEmail(inv) {
     }
   } catch (e) { /* si no hay template, seguimos marcando enviado */ }
   await pool.execute("UPDATE invites SET sent_at=NOW() WHERE id=?", [inv.id]);
-  try { await pool.execute("INSERT INTO invite_events (invite_id, kind) VALUES (?, 'sent')", [inv.id]); } catch {}
+  try {
+    await pool.execute(
+      "INSERT INTO invite_events (invite_id, kind, ua) VALUES (?, 'sent', ?)",
+      [inv.id, rawNote ? ("note:" + rawNote.slice(0,200)) : null]
+    );
+  } catch {}
 }
 
-/* Reenviar invitación por email */
+/* Reenviar invitación por email (acepta note opcional en el body) */
 app.post("/api/admin/invites/:id/send", wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT * FROM invites WHERE id=?", [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: "not_found" });
   const inv = rows[0];
   if (!inv.email) return res.status(400).json({ error: "no_email" });
-  await sendInviteEmail(inv);
+  const note = String((req.body && req.body.note) || "").slice(0, 2000);
+  await sendInviteEmail(inv, note);
   res.json({ ok: true });
 }));
 
