@@ -5766,16 +5766,41 @@ function routeCcAddress(templateId, category) {
   }
 }
 
-function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote }) {
+function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote, headerStyle }) {
   const brand = getSetting("content.brand.name","Aura") || "Aura";
   const brand1 = getSetting("content.design.brand1","#7c3aed") || "#7c3aed";
   const brand2 = getSetting("content.design.brand2","#ec4899") || "#ec4899";
-  const logoImg = getSetting("admin.logo_image","")
-    || getSetting("content.design.logo_image","")
-    || "";
-  const logoHtml = logoImg
-    ? `<img src="${logoImg}" alt="${brand}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;background:rgba(255,255,255,.2);margin-bottom:10px;display:inline-block"/>`
-    : `<div style="display:inline-block;width:56px;height:56px;border-radius:16px;background:rgba(255,255,255,.2);line-height:56px;font-size:32px;margin-bottom:10px">💜</div>`;
+
+  // headerStyle: "dark" (default, gradiente color) | "light" (fondo blanco)
+  const hstyle = headerStyle === "light" ? "light" : "dark";
+
+  // Luminosidad aproximada de un color hex para decidir cabecera
+  function _lum(hex){
+    const m = String(hex||"").match(/^#?([0-9a-f]{6})$/i); if(!m) return 0;
+    const n = parseInt(m[1],16); const r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+    return (0.2126*r + 0.7152*g + 0.0722*b)/255;
+  }
+  // Si el usuario forzó tema claro o el gradiente es muy claro → cabecera clara
+  const gradientIsLight = (_lum(brand1) + _lum(brand2)) / 2 > 0.75;
+  const useLightHeader = hstyle === "light" || gradientIsLight;
+
+  // Logo: si cabecera oscura → logo claro (aura-logo normal / _light variant);
+  // si cabecera clara → logo oscuro (variante para fondos blancos)
+  const logoDark = getSetting("admin.logo_image","") || getSetting("content.design.logo_image","") || "";
+  const logoLight = getSetting("admin.logo_image_light","") || getSetting("content.design.logo_image_light","") || "";
+  const chosenLogo = useLightHeader
+    ? (logoDark || logoLight)     // fondo blanco → logo oscuro
+    : (logoLight || logoDark);    // fondo oscuro → logo claro
+
+  const headerBg = useLightHeader
+    ? "background:#ffffff;border-bottom:1px solid #eee6f7"
+    : `background:linear-gradient(135deg,${brand1},${brand2})`;
+  const headerTextColor = useLightHeader ? "#1a1a2e" : "#ffffff";
+  const logoBgFallback = useLightHeader ? "rgba(124,58,237,.10)" : "rgba(255,255,255,.2)";
+
+  const logoHtml = chosenLogo
+    ? `<img src="${chosenLogo}" alt="${brand}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;background:${logoBgFallback};margin-bottom:10px;display:inline-block"/>`
+    : `<div style="display:inline-block;width:56px;height:56px;border-radius:16px;background:${logoBgFallback};line-height:56px;font-size:32px;margin-bottom:10px">💜</div>`;
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -5788,9 +5813,9 @@ function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote }) {
 <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3fa;padding:32px 16px">
   <tr><td align="center">
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;background:#ffffff;border-radius:20px;box-shadow:0 10px 40px rgba(124,58,237,.08);overflow:hidden">
-      <tr><td style="background:linear-gradient(135deg,${brand1},${brand2});padding:28px 32px;text-align:center">
+      <tr><td style="${headerBg};padding:28px 32px;text-align:center">
         ${logoHtml}
-        <div style="color:#fff;font-size:22px;font-weight:800;letter-spacing:.3px">${brand}</div>
+        <div style="color:${headerTextColor};font-size:22px;font-weight:800;letter-spacing:.3px">${brand}</div>
       </td></tr>
       <tr><td style="padding:32px 32px 24px">
         <h1 style="margin:0 0 8px;font-size:20px;font-weight:800;color:#1a1a2e">${title}</h1>
@@ -8993,6 +9018,24 @@ app.post("/api/my/messages", wrap(async (req, res) => {
       targetType: "conversation", targetId: cid, req,
     });
   } catch {}
+  // Push notification al otro usuario de la conversación
+  try {
+    const otherId = c[0].user_a === me ? c[0].user_b : c[0].user_a;
+    if (otherId && typeof notifyUser === "function") {
+      const [sender] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
+      const senderName = sender.length ? sender[0].name : "Alguien";
+      const preview = media_type === "text"
+        ? String(body || "").slice(0, 80)
+        : (media_type === "photo" ? "📷 Te envió una foto" : "🎤 Te envió un audio");
+      notifyUser(otherId, {
+        kind: "message",
+        title: senderName,
+        body: preview,
+        url: `/app#/chat/${cid}`,
+        meta: { conversation_id: cid, sender_id: me },
+      });
+    }
+  } catch {}
   res.json({ ok: true, id: r.insertId });
 }));
 
@@ -10247,6 +10290,83 @@ app.put("/api/my/notification-prefs", wrap(async (req, res) => {
   );
   res.json({ ok: true });
 }));
+
+/* ==================== WEB PUSH ==================== */
+let webPush = null;
+try {
+  webPush = require("web-push");
+  if (process.env.VAPID_PUBLIC && process.env.VAPID_PRIVATE) {
+    webPush.setVapidDetails(
+      process.env.VAPID_EMAIL || "mailto:soporte@citasaura.es",
+      process.env.VAPID_PUBLIC,
+      process.env.VAPID_PRIVATE
+    );
+    console.log("Web Push: configurado con VAPID");
+  } else {
+    console.log("Web Push: falta VAPID_PUBLIC/VAPID_PRIVATE en env");
+    webPush = null;
+  }
+} catch (e) {
+  console.log("Web Push: módulo no instalado (npm install web-push)");
+}
+
+// Endpoint público para que el cliente obtenga la clave pública
+app.get("/api/push/vapid-public-key", (req, res) => {
+  res.json({ key: process.env.VAPID_PUBLIC || "" });
+});
+
+// Envía notificación push a todos los dispositivos de un usuario
+async function sendPushToUser(userId, payload) {
+  if (!webPush) return { sent: 0 };
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, endpoint, p256dh, auth FROM user_push_subscriptions WHERE user_id=?",
+      [userId]
+    );
+    if (!rows.length) return { sent: 0 };
+    const data = JSON.stringify(payload || {});
+    let ok = 0;
+    for (const s of rows) {
+      try {
+        await webPush.sendNotification(
+          { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
+          data,
+          { TTL: 60 * 60 * 24 }
+        );
+        ok++;
+      } catch (e) {
+        // Endpoint expirado o inválido: eliminar
+        if (e && (e.statusCode === 404 || e.statusCode === 410)) {
+          try { await pool.execute("DELETE FROM user_push_subscriptions WHERE id=?", [s.id]); } catch {}
+        }
+      }
+    }
+    return { sent: ok };
+  } catch (e) {
+    console.error("push send error:", e.message);
+    return { sent: 0, error: e.message };
+  }
+}
+
+// Helper que crea notificación in-app (fila en tabla notifications) + envía push si tiene consentimiento
+async function notifyUser(userId, { kind, title, body, url, icon, meta }) {
+  try {
+    await pool.execute(
+      "INSERT INTO notifications (user_id, kind, title, body, url, meta, created_at) VALUES (?,?,?,?,?,?,NOW())",
+      [userId, String(kind||""), String(title||""), String(body||""), String(url||""), meta ? JSON.stringify(meta) : null]
+    );
+  } catch (e) {
+    // Si la tabla notifications no tiene todas esas columnas, no rompemos
+  }
+  // Enviar push (best-effort)
+  sendPushToUser(userId, {
+    title: title || "Aura",
+    body: body || "",
+    url: url || "/",
+    icon: icon || "/assets/aura-logo.png",
+    tag: kind || "aura",
+  }).catch(() => {});
+}
 
 app.post("/api/my/push-subscribe", wrap(async (req, res) => {
   const me = readMyUserId(req);
