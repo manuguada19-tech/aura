@@ -16,7 +16,7 @@
      usuario dejó la app instalada, se registre su última zona.
 */
 
-const CACHE_VERSION = "aura-v1";
+const CACHE_VERSION = "aura-v3";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
@@ -76,7 +76,28 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Cache-first para el resto (JS, CSS, imágenes)
+  // Para JS/CSS de la propia app: NETWORK-FIRST con fallback a cache.
+  // Así los cambios en app.js / styles.css se reflejan inmediatamente sin
+  // tener que esperar a que caduque un cache. Solo caemos al cache si no
+  // hay red (offline).
+  const isAppCode = /\.(?:js|css)(?:\?.*)?$/i.test(url.pathname);
+  if (isAppCode) {
+    event.respondWith((async () => {
+      try {
+        const resp = await fetch(req, { cache: "no-store" });
+        if (resp && resp.status === 200 && resp.type === "basic") {
+          try { const c = await caches.open(CACHE_VERSION); await c.put(req, resp.clone()); } catch {}
+        }
+        return resp;
+      } catch {
+        const cached = await caches.match(req);
+        return cached || offlineFallback();
+      }
+    })());
+    return;
+  }
+
+  // Cache-first para el resto (imágenes, fuentes, etc.)
   event.respondWith((async () => {
     const cached = await caches.match(req);
     if (cached) return cached;
@@ -182,8 +203,12 @@ self.addEventListener("push", (event) => {
     body: data.body || "",
     icon: data.icon || "/aura-logo.png",
     badge: data.badge || "/aura-logo-tiny.png",
+    image: data.image || undefined,
     tag: data.tag || "aura",
-    data: { url: data.url || "/" },
+    data: {
+      url: data.url || "/",
+      campaign_id: data.campaign_id || null,
+    },
     vibrate: [80, 30, 80],
   };
   event.waitUntil(self.registration.showNotification(title, options));
@@ -191,11 +216,30 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) || "/";
+  const d = event.notification.data || {};
+  const targetUrl = d.url || "/";
+  const campaignId = d.campaign_id || null;
   event.waitUntil((async () => {
+    // Track click asincrónico (best-effort). El backend usará X-User-Id que
+    // enviaremos vía el cliente cuando esté disponible; el sw no tiene sesión
+    // así que hacemos fetch sin auth: el endpoint acepta anónimo y solo
+    // registra user_id si hay session cookie.
+    if (campaignId) {
+      try {
+        await fetch("/api/my/push/click-track", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ campaign_id: campaignId }),
+          credentials: "include",
+        });
+      } catch {}
+    }
     const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const c of list) {
-      if ("focus" in c) { try { c.postMessage({ type: "push-click", url: targetUrl }); } catch {} return c.focus(); }
+      if ("focus" in c) {
+        try { c.postMessage({ type: "push-click", url: targetUrl, campaign_id: campaignId }); } catch {}
+        return c.focus();
+      }
     }
     if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
   })());

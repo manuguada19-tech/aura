@@ -3136,13 +3136,15 @@ function buildWelcomeLangSelector() {
 
 function screenWelcome(root) {
   root.classList.add("screen-hero");
+  const _welcomeTestMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (_welcomeTestMode) root.classList.add("screen-hero-beta");
 
   // Language flag selector (top-right of the welcome screen)
   root.appendChild(buildWelcomeLangSelector());
 
   const logoBg = T("content.design.logo_bg") || "gradient";
   const heartCls = "welcome-heart" + (logoBg === "transparent" ? " logo-transparent" : "");
-  root.appendChild(el("div", { class: "welcome-logo" }, [
+  root.appendChild(el("div", { class: "welcome-logo" + (_welcomeTestMode ? " welcome-logo-compact" : "") }, [
     el("div", { class: heartCls, html: buildLogoInnerHTML() })
   ]));
   root.appendChild(el("p", { class: "welcome-sub" }, T("content.welcome.subtitle")));
@@ -3240,7 +3242,7 @@ function screenWelcome(root) {
       class: "btn btn-ghost btn-block",
       style: "margin-top:8px;font-size:13px;opacity:.85",
       onclick: () => { try { showPrivateBetaScreen({}); } catch {} }
-    }, T("content.welcome.beta_status_btn") || "🧪 Ver estado de la beta / Soy superadmin"));
+    }, "🧪 Ver estado de la beta / Soy superadmin"));
   }
   // Terms text with clickable links to the Terms and Privacy screens.
   const termsText = T("content.welcome.terms") || "";
@@ -9665,24 +9667,10 @@ async function boot() {
       }
     }
   } catch {}
-  // Modo pruebas privadas: si no hay info-page pública ni usuario logueado,
-  // arrancamos directamente en la pantalla de beta (waitlist + acceso
-  // superadmin). El welcome también soporta el modo pero mostramos la
-  // pantalla beta cuando no hay flujo iniciado, para que quede claro que
-  // la app está en pruebas.
-  const _testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
-  if (!publicInfoScreen && _testMode && !state.user) {
-    try {
-      // Necesitamos revelar el DOM antes de que showPrivateBetaScreen pinte.
-      document.documentElement.classList.remove("js-loading");
-      const sp = document.getElementById("auraSplash"); if (sp) setTimeout(() => sp.remove(), 350);
-    } catch {}
-    try { showPrivateBetaScreen({}); }
-    catch { render(screenWelcome); }
-    try { applyContent(); } catch {}
-    startLivePolling();
-    return;
-  }
+  // Modo pruebas privadas: al arrancar mostramos la pantalla de bienvenida
+  // (con input de código de invitación de tester). Desde ahí el usuario
+  // puede pulsar "🧪 Ver estado de la beta / Soy superadmin" para ir a la
+  // pantalla beta (waitlist + acceso superadmin) si lo necesita.
   render(publicInfoScreen || screenWelcome);
   // Deep-link para apelaciones desde el email de moderación:
   // /?appeal=1&email=xxx  → siempre muestra primero la pantalla de aviso con
