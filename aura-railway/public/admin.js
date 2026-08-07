@@ -1224,6 +1224,8 @@ $("#nav").addEventListener("click", (e) => {
         icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>` },
       { view: "popups", label: "Popups & Push",
         icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>` },
+      { view: "push_campaigns", label: "Campañas Push",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>` },
       { view: "device_incidents", label: "Dispositivos perdidos",
         icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/><path d="M2 12h2M20 12h2M12 2v2M12 22v-2"/></svg>` },
     ];
@@ -1279,6 +1281,7 @@ function route(view) {
     staff: viewStaff,
     newsletter: viewNewsletter,
     popups: viewPopups,
+    push_campaigns: viewPushCampaigns,
     device_incidents: viewDeviceIncidents,
     // Legacy: 'live' redirige a chats (fusionado en V410)
     live: viewChatsAdmin,
@@ -15160,6 +15163,332 @@ async function pickMessageOrTemplate(kind, promptLabel) {
       document.body.appendChild(overlay);
     });
   } catch(e) { return prompt(promptLabel) || null; }
+}
+
+/* ============================================================
+   Campañas Push · envío masivo o segmentado de notificaciones
+   ============================================================ */
+async function viewPushCampaigns(root) {
+  root.appendChild(viewTitle(
+    "🔔 Campañas Push",
+    "Envía notificaciones push a tus usuarios: anuncios, ofertas, avisos de mantenimiento, novedades. Segmentación por zona, país, edad, premium/free o lista de user_ids."
+  ));
+
+  root.appendChild(sectionLegend("Guía rápida", [
+    ["📢", "Enviar ahora (broadcast inmediato)"],
+    ["⏰", "Programar para más tarde"],
+    ["🎯", "Segmentar por audiencia"],
+    ["🧪", "Prueba a un usuario antes de enviar"],
+    ["👁", "Ver estadísticas: entregadas / clics / fallos"],
+  ]));
+
+  // Panel de estadísticas
+  const statsBar = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px" });
+  root.appendChild(statsBar);
+  api.get("/api/admin/push/stats").then(s => {
+    statsBar.innerHTML = "";
+    const cards = [
+      { l: "👤 Usuarios con push", v: s.unique_registered_users || 0, sub: `${s.total_registered_devices||0} dispositivos` },
+      { l: "👻 Visitantes anónimos", v: s.anon_devices || 0, sub: "PWA instalada sin cuenta" },
+      { l: "🌎 Total alcance", v: (s.total_registered_devices||0) + (s.anon_devices||0), sub: "Todos los dispositivos" },
+    ];
+    cards.forEach(c => {
+      const box = el("div", { style: "flex:1;min-width:180px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(236,72,153,.12));border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px" }, [
+        el("div", { style: "font-size:11px;opacity:.7;text-transform:uppercase;letter-spacing:.4px" }, c.l),
+        el("div", { style: "font-size:26px;font-weight:700;margin:4px 0" }, String(c.v)),
+        el("small", { style: "opacity:.7;font-size:11px" }, c.sub),
+      ]);
+      statsBar.appendChild(box);
+    });
+  }).catch(()=>{ statsBar.style.display = "none"; });
+
+  // Acciones superiores
+  const bar = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px" });
+  const btnNew = el("button", { class: "btn primary" }, "➕ Nueva campaña");
+  const btnRefresh = el("button", { class: "btn" }, "🔄 Actualizar");
+  bar.appendChild(btnNew);
+  bar.appendChild(btnRefresh);
+  root.appendChild(bar);
+
+  // Tabla
+  const listWrap = el("div");
+  root.appendChild(listWrap);
+
+  async function load() {
+    listWrap.innerHTML = '<div class="loading">Cargando…</div>';
+    try {
+      const j = await api.get("/api/admin/push/campaigns?limit=100");
+      const items = j.campaigns || [];
+      listWrap.innerHTML = "";
+      if (!items.length) {
+        listWrap.appendChild(el("div", { class: "empty", style: "padding:24px;text-align:center;opacity:.6" },
+          "Aún no has enviado ninguna campaña. Crea la primera con '➕ Nueva campaña'."));
+        return;
+      }
+      const tbl = el("table", { class: "data-table" });
+      tbl.innerHTML = `<thead><tr>
+        <th>ID</th><th>Título</th><th>Segmento</th><th>Estado</th>
+        <th>Objetivo</th><th>Entregadas</th><th>Clics</th><th>Fecha</th><th>Acciones</th>
+      </tr></thead>`;
+      const tbody = el("tbody");
+      items.forEach(c => {
+        const tr = el("tr");
+        const stColors = { draft:"#6b7280", queued:"#3b82f6", sending:"#f59e0b", sent:"#10b981", failed:"#dc2626", scheduled:"#8b5cf6" };
+        const stBg = stColors[c.status] || "#6b7280";
+        tr.innerHTML = `
+          <td>#${c.id}</td>
+          <td><strong>${escapeHtml(c.title||"")}</strong><br><small style="opacity:.7">${escapeHtml((c.body||"").slice(0,80))}</small></td>
+          <td>${escapeHtml(c.segment||"all")}</td>
+          <td><span style="background:${stBg};color:#fff;padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600">${c.status}</span></td>
+          <td>${c.target_count||0}</td>
+          <td>${c.delivered_count||0}</td>
+          <td>${c.click_count||0}</td>
+          <td><small>${c.sent_at ? new Date(c.sent_at).toLocaleString() : (c.scheduled_at ? "⏰ "+new Date(c.scheduled_at).toLocaleString() : new Date(c.created_at).toLocaleString())}</small></td>
+        `;
+        const tdAct = el("td");
+        if (c.status === "draft" || c.status === "failed" || c.status === "scheduled") {
+          const btnSend = el("button", { class: "btn btn-sm primary", style: "margin-right:4px" }, "📢 Enviar ahora");
+          btnSend.addEventListener("click", async () => {
+            if (!confirm(`Enviar campaña #${c.id} ahora?`)) return;
+            btnSend.disabled = true;
+            try { await api.post(`/api/admin/push/campaigns/${c.id}/send-now`, {}); toast("Enviando…"); setTimeout(load, 2000); }
+            catch (e) { alert("Error: " + e.message); btnSend.disabled = false; }
+          });
+          tdAct.appendChild(btnSend);
+        }
+        const btnDup = el("button", { class: "btn btn-sm", style: "margin-right:4px" }, "📋 Duplicar");
+        btnDup.addEventListener("click", () => openCampaignEditor({
+          title: c.title, body: c.body, url: c.url, segment: c.segment
+        }));
+        tdAct.appendChild(btnDup);
+        const btnDel = el("button", { class: "btn btn-sm danger" }, "🗑");
+        btnDel.addEventListener("click", async () => {
+          if (!confirm("Borrar esta campaña? El histórico se perderá.")) return;
+          try { await api.del(`/api/admin/push/campaigns/${c.id}`); toast("Borrada"); load(); }
+          catch(e) { alert("Error: " + e.message); }
+        });
+        tdAct.appendChild(btnDel);
+        tr.appendChild(tdAct);
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      listWrap.appendChild(tbl);
+    } catch (e) {
+      listWrap.innerHTML = `<div class="error" style="padding:16px">Error cargando campañas: ${e.message}</div>`;
+    }
+  }
+  btnRefresh.addEventListener("click", load);
+  btnNew.addEventListener("click", () => openCampaignEditor());
+  load();
+
+  function openCampaignEditor(prefill) {
+    prefill = prefill || {};
+    const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto" });
+    const modal = el("div", { style: "background:var(--card,#fff);color:var(--text,#111);max-width:600px;width:100%;border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);margin:20px 0" });
+
+    modal.appendChild(el("h2", { style: "margin:0 0 4px;font-size:20px" }, "🔔 Nueva campaña push"));
+    modal.appendChild(el("p", { style: "margin:0 0 16px;opacity:.7;font-size:13px" }, "Diseña tu notificación y elige a quién enviarla."));
+
+    // Plantillas rápidas
+    const templates = [
+      { name: "🎁 Oferta", title: "¡50% de descuento en Premium!", body: "Solo hoy: consigue todos los beneficios a mitad de precio.", url: "/#/premium" },
+      { name: "✨ Nueva función", title: "Nueva función disponible", body: "Descubre lo último en Aura. Actualiza y pruébala ya.", url: "/#/me" },
+      { name: "🌟 Recordatorio", title: "Tienes matches esperándote", body: "Vuelve a la app, hay gente interesada en ti.", url: "/#/matches" },
+      { name: "🎉 Evento", title: "Evento especial de Aura", body: "Únete al evento de esta semana y conoce gente nueva.", url: "/#/discover" },
+      { name: "🛠 Mantenimiento", title: "Mantenimiento programado", body: "Estaremos en mantenimiento este viernes de 03:00 a 04:00.", url: "/" },
+      { name: "📱 Instalar app", title: "Instala Aura en tu móvil", body: "Accede más rápido añadiéndola a tu pantalla de inicio.", url: "/" },
+    ];
+    const tmpBar = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px" });
+    tmpBar.appendChild(el("small", { style: "width:100%;opacity:.7" }, "Plantillas rápidas:"));
+    templates.forEach(t => {
+      const b = el("button", { class: "btn btn-sm", style: "font-size:12px" }, t.name);
+      b.addEventListener("click", () => { titleI.value = t.title; bodyI.value = t.body; urlI.value = t.url; updatePreview(); });
+      tmpBar.appendChild(b);
+    });
+    modal.appendChild(tmpBar);
+
+    // Campos
+    function field(label, help, node) {
+      const f = el("div", { style: "margin-bottom:14px" });
+      f.appendChild(el("label", { style: "display:block;font-size:13px;font-weight:600;margin-bottom:4px" }, label));
+      if (help) f.appendChild(el("small", { style: "display:block;opacity:.65;margin-bottom:6px;font-size:12px" }, help));
+      f.appendChild(node);
+      return f;
+    }
+
+    const titleI = el("input", { type: "text", maxlength: 200, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", value: prefill.title || "", placeholder: "Ej: ¡Oferta exclusiva de fin de semana!" });
+    const bodyI = el("textarea", { rows: 3, maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px;resize:vertical", placeholder: "Ej: 50% de descuento en Premium hasta el domingo." }, prefill.body || "");
+    const urlI = el("input", { type: "text", maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", value: prefill.url || "/", placeholder: "/#/premium" });
+    const iconI = el("input", { type: "text", maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", placeholder: "/aura-logo.png (opcional)" });
+    const imageI = el("input", { type: "text", maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", placeholder: "https://... (imagen grande opcional, Android)" });
+
+    modal.appendChild(field("Título", "Máx 200 caracteres. Aparece en negrita.", titleI));
+    modal.appendChild(field("Cuerpo", "Máx 500 caracteres. Descripción corta.", bodyI));
+    modal.appendChild(field("URL destino al hacer clic", "Se abre cuando el usuario toca la notificación. Puede ser una ruta de la app (ej: /#/matches).", urlI));
+    modal.appendChild(field("Icono (opcional)", "URL de icono cuadrado 192x192.", iconI));
+    modal.appendChild(field("Imagen grande (opcional)", "URL de imagen 1200x600. Solo Android.", imageI));
+
+    // Vista previa
+    const preview = el("div", { style: "background:#1f2937;color:#fff;border-radius:12px;padding:14px;margin:12px 0;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.3)" });
+    function updatePreview() {
+      preview.innerHTML = `
+        <div style="display:flex;align-items:start;gap:10px">
+          <div style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;flex-shrink:0">🔔</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:14px">${escapeHtml(titleI.value || "Aura")}</div>
+            <div style="opacity:.85;margin-top:2px">${escapeHtml(bodyI.value || "Vista previa del mensaje")}</div>
+            <small style="opacity:.55;display:block;margin-top:4px">citasaura.es</small>
+          </div>
+        </div>`;
+    }
+    titleI.addEventListener("input", updatePreview);
+    bodyI.addEventListener("input", updatePreview);
+    modal.appendChild(el("label", { style: "display:block;font-size:13px;font-weight:600;margin:8px 0 6px" }, "Vista previa"));
+    modal.appendChild(preview);
+    updatePreview();
+
+    // Segmentación
+    const segSel = el("select", { style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px" }, [
+      el("option", { value: "all" }, "👥 Todos los usuarios registrados"),
+      el("option", { value: "all_including_anon" }, "🌍 TODOS (registrados + visitantes con PWA)"),
+      el("option", { value: "premium" }, "💎 Solo usuarios Premium"),
+      el("option", { value: "free" }, "🆓 Solo usuarios gratuitos"),
+      el("option", { value: "zone" }, "🌈 Por zona (hetero / lgtb)"),
+      el("option", { value: "country" }, "🌎 Por país (registrados)"),
+      el("option", { value: "city" }, "🏙 Por ciudad (registrados)"),
+      el("option", { value: "age" }, "🎂 Por rango de edad"),
+      el("option", { value: "active_days" }, "⚡ Activos en los últimos N días"),
+      el("option", { value: "user_ids" }, "🎯 Lista específica de user_ids"),
+      el("option", { value: "anon" }, "👻 Solo visitantes SIN cuenta (PWA anónima)"),
+      el("option", { value: "anon_country" }, "👻🌎 Visitantes sin cuenta por país"),
+      el("option", { value: "anon_lang" }, "👻🗣 Visitantes sin cuenta por idioma"),
+    ]);
+    if (prefill.segment) segSel.value = prefill.segment;
+
+    const segParamsWrap = el("div", { style: "margin-top:8px;padding:10px;background:rgba(0,0,0,.04);border-radius:8px" });
+    function renderSegParams() {
+      segParamsWrap.innerHTML = "";
+      const v = segSel.value;
+      if (v === "zone") {
+        const s = el("select", { name: "zone", style: "width:100%;padding:8px;border-radius:6px" }, [
+          el("option", { value: "hetero" }, "Hetero"), el("option", { value: "lgtb" }, "LGTB+")
+        ]); segParamsWrap.appendChild(s);
+      } else if (v === "country" || v === "anon_country") {
+        segParamsWrap.appendChild(el("input", { name: "country", placeholder: "Ej: España", style: "width:100%;padding:8px;border-radius:6px" }));
+      } else if (v === "city") {
+        segParamsWrap.appendChild(el("input", { name: "city", placeholder: "Ej: Madrid", style: "width:100%;padding:8px;border-radius:6px" }));
+      } else if (v === "age") {
+        const min = el("input", { name: "min_age", type: "number", placeholder: "Edad mínima (18)", value: "18", style: "flex:1;padding:8px;border-radius:6px" });
+        const max = el("input", { name: "max_age", type: "number", placeholder: "Edad máxima (99)", value: "99", style: "flex:1;padding:8px;border-radius:6px" });
+        segParamsWrap.appendChild(el("div", { style: "display:flex;gap:8px" }, [min, max]));
+      } else if (v === "active_days") {
+        segParamsWrap.appendChild(el("input", { name: "days", type: "number", placeholder: "Últimos N días (ej: 7)", value: "7", style: "width:100%;padding:8px;border-radius:6px" }));
+      } else if (v === "user_ids") {
+        segParamsWrap.appendChild(el("textarea", { name: "user_ids", rows: 3, placeholder: "IDs separados por coma. Ej: 12,34,56,78", style: "width:100%;padding:8px;border-radius:6px" }));
+      } else if (v === "anon_lang") {
+        segParamsWrap.appendChild(el("input", { name: "lang", placeholder: "Ej: es, en, fr, pt", style: "width:100%;padding:8px;border-radius:6px" }));
+        segParamsWrap.appendChild(el("small", { style: "display:block;margin-top:4px;opacity:.6" }, "Prefijo del idioma detectado por navigator.language en el visitante."));
+      } else if (v === "anon") {
+        segParamsWrap.appendChild(el("small", { style: "opacity:.6" }, "Todos los visitantes con PWA instalada y sin cuenta creada."));
+      } else if (v === "all_including_anon") {
+        segParamsWrap.appendChild(el("small", { style: "opacity:.6" }, "Máximo alcance: incluye a usuarios registrados con push activo + visitantes anónimos con PWA. Úsalo para anuncios generales, mantenimiento, etc."));
+      } else {
+        segParamsWrap.appendChild(el("small", { style: "opacity:.6" }, "Sin parámetros adicionales."));
+      }
+    }
+    segSel.addEventListener("change", renderSegParams);
+    renderSegParams();
+    modal.appendChild(field("🎯 Segmentación", "Elige quién recibirá la notificación.", el("div", {}, [segSel, segParamsWrap])));
+
+    // Preview audience
+    const audInfo = el("div", { style: "margin:8px 0;padding:10px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);border-radius:8px;font-size:13px" }, "Pulsa 'Calcular audiencia' para saber a cuántos usuarios llegará.");
+    const btnAud = el("button", { class: "btn btn-sm", type: "button" }, "🧮 Calcular audiencia");
+    btnAud.addEventListener("click", async () => {
+      const params = buildSegParams();
+      btnAud.disabled = true;
+      try {
+        const j = await api.post("/api/admin/push/preview-audience", { segment: segSel.value, segment_params: params });
+        const parts = [];
+        if (j.users) parts.push(`<strong>${j.users}</strong> registrados`);
+        if (j.anons) parts.push(`<strong>${j.anons}</strong> anónimos`);
+        audInfo.innerHTML = `📊 Total: <strong>${j.count}</strong> dispositivos` + (parts.length ? ` &nbsp;·&nbsp; ${parts.join(" + ")}` : "");
+        audInfo.style.background = "rgba(16,185,129,.1)";
+        audInfo.style.borderColor = "rgba(16,185,129,.4)";
+      } catch(e) { audInfo.textContent = "Error: " + e.message; }
+      finally { btnAud.disabled = false; }
+    });
+    modal.appendChild(el("div", { style: "display:flex;gap:8px;align-items:center;margin-bottom:8px" }, [btnAud, audInfo]));
+
+    // Programación
+    const scheduleI = el("input", { type: "datetime-local", style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px" });
+    modal.appendChild(field("⏰ Programar (opcional)", "Deja vacío para enviar inmediatamente.", scheduleI));
+
+    // Prueba
+    const testWrap = el("div", { style: "display:flex;gap:8px;margin-bottom:14px;align-items:center;padding:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px" });
+    testWrap.appendChild(el("small", { style: "flex:1" }, "🧪 Probar en un user_id concreto antes de enviar:"));
+    const testInp = el("input", { type: "number", placeholder: "user_id", style: "width:100px;padding:6px;border-radius:6px" });
+    const btnTest = el("button", { class: "btn btn-sm", type: "button" }, "Enviar prueba");
+    btnTest.addEventListener("click", async () => {
+      const uid = parseInt(testInp.value,10);
+      if (!uid) return alert("Introduce un user_id");
+      btnTest.disabled = true;
+      try {
+        const j = await api.post("/api/admin/push/test", { user_id: uid, title: titleI.value, body: bodyI.value, url: urlI.value, icon: iconI.value || undefined });
+        toast(`Prueba enviada. Dispositivos alcanzados: ${j.sent||0}`);
+      } catch(e) { alert("Error: " + e.message); }
+      finally { btnTest.disabled = false; }
+    });
+    testWrap.appendChild(testInp);
+    testWrap.appendChild(btnTest);
+    modal.appendChild(testWrap);
+
+    function buildSegParams() {
+      const p = {};
+      segParamsWrap.querySelectorAll("input,select,textarea").forEach(i => {
+        const name = i.name;
+        if (!name) return;
+        let v = i.value;
+        if (name === "user_ids") { p[name] = v.split(",").map(x=>parseInt(x.trim(),10)).filter(Boolean); }
+        else if (name === "min_age" || name === "max_age" || name === "days") { p[name] = parseInt(v,10) || undefined; }
+        else if (v) p[name] = v;
+      });
+      return p;
+    }
+
+    // Acciones
+    const foot = el("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:16px" });
+    const btnCancel = el("button", { class: "btn" }, "Cancelar");
+    btnCancel.addEventListener("click", () => overlay.remove());
+    const btnDraft = el("button", { class: "btn" }, "💾 Guardar borrador");
+    const btnSchedule = el("button", { class: "btn" }, "⏰ Programar");
+    const btnSend = el("button", { class: "btn primary" }, "📢 Enviar ahora");
+
+    async function submit(mode) {
+      if (!titleI.value.trim() || !bodyI.value.trim()) { alert("Título y cuerpo son obligatorios."); return; }
+      if (mode === "scheduled" && !scheduleI.value) { alert("Elige fecha de envío."); return; }
+      const payload = {
+        title: titleI.value, body: bodyI.value, url: urlI.value || "/",
+        icon: iconI.value || null, image: imageI.value || null,
+        segment: segSel.value, segment_params: buildSegParams(),
+        send_now: mode === "send", scheduled_at: mode === "scheduled" ? scheduleI.value : null,
+      };
+      try {
+        const j = await api.post("/api/admin/push/campaigns", payload);
+        toast("Campaña creada: #" + j.id);
+        overlay.remove();
+        load();
+      } catch(e) { alert("Error: " + e.message); }
+    }
+    btnDraft.addEventListener("click", () => submit("draft"));
+    btnSchedule.addEventListener("click", () => submit("scheduled"));
+    btnSend.addEventListener("click", () => submit("send"));
+    foot.appendChild(btnCancel); foot.appendChild(btnDraft); foot.appendChild(btnSchedule); foot.appendChild(btnSend);
+    modal.appendChild(foot);
+
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
 }
 
 async function viewDeviceIncidents(root) {

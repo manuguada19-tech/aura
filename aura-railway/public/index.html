@@ -487,46 +487,98 @@
       });
     }
 
-    // 2) Suscripción a Web Push
+    // 2) Suscripción a Web Push (registrada o anónima)
+    async function getPushSubscription(){
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+      let reg; try { reg = await navigator.serviceWorker.ready; } catch { return null; }
+      let existing = await reg.pushManager.getSubscription();
+      if (existing) return { reg, sub: existing };
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") return null;
+      const r = await fetch("/api/push/vapid-public-key");
+      const { key } = await r.json();
+      if (!key) return null;
+      const raw = atob(key.replace(/-/g,"+").replace(/_/g,"/"));
+      const arr = new Uint8Array(raw.length);
+      for (let i=0;i<raw.length;i++) arr[i] = raw.charCodeAt(i);
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: arr,
+      });
+      return { reg, sub };
+    }
+
     async function initPush(){
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
       const uid = getUserId();
-      if (!uid) return;
-      let reg; try { reg = await navigator.serviceWorker.ready; } catch { return; }
-      const existing = await reg.pushManager.getSubscription();
-      if (existing) return;
-
       window.activarNotificacionesPush = async function(){
         try {
-          const perm = await Notification.requestPermission();
-          if (perm !== "granted") return { ok:false, reason:"denied" };
-          const r = await fetch("/api/push/vapid-public-key");
-          const { key } = await r.json();
-          if (!key) return { ok:false, reason:"no_vapid" };
-          const raw = atob(key.replace(/-/g,"+").replace(/_/g,"/"));
-          const arr = new Uint8Array(raw.length);
-          for (let i=0;i<raw.length;i++) arr[i] = raw.charCodeAt(i);
-          const sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: arr,
-          });
-          const payload = sub.toJSON();
-          await fetch("/api/my/push-subscribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-User-Id": uid },
-            body: JSON.stringify({
-              endpoint: payload.endpoint,
-              keys: payload.keys,
-              device_name: navigator.userAgent.slice(0, 120),
-            })
-          });
+          const got = await getPushSubscription();
+          if (!got) return { ok:false, reason:"denied" };
+          const payload = got.sub.toJSON();
+          const currentUid = getUserId();
+          if (currentUid) {
+            // Suscripción de usuario registrado
+            await fetch("/api/my/push-subscribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-User-Id": currentUid },
+              body: JSON.stringify({
+                endpoint: payload.endpoint,
+                keys: payload.keys,
+                device_name: navigator.userAgent.slice(0, 120),
+              })
+            });
+            // Reclamar suscripción anónima previa por si existía
+            fetch("/api/my/push-claim", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-User-Id": currentUid },
+              body: JSON.stringify({ endpoint: payload.endpoint })
+            }).catch(()=>{});
+          } else {
+            // Suscripción anónima
+            await fetch("/api/push-subscribe-anon", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                endpoint: payload.endpoint,
+                keys: payload.keys,
+                lang: navigator.language || "",
+                fingerprint: (navigator.userAgent || "").slice(0, 120),
+              })
+            });
+          }
           return { ok:true };
         } catch(e){ return { ok:false, reason:e.message }; }
       };
+      // Auto-suscribir si el permiso ya está concedido (retención)
       if (Notification.permission === "granted") {
         try { await window.activarNotificacionesPush(); } catch {}
       }
     }
+
+    // Cuando el usuario se logue después, reclamamos la suscripción anónima.
+    window.addEventListener("storage", async (ev) => {
+      if (ev.key !== "aura-session") return;
+      const uid = getUserId();
+      if (!uid) return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          const p = sub.toJSON();
+          fetch("/api/my/push-claim", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-User-Id": uid },
+            body: JSON.stringify({ endpoint: p.endpoint })
+          }).catch(()=>{});
+          fetch("/api/my/push-subscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-User-Id": uid },
+            body: JSON.stringify({ endpoint: p.endpoint, keys: p.keys, device_name: navigator.userAgent.slice(0, 120) })
+          }).catch(()=>{});
+        }
+      } catch {}
+    });
 
     navigator.serviceWorker && navigator.serviceWorker.addEventListener("message", (ev) => {
       if (ev.data && ev.data.type === "push-click" && ev.data.url) {
@@ -555,9 +607,10 @@
       } catch {}
     }
 
-    // Arranque tras login (esperamos a que aura-session esté disponible)
+    // Arranque: initPush se llama siempre (soporta anónimo), 2FA sólo con login.
+    setTimeout(() => { try { initPush(); } catch {} }, 3000);
     function bootWhenLogged(){
-      if (getUserId()) { initPush(); twofaReminder(); return; }
+      if (getUserId()) { twofaReminder(); return; }
       setTimeout(bootWhenLogged, 2000);
     }
     setTimeout(bootWhenLogged, 3000);
