@@ -15283,11 +15283,14 @@ async function viewPushCampaigns(root) {
 
   function openCampaignEditor(prefill) {
     prefill = prefill || {};
+    // Estilos base para inputs, se aplican con var() del tema activo.
+    const INPUT_STYLE = "width:100%;padding:10px;background:var(--panel-2,#191d27);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:8px;font-size:14px;box-sizing:border-box";
+    const INPUT_SM = "padding:8px;background:var(--panel-2,#191d27);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:6px;font-size:13px;box-sizing:border-box";
     const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto" });
-    const modal = el("div", { style: "background:var(--card,#fff);color:var(--text,#111);max-width:600px;width:100%;border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);margin:20px 0" });
+    const modal = el("div", { style: "background:var(--panel,#14171f);color:var(--text,#ecedf3);max-width:600px;width:100%;border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);margin:20px 0;border:1px solid var(--border,#262a36)" });
 
-    modal.appendChild(el("h2", { style: "margin:0 0 4px;font-size:20px" }, "🔔 Nueva campaña push"));
-    modal.appendChild(el("p", { style: "margin:0 0 16px;opacity:.7;font-size:13px" }, "Diseña tu notificación y elige a quién enviarla."));
+    modal.appendChild(el("h2", { style: "margin:0 0 4px;font-size:20px;color:var(--text,#ecedf3)" }, "🔔 Nueva campaña push"));
+    modal.appendChild(el("p", { style: "margin:0 0 16px;color:var(--muted,#8f95a3);font-size:13px" }, "Diseña tu notificación y elige a quién enviarla."));
 
     // Plantillas rápidas
     const templates = [
@@ -15299,7 +15302,7 @@ async function viewPushCampaigns(root) {
       { name: "📱 Instalar app", title: "Instala Aura en tu móvil", body: "Accede más rápido añadiéndola a tu pantalla de inicio.", url: "/" },
     ];
     const tmpBar = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px" });
-    tmpBar.appendChild(el("small", { style: "width:100%;opacity:.7" }, "Plantillas rápidas:"));
+    tmpBar.appendChild(el("small", { style: "width:100%;color:var(--muted,#8f95a3)" }, "Plantillas rápidas:"));
     templates.forEach(t => {
       const b = el("button", { class: "btn btn-sm", style: "font-size:12px" }, t.name);
       b.addEventListener("click", () => { titleI.value = t.title; bodyI.value = t.body; urlI.value = t.url; updatePreview(); });
@@ -15310,17 +15313,17 @@ async function viewPushCampaigns(root) {
     // Campos
     function field(label, help, node) {
       const f = el("div", { style: "margin-bottom:14px" });
-      f.appendChild(el("label", { style: "display:block;font-size:13px;font-weight:600;margin-bottom:4px" }, label));
-      if (help) f.appendChild(el("small", { style: "display:block;opacity:.65;margin-bottom:6px;font-size:12px" }, help));
+      f.appendChild(el("label", { style: "display:block;font-size:13px;font-weight:600;margin-bottom:4px;color:var(--text,#ecedf3)" }, label));
+      if (help) f.appendChild(el("small", { style: "display:block;color:var(--muted,#8f95a3);margin-bottom:6px;font-size:12px" }, help));
       f.appendChild(node);
       return f;
     }
 
-    const titleI = el("input", { type: "text", maxlength: 200, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", value: prefill.title || "", placeholder: "Ej: ¡Oferta exclusiva de fin de semana!" });
-    const bodyI = el("textarea", { rows: 3, maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px;resize:vertical", placeholder: "Ej: 50% de descuento en Premium hasta el domingo." }, prefill.body || "");
-    const urlI = el("input", { type: "text", maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", value: prefill.url || "/", placeholder: "/#/premium" });
-    const iconI = el("input", { type: "text", maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", placeholder: "/aura-logo.png (opcional)" });
-    const imageI = el("input", { type: "text", maxlength: 500, style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px", placeholder: "https://... (imagen grande opcional, Android)" });
+    const titleI = el("input", { type: "text", maxlength: 200, style: INPUT_STYLE, value: prefill.title || "", placeholder: "Ej: ¡Oferta exclusiva de fin de semana!" });
+    const bodyI = el("textarea", { rows: 3, maxlength: 500, style: INPUT_STYLE + ";resize:vertical", placeholder: "Ej: 50% de descuento en Premium hasta el domingo." }, prefill.body || "");
+    const urlI = el("input", { type: "text", maxlength: 500, style: INPUT_STYLE, value: prefill.url || "/", placeholder: "/#/premium" });
+    const iconI = el("input", { type: "text", maxlength: 500, style: INPUT_STYLE, placeholder: "/aura-logo.png (opcional)" });
+    const imageI = el("input", { type: "text", maxlength: 500, style: INPUT_STYLE, placeholder: "https://... (imagen grande opcional, Android)" });
 
     modal.appendChild(field("Título", "Máx 200 caracteres. Aparece en negrita.", titleI));
     modal.appendChild(field("Cuerpo", "Máx 500 caracteres. Descripción corta.", bodyI));
@@ -15343,12 +15346,12 @@ async function viewPushCampaigns(root) {
     }
     titleI.addEventListener("input", updatePreview);
     bodyI.addEventListener("input", updatePreview);
-    modal.appendChild(el("label", { style: "display:block;font-size:13px;font-weight:600;margin:8px 0 6px" }, "Vista previa"));
+    modal.appendChild(el("label", { style: "display:block;font-size:13px;font-weight:600;margin:8px 0 6px;color:var(--text,#ecedf3)" }, "Vista previa"));
     modal.appendChild(preview);
     updatePreview();
 
     // Segmentación
-    const segSel = el("select", { style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px" }, [
+    const segSel = el("select", { style: INPUT_STYLE }, [
       el("option", { value: "all" }, "👥 Todos los usuarios registrados"),
       el("option", { value: "all_including_anon" }, "🌍 TODOS (registrados + visitantes con PWA)"),
       el("option", { value: "premium" }, "💎 Solo usuarios Premium"),
@@ -15365,35 +15368,35 @@ async function viewPushCampaigns(root) {
     ]);
     if (prefill.segment) segSel.value = prefill.segment;
 
-    const segParamsWrap = el("div", { style: "margin-top:8px;padding:10px;background:rgba(0,0,0,.04);border-radius:8px" });
+    const segParamsWrap = el("div", { style: "margin-top:8px;padding:10px;background:var(--panel-2,#191d27);border:1px solid var(--border,#262a36);border-radius:8px" });
     function renderSegParams() {
       segParamsWrap.innerHTML = "";
       const v = segSel.value;
       if (v === "zone") {
-        const s = el("select", { name: "zone", style: "width:100%;padding:8px;border-radius:6px" }, [
+        const s = el("select", { name: "zone", style: INPUT_SM + ";width:100%" }, [
           el("option", { value: "hetero" }, "Hetero"), el("option", { value: "lgtb" }, "LGTB+")
         ]); segParamsWrap.appendChild(s);
       } else if (v === "country" || v === "anon_country") {
-        segParamsWrap.appendChild(el("input", { name: "country", placeholder: "Ej: España", style: "width:100%;padding:8px;border-radius:6px" }));
+        segParamsWrap.appendChild(el("input", { name: "country", placeholder: "Ej: España", style: INPUT_SM + ";width:100%" }));
       } else if (v === "city") {
-        segParamsWrap.appendChild(el("input", { name: "city", placeholder: "Ej: Madrid", style: "width:100%;padding:8px;border-radius:6px" }));
+        segParamsWrap.appendChild(el("input", { name: "city", placeholder: "Ej: Madrid", style: INPUT_SM + ";width:100%" }));
       } else if (v === "age") {
-        const min = el("input", { name: "min_age", type: "number", placeholder: "Edad mínima (18)", value: "18", style: "flex:1;padding:8px;border-radius:6px" });
-        const max = el("input", { name: "max_age", type: "number", placeholder: "Edad máxima (99)", value: "99", style: "flex:1;padding:8px;border-radius:6px" });
+        const min = el("input", { name: "min_age", type: "number", placeholder: "Edad mínima (18)", value: "18", style: INPUT_SM + ";flex:1" });
+        const max = el("input", { name: "max_age", type: "number", placeholder: "Edad máxima (99)", value: "99", style: INPUT_SM + ";flex:1" });
         segParamsWrap.appendChild(el("div", { style: "display:flex;gap:8px" }, [min, max]));
       } else if (v === "active_days") {
-        segParamsWrap.appendChild(el("input", { name: "days", type: "number", placeholder: "Últimos N días (ej: 7)", value: "7", style: "width:100%;padding:8px;border-radius:6px" }));
+        segParamsWrap.appendChild(el("input", { name: "days", type: "number", placeholder: "Últimos N días (ej: 7)", value: "7", style: INPUT_SM + ";width:100%" }));
       } else if (v === "user_ids") {
-        segParamsWrap.appendChild(el("textarea", { name: "user_ids", rows: 3, placeholder: "IDs separados por coma. Ej: 12,34,56,78", style: "width:100%;padding:8px;border-radius:6px" }));
+        segParamsWrap.appendChild(el("textarea", { name: "user_ids", rows: 3, placeholder: "IDs separados por coma. Ej: 12,34,56,78", style: INPUT_SM + ";width:100%" }));
       } else if (v === "anon_lang") {
-        segParamsWrap.appendChild(el("input", { name: "lang", placeholder: "Ej: es, en, fr, pt", style: "width:100%;padding:8px;border-radius:6px" }));
-        segParamsWrap.appendChild(el("small", { style: "display:block;margin-top:4px;opacity:.6" }, "Prefijo del idioma detectado por navigator.language en el visitante."));
+        segParamsWrap.appendChild(el("input", { name: "lang", placeholder: "Ej: es, en, fr, pt", style: INPUT_SM + ";width:100%" }));
+        segParamsWrap.appendChild(el("small", { style: "display:block;margin-top:4px;color:var(--muted,#8f95a3)" }, "Prefijo del idioma detectado por navigator.language en el visitante."));
       } else if (v === "anon") {
-        segParamsWrap.appendChild(el("small", { style: "opacity:.6" }, "Todos los visitantes con PWA instalada y sin cuenta creada."));
+        segParamsWrap.appendChild(el("small", { style: "color:var(--muted,#8f95a3)" }, "Todos los visitantes con PWA instalada y sin cuenta creada."));
       } else if (v === "all_including_anon") {
-        segParamsWrap.appendChild(el("small", { style: "opacity:.6" }, "Máximo alcance: incluye a usuarios registrados con push activo + visitantes anónimos con PWA. Úsalo para anuncios generales, mantenimiento, etc."));
+        segParamsWrap.appendChild(el("small", { style: "color:var(--muted,#8f95a3)" }, "Máximo alcance: incluye a usuarios registrados con push activo + visitantes anónimos con PWA. Úsalo para anuncios generales, mantenimiento, etc."));
       } else {
-        segParamsWrap.appendChild(el("small", { style: "opacity:.6" }, "Sin parámetros adicionales."));
+        segParamsWrap.appendChild(el("small", { style: "color:var(--muted,#8f95a3)" }, "Sin parámetros adicionales."));
       }
     }
     segSel.addEventListener("change", renderSegParams);
@@ -15417,17 +15420,20 @@ async function viewPushCampaigns(root) {
       } catch(e) { audInfo.textContent = "Error: " + e.message; }
       finally { btnAud.disabled = false; }
     });
-    modal.appendChild(el("div", { style: "display:flex;gap:8px;align-items:center;margin-bottom:8px" }, [btnAud, audInfo]));
+    audInfo.style.margin = "0";
+    audInfo.style.flex = "1 1 200px";
+    audInfo.style.minWidth = "0";
+    modal.appendChild(el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px" }, [btnAud, audInfo]));
 
     // Programación
-    const scheduleI = el("input", { type: "datetime-local", style: "width:100%;padding:10px;border:1px solid var(--border,#ccc);border-radius:8px;font-size:14px" });
+    const scheduleI = el("input", { type: "datetime-local", style: INPUT_STYLE });
     modal.appendChild(field("⏰ Programar (opcional)", "Deja vacío para enviar inmediatamente.", scheduleI));
 
     // Prueba
-    const testWrap = el("div", { style: "display:flex;gap:8px;margin-bottom:14px;align-items:center;padding:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px" });
-    testWrap.appendChild(el("small", { style: "flex:1" }, "🧪 Probar en un user_id concreto antes de enviar:"));
-    const testInp = el("input", { type: "number", placeholder: "user_id", style: "width:100px;padding:6px;border-radius:6px" });
-    const btnTest = el("button", { class: "btn btn-sm", type: "button" }, "Enviar prueba");
+    const testWrap = el("div", { style: "display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap;padding:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px" });
+    testWrap.appendChild(el("small", { style: "flex:1 1 100%;min-width:0;opacity:.85" }, "🧪 Probar en un user_id concreto antes de enviar:"));
+    const testInp = el("input", { type: "number", placeholder: "user_id", style: INPUT_SM + ";flex:1;min-width:100px" });
+    const btnTest = el("button", { class: "btn btn-sm", type: "button", style: "white-space:nowrap" }, "Enviar prueba");
     btnTest.addEventListener("click", async () => {
       const uid = parseInt(testInp.value,10);
       if (!uid) return alert("Introduce un user_id");
@@ -15456,12 +15462,12 @@ async function viewPushCampaigns(root) {
     }
 
     // Acciones
-    const foot = el("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:16px" });
-    const btnCancel = el("button", { class: "btn" }, "Cancelar");
+    const foot = el("div", { style: "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px" });
+    const btnCancel = el("button", { class: "btn", style: "flex:1 1 auto;min-width:120px" }, "Cancelar");
     btnCancel.addEventListener("click", () => overlay.remove());
-    const btnDraft = el("button", { class: "btn" }, "💾 Guardar borrador");
-    const btnSchedule = el("button", { class: "btn" }, "⏰ Programar");
-    const btnSend = el("button", { class: "btn primary" }, "📢 Enviar ahora");
+    const btnDraft = el("button", { class: "btn", style: "flex:1 1 auto;min-width:140px" }, "💾 Guardar borrador");
+    const btnSchedule = el("button", { class: "btn", style: "flex:1 1 auto;min-width:120px" }, "⏰ Programar");
+    const btnSend = el("button", { class: "btn primary", style: "flex:1 1 auto;min-width:140px" }, "📢 Enviar ahora");
 
     async function submit(mode) {
       if (!titleI.value.trim() || !bodyI.value.trim()) { alert("Título y cuerpo son obligatorios."); return; }
