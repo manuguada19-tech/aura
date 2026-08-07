@@ -3150,7 +3150,10 @@ function screenWelcome(root) {
   const cta = el("div", { class: "welcome-cta" });
   const regOpen = publicConfig?.app?.registrations_open !== false;
   const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
-  if (regOpen) {
+  // Cuando la app está en modo pruebas (access_locked / private_beta),
+  // ocultamos los botones normales y forzamos el flujo de invitación con
+  // código de tester, aunque `registrations_open` siga true.
+  if (regOpen && !testMode) {
     cta.appendChild(el("button", { class: "btn btn-primary btn-block", onclick: () => render(screenRegisterEmail) }, T("content.welcome.cta_register")));
     cta.appendChild(el("button", { class: "btn btn-ghost btn-block", onclick: () => render(screenLogin) }, T("content.welcome.cta_login")));
   } else {
@@ -3205,27 +3208,40 @@ function screenWelcome(root) {
     }, T("content.welcome.invite_cta")));
   }
 
-  const orSep = el("div", { class: "welcome-or" }, [
-    el("span", { class: "welcome-or-line" }),
-    el("span", { class: "welcome-or-text" }, "o continúa con"),
-    el("span", { class: "welcome-or-line" }),
-  ]);
-  cta.appendChild(orSep);
+  // En modo pruebas ocultamos las opciones "o continúa con" (Google/Apple/
+  // Facebook) porque el acceso solo es válido con código de tester o
+  // desde la pantalla beta (waitlist / superadmin).
+  if (!testMode) {
+    const orSep = el("div", { class: "welcome-or" }, [
+      el("span", { class: "welcome-or-line" }),
+      el("span", { class: "welcome-or-text" }, "o continúa con"),
+      el("span", { class: "welcome-or-line" }),
+    ]);
+    cta.appendChild(orSep);
 
-  cta.appendChild(el("div", { class: "welcome-oauth" }, [
-    el("button", { class: "oauth-btn oauth-google", title: "Continuar con Google", onclick: () => quickLogin("Google") }, [
-      svgIcon(`<path fill="#EA4335" d="M12 10.4v3.4h4.7c-.2 1.2-1.5 3.6-4.7 3.6-2.8 0-5.1-2.3-5.1-5.2s2.3-5.2 5.1-5.2c1.6 0 2.7.7 3.3 1.3l2.3-2.2C16.1 4.7 14.3 4 12 4c-4.4 0-8 3.6-8 8s3.6 8 8 8c4.6 0 7.7-3.3 7.7-7.9 0-.5-.1-.9-.1-1.3H12z"/><path fill="#34A853" d="M3.5 7.6l2.8 2c.8-1.9 2.6-3.2 4.7-3.2 1.3 0 2.5.5 3.4 1.3l2.5-2.5C15.4 3.6 13.8 3 12 3 8.5 3 5.5 5 3.5 7.6z"/><path fill="#FBBC05" d="M12 21c2.3 0 4.3-.8 5.7-2.1l-2.6-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8l-2.8 2.2C5.4 19.1 8.4 21 12 21z"/><path fill="#4285F4" d="M20.7 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h4.9c-.2 1.1-.9 2.1-1.9 2.7l2.6 2.2c1.5-1.4 2.6-3.5 2.6-6.6z"/>`),
-      el("span", {}, "Google"),
-    ]),
-    el("button", { class: "oauth-btn oauth-apple", title: "Continuar con Apple", onclick: () => quickLogin("Apple") }, [
-      svgIcon(`<path fill="#fff" d="M16.4 12.7c0-2.5 2-3.7 2.1-3.7-1.1-1.7-2.9-2-3.5-2-1.5-.2-2.9.9-3.6.9-.7 0-1.9-.9-3.2-.9-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.1 1.2 9.5.8 1.1 1.7 2.4 3 2.3 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.1 3-2.2.9-1.3 1.3-2.5 1.3-2.6-.1-.1-2.8-1.1-2.8-4.7zM14.3 5.4c.7-.9 1.2-2.1 1-3.4-1.1.1-2.4.7-3.1 1.6-.6.8-1.2 2.1-1 3.3 1.2.1 2.4-.6 3.1-1.5z"/>`),
-      el("span", {}, "Apple"),
-    ]),
-    el("button", { class: "oauth-btn oauth-facebook", title: "Continuar con Facebook", onclick: () => quickLogin("Facebook") }, [
-      svgIcon(`<path fill="#fff" d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.3v7c4.7-.8 8.4-4.9 8.4-9.9z"/>`),
-      el("span", {}, "Facebook"),
-    ]),
-  ]));
+    cta.appendChild(el("div", { class: "welcome-oauth" }, [
+      el("button", { class: "oauth-btn oauth-google", title: "Continuar con Google", onclick: () => quickLogin("Google") }, [
+        svgIcon(`<path fill="#EA4335" d="M12 10.4v3.4h4.7c-.2 1.2-1.5 3.6-4.7 3.6-2.8 0-5.1-2.3-5.1-5.2s2.3-5.2 5.1-5.2c1.6 0 2.7.7 3.3 1.3l2.3-2.2C16.1 4.7 14.3 4 12 4c-4.4 0-8 3.6-8 8s3.6 8 8 8c4.6 0 7.7-3.3 7.7-7.9 0-.5-.1-.9-.1-1.3H12z"/><path fill="#34A853" d="M3.5 7.6l2.8 2c.8-1.9 2.6-3.2 4.7-3.2 1.3 0 2.5.5 3.4 1.3l2.5-2.5C15.4 3.6 13.8 3 12 3 8.5 3 5.5 5 3.5 7.6z"/><path fill="#FBBC05" d="M12 21c2.3 0 4.3-.8 5.7-2.1l-2.6-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8l-2.8 2.2C5.4 19.1 8.4 21 12 21z"/><path fill="#4285F4" d="M20.7 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h4.9c-.2 1.1-.9 2.1-1.9 2.7l2.6 2.2c1.5-1.4 2.6-3.5 2.6-6.6z"/>`),
+        el("span", {}, "Google"),
+      ]),
+      el("button", { class: "oauth-btn oauth-apple", title: "Continuar con Apple", onclick: () => quickLogin("Apple") }, [
+        svgIcon(`<path fill="#fff" d="M16.4 12.7c0-2.5 2-3.7 2.1-3.7-1.1-1.7-2.9-2-3.5-2-1.5-.2-2.9.9-3.6.9-.7 0-1.9-.9-3.2-.9-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.1 1.2 9.5.8 1.1 1.7 2.4 3 2.3 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.1 3-2.2.9-1.3 1.3-2.5 1.3-2.6-.1-.1-2.8-1.1-2.8-4.7zM14.3 5.4c.7-.9 1.2-2.1 1-3.4-1.1.1-2.4.7-3.1 1.6-.6.8-1.2 2.1-1 3.3 1.2.1 2.4-.6 3.1-1.5z"/>`),
+        el("span", {}, "Apple"),
+      ]),
+      el("button", { class: "oauth-btn oauth-facebook", title: "Continuar con Facebook", onclick: () => quickLogin("Facebook") }, [
+        svgIcon(`<path fill="#fff" d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.3v7c4.7-.8 8.4-4.9 8.4-9.9z"/>`),
+        el("span", {}, "Facebook"),
+      ]),
+    ]));
+  } else {
+    // En modo pruebas, botón discreto de "¿Eres tester? Ver estado" que
+    // lleva a la pantalla beta con waitlist + acceso superadmin.
+    cta.appendChild(el("button", {
+      class: "btn btn-ghost btn-block",
+      style: "margin-top:8px;font-size:13px;opacity:.85",
+      onclick: () => { try { showPrivateBetaScreen({}); } catch {} }
+    }, T("content.welcome.beta_status_btn") || "🧪 Ver estado de la beta / Soy superadmin"));
+  }
   // Terms text with clickable links to the Terms and Privacy screens.
   const termsText = T("content.welcome.terms") || "";
   // Words to linkify per language. First entry = link to Terms, second = Privacy.
@@ -4108,6 +4124,14 @@ function showAppealForm(prefEmail, prefReason, kind, prefOpts) {
 
 /* ---- Register: email ---- */
 function screenRegisterEmail(root) {
+  // En modo pruebas privadas exigimos que exista un `invite_code` validado
+  // (setteado por el flujo del welcome cuando el tester introduce su código).
+  // Sin código, no permitimos entrar al registro y devolvemos a la beta screen.
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  const hasInvite = !!(state.registration && state.registration.invite_code);
+  if (testMode && !hasInvite) {
+    try { showPrivateBetaScreen({}); return; } catch {}
+  }
   root.classList.add("screen-register-email");
   root.appendChild(topbar(T("content.register.email.topbar_title") || "Crear cuenta", () => render(screenWelcome)));
   root.appendChild(stepper(1, 6));
@@ -5155,6 +5179,15 @@ function screenRegisterPhotos(root) {
 
 /* ---- Login ---- */
 function screenLogin(root) {
+  // Si la app está en modo pruebas (access_locked / private_beta) y el
+  // usuario intenta abrir la pantalla de login "a pelo", enseñamos la
+  // pantalla beta con waitlist + acceso superadmin. El login normal
+  // solo está disponible para testers autorizados con código o para
+  // cuentas verificadas por el backend.
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (testMode) {
+    try { showPrivateBetaScreen({}); return; } catch {}
+  }
   root.appendChild(topbar("Iniciar sesión", () => render(screenWelcome)));
 
   const form = el("form", { class: "form" });
@@ -9632,6 +9665,24 @@ async function boot() {
       }
     }
   } catch {}
+  // Modo pruebas privadas: si no hay info-page pública ni usuario logueado,
+  // arrancamos directamente en la pantalla de beta (waitlist + acceso
+  // superadmin). El welcome también soporta el modo pero mostramos la
+  // pantalla beta cuando no hay flujo iniciado, para que quede claro que
+  // la app está en pruebas.
+  const _testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (!publicInfoScreen && _testMode && !state.user) {
+    try {
+      // Necesitamos revelar el DOM antes de que showPrivateBetaScreen pinte.
+      document.documentElement.classList.remove("js-loading");
+      const sp = document.getElementById("auraSplash"); if (sp) setTimeout(() => sp.remove(), 350);
+    } catch {}
+    try { showPrivateBetaScreen({}); }
+    catch { render(screenWelcome); }
+    try { applyContent(); } catch {}
+    startLivePolling();
+    return;
+  }
   render(publicInfoScreen || screenWelcome);
   // Deep-link para apelaciones desde el email de moderación:
   // /?appeal=1&email=xxx  → siempre muestra primero la pantalla de aviso con
