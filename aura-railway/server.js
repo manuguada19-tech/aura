@@ -445,6 +445,23 @@ const PUBLIC_API = new Set([
   // Preferencias de idioma y tracking del usuario
   "POST /api/my/lang",
   "POST /api/my/track",
+  // Estado del dispositivo / incidencias del usuario (auth por X-User-Id)
+  "GET /api/my/device-status",
+  "GET /api/my/device-incidents",
+  "POST /api/my/device-incidents",
+  "GET /api/my/account-status",
+  "GET /api/my/emergency-contacts",
+  "POST /api/my/emergency-contacts",
+  "PUT /api/my/emergency-contacts",
+  "DELETE /api/my/emergency-contacts",
+  // Preferencias de notificaciones y push
+  "GET /api/my/notification-prefs",
+  "POST /api/my/notification-prefs",
+  "PUT /api/my/notification-prefs",
+  "POST /api/my/push-subscribe",
+  "POST /api/my/push-unsubscribe",
+  // Popups
+  "GET /api/my/popup-active",
   // Social login demo helper — cuenta a la que entran Google/Apple/Facebook
   "GET /api/social/demo",
   // Support tickets (public creation)
@@ -525,10 +542,22 @@ app.use((req, res, next) => {
   next();
 });
 
+// Prefijos "/api/my/*" que aceptan auth por X-User-Id (no admin token) para
+// rutas parametrizadas (con :id) que no se pueden listar en PUBLIC_API por
+// nombre exacto.
+const PUBLIC_MY_PREFIXES = [
+  "/api/my/device-incidents/",
+  "/api/my/popup/",
+  "/api/my/reads/",
+  "/api/my/messages/",
+  "/api/my/conversations/",
+];
+
 app.use((req, res, next) => {
   if (!req.path.startsWith("/api/")) return next();
   const key = `${req.method} ${req.path}`;
   if (PUBLIC_API.has(key)) return next();
+  if (PUBLIC_MY_PREFIXES.some((p) => req.path.startsWith(p))) return next();
   return requireAdmin(req, res, next);
 });
 
