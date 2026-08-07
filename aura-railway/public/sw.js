@@ -43,30 +43,53 @@ self.addEventListener("activate", (event) => {
 });
 
 // ---- Fetch: red primero para HTML/JS, cache primero para assets estáticos
+// Siempre devolvemos una Response válida para no romper el navegador con
+// "Failed to convert value to 'Response'".
+function offlineFallback() {
+  return new Response("", { status: 504, statusText: "offline" });
+}
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-  const url = new URL(req.url);
+  let url;
+  try { url = new URL(req.url); } catch { return; }
+  // Solo interceptamos peticiones de nuestro propio origen; deja pasar
+  // recursos cross-origin (adsense, analytics, fuentes externas, etc.).
+  if (url.origin !== self.location.origin) return;
   // No cacheamos llamadas al backend
   if (url.pathname.startsWith("/api/")) return;
-  // Estrategia network-first para navegación
-  if (req.mode === "navigate" || (req.destination === "document")) {
-    event.respondWith(
-      fetch(req).catch(() => caches.match(req).then((r) => r || caches.match("./index.html")))
-    );
+  // No interceptamos rutas admin
+  if (url.pathname.startsWith("/admin")) return;
+
+  // Estrategia network-first para navegación (documentos HTML)
+  if (req.mode === "navigate" || req.destination === "document") {
+    event.respondWith((async () => {
+      try {
+        return await fetch(req);
+      } catch {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        const fallback = await caches.match("./index.html");
+        return fallback || offlineFallback();
+      }
+    })());
     return;
   }
-  // Cache-first para el resto
-  event.respondWith(
-    caches.match(req).then((cached) => cached || fetch(req).then((resp) => {
-      // Guardamos copia de recursos GET 200 en la cache
+
+  // Cache-first para el resto (JS, CSS, imágenes)
+  event.respondWith((async () => {
+    const cached = await caches.match(req);
+    if (cached) return cached;
+    try {
+      const resp = await fetch(req);
       if (resp && resp.status === 200 && resp.type === "basic") {
-        const clone = resp.clone();
-        caches.open(CACHE_VERSION).then((c) => c.put(req, clone)).catch(() => {});
+        try { const c = await caches.open(CACHE_VERSION); await c.put(req, resp.clone()); } catch {}
       }
       return resp;
-    }).catch(() => cached))
-  );
+    } catch {
+      return offlineFallback();
+    }
+  })());
 });
 
 // ---- Estado compartido con la app (IndexedDB simple) -----------------
