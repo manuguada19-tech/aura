@@ -331,16 +331,21 @@
 
   <!-- ================== PWA INSTALL BANNER ================== -->
   <style>
-    #auraInstallBanner{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(140%);z-index:9998;max-width:420px;width:calc(100% - 32px);background:linear-gradient(135deg,#1a1a2e,#2a1a4a);border:1px solid rgba(124,58,237,.45);border-radius:16px;padding:14px 16px;color:#fff;display:flex;align-items:center;gap:12px;box-shadow:0 20px 50px rgba(0,0,0,.5);transition:transform .35s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+    /* Píldora flotante arriba, discreta, no interfiere con la tabbar inferior. */
+    #auraInstallBanner{position:fixed;left:50%;top:12px;transform:translateX(-50%) translateY(-140%);z-index:9998;max-width:380px;width:calc(100% - 24px);background:linear-gradient(135deg,rgba(26,26,46,.96),rgba(42,26,74,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:10px 12px;color:#fff;display:flex;align-items:center;gap:10px;box-shadow:0 12px 36px rgba(0,0,0,.4);transition:transform .35s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px}
     #auraInstallBanner.show{transform:translateX(-50%) translateY(0)}
-    #auraInstallBanner .ico{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;flex-shrink:0;font-size:22px}
+    #auraInstallBanner .ico{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;flex-shrink:0;font-size:16px}
     #auraInstallBanner .txt{flex:1;min-width:0}
-    #auraInstallBanner .txt b{display:block;font-size:14px;font-weight:700;margin-bottom:2px}
-    #auraInstallBanner .txt small{color:#aab;font-size:12px;line-height:1.3;display:block}
+    #auraInstallBanner .txt b{display:block;font-size:13px;font-weight:700;line-height:1.2}
+    #auraInstallBanner .txt small{color:#aab;font-size:11px;line-height:1.3;display:block;margin-top:1px}
     #auraInstallBanner button{border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
-    #auraInstallBanner .btn-install{padding:8px 14px;border-radius:999px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;font-size:13px;font-weight:700;box-shadow:0 6px 18px rgba(124,58,237,.35)}
-    #auraInstallBanner .btn-close{padding:6px;color:#888;font-size:18px;line-height:1}
+    #auraInstallBanner .btn-install{padding:6px 12px;border-radius:999px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+    #auraInstallBanner .btn-close{padding:4px 6px;color:#888;font-size:16px;line-height:1}
     #auraInstallBanner .btn-close:hover{color:#fff}
+    /* Respetar notch en móviles */
+    @supports (top: env(safe-area-inset-top)) {
+      #auraInstallBanner{top:calc(12px + env(safe-area-inset-top))}
+    }
   </style>
   <div id="auraInstallBanner" role="dialog" aria-label="Instalar Aura como aplicación">
     <div class="ico">📱</div>
@@ -586,9 +591,20 @@
       }
     });
 
-    // 3) Recordatorio de 2FA (cada 7 días si no lo tiene activo)
+    // 3) Recordatorio de 2FA — discreto, no bloqueante.
+    // Se muestra sólo como pequeño toast lateral abajo, dejando la app usable.
+    // Reglas:
+    //   · Usuario logueado
+    //   · 2FA no activo
+    //   · Han pasado ≥7 días desde el último aviso
+    //   · Al menos 3 aperturas de la app y ≥2 días desde el registro
+    //   · No mostrarlo dentro de los primeros 90s tras entrar a la app
     async function twofaReminder(){
       const uid = getUserId(); if (!uid) return;
+      // Contador de aperturas
+      let opens = 0;
+      try { opens = parseInt(localStorage.getItem("aura-app-opens") || "0", 10) || 0; } catch {}
+      if (opens < 3) return;
       try {
         const r = await fetch("/api/2fa/status", { headers: { "X-User-Id": uid } });
         const s = await r.json();
@@ -597,28 +613,79 @@
           const days = (Date.now() - new Date(s.last_reminder).getTime()) / 86400000;
           if (days < 7) return;
         }
-        const modal = document.getElementById("twofaReminder");
-        if (!modal) return;
-        modal.classList.add("show");
-        document.getElementById("twofaLater").addEventListener("click", async () => {
-          await fetch("/api/2fa/snooze-reminder", { method: "POST", headers: { "X-User-Id": uid } });
-          modal.classList.remove("show");
-        });
+        if (s.created_at) {
+          const daysAcc = (Date.now() - new Date(s.created_at).getTime()) / 86400000;
+          if (daysAcc < 2) return;
+        }
+        showTwofaToast(uid);
       } catch {}
+    }
+    function showTwofaToast(uid){
+      if (document.getElementById("twofaToast")) return;
+      const t = document.createElement("div");
+      t.id = "twofaToast";
+      t.innerHTML = `
+        <div class="tf-ico">🔐</div>
+        <div class="tf-txt">
+          <b>Protege tu cuenta</b>
+          <small>Activa la verificación en 2 pasos.</small>
+        </div>
+        <button class="tf-cta" type="button">Activar</button>
+        <button class="tf-close" type="button" aria-label="Cerrar">×</button>`;
+      document.body.appendChild(t);
+      requestAnimationFrame(() => t.classList.add("show"));
+      t.querySelector(".tf-cta").addEventListener("click", () => {
+        location.href = "/settings/2fa";
+      });
+      t.querySelector(".tf-close").addEventListener("click", async () => {
+        try { await fetch("/api/2fa/snooze-reminder", { method: "POST", headers: { "X-User-Id": uid } }); } catch {}
+        t.classList.remove("show");
+        setTimeout(() => t.remove(), 350);
+      });
+      // Auto-oculta en 20s si el usuario no interactúa
+      setTimeout(() => {
+        if (!t.parentNode) return;
+        t.classList.remove("show");
+        setTimeout(() => t.remove(), 350);
+      }, 20000);
     }
 
     // Arranque: initPush se llama siempre (soporta anónimo), 2FA sólo con login.
     setTimeout(() => { try { initPush(); } catch {} }, 3000);
+    // Incrementar contador de aperturas al arrancar con sesión.
+    function bumpOpens(){
+      try {
+        const n = parseInt(localStorage.getItem("aura-app-opens") || "0", 10) || 0;
+        localStorage.setItem("aura-app-opens", String(n + 1));
+      } catch {}
+    }
     function bootWhenLogged(){
-      if (getUserId()) { twofaReminder(); return; }
+      if (getUserId()) {
+        bumpOpens();
+        // Esperar ≥90s antes de mostrar el aviso 2FA
+        setTimeout(twofaReminder, 90000);
+        return;
+      }
       setTimeout(bootWhenLogged, 2000);
     }
     setTimeout(bootWhenLogged, 3000);
   })();
   </script>
 
-  <!-- ================== MODAL RECORDATORIO 2FA ================== -->
+  <!-- ================== TOAST DISCRETO 2FA ================== -->
   <style>
+    #twofaToast{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom, 0px) + 74px);max-width:400px;margin:0 auto;z-index:9997;background:linear-gradient(135deg,rgba(26,26,46,.96),rgba(15,15,30,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:10px 12px;color:#fff;display:flex;align-items:center;gap:10px;box-shadow:0 12px 36px rgba(0,0,0,.4);font-size:13px;transform:translateY(160%);transition:transform .35s ease}
+    #twofaToast.show{transform:translateY(0)}
+    #twofaToast .tf-ico{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;font-size:16px;flex-shrink:0}
+    #twofaToast .tf-txt{flex:1;min-width:0}
+    #twofaToast .tf-txt b{display:block;font-size:13px;font-weight:700;line-height:1.2}
+    #twofaToast .tf-txt small{color:#aab;font-size:11px;line-height:1.3;display:block;margin-top:1px}
+    #twofaToast button{border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
+    #twofaToast .tf-cta{padding:6px 12px;border-radius:999px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+    #twofaToast .tf-close{padding:4px 6px;color:#888;font-size:16px;line-height:1}
+    #twofaToast .tf-close:hover{color:#fff}
+
+    /* Modal antiguo — mantenemos por compatibilidad pero ya no se muestra por defecto */
     #twofaReminder{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(8px)}
     #twofaReminder.show{display:flex}
     #twofaReminder .rc{background:linear-gradient(135deg,#1a1a2e,#0f0f1e);border-radius:24px;max-width:420px;width:100%;padding:32px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6);border:1px solid rgba(124,58,237,.4);text-align:center;animation:pop2r .3s ease}

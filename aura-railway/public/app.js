@@ -7221,25 +7221,32 @@ function screenMe(root) {
       { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", sub: "Push, email y qué tipos recibes", onClick: () => render(screenNotificationSettings) },
       { icon: "🌙", title: T("content.me.item_theme") || "Tema", sub: themeSub, onClick: () => { $("#themeToggle").click(); render(screenMe); } },
       { icon: "🌍", title: T("content.me.item_lang") || "Idioma", sub: ({ es: "Español", en: "English", fr: "Français", de: "Deutsch", it: "Italiano", pt: "Português" }[currentLang] || "Español"), onClick: () => openLanguageSheet() },
-      // Instalar Aura como PWA. Solo aparece si el navegador ha emitido
-      // beforeinstallprompt (Android/Chrome/Edge) o si es iOS (que no lo emite
-      // pero admite instalación manual). Se oculta si ya está instalada.
+      // Instalar Aura como PWA. Aparece SIEMPRE salvo que ya esté instalada.
+      // Si tenemos prompt nativo (Android/Chrome/Edge) lo usamos; si no,
+      // mostramos instrucciones específicas para el navegador del usuario.
       ...(function(){
         try {
           const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
           if (standalone) return [];
-          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.MSStream;
+          const ua = navigator.userAgent || "";
+          const isIOS = /iPhone|iPad|iPod/i.test(ua) && !window.MSStream;
+          const isAndroid = /Android/i.test(ua);
+          const isFirefox = /Firefox/i.test(ua);
+          const isSamsung = /SamsungBrowser/i.test(ua);
+          const isEdge = /Edg\//i.test(ua);
+          const isChrome = /Chrome/i.test(ua) && !isEdge && !isSamsung;
+          const isSafariDesktop = /Safari/i.test(ua) && !/Chrome|Chromium|Edg/i.test(ua) && !isIOS;
           const hasPrompt = !!window.__auraDeferredInstall;
-          if (!hasPrompt && !isIOS) return [];
+          let sub = "Añadir a la pantalla de inicio";
+          if (isIOS) sub = "Toca Compartir → Añadir a pantalla de inicio";
+          else if (!hasPrompt && isFirefox) sub = "Menú ⋮ → Instalar";
+          else if (!hasPrompt && isSafariDesktop) sub = "Archivo → Añadir al Dock";
           return [{
             icon: "📲",
             title: "Instalar Aura como app",
-            sub: isIOS ? "Toca Compartir → Añadir a pantalla de inicio" : "Añadir a la pantalla de inicio",
+            sub,
             onClick: async () => {
-              if (isIOS) {
-                alert("Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.");
-                return;
-              }
+              // 1) Prompt nativo si está disponible
               if (window.__auraDeferredInstall) {
                 try {
                   window.__auraDeferredInstall.prompt();
@@ -7249,10 +7256,31 @@ function screenMe(root) {
                     toast("Aura instalada");
                     render(screenMe);
                   }
-                } catch(e) { toast("No se pudo instalar: " + e.message); }
-              } else {
-                alert("La instalación se ofrece automáticamente cuando el navegador lo permite. Prueba desde el menú del navegador → 'Instalar aplicación'.");
+                } catch(e) { toast("No se pudo instalar"); }
+                return;
               }
+              // 2) Instrucciones por navegador
+              let msg;
+              if (isIOS) {
+                msg = "Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.";
+              } else if (isAndroid && isFirefox) {
+                msg = "En Firefox Android:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar' o 'Añadir a pantalla de inicio'.";
+              } else if (isAndroid && isSamsung) {
+                msg = "En Samsung Internet:\n\n1) Menú ☰ (abajo).\n2) 'Añadir página a' → 'Pantalla de inicio'.";
+              } else if (isAndroid) {
+                msg = "En Chrome Android:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar aplicación' o 'Añadir a pantalla de inicio'.\n\nSi no aparece, actualiza Chrome o reinicia la página.";
+              } else if (isFirefox) {
+                msg = "En Firefox de escritorio:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar' (icono +).";
+              } else if (isSafariDesktop) {
+                msg = "En Safari Mac:\n\n1) Menú 'Archivo'.\n2) 'Añadir al Dock…'.";
+              } else if (isEdge) {
+                msg = "En Edge:\n\n1) Menú ⋯ (arriba derecha).\n2) 'Aplicaciones' → 'Instalar este sitio como aplicación'.";
+              } else if (isChrome) {
+                msg = "En Chrome:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar Aura…' o 'Enviar, guardar y compartir' → 'Instalar página como aplicación'.";
+              } else {
+                msg = "Busca en el menú de tu navegador la opción 'Instalar aplicación' o 'Añadir a pantalla de inicio'.";
+              }
+              alert(msg);
             }
           }];
         } catch { return []; }
