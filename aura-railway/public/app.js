@@ -3134,10 +3134,89 @@ function buildWelcomeLangSelector() {
   return wrap;
 }
 
+/* Popup informativo que se muestra en modo pruebas privadas cada vez que
+   se entra a la pantalla de bienvenida. Explica que los perfiles que verá
+   el tester son bots creados para la fase de pruebas, no personas reales. */
+function showBetaBotsNotice() {
+  // Evita duplicados si ya está montado en esta sesión de pantalla.
+  if (document.querySelector(".beta-bots-notice-overlay")) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "beta-bots-notice-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.style.cssText = [
+    "position:fixed", "inset:0", "z-index:99999",
+    "background:rgba(6,4,20,.72)", "backdrop-filter:blur(6px)",
+    "-webkit-backdrop-filter:blur(6px)",
+    "display:flex", "align-items:center", "justify-content:center",
+    "padding:20px", "animation:fadeIn .25s ease-out",
+  ].join(";");
+
+  const card = document.createElement("div");
+  card.style.cssText = [
+    "max-width:420px", "width:100%",
+    "background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%)",
+    "border:1px solid rgba(255,255,255,.14)",
+    "border-radius:20px", "padding:22px 22px 18px",
+    "box-shadow:0 30px 80px rgba(0,0,0,.6)",
+    "color:#fff", "text-align:center",
+    "animation:popIn .35s cubic-bezier(.2,.9,.2,1)",
+  ].join(";");
+
+  card.innerHTML = `
+    <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:16px;
+                background:linear-gradient(135deg,#ff3b6b,#ff8a3b,#a855f7);
+                display:grid;place-items:center;font-size:32px;
+                box-shadow:0 10px 30px rgba(168,85,247,.35)">🤖</div>
+    <div style="display:inline-block;padding:6px 14px;border-radius:999px;
+                background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
+                font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+                color:#f2e8ff;margin-bottom:10px">🧪 Modo pruebas</div>
+    <h3 style="margin:0 0 10px;font-size:20px;font-weight:800;line-height:1.2">
+      Aviso importante
+    </h3>
+    <p style="margin:0 0 8px;font-size:15px;line-height:1.45;color:#e6d9ff">
+      Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.
+    </p>
+    <p style="margin:0 0 18px;font-size:14px;line-height:1.45;color:#c9bce4">
+      Ninguno es una persona real todavía. Sirven para que puedas probar
+      todas las funciones (matches, chats, filtros, etc.) antes del lanzamiento público.
+    </p>
+    <button type="button" class="beta-bots-notice-ok"
+      style="width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;
+             background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);
+             color:#fff;font-weight:800;font-size:15px;letter-spacing:.3px;
+             box-shadow:0 10px 24px rgba(255,90,150,.35)">
+      Entendido
+    </button>
+  `;
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    try { overlay.remove(); } catch {}
+  };
+  card.querySelector(".beta-bots-notice-ok").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+}
+
 function screenWelcome(root) {
   root.classList.add("screen-hero");
   const _welcomeTestMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
   if (_welcomeTestMode) root.classList.add("screen-hero-beta");
+
+  // En modo pruebas privadas mostramos un aviso emergente cada vez que se
+  // entra a la pantalla de bienvenida, aclarando que los perfiles visibles
+  // son bots para la fase de pruebas y no personas reales.
+  if (_welcomeTestMode) {
+    setTimeout(() => {
+      try { showBetaBotsNotice(); } catch {}
+    }, 350);
+  }
 
   // Language flag selector (top-right of the welcome screen)
   root.appendChild(buildWelcomeLangSelector());
