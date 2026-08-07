@@ -388,36 +388,36 @@ function fmtMoney(amount, cur) {
 }
 
 /* API helper */
-const api = {
-  async get(url) {
-    const r = await fetch(url, { headers: authHeaders(), cache: "no-store" });
-    if (r.status === 401) return handleAuthFailure();
-    if (!r.ok) throw new Error("GET " + url + " " + r.status);
-    return r.json();
-  },
-  async send(method, url, body) {
-    const r = await fetch(url, {
-      method,
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: body ? JSON.stringify(body) : undefined,
-      cache: "no-store",
-    });
-    if (r.status === 401) return handleAuthFailure();
-    if (!r.ok) {
-      let data = null;
-      try { data = await r.json(); } catch {}
-      const err = new Error(method + " " + url + " " + r.status);
-      err.status = r.status;
-      err.data = data;
-      throw err;
-    }
-    return r.json();
-  },
-  post(url, body) { return this.send("POST", url, body); },
-  patch(url, body) { return this.send("PATCH", url, body); },
-  put(url, body) { return this.send("PUT", url, body); },
-  del(url) { return this.send("DELETE", url); },
-};
+// Callable: api(url, opts?) -> también objeto con .get/.post/.patch/.put/.del
+async function api(url, opts) {
+  opts = opts || {};
+  const method = (opts.method || "GET").toUpperCase();
+  const hasBody = opts.body != null;
+  const headers = authHeaders(hasBody ? { "Content-Type": "application/json" } : {});
+  Object.assign(headers, opts.headers || {});
+  const r = await fetch(url, {
+    method,
+    headers,
+    body: hasBody ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,
+    cache: "no-store",
+  });
+  if (r.status === 401) return handleAuthFailure();
+  if (!r.ok) {
+    let data = null;
+    try { data = await r.json(); } catch {}
+    const err = new Error(method + " " + url + " " + r.status);
+    err.status = r.status;
+    err.data = data;
+    throw err;
+  }
+  try { return await r.json(); } catch { return {}; }
+}
+api.get = (url) => api(url);
+api.post = (url, body) => api(url, { method: "POST", body: typeof body === "string" ? body : JSON.stringify(body || {}) });
+api.patch = (url, body) => api(url, { method: "PATCH", body: typeof body === "string" ? body : JSON.stringify(body || {}) });
+api.put = (url, body) => api(url, { method: "PUT", body: typeof body === "string" ? body : JSON.stringify(body || {}) });
+api.del = (url) => api(url, { method: "DELETE" });
+api.send = (method, url, body) => api(url, { method, body: typeof body === "string" ? body : JSON.stringify(body || {}) });
 
 /* ============================================================
    Global auto-save
@@ -533,7 +533,8 @@ async function openTwoFaSetup(box) {
       <details style="margin:6px 0 14px"><summary style="cursor:pointer;font-size:12px;color:#888">¿No puedes escanear? Introducir clave manual</summary>
         <div style="font-family:monospace;font-size:13px;background:#0f0f14;padding:10px;border-radius:8px;margin-top:6px;word-break:break-all;user-select:all">${data.secret}</div>
       </details>
-      <label class="field"><span>Código de 6 dígitos</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:22px;letter-spacing:6px" /></label>
+      <label class="field"><span>Introduce el código de tu app de autenticación</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700" /></label>
+      <p class="muted" style="font-size:12px;text-align:center;margin:6px 0 0">¿Problemas? <a href="mailto:soporte@citasaura.es?subject=Ayuda%20con%202FA" style="color:#ff8a3b;text-decoration:none">Contactar soporte</a></p>
       <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
       <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
         <button type="button" class="btn ghost ac-cancel">Cancelar</button>
@@ -839,7 +840,7 @@ refreshNavBadges();
 setInterval(refreshNavBadges, 30000);
 
 /* Theme */
-document.documentElement.dataset.theme = localStorage.getItem("aura-admin-theme") || "light";
+document.documentElement.dataset.theme = localStorage.getItem("aura-admin-theme") || "dark";
 function updateThemeBtnIcon() {
   const btn = document.getElementById("themeBtn");
   if (!btn) return;
@@ -1345,16 +1346,15 @@ if (typeof MutationObserver !== "undefined") {
    ]));
    Se pliega por defecto para no ocupar espacio; el usuario la abre si duda. */
 function sectionLegend(title, items) {
-  const details = el("details", {
+  const wrap = el("div", {
     class: "section-legend",
-    style: "margin:8px 0 12px;border:1px solid var(--border,#2a2f3a);border-radius:10px;background:rgba(255,255,255,0.02);",
+    style: "margin:8px 0 12px;border:1px solid var(--border,#2a2f3a);border-radius:10px;background:rgba(255,255,255,0.02);padding:12px 14px;",
   });
-  const summary = el("summary", {
-    style: "cursor:pointer;padding:10px 14px;font-size:13px;font-weight:600;user-select:none;list-style:none;",
-  }, "❓ " + (title || "¿Qué significa cada icono?"));
-  details.appendChild(summary);
+  wrap.appendChild(el("div", {
+    style: "font-size:13px;font-weight:600;margin-bottom:8px;",
+  }, "❓ " + (title || "¿Qué significa cada icono?")));
   const body = el("div", {
-    style: "display:flex;flex-wrap:wrap;gap:8px 16px;padding:0 14px 12px;font-size:12.5px;line-height:1.5;",
+    style: "display:flex;flex-wrap:wrap;gap:8px 16px;font-size:12.5px;line-height:1.5;",
   });
   (items || []).forEach(([ico, desc]) => {
     body.appendChild(el("span", { style: "display:inline-flex;align-items:center;gap:6px;" }, [
@@ -1362,8 +1362,8 @@ function sectionLegend(title, items) {
       el("span", { style: "opacity:.85;" }, "→ " + desc),
     ]));
   });
-  details.appendChild(body);
-  return details;
+  wrap.appendChild(body);
+  return wrap;
 }
 
 /* Reusable pieces */
@@ -1424,6 +1424,8 @@ function avatar(url, size=36) {
   return el("div", { class: "av", style: `width:${size}px;height:${size}px;background-image:url('${url||""}')` });
 }
 function btn(label, cls="ghost sm", onclick) {
+  // Overload: si el 2º argumento es function, se trata de onclick y cls por defecto
+  if (typeof cls === "function") { onclick = cls; cls = "ghost sm"; }
   return el("button", { type: "button", class: "btn " + cls, onclick }, label);
 }
 
@@ -12919,7 +12921,20 @@ async function viewInvites(root) {
       const acts = E("div","inv-actions");
       if (iv.email) {
         acts.appendChild(btn(iv.sent_at ? "🔁 Reenviar" : "📨 Enviar email", "primary sm", async () => {
-          try { await api.post("/api/admin/invites/" + iv.id + "/send", {}); toast("Email enviado"); load(); loadStats(); }
+          // Nota opcional adjunta al código (aparece dentro del email
+          // como bloque destacado bajo el código de invitación).
+          const note = prompt(
+            "Nota adicional para el tester (opcional).\n" +
+            "Se enviará dentro del mismo email, debajo del código, como aviso destacado.\n" +
+            "Déjalo vacío si no quieres añadir nada.",
+            ""
+          );
+          if (note === null) return; // Cancelado
+          try {
+            await api.post("/api/admin/invites/" + iv.id + "/send", { note: note.trim() });
+            toast(note.trim() ? "Email enviado con nota" : "Email enviado");
+            load(); loadStats();
+          }
           catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
         }));
       }
@@ -13822,8 +13837,9 @@ async function viewNewsletter(root) {
       .season-btn:hover{background:rgba(91,155,255,.15);border-color:var(--accent,#5b9bff)}
       .news-drawer{background:linear-gradient(160deg,rgba(255,255,255,.02),rgba(0,0,0,.15));border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:20px;margin-bottom:16px}
       .news-drawer label{display:block;font-size:12px;font-weight:600;margin:10px 0 4px;color:var(--muted,#7a869a);text-transform:uppercase;letter-spacing:.3px}
-      .news-drawer .input,.news-drawer textarea{width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit;font:inherit}
+      .news-drawer .input,.news-drawer textarea,.news-drawer select{width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit;font:inherit}
       .news-drawer textarea{min-height:140px;font-family:monospace;font-size:13px}
+      .news-drawer select option{background:#1a1e28;color:#fff}
     `;
     document.head.appendChild(st);
   }
@@ -13923,6 +13939,166 @@ async function viewNewsletter(root) {
     }
   }
 
+  // --- Plantillas de contenido prediseñadas ---
+  // Cada plantilla es un preset de nombre + asunto + bloques que el admin
+  // puede aplicar con un solo clic y luego solo tiene que editar los detalles.
+  const CONTENT_TEMPLATES = [
+    {
+      id: "welcome",
+      emoji: "👋",
+      name: "Bienvenida a Aura",
+      desc: "Saluda a nuevos usuarios y explícales primeros pasos",
+      subject: "Bienvenido/a a Aura, {{name}} 💜",
+      blocks: [
+        { type: "title", text: "¡Hola {{name}}! 👋", align: "center" },
+        { type: "text", text: "Nos alegra tenerte en Aura. Aquí encontrarás personas reales, conexiones auténticas y muchas formas de conocer a alguien especial.", align: "left" },
+        { type: "text", text: "Para empezar con buen pie, te recomendamos:\n\n1) Completa tu perfil al 100% (subir fotos multiplica tus matches).\n2) Verifica tu cuenta para el sello azul.\n3) Activa las notificaciones para no perderte un match.", align: "left" },
+        { type: "button", text: "Ir a mi perfil", url: "https://citasaura.es/app#/profile" },
+        { type: "divider" },
+        { type: "text", text: "¿Alguna duda? Escríbenos a soporte@citasaura.es y te respondemos rápido.", align: "center" },
+      ]
+    },
+    {
+      id: "new_feature",
+      emoji: "✨",
+      name: "Anuncio de nueva función",
+      desc: "Comunica una funcionalidad recién lanzada",
+      subject: "✨ Novedad en Aura: [nombre función]",
+      blocks: [
+        { type: "title", text: "✨ Novedad recién horneada", align: "center" },
+        { type: "text", text: "Hola {{name}}, tenemos algo nuevo que creemos que te va a encantar.", align: "left" },
+        { type: "title", text: "[Nombre de la función]", align: "center" },
+        { type: "text", text: "Explica en 2 o 3 líneas qué hace, por qué es útil y cómo cambia la experiencia. Sé concreto: dile al usuario qué gana usándola.", align: "left" },
+        { type: "image", url: "https://citasaura.es/assets/feature-cover.png" },
+        { type: "button", text: "Pruébalo ahora", url: "https://citasaura.es/app" },
+        { type: "text", text: "Si tienes feedback nos encanta escucharlo: soporte@citasaura.es", align: "center" },
+      ]
+    },
+    {
+      id: "offer",
+      emoji: "💎",
+      name: "Oferta / descuento Premium",
+      desc: "Promoción limitada de suscripción",
+      subject: "🔥 Oferta especial solo para ti, {{name}}",
+      blocks: [
+        { type: "title", text: "🔥 Oferta relámpago", align: "center" },
+        { type: "text", text: "Solo durante los próximos [X días], accede a Premium con un [XX%] de descuento.", align: "center" },
+        { type: "text", text: "Con Premium tienes:\n\n💖 Likes ilimitados\n👀 Ver quién te ha dado like\n🚀 Boost semanal gratis\n💌 Enviar mensajes sin match", align: "left" },
+        { type: "button", text: "Activar Premium con descuento", url: "https://citasaura.es/app#/premium" },
+        { type: "text", text: "Oferta válida hasta [fecha]. No se puede combinar con otras promociones.", align: "center" },
+      ]
+    },
+    {
+      id: "reengage",
+      emoji: "💤",
+      name: "Recuperar usuarios inactivos",
+      desc: "Recuerda a quienes llevan días sin abrir la app",
+      subject: "{{name}}, alguien te está buscando 👀",
+      blocks: [
+        { type: "title", text: "Hace tiempo que no te vemos 💜", align: "center" },
+        { type: "text", text: "Hola {{name}}, hay nuevas personas en Aura que podrían ser tu match perfecto.", align: "left" },
+        { type: "text", text: "Cada día se unen decenas de personas cerca de ti. Vuelve a echar un vistazo, quizá esté esperándote alguien especial.", align: "left" },
+        { type: "button", text: "Ver quién hay ahora", url: "https://citasaura.es/app" },
+      ]
+    },
+    {
+      id: "tips_safety",
+      emoji: "🛡️",
+      name: "Consejos de seguridad",
+      desc: "Recordatorio de buenas prácticas al chatear/conocer",
+      subject: "🛡️ 5 consejos para citas seguras",
+      blocks: [
+        { type: "title", text: "Tu seguridad es lo primero", align: "center" },
+        { type: "text", text: "Hola {{name}}, queremos que tu experiencia en Aura sea segura y divertida. Estos son 5 consejos rápidos:", align: "left" },
+        { type: "text", text: "1) 📸 Verifica tu perfil con foto real. Da confianza y sube los matches.\n2) 💬 Chatea primero dentro de la app antes de dar tu teléfono.\n3) 📍 En la primera cita, elige un sitio público y avisa a alguien de confianza.\n4) 🚫 Reporta cualquier comportamiento sospechoso — nuestro equipo revisa 24/7.\n5) 💜 Nunca envíes dinero a nadie que conociste en la app.", align: "left" },
+        { type: "button", text: "Leer guía completa", url: "https://citasaura.es/seguridad" },
+      ]
+    },
+    {
+      id: "survey",
+      emoji: "📊",
+      name: "Encuesta de satisfacción",
+      desc: "Pide opinión al usuario",
+      subject: "{{name}}, ¿nos ayudas a mejorar? (2 min)",
+      blocks: [
+        { type: "title", text: "Tu opinión nos importa 💜", align: "center" },
+        { type: "text", text: "Hola {{name}}, estamos mejorando Aura cada semana y tu feedback nos ayuda a priorizar lo importante.", align: "left" },
+        { type: "text", text: "Responder solo lleva 2 minutos y nos ayuda muchísimo. Como agradecimiento, te regalamos 3 Súper Likes.", align: "left" },
+        { type: "button", text: "Empezar encuesta", url: "https://citasaura.es/encuesta" },
+      ]
+    },
+    {
+      id: "maintenance",
+      emoji: "🛠",
+      name: "Aviso de mantenimiento",
+      desc: "Comunica ventana de mantenimiento",
+      subject: "🛠 Mantenimiento programado en Aura",
+      blocks: [
+        { type: "title", text: "Aviso de mantenimiento", align: "center" },
+        { type: "text", text: "Hola {{name}}, el [fecha] entre las [hora inicio] y las [hora fin] realizaremos tareas de mantenimiento en nuestros servidores.", align: "left" },
+        { type: "text", text: "Durante ese periodo la app podría estar lenta o no accesible durante breves minutos. Lo estamos haciendo para mejorar tu experiencia.", align: "left" },
+        { type: "text", text: "Gracias por tu paciencia 💜", align: "center" },
+      ]
+    },
+    {
+      id: "policy_update",
+      emoji: "📄",
+      name: "Actualización de políticas",
+      desc: "Cambios en términos o privacidad",
+      subject: "📄 Hemos actualizado nuestras políticas",
+      blocks: [
+        { type: "title", text: "Actualización de nuestras políticas", align: "center" },
+        { type: "text", text: "Hola {{name}}, hemos actualizado nuestros términos y política de privacidad. Los cambios entran en vigor el [fecha].", align: "left" },
+        { type: "text", text: "Resumen de qué cambia:\n• [Cambio 1]\n• [Cambio 2]\n• [Cambio 3]", align: "left" },
+        { type: "button", text: "Leer los cambios completos", url: "https://citasaura.es/legal/privacidad" },
+        { type: "text", text: "Si sigues usando Aura después del [fecha] aceptas los nuevos términos.", align: "center" },
+      ]
+    },
+    {
+      id: "section_highlight",
+      emoji: "📍",
+      name: "Destacar sección de la app",
+      desc: "Enseña una parte de la app que se usa poco",
+      subject: "¿Ya conoces [sección] en Aura?",
+      blocks: [
+        { type: "title", text: "Descubre [nombre sección] 📍", align: "center" },
+        { type: "text", text: "Hola {{name}}, muchos usuarios aún no saben que en Aura puedes hacer esto:", align: "left" },
+        { type: "text", text: "Explica en 2-3 líneas para qué sirve esta sección y qué gana usándola. Ejemplo: 'Con los Eventos puedes descubrir citas en grupo cerca de ti — una forma diferente de conocer gente sin la presión del uno a uno'.", align: "left" },
+        { type: "button", text: "Ir a la sección", url: "https://citasaura.es/app#/[ruta]" },
+      ]
+    },
+    {
+      id: "blank",
+      emoji: "📝",
+      name: "En blanco",
+      desc: "Empezar desde cero",
+      subject: "",
+      blocks: [
+        { type: "title", text: "Hola {{name}}", align: "left" },
+        { type: "text", text: "Escribe aquí tu mensaje.", align: "left" },
+      ]
+    },
+  ];
+
+  // --- Editor visual de newsletter con bloques ---
+  function _blocksToHtml(blocks) {
+    const parts = blocks.map(b => {
+      if (b.type === "title") return `<h1 style="margin:0 0 8px;font-size:24px;font-weight:800;color:#1a1a2e;text-align:${b.align||"left"}">${(b.text||"").replace(/</g,"&lt;")}</h1>`;
+      if (b.type === "text") return `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#4a475b;text-align:${b.align||"left"}">${(b.text||"").replace(/\n/g,"<br/>")}</p>`;
+      if (b.type === "image") return `<div style="text-align:center;margin:12px 0"><img src="${b.url||""}" alt="" style="max-width:100%;border-radius:12px"/></div>`;
+      if (b.type === "button") return `<div style="text-align:center;margin:18px 0"><a href="${b.url||"#"}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:700">${(b.text||"Botón").replace(/</g,"&lt;")}</a></div>`;
+      if (b.type === "divider") return `<hr style="border:0;border-top:1px solid #eee6f7;margin:20px 0"/>`;
+      if (b.type === "spacer") return `<div style="height:${b.size||24}px"></div>`;
+      if (b.type === "html") return b.html || "";
+      return "";
+    });
+    return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a2e">${parts.join("\n")}</div>`;
+  }
+  function _htmlToBlocks(html) {
+    if (!html) return [{ type: "title", text: "Hola {{name}}", align: "center" }, { type: "text", text: "Escribe aquí tu mensaje.", align: "left" }];
+    return [{ type: "html", html }];
+  }
+
   function openDrawer(data) {
     drawer.innerHTML = "";
     drawer.style.display = "block";
@@ -13932,7 +14108,11 @@ async function viewNewsletter(root) {
 
     const nameInp = el("input", { class: "input", value: data?.name || "", placeholder: "Ej: Orgullo LGBT 2026" });
     const subjInp = el("input", { class: "input", value: data?.subject || "", placeholder: "Asunto del email" });
-    const bodyTa = el("textarea", { placeholder: "HTML del email (soporta {{name}}, {{email}})" }, data?.body_html || "");
+
+    // Estado editor
+    let blocks = (data && data.blocks_json) ? (function(){ try { return JSON.parse(data.blocks_json); } catch { return _htmlToBlocks(data?.body_html); } })() : _htmlToBlocks(data?.body_html);
+    let mode = "visual"; // "visual" | "html"
+    let htmlValue = data?.body_html || "";
 
     const segSel = el("select", { class: "input" });
     [["all","Todos"],["premium","Premium"],["free","Free"],["verified","Verificados"],["unverified","No verificados"],["male","Hombres"],["female","Mujeres"],["lgbt","LGBT+"],["hetero","Hetero"],["new","Nuevos (<30 días)"]].forEach(([v,l]) => {
@@ -13948,8 +14128,133 @@ async function viewNewsletter(root) {
     drawer.appendChild(nameInp);
     drawer.appendChild(el("label", {}, "Asunto"));
     drawer.appendChild(subjInp);
-    drawer.appendChild(el("label", {}, "Cuerpo (HTML)"));
-    drawer.appendChild(bodyTa);
+
+    // === Selector de plantillas de contenido prediseñadas ===
+    if (!isEdit) {
+      drawer.appendChild(el("label", {}, "🎨 Plantillas prediseñadas de contenido"));
+      const tplHelp = el("p", { style: "font-size:12px;color:#7a869a;margin:0 0 8px" },
+        "Elige una plantilla para partir de un contenido ya escrito. Podrás editar todos los bloques después.");
+      drawer.appendChild(tplHelp);
+      const tplGrid = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:12px" });
+      CONTENT_TEMPLATES.forEach(t => {
+        const card = el("button", {
+          type: "button",
+          style: "text-align:left;background:rgba(124,58,237,.08);border:1px solid var(--border);border-radius:10px;padding:10px 12px;cursor:pointer;color:inherit;font:inherit;transition:.15s"
+        });
+        card.innerHTML = `<div style="font-size:20px;margin-bottom:4px">${t.emoji}</div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:2px">${t.name}</div>
+          <div style="font-size:11.5px;color:#7a869a;line-height:1.3">${t.desc}</div>`;
+        card.addEventListener("mouseenter", () => { card.style.background = "rgba(124,58,237,.18)"; card.style.borderColor = "#7c3aed"; });
+        card.addEventListener("mouseleave", () => { card.style.background = "rgba(124,58,237,.08)"; card.style.borderColor = ""; });
+        card.addEventListener("click", () => {
+          if (blocks && blocks.length && !confirm(`Aplicar plantilla "${t.name}"? Se sustituirá el contenido actual del editor.`)) return;
+          blocks = JSON.parse(JSON.stringify(t.blocks));
+          if (!nameInp.value.trim()) nameInp.value = t.name;
+          if (!subjInp.value.trim()) subjInp.value = t.subject;
+          mode = "visual";
+          renderEditor();
+          toast(`Plantilla "${t.name}" aplicada. Edita los textos entre corchetes.`);
+        });
+        tplGrid.appendChild(card);
+      });
+      drawer.appendChild(tplGrid);
+    }
+
+    // === Editor visual ===
+    drawer.appendChild(el("label", {}, "Contenido"));
+    const editorWrap = el("div", { style: "border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(0,0,0,.15)" });
+    const modeBar = el("div", { style: "display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap" });
+    const btnVisual = btn("🎨 Editor visual", () => { mode = "visual"; renderEditor(); });
+    const btnHtml = btn("⌨️ HTML avanzado", () => { mode = "html"; htmlValue = _blocksToHtml(blocks); renderEditor(); });
+    modeBar.appendChild(btnVisual); modeBar.appendChild(btnHtml);
+    editorWrap.appendChild(modeBar);
+
+    const editorBody = el("div");
+    editorWrap.appendChild(editorBody);
+
+    const previewLabel = el("label", { style: "margin-top:14px" }, "Vista previa");
+    const preview = el("div", { style: "border:1px solid var(--border);border-radius:12px;padding:20px;background:#fff;max-height:400px;overflow-y:auto" });
+    editorWrap.appendChild(previewLabel);
+    editorWrap.appendChild(preview);
+
+    function refreshPreview() {
+      const html = mode === "html" ? htmlValue : _blocksToHtml(blocks);
+      preview.innerHTML = html;
+    }
+
+    function renderBlockEditor(b, idx) {
+      const wrap = el("div", { style: "border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.02)" });
+      const head = el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px" });
+      head.appendChild(el("span", { style: "font-size:12px;font-weight:600;text-transform:uppercase;color:#88839a" }, b.type));
+      const acts = el("div", { style: "display:flex;gap:4px" });
+      acts.appendChild(btn("↑", () => { if (idx>0) { [blocks[idx-1],blocks[idx]]=[blocks[idx],blocks[idx-1]]; renderEditor(); } }));
+      acts.appendChild(btn("↓", () => { if (idx<blocks.length-1) { [blocks[idx+1],blocks[idx]]=[blocks[idx],blocks[idx+1]]; renderEditor(); } }));
+      acts.appendChild(btn("🗑", () => { blocks.splice(idx,1); renderEditor(); }));
+      head.appendChild(acts);
+      wrap.appendChild(head);
+      if (b.type === "title" || b.type === "text") {
+        const inp = b.type === "title"
+          ? el("input", { class: "input", value: b.text || "", placeholder: b.type === "title" ? "Título" : "Texto…" })
+          : el("textarea", { placeholder: "Texto (puedes usar {{name}}, {{email}})", style: "min-height:70px" }, b.text || "");
+        inp.addEventListener("input", () => { b.text = inp.value; refreshPreview(); });
+        wrap.appendChild(inp);
+        const alignSel = el("select", { class: "input", style: "margin-top:6px;max-width:180px" });
+        [["left","Izquierda"],["center","Centro"],["right","Derecha"]].forEach(([v,l]) => {
+          const o = el("option", { value: v }, l); if ((b.align||"left")===v) o.selected = true; alignSel.appendChild(o);
+        });
+        alignSel.addEventListener("change", () => { b.align = alignSel.value; refreshPreview(); });
+        wrap.appendChild(alignSel);
+      } else if (b.type === "image") {
+        const inp = el("input", { class: "input", value: b.url || "", placeholder: "URL de la imagen (https://…)" });
+        inp.addEventListener("input", () => { b.url = inp.value; refreshPreview(); });
+        wrap.appendChild(inp);
+      } else if (b.type === "button") {
+        const t = el("input", { class: "input", value: b.text || "Botón", placeholder: "Texto del botón" });
+        const u = el("input", { class: "input", value: b.url || "", placeholder: "URL destino", style: "margin-top:6px" });
+        t.addEventListener("input", () => { b.text = t.value; refreshPreview(); });
+        u.addEventListener("input", () => { b.url = u.value; refreshPreview(); });
+        wrap.appendChild(t); wrap.appendChild(u);
+      } else if (b.type === "spacer") {
+        const inp = el("input", { class: "input", type: "number", value: b.size || 24, placeholder: "Píxeles" });
+        inp.addEventListener("input", () => { b.size = parseInt(inp.value) || 24; refreshPreview(); });
+        wrap.appendChild(inp);
+      } else if (b.type === "html") {
+        const ta = el("textarea", { placeholder: "HTML personalizado", style: "min-height:100px;font-family:monospace" }, b.html || "");
+        ta.addEventListener("input", () => { b.html = ta.value; refreshPreview(); });
+        wrap.appendChild(ta);
+      }
+      return wrap;
+    }
+
+    function renderEditor() {
+      editorBody.innerHTML = "";
+      btnVisual.className = "btn " + (mode === "visual" ? "primary" : "ghost sm");
+      btnHtml.className = "btn " + (mode === "html" ? "primary" : "ghost sm");
+      if (mode === "visual") {
+        blocks.forEach((b, i) => editorBody.appendChild(renderBlockEditor(b, i)));
+        const addBar = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px" });
+        [["title","➕ Título"],["text","➕ Texto"],["image","➕ Imagen"],["button","➕ Botón"],["divider","➕ Separador"],["spacer","➕ Espacio"],["html","➕ HTML"]].forEach(([t,l]) => {
+          addBar.appendChild(btn(l, () => {
+            const nb = { type: t };
+            if (t === "title") nb.text = "Nuevo título";
+            if (t === "text") nb.text = "Escribe aquí…";
+            if (t === "button") { nb.text = "Botón"; nb.url = ""; }
+            if (t === "spacer") nb.size = 24;
+            blocks.push(nb);
+            renderEditor();
+          }));
+        });
+        editorBody.appendChild(addBar);
+      } else {
+        const ta = el("textarea", { placeholder: "HTML del email (soporta {{name}}, {{email}})", style: "width:100%;min-height:280px;font-family:monospace;font-size:13px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit" }, htmlValue);
+        ta.addEventListener("input", () => { htmlValue = ta.value; refreshPreview(); });
+        editorBody.appendChild(ta);
+      }
+      refreshPreview();
+    }
+    renderEditor();
+    drawer.appendChild(editorWrap);
+
     drawer.appendChild(el("label", {}, "Segmento"));
     drawer.appendChild(segSel);
     drawer.appendChild(el("label", {}, "Usuarios individuales (opcional, IDs)"));
@@ -13960,7 +14265,16 @@ async function viewNewsletter(root) {
     const acts = el("div", { style: "display:flex;gap:8px;margin-top:14px" });
     const cancel = btn("Cerrar", () => { drawer.style.display = "none"; });
     const save = btn(isEdit ? "💾 Guardar" : "💾 Crear", async () => {
-      const body = { name: nameInp.value.trim(), subject: subjInp.value.trim(), body_html: bodyTa.value, segment: segSel.value, target_user_ids: targetInp.value.trim(), occasion: occasionInp.value.trim() };
+      const finalHtml = mode === "html" ? htmlValue : _blocksToHtml(blocks);
+      const body = {
+        name: nameInp.value.trim(),
+        subject: subjInp.value.trim(),
+        body_html: finalHtml,
+        blocks_json: mode === "visual" ? JSON.stringify(blocks) : null,
+        segment: segSel.value,
+        target_user_ids: targetInp.value.trim(),
+        occasion: occasionInp.value.trim(),
+      };
       if (!body.name || !body.subject) { toast("Nombre y asunto requeridos"); return; }
       try {
         if (isEdit) await api(`/api/admin/newsletters/${data.id}`, { method: "PATCH", body: JSON.stringify(body) });
@@ -14069,67 +14383,153 @@ async function viewPopups(root) {
     return card;
   }
 
+  // Plantillas prediseñadas de popups
+  const POPUP_TEMPLATES = [
+    { id: "welcome", emoji: "👋", name: "Bienvenida",
+      preset: { title: "¡Bienvenido a Aura! 💜", body: "Empieza completando tu perfil para tener más matches.", cta_text: "Ir a mi perfil", cta_url: "/app#/profile", theme: "default" } },
+    { id: "premium", emoji: "💎", name: "Promo Premium",
+      preset: { title: "🔥 Oferta Premium 50% dto.", body: "Solo por hoy: Premium con 50% de descuento.\nLikes ilimitados, ver quién te gustó, boost semanal.", cta_text: "Activar Premium", cta_url: "/app#/premium", theme: "premium" } },
+    { id: "verify", emoji: "✅", name: "Verificar cuenta",
+      preset: { title: "Verifica tu cuenta ✅", body: "Consigue el sello azul y aumenta tu confianza en Aura. Solo tarda 1 minuto.", cta_text: "Verificar ahora", cta_url: "/app#/verify", theme: "default" } },
+    { id: "event", emoji: "🎉", name: "Evento especial",
+      preset: { title: "🎉 Evento en Aura", body: "Únete al evento en vivo esta semana. Conoce gente en tiempo real.", cta_text: "Ver evento", cta_url: "/app#/events", theme: "default" } },
+    { id: "pride", emoji: "🏳️‍🌈", name: "Pride",
+      preset: { title: "Feliz Orgullo LGBT+ 🏳️‍🌈", body: "Celebramos la diversidad. Descubre perfiles LGBT+ cerca de ti.", cta_text: "Explorar", cta_url: "/app", theme: "pride" } },
+    { id: "valentine", emoji: "💘", name: "San Valentín",
+      preset: { title: "💘 San Valentín en Aura", body: "Encuentra a alguien especial esta semana con boost gratis.", cta_text: "Activar Boost", cta_url: "/app#/boost", theme: "valentine" } },
+    { id: "reengage", emoji: "💤", name: "Reactivar",
+      preset: { title: "Te echamos de menos 💜", body: "Nuevas personas se han unido a Aura cerca de ti. ¿Vuelves a echar un vistazo?", cta_text: "Ver perfiles", cta_url: "/app", theme: "default" } },
+    { id: "notice", emoji: "📢", name: "Aviso importante",
+      preset: { title: "📢 Aviso importante", body: "Comunica aquí algo relevante para el usuario.", cta_text: "Entendido", cta_url: "", theme: "default" } },
+  ];
+
   function openPopupModal(p) {
     const isEdit = !!p;
-    const overlay = el("div", { class: "modal-overlay", style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" });
-    const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border,#2a2f3a);border-radius:14px;max-width:720px;width:100%;max-height:90vh;overflow-y:auto;padding:24px" });
+    const overlay = el("div", { class: "modal-overlay", style: "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)" });
+    const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border,#2a2f3a);border-radius:18px;max-width:820px;width:100%;max-height:92vh;overflow-y:auto;padding:0" });
     overlay.appendChild(modal);
     overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
-    modal.appendChild(el("h3", { style: "margin:0 0 12px" }, isEdit ? "Editar popup" : "Nuevo popup"));
 
-    const titleInp = el("input", { class: "input", value: p?.title || "", placeholder: "Título del popup", style: "width:100%" });
-    const bodyTa = el("textarea", { class: "input", placeholder: "Texto del popup (soporta HTML básico)", style: "width:100%;min-height:100px" }, p?.body || "");
-    const imgInp = el("input", { class: "input", value: p?.image_url || "", placeholder: "URL imagen (opcional)", style: "width:100%" });
-    const ctaTextInp = el("input", { class: "input", value: p?.cta_text || "", placeholder: "Texto botón CTA", style: "width:100%" });
-    const ctaUrlInp = el("input", { class: "input", value: p?.cta_url || "", placeholder: "URL o ruta destino (/premium, https://...)", style: "width:100%" });
+    // Cabecera con gradiente
+    const header = el("div", { style: "background:linear-gradient(135deg,#7c3aed,#ec4899);padding:22px 26px;border-radius:18px 18px 0 0;color:#fff" });
+    header.appendChild(el("div", { style: "font-size:12px;opacity:.85;text-transform:uppercase;letter-spacing:1px;font-weight:600" }, isEdit ? "Editando popup" : "Nuevo popup / campaña in-app"));
+    header.appendChild(el("h2", { style: "margin:4px 0 0;font-size:22px;font-weight:800" }, isEdit ? (p.title || "Popup sin título") : "Crear popup"));
+    header.appendChild(el("p", { style: "margin:6px 0 0;font-size:13px;opacity:.9;line-height:1.5" },
+      "Los popups aparecen dentro de la app a los usuarios que cumplan las condiciones. También pueden enviarse como push."));
+    modal.appendChild(header);
+
+    const body = el("div", { style: "padding:20px 26px 24px" });
+    modal.appendChild(body);
+
+    // Helper de sección con título y descripción
+    function section(icon, title, desc) {
+      const s = el("div", { style: "margin:18px 0 10px;padding-bottom:6px;border-bottom:1px solid rgba(255,255,255,.06)" });
+      s.appendChild(el("div", { style: "font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px" }, `${icon} ${title}`));
+      if (desc) s.appendChild(el("div", { style: "font-size:12px;color:#7a869a;margin-top:2px;line-height:1.4" }, desc));
+      body.appendChild(s);
+    }
+    function row(lbl, hint, node) {
+      body.appendChild(el("label", { style: "display:block;margin:10px 0 3px;font-size:12.5px;font-weight:600" }, lbl));
+      if (hint) body.appendChild(el("div", { style: "font-size:11.5px;color:#7a869a;margin:0 0 5px;line-height:1.4" }, hint));
+      body.appendChild(node);
+    }
+
+    const titleInp = el("input", { class: "input", value: p?.title || "", placeholder: "Ej: ¡Nueva función disponible!", style: "width:100%" });
+    const bodyTa = el("textarea", { class: "input", placeholder: "Explica el mensaje en 1-2 líneas. Puedes usar HTML básico (<b>, <br>, <a>).", style: "width:100%;min-height:90px" }, p?.body || "");
+    const imgInp = el("input", { class: "input", value: p?.image_url || "", placeholder: "https://... (deja vacío para no mostrar imagen)", style: "width:100%" });
+    const ctaTextInp = el("input", { class: "input", value: p?.cta_text || "", placeholder: "Ej: Ver más", style: "width:100%" });
+    const ctaUrlInp = el("input", { class: "input", value: p?.cta_url || "", placeholder: "Ej: /app#/premium  o  https://citasaura.es/blog", style: "width:100%" });
     const themeSel = el("select", { class: "input", style: "width:100%" });
-    [["default","Neutro"],["pride","🏳️‍🌈 Pride"],["valentine","💘 Valentín"],["christmas","🎄 Navidad"],["summer","☀️ Verano"],["premium","💎 Premium"]].forEach(([v,l]) => {
+    [["default","🎨 Neutro (por defecto)"],["pride","🏳️‍🌈 Pride"],["valentine","💘 Valentín"],["christmas","🎄 Navidad"],["summer","☀️ Verano"],["premium","💎 Premium"]].forEach(([v,l]) => {
       const o = el("option", { value: v }, l);
       if ((p?.theme || "default") === v) o.selected = true;
       themeSel.appendChild(o);
     });
     const segSel = el("select", { class: "input", style: "width:100%" });
-    [["all","Todos"],["premium","Premium"],["free","Free"],["verified","Verificados"],["unverified","No verificados"],["male","Hombres"],["female","Mujeres"],["lgbt","LGBT+"],["new","Nuevos"]].forEach(([v,l]) => {
+    [["all","🌍 Todos los usuarios"],["premium","💎 Solo Premium"],["free","🆓 Solo cuentas Free"],["verified","✅ Verificados"],["unverified","⚠️ No verificados"],["male","♂️ Hombres"],["female","♀️ Mujeres"],["lgbt","🏳️‍🌈 LGBT+"],["new","🌱 Nuevos (<30 días)"]].forEach(([v,l]) => {
       const o = el("option", { value: v }, l);
       if ((p?.segment || "all") === v) o.selected = true;
       segSel.appendChild(o);
     });
-    const targetInp = el("input", { class: "input", value: p?.target_user_ids || "", placeholder: "IDs usuarios (opcional, coma)", style: "width:100%" });
+    const targetInp = el("input", { class: "input", value: p?.target_user_ids || "", placeholder: "Ej: 123, 456, 789 (deja vacío para usar el segmento)", style: "width:100%" });
     const startInp = el("input", { class: "input", type: "datetime-local", value: p?.start_at ? String(p.start_at).slice(0,16) : "", style: "width:100%" });
     const endInp = el("input", { class: "input", type: "datetime-local", value: p?.end_at ? String(p.end_at).slice(0,16) : "", style: "width:100%" });
     const prInp = el("input", { class: "input", type: "number", value: p?.priority || 0, style: "width:100%" });
-    const onceCb = el("input", { type: "checkbox" });
-    if (p?.show_once) onceCb.checked = true;
-    const pushCb = el("input", { type: "checkbox" });
-    if (p?.push_enabled) pushCb.checked = true;
-    const activeCb = el("input", { type: "checkbox" });
-    if (p ? p.active : true) activeCb.checked = true;
+    const onceCb = el("input", { type: "checkbox" }); if (p?.show_once) onceCb.checked = true;
+    const pushCb = el("input", { type: "checkbox" }); if (p?.push_enabled) pushCb.checked = true;
+    const activeCb = el("input", { type: "checkbox" }); if (p ? p.active : true) activeCb.checked = true;
 
-    function row(lbl, node) {
-      modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, lbl));
-      modal.appendChild(node);
+    // === Plantillas rápidas (solo al crear) ===
+    if (!isEdit) {
+      section("🎨", "Plantillas rápidas", "Empieza desde una plantilla y luego personaliza los textos.");
+      const tplGrid = el("div", { style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px" });
+      POPUP_TEMPLATES.forEach(t => {
+        const card = el("button", {
+          type: "button",
+          style: "text-align:center;background:rgba(124,58,237,.08);border:1px solid var(--border);border-radius:10px;padding:12px 8px;cursor:pointer;color:inherit;font:inherit;transition:.15s"
+        });
+        card.innerHTML = `<div style="font-size:24px;margin-bottom:4px">${t.emoji}</div>
+          <div style="font-weight:700;font-size:12.5px">${t.name}</div>`;
+        card.addEventListener("mouseenter", () => { card.style.background = "rgba(124,58,237,.20)"; card.style.borderColor = "#7c3aed"; card.style.transform = "translateY(-2px)"; });
+        card.addEventListener("mouseleave", () => { card.style.background = "rgba(124,58,237,.08)"; card.style.borderColor = ""; card.style.transform = ""; });
+        card.addEventListener("click", () => {
+          titleInp.value = t.preset.title;
+          bodyTa.value = t.preset.body;
+          ctaTextInp.value = t.preset.cta_text || "";
+          ctaUrlInp.value = t.preset.cta_url || "";
+          themeSel.value = t.preset.theme || "default";
+          toast(`Plantilla "${t.name}" aplicada`);
+        });
+        tplGrid.appendChild(card);
+      });
+      body.appendChild(tplGrid);
     }
-    row("Título", titleInp);
-    row("Cuerpo", bodyTa);
-    row("Imagen (URL)", imgInp);
-    const cta2 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [ctaTextInp, ctaUrlInp]);
-    row("CTA (texto / URL)", cta2);
-    const row2 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [themeSel, segSel]);
-    row("Tema / Segmento", row2);
-    row("Usuarios individuales (opcional)", targetInp);
-    const row3 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px" }, [startInp, endInp, prInp]);
-    row("Inicio / Fin / Prioridad", row3);
-    const flags = el("div", { style: "display:flex;flex-wrap:wrap;gap:16px;margin-top:12px" }, [
-      el("label", {}, [onceCb, " 1️⃣ Mostrar una vez por usuario"]),
-      el("label", {}, [pushCb, " 🔔 Enviar push simultánea"]),
-      el("label", {}, [activeCb, " ● Activo"]),
-    ]);
-    modal.appendChild(flags);
 
-    const acts = el("div", { style: "display:flex;gap:8px;margin-top:16px;justify-content:flex-end" });
+    // === Contenido ===
+    section("✍️", "Contenido del popup", "Lo que verá el usuario dentro de la app. El título es obligatorio.");
+    row("Título", "Corto y llamativo, máximo 60 caracteres.", titleInp);
+    row("Cuerpo del mensaje", "El texto principal. Puedes usar HTML básico como <b>, <a href=''>.", bodyTa);
+    row("Imagen (opcional)", "URL de una imagen que aparecerá arriba del popup. Recomendado 16:9.", imgInp);
+
+    // === Botón de acción ===
+    section("🎯", "Botón de acción (CTA)", "Botón que llevará al usuario a una página. Deja los dos campos vacíos si no quieres botón.");
+    const cta2 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [ctaTextInp, ctaUrlInp]);
+    row("Texto del botón / URL destino", "URL puede ser interna (empieza con /app#/…) o externa (https://…).", cta2);
+
+    // === Segmentación ===
+    section("🎯", "¿A quién se lo mostramos?", "Elige el estilo visual y a qué grupo de usuarios se mostrará.");
+    const row2 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px" }, [themeSel, segSel]);
+    row("Tema visual / Segmento", "El tema cambia colores. El segmento filtra a qué usuarios llega.", row2);
+    row("Usuarios individuales (opcional)", "Si pones IDs, solo esos usuarios lo verán (ignora el segmento).", targetInp);
+
+    // === Programación ===
+    section("📅", "Programación", "Ventana temporal en la que el popup estará activo. Deja vacío para que aparezca de inmediato y sin fecha de fin.");
+    const row3 = el("div", { style: "display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px" });
+    row3.appendChild(el("div", {}, [el("div",{style:"font-size:11px;color:#7a869a;margin-bottom:2px"},"Fecha inicio"), startInp]));
+    row3.appendChild(el("div", {}, [el("div",{style:"font-size:11px;color:#7a869a;margin-bottom:2px"},"Fecha fin"), endInp]));
+    row3.appendChild(el("div", {}, [el("div",{style:"font-size:11px;color:#7a869a;margin-bottom:2px"},"Prioridad"), prInp]));
+    body.appendChild(row3);
+    body.appendChild(el("div", { style: "font-size:11.5px;color:#7a869a;margin-top:4px" },
+      "Prioridad: si hay varios popups activos, se muestra primero el de número mayor."));
+
+    // === Opciones ===
+    section("⚙️", "Opciones de comportamiento", "");
+    const optCard = el("div", { style: "display:flex;flex-direction:column;gap:10px;background:rgba(0,0,0,.15);border:1px solid var(--border);border-radius:10px;padding:12px" });
+    optCard.appendChild(el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [
+      onceCb, el("span", {}, [el("b",{},"1️⃣ Mostrar una vez por usuario "), el("span",{style:"font-size:11.5px;color:#7a869a"},"— Si activo, cada usuario solo lo verá una vez.")])
+    ]));
+    optCard.appendChild(el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [
+      pushCb, el("span", {}, [el("b",{},"🔔 Enviar también como push "), el("span",{style:"font-size:11.5px;color:#7a869a"},"— Manda notificación push en paralelo (útil si el usuario no tiene la app abierta).")])
+    ]));
+    optCard.appendChild(el("label", { style: "display:flex;align-items:center;gap:8px;cursor:pointer" }, [
+      activeCb, el("span", {}, [el("b",{},"● Activo "), el("span",{style:"font-size:11.5px;color:#7a869a"},"— Desactiva para pausar sin borrar.")])
+    ]));
+    body.appendChild(optCard);
+
+    const acts = el("div", { style: "display:flex;gap:8px;margin-top:20px;padding-top:14px;border-top:1px solid rgba(255,255,255,.06);justify-content:flex-end" });
     const cancel = btn("Cancelar", () => overlay.remove());
-    const save = btn(isEdit ? "💾 Guardar" : "💾 Crear", async () => {
-      const body = {
+    const save = btn(isEdit ? "💾 Guardar cambios" : "💾 Crear popup", async () => {
+      const payload = {
         title: titleInp.value, body: bodyTa.value, image_url: imgInp.value,
         cta_text: ctaTextInp.value, cta_url: ctaUrlInp.value, theme: themeSel.value,
         segment: segSel.value, target_user_ids: targetInp.value,
@@ -14139,10 +14539,10 @@ async function viewPopups(root) {
         push_enabled: pushCb.checked ? 1 : 0,
         active: activeCb.checked ? 1 : 0,
       };
-      if (!body.title) { toast("Título requerido"); return; }
+      if (!payload.title) { toast("El título es obligatorio"); return; }
       try {
-        if (isEdit) await api(`/api/admin/popups/${p.id}`, { method: "PATCH", body: JSON.stringify(body) });
-        else await api("/api/admin/popups", { method: "POST", body: JSON.stringify(body) });
+        if (isEdit) await api(`/api/admin/popups/${p.id}`, { method: "PATCH", body: JSON.stringify(payload) });
+        else await api("/api/admin/popups", { method: "POST", body: JSON.stringify(payload) });
         overlay.remove();
         toast("Guardado");
         load();
@@ -14150,7 +14550,7 @@ async function viewPopups(root) {
     });
     save.className = "btn primary";
     acts.appendChild(cancel); acts.appendChild(save);
-    modal.appendChild(acts);
+    body.appendChild(acts);
     document.body.appendChild(overlay);
   }
 
