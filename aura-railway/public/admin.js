@@ -12921,7 +12921,20 @@ async function viewInvites(root) {
       const acts = E("div","inv-actions");
       if (iv.email) {
         acts.appendChild(btn(iv.sent_at ? "🔁 Reenviar" : "📨 Enviar email", "primary sm", async () => {
-          try { await api.post("/api/admin/invites/" + iv.id + "/send", {}); toast("Email enviado"); load(); loadStats(); }
+          // Nota opcional adjunta al código (aparece dentro del email
+          // como bloque destacado bajo el código de invitación).
+          const note = prompt(
+            "Nota adicional para el tester (opcional).\n" +
+            "Se enviará dentro del mismo email, debajo del código, como aviso destacado.\n" +
+            "Déjalo vacío si no quieres añadir nada.",
+            ""
+          );
+          if (note === null) return; // Cancelado
+          try {
+            await api.post("/api/admin/invites/" + iv.id + "/send", { note: note.trim() });
+            toast(note.trim() ? "Email enviado con nota" : "Email enviado");
+            load(); loadStats();
+          }
           catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
         }));
       }
@@ -13824,8 +13837,9 @@ async function viewNewsletter(root) {
       .season-btn:hover{background:rgba(91,155,255,.15);border-color:var(--accent,#5b9bff)}
       .news-drawer{background:linear-gradient(160deg,rgba(255,255,255,.02),rgba(0,0,0,.15));border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:20px;margin-bottom:16px}
       .news-drawer label{display:block;font-size:12px;font-weight:600;margin:10px 0 4px;color:var(--muted,#7a869a);text-transform:uppercase;letter-spacing:.3px}
-      .news-drawer .input,.news-drawer textarea{width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit;font:inherit}
+      .news-drawer .input,.news-drawer textarea,.news-drawer select{width:100%;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit;font:inherit}
       .news-drawer textarea{min-height:140px;font-family:monospace;font-size:13px}
+      .news-drawer select option{background:#1a1e28;color:#fff}
     `;
     document.head.appendChild(st);
   }
@@ -13925,6 +13939,25 @@ async function viewNewsletter(root) {
     }
   }
 
+  // --- Editor visual de newsletter con bloques ---
+  function _blocksToHtml(blocks) {
+    const parts = blocks.map(b => {
+      if (b.type === "title") return `<h1 style="margin:0 0 8px;font-size:24px;font-weight:800;color:#1a1a2e;text-align:${b.align||"left"}">${(b.text||"").replace(/</g,"&lt;")}</h1>`;
+      if (b.type === "text") return `<p style="margin:0 0 12px;font-size:15px;line-height:1.6;color:#4a475b;text-align:${b.align||"left"}">${(b.text||"").replace(/\n/g,"<br/>")}</p>`;
+      if (b.type === "image") return `<div style="text-align:center;margin:12px 0"><img src="${b.url||""}" alt="" style="max-width:100%;border-radius:12px"/></div>`;
+      if (b.type === "button") return `<div style="text-align:center;margin:18px 0"><a href="${b.url||"#"}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:700">${(b.text||"Botón").replace(/</g,"&lt;")}</a></div>`;
+      if (b.type === "divider") return `<hr style="border:0;border-top:1px solid #eee6f7;margin:20px 0"/>`;
+      if (b.type === "spacer") return `<div style="height:${b.size||24}px"></div>`;
+      if (b.type === "html") return b.html || "";
+      return "";
+    });
+    return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1a1a2e">${parts.join("\n")}</div>`;
+  }
+  function _htmlToBlocks(html) {
+    if (!html) return [{ type: "title", text: "Hola {{name}}", align: "center" }, { type: "text", text: "Escribe aquí tu mensaje.", align: "left" }];
+    return [{ type: "html", html }];
+  }
+
   function openDrawer(data) {
     drawer.innerHTML = "";
     drawer.style.display = "block";
@@ -13934,7 +13967,11 @@ async function viewNewsletter(root) {
 
     const nameInp = el("input", { class: "input", value: data?.name || "", placeholder: "Ej: Orgullo LGBT 2026" });
     const subjInp = el("input", { class: "input", value: data?.subject || "", placeholder: "Asunto del email" });
-    const bodyTa = el("textarea", { placeholder: "HTML del email (soporta {{name}}, {{email}})" }, data?.body_html || "");
+
+    // Estado editor
+    let blocks = (data && data.blocks_json) ? (function(){ try { return JSON.parse(data.blocks_json); } catch { return _htmlToBlocks(data?.body_html); } })() : _htmlToBlocks(data?.body_html);
+    let mode = "visual"; // "visual" | "html"
+    let htmlValue = data?.body_html || "";
 
     const segSel = el("select", { class: "input" });
     [["all","Todos"],["premium","Premium"],["free","Free"],["verified","Verificados"],["unverified","No verificados"],["male","Hombres"],["female","Mujeres"],["lgbt","LGBT+"],["hetero","Hetero"],["new","Nuevos (<30 días)"]].forEach(([v,l]) => {
@@ -13950,8 +13987,102 @@ async function viewNewsletter(root) {
     drawer.appendChild(nameInp);
     drawer.appendChild(el("label", {}, "Asunto"));
     drawer.appendChild(subjInp);
-    drawer.appendChild(el("label", {}, "Cuerpo (HTML)"));
-    drawer.appendChild(bodyTa);
+
+    // === Editor visual ===
+    drawer.appendChild(el("label", {}, "Contenido"));
+    const editorWrap = el("div", { style: "border:1px solid var(--border);border-radius:12px;padding:12px;background:rgba(0,0,0,.15)" });
+    const modeBar = el("div", { style: "display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap" });
+    const btnVisual = btn("🎨 Editor visual", () => { mode = "visual"; renderEditor(); });
+    const btnHtml = btn("⌨️ HTML avanzado", () => { mode = "html"; htmlValue = _blocksToHtml(blocks); renderEditor(); });
+    modeBar.appendChild(btnVisual); modeBar.appendChild(btnHtml);
+    editorWrap.appendChild(modeBar);
+
+    const editorBody = el("div");
+    editorWrap.appendChild(editorBody);
+
+    const previewLabel = el("label", { style: "margin-top:14px" }, "Vista previa");
+    const preview = el("div", { style: "border:1px solid var(--border);border-radius:12px;padding:20px;background:#fff;max-height:400px;overflow-y:auto" });
+    editorWrap.appendChild(previewLabel);
+    editorWrap.appendChild(preview);
+
+    function refreshPreview() {
+      const html = mode === "html" ? htmlValue : _blocksToHtml(blocks);
+      preview.innerHTML = html;
+    }
+
+    function renderBlockEditor(b, idx) {
+      const wrap = el("div", { style: "border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.02)" });
+      const head = el("div", { style: "display:flex;justify-content:space-between;align-items:center;margin-bottom:6px" });
+      head.appendChild(el("span", { style: "font-size:12px;font-weight:600;text-transform:uppercase;color:#88839a" }, b.type));
+      const acts = el("div", { style: "display:flex;gap:4px" });
+      acts.appendChild(btn("↑", () => { if (idx>0) { [blocks[idx-1],blocks[idx]]=[blocks[idx],blocks[idx-1]]; renderEditor(); } }));
+      acts.appendChild(btn("↓", () => { if (idx<blocks.length-1) { [blocks[idx+1],blocks[idx]]=[blocks[idx],blocks[idx+1]]; renderEditor(); } }));
+      acts.appendChild(btn("🗑", () => { blocks.splice(idx,1); renderEditor(); }));
+      head.appendChild(acts);
+      wrap.appendChild(head);
+      if (b.type === "title" || b.type === "text") {
+        const inp = b.type === "title"
+          ? el("input", { class: "input", value: b.text || "", placeholder: b.type === "title" ? "Título" : "Texto…" })
+          : el("textarea", { placeholder: "Texto (puedes usar {{name}}, {{email}})", style: "min-height:70px" }, b.text || "");
+        inp.addEventListener("input", () => { b.text = inp.value; refreshPreview(); });
+        wrap.appendChild(inp);
+        const alignSel = el("select", { class: "input", style: "margin-top:6px;max-width:180px" });
+        [["left","Izquierda"],["center","Centro"],["right","Derecha"]].forEach(([v,l]) => {
+          const o = el("option", { value: v }, l); if ((b.align||"left")===v) o.selected = true; alignSel.appendChild(o);
+        });
+        alignSel.addEventListener("change", () => { b.align = alignSel.value; refreshPreview(); });
+        wrap.appendChild(alignSel);
+      } else if (b.type === "image") {
+        const inp = el("input", { class: "input", value: b.url || "", placeholder: "URL de la imagen (https://…)" });
+        inp.addEventListener("input", () => { b.url = inp.value; refreshPreview(); });
+        wrap.appendChild(inp);
+      } else if (b.type === "button") {
+        const t = el("input", { class: "input", value: b.text || "Botón", placeholder: "Texto del botón" });
+        const u = el("input", { class: "input", value: b.url || "", placeholder: "URL destino", style: "margin-top:6px" });
+        t.addEventListener("input", () => { b.text = t.value; refreshPreview(); });
+        u.addEventListener("input", () => { b.url = u.value; refreshPreview(); });
+        wrap.appendChild(t); wrap.appendChild(u);
+      } else if (b.type === "spacer") {
+        const inp = el("input", { class: "input", type: "number", value: b.size || 24, placeholder: "Píxeles" });
+        inp.addEventListener("input", () => { b.size = parseInt(inp.value) || 24; refreshPreview(); });
+        wrap.appendChild(inp);
+      } else if (b.type === "html") {
+        const ta = el("textarea", { placeholder: "HTML personalizado", style: "min-height:100px;font-family:monospace" }, b.html || "");
+        ta.addEventListener("input", () => { b.html = ta.value; refreshPreview(); });
+        wrap.appendChild(ta);
+      }
+      return wrap;
+    }
+
+    function renderEditor() {
+      editorBody.innerHTML = "";
+      btnVisual.className = "btn " + (mode === "visual" ? "primary" : "ghost sm");
+      btnHtml.className = "btn " + (mode === "html" ? "primary" : "ghost sm");
+      if (mode === "visual") {
+        blocks.forEach((b, i) => editorBody.appendChild(renderBlockEditor(b, i)));
+        const addBar = el("div", { style: "display:flex;gap:6px;flex-wrap:wrap;margin-top:8px" });
+        [["title","➕ Título"],["text","➕ Texto"],["image","➕ Imagen"],["button","➕ Botón"],["divider","➕ Separador"],["spacer","➕ Espacio"],["html","➕ HTML"]].forEach(([t,l]) => {
+          addBar.appendChild(btn(l, () => {
+            const nb = { type: t };
+            if (t === "title") nb.text = "Nuevo título";
+            if (t === "text") nb.text = "Escribe aquí…";
+            if (t === "button") { nb.text = "Botón"; nb.url = ""; }
+            if (t === "spacer") nb.size = 24;
+            blocks.push(nb);
+            renderEditor();
+          }));
+        });
+        editorBody.appendChild(addBar);
+      } else {
+        const ta = el("textarea", { placeholder: "HTML del email (soporta {{name}}, {{email}})", style: "width:100%;min-height:280px;font-family:monospace;font-size:13px;background:rgba(0,0,0,.2);border:1px solid var(--border);border-radius:8px;padding:10px;color:inherit" }, htmlValue);
+        ta.addEventListener("input", () => { htmlValue = ta.value; refreshPreview(); });
+        editorBody.appendChild(ta);
+      }
+      refreshPreview();
+    }
+    renderEditor();
+    drawer.appendChild(editorWrap);
+
     drawer.appendChild(el("label", {}, "Segmento"));
     drawer.appendChild(segSel);
     drawer.appendChild(el("label", {}, "Usuarios individuales (opcional, IDs)"));
@@ -13962,7 +14093,16 @@ async function viewNewsletter(root) {
     const acts = el("div", { style: "display:flex;gap:8px;margin-top:14px" });
     const cancel = btn("Cerrar", () => { drawer.style.display = "none"; });
     const save = btn(isEdit ? "💾 Guardar" : "💾 Crear", async () => {
-      const body = { name: nameInp.value.trim(), subject: subjInp.value.trim(), body_html: bodyTa.value, segment: segSel.value, target_user_ids: targetInp.value.trim(), occasion: occasionInp.value.trim() };
+      const finalHtml = mode === "html" ? htmlValue : _blocksToHtml(blocks);
+      const body = {
+        name: nameInp.value.trim(),
+        subject: subjInp.value.trim(),
+        body_html: finalHtml,
+        blocks_json: mode === "visual" ? JSON.stringify(blocks) : null,
+        segment: segSel.value,
+        target_user_ids: targetInp.value.trim(),
+        occasion: occasionInp.value.trim(),
+      };
       if (!body.name || !body.subject) { toast("Nombre y asunto requeridos"); return; }
       try {
         if (isEdit) await api(`/api/admin/newsletters/${data.id}`, { method: "PATCH", body: JSON.stringify(body) });
