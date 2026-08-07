@@ -460,6 +460,11 @@ const PUBLIC_API = new Set([
   "PUT /api/my/notification-prefs",
   "POST /api/my/push-subscribe",
   "POST /api/my/push-unsubscribe",
+  "POST /api/my/push/click-track",
+  "POST /api/my/push-claim",
+  // Suscripciones push de visitantes sin cuenta (PWA instalada, sin login)
+  "POST /api/push-subscribe-anon",
+  "POST /api/push-unsubscribe-anon",
   // Popups
   "GET /api/my/popup-active",
   // Social login demo helper — cuenta a la que entran Google/Apple/Facebook
@@ -10458,6 +10463,434 @@ app.post("/api/my/push-unsubscribe", wrap(async (req, res) => {
   else await pool.execute("DELETE FROM user_push_subscriptions WHERE user_id=?", [me]);
   res.json({ ok: true });
 }));
+
+/* --- Suscripciones anónimas ---
+   Guardamos endpoints push de visitantes que instalaron la PWA pero aún NO
+   se han registrado. Se guarda un fingerprint del dispositivo/idioma/UA para
+   segmentación básica. Al registrarse, la app llama a /api/my/push-claim
+   pasando el mismo endpoint y la suscripción se promueve a la cuenta creada. */
+async function ensureAnonPushTable() {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS anon_push_subscriptions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      endpoint VARCHAR(500) NOT NULL,
+      p256dh VARCHAR(255) DEFAULT NULL,
+      auth VARCHAR(120) DEFAULT NULL,
+      device_fingerprint VARCHAR(120) DEFAULT NULL,
+      user_agent VARCHAR(500) DEFAULT NULL,
+      lang VARCHAR(20) DEFAULT NULL,
+      country VARCHAR(80) DEFAULT NULL,
+      city VARCHAR(120) DEFAULT NULL,
+      ip VARCHAR(80) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_endpoint (endpoint(191)),
+      INDEX idx_lang (lang),
+      INDEX idx_country (country)
+    )`);
+  } catch (e) { console.error("ensureAnonPushTable:", e.message); }
+}
+ensureAnonPushTable().catch(() => {});
+
+// Suscripción anónima (sin login). Cualquiera puede llamarla.
+app.post("/api/push-subscribe-anon", wrap(async (req, res) => {
+  const b = req.body || {};
+  const endpoint = String(b.endpoint || "").slice(0, 500);
+  if (!endpoint) return res.status(400).json({ error: "no_endpoint" });
+  const p256dh = String(b.keys?.p256dh || "").slice(0, 255);
+  const auth = String(b.keys?.auth || "").slice(0, 120);
+  const fingerprint = String(b.fingerprint || "").slice(0, 120);
+  const ua = String(req.headers["user-agent"] || "").slice(0, 500);
+  const lang = String(b.lang || req.headers["accept-language"] || "").slice(0, 20);
+  const country = b.country ? String(b.country).slice(0, 80) : null;
+  const city = b.city ? String(b.city).slice(0, 120) : null;
+  const ip = String(clientIp(req) || "").slice(0, 80);
+  try {
+    // Si ya está registrado como usuario, no duplicar en anon.
+    const [dup] = await pool.query("SELECT id FROM user_push_subscriptions WHERE endpoint=? LIMIT 1", [endpoint]);
+    if (dup.length) return res.json({ ok: true, already_registered: true });
+    await pool.execute(
+      `INSERT INTO anon_push_subscriptions (endpoint, p256dh, auth, device_fingerprint, user_agent, lang, country, city, ip)
+       VALUES (?,?,?,?,?,?,?,?,?)
+       ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth),
+         device_fingerprint=VALUES(device_fingerprint), user_agent=VALUES(user_agent),
+         lang=VALUES(lang), country=VALUES(country), city=VALUES(city), ip=VALUES(ip)`,
+      [endpoint, p256dh, auth, fingerprint, ua, lang, country, city, ip]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("push-subscribe-anon:", e.message);
+    res.status(500).json({ error: "internal" });
+  }
+}));
+
+// Reclamar una suscripción anónima al registrarse (mueve el endpoint a la
+// cuenta del usuario y elimina el anónimo).
+app.post("/api/my/push-claim", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const endpoint = String((req.body||{}).endpoint || "").slice(0, 500);
+  if (!endpoint) return res.status(400).json({ error: "no_endpoint" });
+  const [rows] = await pool.query("SELECT * FROM anon_push_subscriptions WHERE endpoint=? LIMIT 1", [endpoint]);
+  if (!rows.length) return res.json({ ok: true, claimed: false });
+  const s = rows[0];
+  try {
+    await pool.execute("DELETE FROM user_push_subscriptions WHERE endpoint=?", [endpoint]);
+    await pool.execute(
+      `INSERT INTO user_push_subscriptions (user_id, endpoint, p256dh, auth, device_name)
+       VALUES (?,?,?,?,?)`,
+      [me, endpoint, s.p256dh, s.auth, (s.user_agent||"").slice(0,120)]
+    );
+    await pool.execute("DELETE FROM anon_push_subscriptions WHERE endpoint=?", [endpoint]);
+    res.json({ ok: true, claimed: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+}));
+
+// Desuscribir anónimo
+app.post("/api/push-unsubscribe-anon", wrap(async (req, res) => {
+  const endpoint = String((req.body||{}).endpoint || "").slice(0, 500);
+  if (endpoint) await pool.execute("DELETE FROM anon_push_subscriptions WHERE endpoint=?", [endpoint]);
+  res.json({ ok: true });
+}));
+
+/* ==================== ADMIN PUSH CAMPAIGNS ====================
+   Sistema para que el admin envíe notificaciones push masivas o segmentadas.
+   Segmentación: all | premium | free | zone | country | age | user_ids | active_days
+   Estados: draft | queued | sending | sent | failed | scheduled
+   Métricas: enviadas, entregadas, clics (via /api/my/push/click-track).
+   ============================================================= */
+async function ensurePushCampaignTables() {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS push_campaigns (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(200) NOT NULL,
+      body TEXT NOT NULL,
+      url VARCHAR(500) DEFAULT '/',
+      icon VARCHAR(500) DEFAULT NULL,
+      image VARCHAR(500) DEFAULT NULL,
+      tag VARCHAR(80) DEFAULT 'aura-campaign',
+      segment VARCHAR(40) DEFAULT 'all',
+      segment_params TEXT DEFAULT NULL,
+      target_user_ids TEXT DEFAULT NULL,
+      status ENUM('draft','queued','sending','sent','failed','scheduled') DEFAULT 'draft',
+      scheduled_at DATETIME NULL,
+      sent_at DATETIME NULL,
+      target_count INT DEFAULT 0,
+      delivered_count INT DEFAULT 0,
+      click_count INT DEFAULT 0,
+      failed_count INT DEFAULT 0,
+      error_message TEXT DEFAULT NULL,
+      created_by VARCHAR(190) DEFAULT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_status (status),
+      INDEX idx_scheduled (scheduled_at)
+    )`);
+  } catch (e) { console.error("ensurePushCampaignTables:", e.message); }
+}
+ensurePushCampaignTables().catch(() => {});
+
+// Resuelve segmento. Devuelve { userIds: [], anonEndpoints: [] }
+async function resolvePushAudience(segment, params) {
+  const p = params || {};
+  const seg = String(segment || "all").toLowerCase();
+  const out = { userIds: [], anonEndpoints: [] };
+  // ----- Segmentos que apuntan SOLO a anónimos -----
+  if (seg === "anon" || seg === "anon_country" || seg === "anon_lang") {
+    let sql = "SELECT endpoint FROM anon_push_subscriptions WHERE 1=1";
+    const args = [];
+    if (seg === "anon_country" && p.country) { sql += " AND country=?"; args.push(String(p.country)); }
+    if (seg === "anon_lang" && p.lang) { sql += " AND lang LIKE ?"; args.push(String(p.lang) + "%"); }
+    sql += " LIMIT 200000";
+    try {
+      const [rows] = await pool.query(sql, args);
+      out.anonEndpoints = rows.map(r => r.endpoint);
+    } catch (e) { console.error("anon audience:", e.message); }
+    return out;
+  }
+
+  // ----- Segmentos de usuarios registrados -----
+  let sql = "SELECT DISTINCT u.id FROM users u INNER JOIN user_push_subscriptions ps ON ps.user_id=u.id WHERE 1=1";
+  const args = [];
+  if (seg === "premium") {
+    sql += " AND (u.is_premium=1 OR u.premium_until > NOW())";
+  } else if (seg === "free") {
+    sql += " AND (u.is_premium=0 OR u.is_premium IS NULL) AND (u.premium_until IS NULL OR u.premium_until < NOW())";
+  } else if (seg === "zone" && p.zone) {
+    sql += " AND u.zone=?"; args.push(String(p.zone));
+  } else if (seg === "country" && p.country) {
+    sql += " AND u.country=?"; args.push(String(p.country));
+  } else if (seg === "city" && p.city) {
+    sql += " AND u.city=?"; args.push(String(p.city));
+  } else if (seg === "age" && (p.min_age || p.max_age)) {
+    if (p.min_age) { sql += " AND u.age >= ?"; args.push(parseInt(p.min_age,10)||18); }
+    if (p.max_age) { sql += " AND u.age <= ?"; args.push(parseInt(p.max_age,10)||99); }
+  } else if (seg === "user_ids" && Array.isArray(p.user_ids) && p.user_ids.length) {
+    const ids = p.user_ids.map(x => parseInt(x,10)).filter(Boolean).slice(0, 5000);
+    if (!ids.length) return out;
+    sql += ` AND u.id IN (${ids.map(()=>"?").join(",")})`;
+    args.push(...ids);
+  } else if (seg === "active_days" && p.days) {
+    const d = parseInt(p.days,10) || 30;
+    sql += ` AND u.last_seen_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`;
+    args.push(d);
+  }
+  // "all", "all_including_anon" o inválido → no añade filtro
+  sql += " LIMIT 200000";
+  try {
+    const [rows] = await pool.query(sql, args);
+    out.userIds = rows.map(r => r.id);
+  } catch (e) {
+    console.error("resolvePushAudience users:", e.message);
+  }
+
+  // Incluir anónimos si el segmento lo pide
+  if (seg === "all_including_anon") {
+    try {
+      const [aRows] = await pool.query("SELECT endpoint FROM anon_push_subscriptions LIMIT 200000");
+      out.anonEndpoints = aRows.map(r => r.endpoint);
+    } catch (e) { console.error("all_including_anon anon:", e.message); }
+  }
+  return out;
+}
+
+// Enviar push a un endpoint arbitrario (usado para anónimos)
+async function sendPushToEndpoint(sub, payload) {
+  if (!webPush) return { sent: 0 };
+  try {
+    await webPush.sendNotification(
+      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+      JSON.stringify(payload || {}),
+      { TTL: 60 * 60 * 24 }
+    );
+    return { sent: 1 };
+  } catch (e) {
+    if (e && (e.statusCode === 404 || e.statusCode === 410)) {
+      try { await pool.execute("DELETE FROM anon_push_subscriptions WHERE endpoint=?", [sub.endpoint]); } catch {}
+    }
+    return { sent: 0, error: e.message };
+  }
+}
+
+// Envío efectivo de una campaña (idempotente: marca sent tras terminar)
+async function runPushCampaign(campaignId) {
+  const [rows] = await pool.query("SELECT * FROM push_campaigns WHERE id=? LIMIT 1", [campaignId]);
+  if (!rows.length) return { ok: false, error: "not_found" };
+  const c = rows[0];
+  if (c.status === "sending" || c.status === "sent") return { ok: false, error: "already_" + c.status };
+  await pool.execute("UPDATE push_campaigns SET status='sending' WHERE id=?", [campaignId]);
+  let params = {};
+  try { params = c.segment_params ? JSON.parse(c.segment_params) : {}; } catch {}
+  // Si viene target_user_ids explícito, priorizarlo
+  let userIds = [];
+  let anonEndpoints = [];
+  if (c.target_user_ids && c.target_user_ids.trim()) {
+    userIds = c.target_user_ids.split(",").map(x => parseInt(x,10)).filter(Boolean);
+  } else {
+    const aud = await resolvePushAudience(c.segment, params);
+    userIds = aud.userIds || [];
+    anonEndpoints = aud.anonEndpoints || [];
+  }
+  const payload = {
+    title: c.title || "Aura",
+    body: c.body || "",
+    url: c.url || "/",
+    icon: c.icon || "/assets/aura-logo.png",
+    image: c.image || undefined,
+    tag: c.tag || `aura-campaign-${c.id}`,
+    campaign_id: c.id,
+  };
+  let delivered = 0, failed = 0;
+  // Registrados
+  for (const uid of userIds) {
+    try {
+      const r = await sendPushToUser(uid, payload);
+      delivered += (r.sent || 0);
+      if (!r.sent) failed++;
+    } catch { failed++; }
+  }
+  // Anónimos
+  if (anonEndpoints.length) {
+    try {
+      const [subs] = await pool.query(
+        `SELECT endpoint, p256dh, auth FROM anon_push_subscriptions WHERE endpoint IN (${anonEndpoints.map(()=>"?").join(",")})`,
+        anonEndpoints
+      );
+      for (const s of subs) {
+        const r = await sendPushToEndpoint(s, payload);
+        delivered += (r.sent || 0);
+        if (!r.sent) failed++;
+      }
+    } catch (e) { console.error("anon send batch:", e.message); }
+  }
+  const totalTarget = userIds.length + anonEndpoints.length;
+  await pool.execute(
+    "UPDATE push_campaigns SET status='sent', sent_at=NOW(), target_count=?, delivered_count=?, failed_count=? WHERE id=?",
+    [totalTarget, delivered, failed, campaignId]
+  );
+  // Guardar en notifications in-app (solo usuarios registrados; los anónimos no tienen user_id)
+  try {
+    for (const uid of userIds.slice(0, 20000)) {
+      await pool.execute(
+        "INSERT INTO notifications (user_id, kind, title, body, url, meta, created_at) VALUES (?,?,?,?,?,?,NOW())",
+        [uid, "campaign", c.title, c.body, c.url || "/", JSON.stringify({ campaign_id: c.id })]
+      );
+    }
+  } catch {}
+  return { ok: true, target: totalTarget, users: userIds.length, anons: anonEndpoints.length, delivered, failed };
+}
+
+// Loop de programaciones (cada 60s revisa campañas scheduled cuyo scheduled_at <= NOW)
+setInterval(async () => {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id FROM push_campaigns WHERE status='scheduled' AND scheduled_at <= NOW() LIMIT 10"
+    );
+    for (const r of rows) {
+      runPushCampaign(r.id).catch(() => {});
+    }
+  } catch {}
+}, 60000);
+
+// Lista de campañas (paginada)
+app.get("/api/admin/push/campaigns", wrap(async (req, res) => {
+  await ensurePushCampaignTables();
+  const limit = Math.min(200, parseInt(req.query.limit,10) || 50);
+  const [rows] = await pool.query(
+    "SELECT id, title, body, url, segment, status, scheduled_at, sent_at, target_count, delivered_count, click_count, failed_count, created_by, created_at FROM push_campaigns ORDER BY id DESC LIMIT ?",
+    [limit]
+  );
+  res.json({ ok: true, campaigns: rows });
+}));
+
+// Detalle de campaña
+app.get("/api/admin/push/campaigns/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id,10);
+  const [rows] = await pool.query("SELECT * FROM push_campaigns WHERE id=? LIMIT 1", [id]);
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true, campaign: rows[0] });
+}));
+
+// Preview: cuántos usuarios recibirían la campaña
+app.post("/api/admin/push/preview-audience", wrap(async (req, res) => {
+  const b = req.body || {};
+  const aud = await resolvePushAudience(b.segment, b.segment_params || {});
+  const users = (aud.userIds || []).length;
+  const anons = (aud.anonEndpoints || []).length;
+  res.json({
+    ok: true,
+    count: users + anons,
+    users,
+    anons,
+    sample_users: (aud.userIds || []).slice(0, 20),
+  });
+}));
+
+// Estadísticas globales de suscripciones push
+app.get("/api/admin/push/stats", wrap(async (req, res) => {
+  try {
+    const [[u]] = await pool.query("SELECT COUNT(*) AS n FROM user_push_subscriptions");
+    const [[a]] = await pool.query("SELECT COUNT(*) AS n FROM anon_push_subscriptions");
+    const [[uu]] = await pool.query("SELECT COUNT(DISTINCT user_id) AS n FROM user_push_subscriptions");
+    const [byLang] = await pool.query("SELECT lang, COUNT(*) AS n FROM anon_push_subscriptions GROUP BY lang ORDER BY n DESC LIMIT 10");
+    const [byCountry] = await pool.query("SELECT country, COUNT(*) AS n FROM anon_push_subscriptions WHERE country IS NOT NULL GROUP BY country ORDER BY n DESC LIMIT 10");
+    res.json({ ok: true, total_registered_devices: u.n, unique_registered_users: uu.n, anon_devices: a.n, anon_by_lang: byLang, anon_by_country: byCountry });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+}));
+
+// Crear campaña (draft / scheduled / send-now)
+app.post("/api/admin/push/campaigns", wrap(async (req, res) => {
+  await ensurePushCampaignTables();
+  const b = req.body || {};
+  const admin = req.admin?.email || "admin";
+  const title = String(b.title || "").slice(0, 200);
+  const body = String(b.body || "").slice(0, 2000);
+  if (!title || !body) return res.status(400).json({ error: "title_body_required" });
+  const url = String(b.url || "/").slice(0, 500);
+  const icon = b.icon ? String(b.icon).slice(0, 500) : null;
+  const image = b.image ? String(b.image).slice(0, 500) : null;
+  const tag = String(b.tag || "aura-campaign").slice(0, 80);
+  const segment = String(b.segment || "all").slice(0, 40);
+  const segmentParams = b.segment_params ? JSON.stringify(b.segment_params).slice(0, 4000) : null;
+  const targetUserIds = Array.isArray(b.target_user_ids) ? b.target_user_ids.join(",").slice(0, 20000) : (b.target_user_ids || null);
+  let status = "draft";
+  let scheduledAt = null;
+  if (b.send_now) status = "queued";
+  else if (b.scheduled_at) { status = "scheduled"; scheduledAt = new Date(b.scheduled_at); }
+  const [ins] = await pool.execute(
+    `INSERT INTO push_campaigns (title, body, url, icon, image, tag, segment, segment_params, target_user_ids, status, scheduled_at, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [title, body, url, icon, image, tag, segment, segmentParams, targetUserIds, status, scheduledAt, admin]
+  );
+  const id = ins.insertId;
+  // Si es send-now, lanza en background
+  if (status === "queued") {
+    runPushCampaign(id).catch(err => {
+      pool.execute("UPDATE push_campaigns SET status='failed', error_message=? WHERE id=?", [String(err.message||err).slice(0,500), id]).catch(()=>{});
+    });
+  }
+  res.json({ ok: true, id, status });
+}));
+
+// Reenviar una campaña existente (crea copia como queued)
+app.post("/api/admin/push/campaigns/:id/send-now", wrap(async (req, res) => {
+  const id = parseInt(req.params.id,10);
+  const [rows] = await pool.query("SELECT * FROM push_campaigns WHERE id=? LIMIT 1", [id]);
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  await pool.execute("UPDATE push_campaigns SET status='queued', scheduled_at=NULL WHERE id=?", [id]);
+  runPushCampaign(id).catch(err => {
+    pool.execute("UPDATE push_campaigns SET status='failed', error_message=? WHERE id=?", [String(err.message||err).slice(0,500), id]).catch(()=>{});
+  });
+  res.json({ ok: true, id });
+}));
+
+// Enviar prueba a mi propio usuario (o a un user_id concreto)
+app.post("/api/admin/push/test", wrap(async (req, res) => {
+  const b = req.body || {};
+  const testUserId = parseInt(b.user_id,10);
+  if (!testUserId) return res.status(400).json({ error: "user_id_required" });
+  const payload = {
+    title: String(b.title || "Prueba Aura").slice(0, 200),
+    body: String(b.body || "Notificación de prueba").slice(0, 500),
+    url: String(b.url || "/").slice(0, 500),
+    icon: b.icon || "/assets/aura-logo.png",
+    tag: "aura-test",
+  };
+  const r = await sendPushToUser(testUserId, payload);
+  res.json({ ok: true, ...r });
+}));
+
+// Borrar campaña
+app.delete("/api/admin/push/campaigns/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id,10);
+  await pool.execute("DELETE FROM push_campaigns WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+// Track de clics: el sw.js lo llama cuando el usuario abre la notificación
+app.post("/api/my/push/click-track", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  const cid = parseInt((req.body||{}).campaign_id, 10);
+  if (!cid) return res.json({ ok: true });
+  try { await pool.execute("UPDATE push_campaigns SET click_count = click_count + 1 WHERE id=?", [cid]); } catch {}
+  try {
+    if (me) await pool.execute(
+      "INSERT INTO push_campaign_clicks (campaign_id, user_id, clicked_at) VALUES (?,?,NOW())",
+      [cid, me]
+    );
+  } catch {}
+  res.json({ ok: true });
+}));
+
+// Tabla auxiliar para clicks (best-effort)
+pool.query(`CREATE TABLE IF NOT EXISTS push_campaign_clicks (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  campaign_id INT NOT NULL,
+  user_id INT DEFAULT NULL,
+  clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_campaign (campaign_id)
+)`).catch(() => {});
 
 /* ==================== IN-APP POPUPS ==================== */
 app.get("/api/admin/popups", wrap(async (req, res) => {
