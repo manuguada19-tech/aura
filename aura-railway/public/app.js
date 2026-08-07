@@ -7221,6 +7221,42 @@ function screenMe(root) {
       { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", sub: "Push, email y qué tipos recibes", onClick: () => render(screenNotificationSettings) },
       { icon: "🌙", title: T("content.me.item_theme") || "Tema", sub: themeSub, onClick: () => { $("#themeToggle").click(); render(screenMe); } },
       { icon: "🌍", title: T("content.me.item_lang") || "Idioma", sub: ({ es: "Español", en: "English", fr: "Français", de: "Deutsch", it: "Italiano", pt: "Português" }[currentLang] || "Español"), onClick: () => openLanguageSheet() },
+      // Instalar Aura como PWA. Solo aparece si el navegador ha emitido
+      // beforeinstallprompt (Android/Chrome/Edge) o si es iOS (que no lo emite
+      // pero admite instalación manual). Se oculta si ya está instalada.
+      ...(function(){
+        try {
+          const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+          if (standalone) return [];
+          const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.MSStream;
+          const hasPrompt = !!window.__auraDeferredInstall;
+          if (!hasPrompt && !isIOS) return [];
+          return [{
+            icon: "📲",
+            title: "Instalar Aura como app",
+            sub: isIOS ? "Toca Compartir → Añadir a pantalla de inicio" : "Añadir a la pantalla de inicio",
+            onClick: async () => {
+              if (isIOS) {
+                alert("Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.");
+                return;
+              }
+              if (window.__auraDeferredInstall) {
+                try {
+                  window.__auraDeferredInstall.prompt();
+                  const { outcome } = await window.__auraDeferredInstall.userChoice;
+                  if (outcome === "accepted") {
+                    window.__auraDeferredInstall = null;
+                    toast("Aura instalada");
+                    render(screenMe);
+                  }
+                } catch(e) { toast("No se pudo instalar: " + e.message); }
+              } else {
+                alert("La instalación se ofrece automáticamente cuando el navegador lo permite. Prueba desde el menú del navegador → 'Instalar aplicación'.");
+              }
+            }
+          }];
+        } catch { return []; }
+      })(),
     ]},
     { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
       { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: T("content.me.item_invisible_sub") || "Solo Premium", onClick: () => render(screenInvisibleMode) },
@@ -7305,19 +7341,42 @@ function screenAccountStatus(root) {
     const st = document.createElement("style");
     st.id = "accStatusStyle";
     st.textContent = `
-      .acc-status-box{background:var(--card,#fff);border-radius:14px;
+      .acc-status-box{background:var(--card,#fff);color:var(--text,#111);
+        border:1px solid var(--border,rgba(0,0,0,.06));border-radius:14px;
         padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);}
       .acc-status-title{display:flex;align-items:center;gap:8px;
-        font-size:15px;font-weight:600;margin:0 0 8px;}
-      .acc-status-item{padding:8px 0;border-top:1px solid rgba(0,0,0,.06);
-        font-size:13.5px;display:flex;justify-content:space-between;align-items:center;gap:8px;}
+        font-size:15px;font-weight:600;margin:0 0 8px;color:var(--text,#111);}
+      .acc-status-item{padding:8px 0;border-top:1px solid var(--border,rgba(0,0,0,.06));
+        font-size:13.5px;display:flex;justify-content:space-between;align-items:center;gap:8px;
+        color:var(--text,#111);}
       .acc-status-item:first-child{border-top:none;}
+      .acc-status-item small{color:var(--text-soft,#666) !important;}
       .acc-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
       .acc-badge.ok{background:#dcfce7;color:#166534;}
       .acc-badge.warn{background:#fef3c7;color:#92400e;}
       .acc-badge.no{background:#fee2e2;color:#991b1b;}
       .acc-badge.info{background:#dbeafe;color:#1e40af;}
       .acc-badge.muted{background:#f3f4f6;color:#4b5563;}
+      /* Dark mode: usar tarjeta oscura si el tema define --card, si no forzar */
+      @media (prefers-color-scheme: dark){
+        .acc-status-box{background:var(--card,#1a1d2b);color:var(--text,#e6e9f2);
+          border-color:var(--border,#2a2f45);}
+        .acc-status-item{border-top-color:var(--border,#2a2f45);color:var(--text,#e6e9f2);}
+        .acc-status-item small{color:var(--text-soft,#9aa4bf) !important;}
+        .acc-badge.ok{background:#064e3b;color:#a7f3d0;}
+        .acc-badge.warn{background:#78350f;color:#fde68a;}
+        .acc-badge.no{background:#7f1d1d;color:#fecaca;}
+        .acc-badge.info{background:#1e3a8a;color:#bfdbfe;}
+        .acc-badge.muted{background:#2a2f45;color:#c1c7d8;}
+      }
+      /* Soporte de tema por clase (algunos temas alternan .theme-dark) */
+      body.theme-dark .acc-status-box,body.dark .acc-status-box,html.dark .acc-status-box{
+        background:var(--card,#1a1d2b);color:var(--text,#e6e9f2);
+        border-color:var(--border,#2a2f45);}
+      body.theme-dark .acc-status-item,body.dark .acc-status-item,html.dark .acc-status-item{
+        border-top-color:var(--border,#2a2f45);color:var(--text,#e6e9f2);}
+      body.theme-dark .acc-status-item small,body.dark .acc-status-item small,html.dark .acc-status-item small{
+        color:var(--text-soft,#9aa4bf) !important;}
     `;
     document.head.appendChild(st);
   }
@@ -7376,7 +7435,7 @@ function screenAccountStatus(root) {
           row.innerHTML = `
             <div>
               <div style="font-weight:600;">${a.subject || "Apelación #" + a.id}</div>
-              <small style="color:#666;">${a.created_at ? new Date(a.created_at).toLocaleString() : ""}</small>
+              <small>${a.created_at ? new Date(a.created_at).toLocaleString() : ""}</small>
             </div>
             ${badge(sb.t, sb.l)}`;
           boxAppeals.appendChild(row);
@@ -7398,8 +7457,8 @@ function screenAccountStatus(root) {
           row.innerHTML = `
             <div>
               <div style="font-weight:600;">${i.title || i.type || "Infracción"}</div>
-              <small style="color:#666;">${i.detail || ""}</small>
-              <small style="color:#999;display:block;">${i.created_at ? new Date(i.created_at).toLocaleString() : ""}</small>
+              <small>${i.detail || ""}</small>
+              <small style="display:block;opacity:.75;">${i.created_at ? new Date(i.created_at).toLocaleString() : ""}</small>
             </div>
             ${badge(sev, i.status === "resolved" ? "Resuelta" : (i.severity || "aviso"))}`;
           boxInfract.appendChild(row);
@@ -9937,8 +9996,11 @@ setTimeout(() => { try { checkActivePopup(); } catch {} }, 3500);
   document.head.appendChild(s);
 })();
 
-async function screenDeviceSecurity() {
-  const wrap = el("section", { class: "screen screen-security" });
+async function screenDeviceSecurity(container) {
+  const wrap = el("section", { class: "screen-security" });
+  // render() ya monta un <div class="screen"> y nos lo pasa como container.
+  // Debemos añadir nuestros nodos ahí (no devolverlos).
+  if (container && container.appendChild) container.appendChild(wrap);
   wrap.appendChild(el("div", { class: "sec-hero" }, [
     el("h2", {}, "🛡 Seguridad del dispositivo"),
     el("p", {}, "¿Perdiste el móvil o te lo han robado? Solicita alarma sonora, mensaje remoto o bloqueo con verificación de identidad."),
