@@ -233,37 +233,10 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
     <form id="loginForm" autocomplete="off">
       <label class="field"><span>Email</span><input class="input" type="email" name="email" required autofocus autocomplete="username" /></label>
       <label class="field"><span>Contraseña</span><input class="input" type="password" name="password" required autocomplete="current-password" /></label>
-      <div id="totpField" style="display:none;margin-top:6px">
-        <div style="text-align:center;margin:10px 0 14px">
-          <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:16px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;font-size:28px;box-shadow:0 10px 30px rgba(124,58,237,.35)">🔐</div>
-          <div style="font-weight:700;font-size:16px;margin-bottom:4px">Verificación en dos pasos</div>
-          <div style="font-size:12px;color:#aab;line-height:1.5">Introduce el código de 6 dígitos que aparece<br/>en tu app de autenticación (Google Authenticator, Authy, 1Password…)</div>
-        </div>
-        <input class="input" type="text" name="totp_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="text-align:center;font-size:22px;letter-spacing:6px;font-weight:700;box-sizing:border-box;width:100%" />
-        <div style="text-align:center;margin-top:12px;font-size:12px;color:#888">
-          ¿Perdiste el acceso a tu app? <a href="#" id="useEmailLink" style="color:#ff8a3b;text-decoration:none">Recibir código por email</a>
-        </div>
-      </div>
-      <div id="emailField" style="display:none;margin-top:6px">
-        <div style="text-align:center;margin:10px 0 14px">
-          <div style="width:56px;height:56px;margin:0 auto 10px;border-radius:16px;background:linear-gradient(135deg,#3b82f6,#7c3aed);display:grid;place-items:center;font-size:28px;box-shadow:0 10px 30px rgba(59,130,246,.35)">📧</div>
-          <div style="font-weight:700;font-size:16px;margin-bottom:4px">Acceso por correo</div>
-          <div id="emailFieldDesc" style="font-size:12px;color:#aab;line-height:1.5">Enviaremos un código de 6 dígitos a tu email de administrador. Introduce ese código para entrar.</div>
-        </div>
-        <input class="input" type="text" name="email_code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="000000" style="text-align:center;font-size:22px;letter-spacing:6px;font-weight:700;display:none;box-sizing:border-box;width:100%" id="emailCodeInput" />
-        <button type="button" id="sendEmailBtn" class="btn" style="width:100%;margin-top:8px">Enviar código a mi correo</button>
-        <div style="text-align:center;margin-top:14px;font-size:12px;color:#888">
-          ¿Sin acceso al email también? <a href="mailto:soporte@citasaura.es?subject=Ayuda%20con%20acceso%20admin" style="color:#ff8a3b;text-decoration:none">Contactar soporte</a>
-        </div>
-      </div>
       <button class="btn" type="submit">Entrar</button>
       <p class="err" id="err"></p>
     </form>
-    <div class="foot" style="display:flex;gap:16px;justify-content:center;align-items:center;flex-wrap:wrap;margin-top:18px">
-      <a href="/" style="color:#ff8a3b;text-decoration:none">← Volver a la app</a>
-      <span style="color:#333">|</span>
-      <a href="#" id="backToLoginStep" style="color:#ff8a3b;text-decoration:none">↺ Volver al login</a>
-    </div>
+    <p class="foot"><a href="/">← Volver a la app</a></p>
   </div>
   <script>
     // Load admin branding (logo + name) from public endpoint so the login
@@ -295,102 +268,21 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
       }
       var f = document.getElementById("loginForm");
       var err = document.getElementById("err");
-      // Back-to-login link (resets flow to email+password step)
-      document.getElementById("backToLoginStep").addEventListener("click", function(ev){
-        ev.preventDefault();
-        document.getElementById("totpField").style.display = "none";
-        document.getElementById("emailField").style.display = "none";
-        f.email.parentElement.style.display = "";
-        f.password.parentElement.style.display = "";
-        if (f.totp_code) f.totp_code.value = "";
-        if (f.email_code) f.email_code.value = "";
-        err.textContent = "";
-        var btnR = f.querySelector(".btn");
-        btnR.disabled = false; btnR.textContent = "Entrar";
-        emailStep = 0;
-        var sBtn = document.getElementById("sendEmailBtn");
-        if (sBtn) { sBtn.style.display = ""; sBtn.disabled = false; sBtn.textContent = "Enviar código a mi correo"; }
-        var eInp = document.getElementById("emailCodeInput");
-        if (eInp) eInp.style.display = "none";
-        f.email.focus();
-      });
-      // Email fallback flow (send code + verify code)
-      var emailStep = 0; // 0=idle, 1=sent
-      document.getElementById("useEmailLink").addEventListener("click", function(ev){
-        ev.preventDefault();
-        document.getElementById("totpField").style.display = "none";
-        document.getElementById("emailField").style.display = "";
-        f.email.parentElement.style.display = "";
-        f.password.parentElement.style.display = "none";
-      });
-      document.getElementById("sendEmailBtn").addEventListener("click", async function(){
-        var email = f.email.value.trim();
-        if (!email) { err.textContent = "Escribe tu email primero"; return; }
-        var b = document.getElementById("sendEmailBtn");
-        b.disabled = true; b.textContent = "Enviando…";
-        try {
-          var r = await fetch("/api/admin/email-login/send", {
-            method: "POST", headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({email: email})
-          });
-          if (!r.ok) throw new Error("send_failed");
-          document.getElementById("emailFieldDesc").textContent = "Revisa tu correo. Introduce el código de 6 dígitos que te enviamos.";
-          document.getElementById("emailCodeInput").style.display = "";
-          document.getElementById("emailCodeInput").focus();
-          b.style.display = "none";
-          emailStep = 1;
-          err.textContent = "";
-        } catch(ex){
-          err.textContent = "No se pudo enviar el código"; b.disabled = false; b.textContent = "Enviar código a mi correo";
-        }
-      });
       f.addEventListener("submit", async function(e){
         e.preventDefault();
         err.textContent = "";
         var email = f.email.value.trim();
         var password = f.password.value;
-        var totpCode = f.totp_code ? f.totp_code.value.trim() : "";
-        var emailCode = f.email_code ? f.email_code.value.trim() : "";
         var btn = f.querySelector(".btn");
         btn.disabled = true; btn.textContent = "Entrando…";
-        // Email login path
-        if (emailStep === 1 && emailCode) {
-          try {
-            var r2 = await fetch("/api/admin/email-login/verify", {
-              method: "POST", headers: {"Content-Type":"application/json"},
-              body: JSON.stringify({email: email, code: emailCode})
-            });
-            var d2 = await r2.json();
-            if (!r2.ok) { err.textContent = "Código incorrecto"; btn.disabled = false; btn.textContent = "Verificar código"; return; }
-            localStorage.setItem("adminToken", d2.token);
-            location.replace("/admin.html?adminToken=" + encodeURIComponent(d2.token));
-            return;
-          } catch(_){ err.textContent = "Error de red"; btn.disabled = false; btn.textContent = "Verificar código"; return; }
-        }
         try {
-          var body = {email: email, password: password};
-          if (totpCode) body.totp_code = totpCode;
           var r = await fetch("/api/admin/login", {
             method: "POST",
             headers: {"Content-Type":"application/json"},
-            body: JSON.stringify(body)
+            body: JSON.stringify({email: email, password: password})
           });
           var data = await r.json();
-          if (r.ok && data.needs_2fa) {
-            document.getElementById("totpField").style.display = "";
-            f.email.parentElement.style.display = "none";
-            f.password.parentElement.style.display = "none";
-            f.totp_code.focus();
-            err.textContent = "";
-            btn.disabled = false; btn.textContent = "Verificar código";
-            return;
-          }
-          if (!r.ok) {
-            if (data && data.error === "invalid_2fa") err.textContent = "Código 2FA incorrecto";
-            else err.textContent = "Credenciales incorrectas";
-            btn.disabled = false; btn.textContent = document.getElementById("totpField").style.display === "none" ? "Entrar" : "Verificar";
-            return;
-          }
+          if (!r.ok) { err.textContent = "Credenciales incorrectas"; btn.disabled = false; btn.textContent = "Entrar"; return; }
           localStorage.setItem("adminToken", data.token);
           location.replace("/admin.html?adminToken=" + encodeURIComponent(data.token));
         } catch (ex) {
@@ -418,9 +310,6 @@ const PUBLIC_API = new Set([
   "POST /api/admin/login",
   "POST /api/admin/logout",
   "GET /api/admin/me",
-  "POST /api/admin/email-login/send",
-  "POST /api/admin/email-login/verify",
-  "POST /api/login/email-recovery/send",
   // Real chat endpoints (no admin token required — associated to a user id)
   "POST /api/my/ensure",
   "POST /api/my/heartbeat",
@@ -439,34 +328,11 @@ const PUBLIC_API = new Set([
   // GPS opcional (autenticado por X-User-Id, no por admin token)
   "POST /api/my/gps/consent",
   "POST /api/my/gps/report",
-  "POST /api/my/gps/heartbeat",
   "GET /api/my/gps/state",
   "POST /api/my/gps/reask-ack",
   // Preferencias de idioma y tracking del usuario
   "POST /api/my/lang",
   "POST /api/my/track",
-  // Estado del dispositivo / incidencias del usuario (auth por X-User-Id)
-  "GET /api/my/device-status",
-  "GET /api/my/device-incidents",
-  "POST /api/my/device-incidents",
-  "GET /api/my/account-status",
-  "GET /api/my/emergency-contacts",
-  "POST /api/my/emergency-contacts",
-  "PUT /api/my/emergency-contacts",
-  "DELETE /api/my/emergency-contacts",
-  // Preferencias de notificaciones y push
-  "GET /api/my/notification-prefs",
-  "POST /api/my/notification-prefs",
-  "PUT /api/my/notification-prefs",
-  "POST /api/my/push-subscribe",
-  "POST /api/my/push-unsubscribe",
-  "POST /api/my/push/click-track",
-  "POST /api/my/push-claim",
-  // Suscripciones push de visitantes sin cuenta (PWA instalada, sin login)
-  "POST /api/push-subscribe-anon",
-  "POST /api/push-unsubscribe-anon",
-  // Popups
-  "GET /api/my/popup-active",
   // Social login demo helper — cuenta a la que entran Google/Apple/Facebook
   "GET /api/social/demo",
   // Support tickets (public creation)
@@ -547,22 +413,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Prefijos "/api/my/*" que aceptan auth por X-User-Id (no admin token) para
-// rutas parametrizadas (con :id) que no se pueden listar en PUBLIC_API por
-// nombre exacto.
-const PUBLIC_MY_PREFIXES = [
-  "/api/my/device-incidents/",
-  "/api/my/popup/",
-  "/api/my/reads/",
-  "/api/my/messages/",
-  "/api/my/conversations/",
-];
-
 app.use((req, res, next) => {
   if (!req.path.startsWith("/api/")) return next();
   const key = `${req.method} ${req.path}`;
   if (PUBLIC_API.has(key)) return next();
-  if (PUBLIC_MY_PREFIXES.some((p) => req.path.startsWith(p))) return next();
   return requireAdmin(req, res, next);
 });
 
@@ -1059,38 +913,7 @@ async function migrate() {
        ADD COLUMN IF NOT EXISTS didit_session_url VARCHAR(500) NULL AFTER didit_session_id,
        ADD COLUMN IF NOT EXISTS didit_status      VARCHAR(40)  NULL AFTER didit_session_url,
        ADD COLUMN IF NOT EXISTS didit_decision    VARCHAR(40)  NULL AFTER didit_status,
-       ADD COLUMN IF NOT EXISTS didit_country     VARCHAR(8)   NULL AFTER didit_decision,
-       ADD COLUMN IF NOT EXISTS face_hash         VARCHAR(190) NULL AFTER doc_hash,
-       ADD COLUMN IF NOT EXISTS face_descriptor   TEXT NULL AFTER face_hash,
-       ADD INDEX IF NOT EXISTS idx_facehash (face_hash)`,
-    /* Sistema anti-duplicados: pares detectados con puntuación. Cada fila
-       relaciona 2 usuarios sospechosos de ser la misma persona. */
-    `CREATE TABLE IF NOT EXISTS duplicate_matches (
-      id             INT AUTO_INCREMENT PRIMARY KEY,
-      user_a_id      INT NOT NULL,
-      user_b_id      INT NOT NULL,
-      score          INT NOT NULL DEFAULT 0,
-      signals        TEXT NULL,          -- JSON con lista de señales que coinciden y sus puntos
-      status         ENUM('pending','confirmed','dismissed','merged') NOT NULL DEFAULT 'pending',
-      auto_action    ENUM('none','flagged','blocked') NOT NULL DEFAULT 'none',
-      created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      reviewed_by    VARCHAR(190) NULL,
-      reviewed_at    TIMESTAMP NULL,
-      reviewer_note  VARCHAR(500) NULL,
-      UNIQUE KEY uk_pair (user_a_id, user_b_id),
-      INDEX idx_score (score DESC),
-      INDEX idx_status (status),
-      INDEX idx_created (created_at DESC)
-    )`,
-    /* Añadir columnas a users para el fingerprint de registro y el badge de duplicado */
-    `ALTER TABLE users
-       ADD COLUMN IF NOT EXISTS register_fingerprint VARCHAR(190) NULL,
-       ADD COLUMN IF NOT EXISTS register_ip          VARCHAR(64)  NULL,
-       ADD COLUMN IF NOT EXISTS duplicate_score      INT NOT NULL DEFAULT 0,
-       ADD COLUMN IF NOT EXISTS duplicate_status     ENUM('none','flagged','blocked','confirmed_dup','dismissed') NOT NULL DEFAULT 'none',
-       ADD INDEX IF NOT EXISTS idx_regfp (register_fingerprint),
-       ADD INDEX IF NOT EXISTS idx_regip (register_ip),
-       ADD INDEX IF NOT EXISTS idx_dupscore (duplicate_score DESC)`,
+       ADD COLUMN IF NOT EXISTS didit_country     VARCHAR(8)   NULL AFTER didit_decision`,
     `CREATE TABLE IF NOT EXISTS blocked_devices (
       id           INT AUTO_INCREMENT PRIMARY KEY,
       ip           VARCHAR(64)  NULL,
@@ -1206,6 +1029,26 @@ async function migrate() {
 
   // V401 - Preferencia de idioma por usuario (para traducir emails y push).
   try { await pool.execute("ALTER TABLE users ADD COLUMN preferred_lang VARCHAR(5) NOT NULL DEFAULT 'es'"); } catch {}
+
+  // V500 - Verificación en dos pasos (2FA / TOTP) por usuario.
+  //   secret     : semilla base32 de la app autenticadora (Google/Authy/Aegis).
+  //   enabled    : 1 cuando el usuario terminó el setup y verificó un código.
+  //   recovery   : JSON con hashes SHA-256 de los códigos de recuperación
+  //                (8 códigos de un solo uso). Se marcan como usados quitándolos.
+  //   activated_at / last_used_at : auditoría básica.
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_2fa (
+      user_id INT NOT NULL PRIMARY KEY,
+      secret VARCHAR(64) NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      recovery TEXT NULL,
+      activated_at TIMESTAMP NULL,
+      last_used_at TIMESTAMP NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CONSTRAINT fk_user_2fa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB`);
+  } catch (e) { /* ya existe */ }
 
   // V441 - Admin puede volver a pedir el consentimiento GPS a un usuario.
   //        Cuando reask_pending=1, el cliente muestra el modal de consentimiento
@@ -1659,53 +1502,19 @@ app.delete("/api/users/:id/activity", wrap(async (req, res) => {
 
 // Users list + CRUD
 app.get("/api/users", wrap(async (req, res) => {
-  const { q = "", zone, status, plan, gender, verified, country, age_min, age_max,
-          created_from, created_to, order = "recent", limit = 50, offset = 0 } = req.query;
+  const { q = "", zone, status, plan, limit = 50, offset = 0 } = req.query;
   const clauses = [];
   const params = [];
-  if (q) {
-    // Buscar también por ID exacto o teléfono si aplica
-    const idNum = Number(q);
-    if (Number.isInteger(idNum) && idNum > 0) {
-      clauses.push("(id=? OR name LIKE ? OR email LIKE ? OR phone LIKE ?)");
-      params.push(idNum, `%${q}%`, `%${q}%`, `%${q}%`);
-    } else {
-      clauses.push("(name LIKE ? OR email LIKE ? OR phone LIKE ?)");
-      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
-    }
-  }
+  if (q) { clauses.push("(name LIKE ? OR email LIKE ?)"); params.push(`%${q}%`, `%${q}%`); }
   if (zone) { clauses.push("zone=?"); params.push(zone); }
   if (status) { clauses.push("status=?"); params.push(status); }
   if (plan) { clauses.push("plan=?"); params.push(plan); }
-  if (gender) { clauses.push("gender=?"); params.push(gender); }
-  if (verified === "0" || verified === "1") { clauses.push("verified=?"); params.push(Number(verified)); }
-  if (country) { clauses.push("country LIKE ?"); params.push(`%${country}%`); }
-  if (age_min) { clauses.push("age >= ?"); params.push(Number(age_min)); }
-  if (age_max) { clauses.push("age <= ?"); params.push(Number(age_max)); }
-  if (created_from) { clauses.push("created_at >= ?"); params.push(created_from); }
-  if (created_to) { clauses.push("created_at <= ?"); params.push(created_to + " 23:59:59"); }
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-  let orderClause = "ORDER BY created_at DESC";
-  if (order === "oldest") orderClause = "ORDER BY created_at ASC";
-  else if (order === "name_asc") orderClause = "ORDER BY name ASC";
-  else if (order === "last_active") orderClause = "ORDER BY last_login DESC";
-  else if (order === "spent_desc") orderClause = "ORDER BY (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.user_id=users.id) DESC";
-  else if (order === "reports_desc") orderClause = "ORDER BY (SELECT COUNT(*) FROM reports r WHERE r.target_user_id=users.id) DESC";
-  // tags column may not exist; try/catch fallback
-  let rows;
-  try {
-    [rows] = await pool.query(
-      `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at, last_login, tags
-       FROM users ${where} ${orderClause} LIMIT ? OFFSET ?`,
-      [...params, Number(limit), Number(offset)]
-    );
-  } catch (e) {
-    [rows] = await pool.query(
-      `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at, last_login
-       FROM users ${where} ${orderClause} LIMIT ? OFFSET ?`,
-      [...params, Number(limit), Number(offset)]
-    );
-  }
+  const [rows] = await pool.query(
+    `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at
+     FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    [...params, Number(limit), Number(offset)]
+  );
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) total FROM users ${where}`, params);
   res.json({ rows, total });
 }));
@@ -1993,20 +1802,6 @@ app.delete("/api/users/:id", wrap(async (req, res) => {
   // Recuperar email antes de borrar para limpiar identity_verifications
   const [ur] = await pool.query("SELECT email FROM users WHERE id=?", [id]);
   const email = ur.length ? ur[0].email : null;
-  // V510 — Eliminar también sesiones de Didit ANTES de borrar identity_verifications
-  let diditDeleted = 0;
-  try {
-    const [kycRows] = await pool.query(
-      "SELECT didit_session_id FROM identity_verifications WHERE user_id=? OR (email IS NOT NULL AND email=?)",
-      [id, email]
-    );
-    for (const k of kycRows) {
-      if (k.didit_session_id && typeof deleteDiditSession === "function") {
-        const ok = await deleteDiditSession(k.didit_session_id);
-        if (ok) diditDeleted++;
-      }
-    }
-  } catch (e) { console.warn("Didit delete on user delete:", e.message); }
   await pool.execute("DELETE FROM users WHERE id=?", [id]);
   // Borrar verificaciones asociadas por user_id o por email
   try {
@@ -2015,8 +1810,8 @@ app.delete("/api/users/:id", wrap(async (req, res) => {
       [id, email]
     );
   } catch {}
-  await logActivity("admin", `Usuario eliminado (id ${id}${email ? " · " + email : ""}) · Didit sesiones borradas: ${diditDeleted}`);
-  res.json({ ok: true, didit_deleted: diditDeleted });
+  await logActivity("admin", `Usuario eliminado (id ${id}${email ? " · " + email : ""})`);
+  res.json({ ok: true });
 }));
 
 // Plans
@@ -2680,18 +2475,6 @@ async function applyDiditDecision(verId, dec) {
     }
   }
 
-  // Face hash: si Didit devuelve descriptor/embedding lo guardamos íntegro,
-  // y calculamos un SHA-256 estable para comparación rápida en BD. Si no
-  // hay descriptor pero sí un image_hash o photo URL, usamos eso como proxy.
-  let faceHash = null; let faceDescriptor = null;
-  const faceDesc = face.descriptor || face.embedding || face.template || null;
-  if (faceDesc) {
-    faceDescriptor = typeof faceDesc === "string" ? faceDesc : JSON.stringify(faceDesc);
-    faceHash = _sha256(faceDescriptor).slice(0, 64);
-  } else if (face.image_hash || face.reference_hash) {
-    faceHash = String(face.image_hash || face.reference_hash).slice(0, 64);
-  }
-
   const patch = {
     didit_status:   status,
     didit_decision: mapped,
@@ -2701,8 +2484,6 @@ async function applyDiditDecision(verId, dec) {
     extracted_age:  age,
     doc_type:       docType ? String(docType).slice(0, 40) : null,
     doc_hash:       docHash ? String(docHash).slice(0, 190) : null,
-    face_hash:      faceHash,
-    face_descriptor: faceDescriptor,
     doc_score:          Number(idv.score || idv.confidence || 0) || null,
     selfie_match_score: Number(face.score || face.confidence || 0) || null,
     liveness_score:     Number(live.score || live.confidence || 0) || null,
@@ -2710,43 +2491,6 @@ async function applyDiditDecision(verId, dec) {
     last_reason: (dec.reasons || dec.decline_reasons || []).join(",").slice(0, 255) || null,
   };
   await kycUpdate(verId, patch);
-
-  // Sistema anti-duplicados: al aprobar el KYC ejecutamos el scoring
-  // contra el resto de usuarios. Si el score >= 70 la cuenta se suspende
-  // automáticamente y queda listada para revisión del admin.
-  if (mapped === "verified") {
-    try {
-      const [[iv]] = await pool.query(
-        `SELECT user_id, email, ip, fingerprint FROM identity_verifications WHERE id=?`, [verId]);
-      if (iv && iv.user_id) {
-        const [[u]] = await pool.query(
-          `SELECT id, email, name, birth_date FROM users WHERE id=?`, [iv.user_id]);
-        // Guardar fingerprint/IP de registro en users si aún no están
-        if (u) {
-          try {
-            await pool.execute(
-              `UPDATE users SET
-                register_fingerprint = COALESCE(NULLIF(register_fingerprint,''), ?),
-                register_ip          = COALESCE(NULLIF(register_ip,''), ?),
-                birth_date           = COALESCE(birth_date, ?)
-               WHERE id=?`,
-              [iv.fingerprint || null, iv.ip || null, dob || null, u.id]);
-          } catch {}
-          await computeDuplicateScore({
-            user_id: u.id,
-            email: u.email,
-            name: name || u.name,
-            birth_date: dob || u.birth_date,
-            register_fingerprint: iv.fingerprint,
-            register_ip: iv.ip,
-            doc_hash: docHash,
-            face_hash: faceHash,
-            phone: null,
-          });
-        }
-      }
-    } catch (e) { console.warn("[duplicates] compute failed:", e.message); }
-  }
 
   // Bloqueo automático si menor de edad
   if (age != null && age < KYC_MIN_AGE) {
@@ -3197,133 +2941,6 @@ app.post("/api/admin/kyc/:id/reject", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-/* ============================================================
-   DELETE-ACCOUNT — Eliminar cuenta desde el panel KYC
-   ============================================================
-   - Motivo obligatorio (dropdown) + descripción libre opcional.
-   - Opcional: eliminar sesión Didit.
-   - Opcional: enviar email al usuario con la plantilla
-     `account_deleted` (dinámica).
-   - Registra el motivo en account_deletions y en logs.
-============================================================ */
-app.post("/api/admin/kyc/:id/delete-account", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const admin = res.locals?.admin?.email || "admin";
-  const b = req.body || {};
-  const reason = String(b.reason || "").slice(0, 60);
-  if (!reason) return res.status(400).json({ error: "reason_required" });
-  const detail = String(b.detail || "").slice(0, 1000);
-  const alsoDidit    = !!b.also_didit;
-  const sendEmail    = !!b.send_email;
-  const appealWarn   = !!b.appeal_warning;
-
-  const [rows] = await pool.query(
-    "SELECT user_id, email, provider, didit_session_id FROM identity_verifications WHERE id=? LIMIT 1",
-    [id]
-  );
-  if (!rows.length) return res.status(404).json({ error: "not_found" });
-  const v = rows[0];
-  const userId = v.user_id;
-  const email  = v.email;
-
-  // 1) Auditoría de la eliminación (tabla ligera).
-  try {
-    await pool.execute(
-      `CREATE TABLE IF NOT EXISTS account_deletions (
-         id INT AUTO_INCREMENT PRIMARY KEY,
-         user_id INT NULL,
-         email VARCHAR(190),
-         reason VARCHAR(60),
-         detail TEXT,
-         deleted_by VARCHAR(120),
-         also_didit TINYINT(1) DEFAULT 0,
-         email_sent TINYINT(1) DEFAULT 0,
-         appeal_warning TINYINT(1) DEFAULT 0,
-         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-         INDEX idx_email (email),
-         INDEX idx_user (user_id)
-       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`
-    );
-    await pool.execute(
-      `INSERT INTO account_deletions
-        (user_id, email, reason, detail, deleted_by, also_didit, email_sent, appeal_warning)
-       VALUES (?,?,?,?,?,?,?,?)`,
-      [userId || null, email, reason, detail, admin, alsoDidit ? 1 : 0, sendEmail ? 1 : 0, appealWarn ? 1 : 0]
-    );
-  } catch (e) { /* no bloquea */ }
-
-  // 2) Didit: cerrar sesión (best-effort).
-  if (alsoDidit && v.provider === "didit" && v.didit_session_id) {
-    try {
-      if (typeof diditClient !== "undefined" && diditClient && typeof diditClient.deleteSession === "function") {
-        await diditClient.deleteSession(v.didit_session_id);
-      } else if (process.env.DIDIT_API_KEY) {
-        const baseUrl = process.env.DIDIT_BASE_URL || "https://verification.didit.me";
-        await fetch(`${baseUrl}/v1/session/${v.didit_session_id}`, {
-          method: "DELETE",
-          headers: { "x-api-key": process.env.DIDIT_API_KEY },
-        }).catch(() => {});
-      }
-    } catch (e) { /* best-effort */ }
-  }
-
-  // 3) Enviar email si procede (encolar en email_outbox).
-  if (sendEmail && email) {
-    try {
-      const subject = "Tu cuenta en Aura ha sido eliminada";
-      const reasonHuman = ({
-        menor_de_edad: "Menor de edad detectado",
-        documento_falso: "Documento falso o manipulado",
-        identidad_no_coincide: "La identidad no coincide con el perfil",
-        duplicado: "Cuenta duplicada",
-        fraude: "Sospecha de fraude",
-        incumplimiento: "Incumplimiento de las normas",
-        otro: "Otro",
-      })[reason] || reason;
-
-      const bodyHtml = `
-        <div style="font-family:sans-serif;max-width:520px;margin:auto;padding:20px;">
-          <h2 style="color:#7c3aed;">Cuenta eliminada</h2>
-          <p>Hola,</p>
-          <p>Te informamos de que tu cuenta en <b>Aura</b> ha sido eliminada por el siguiente motivo:</p>
-          <p style="padding:12px;background:#f5f0ff;border-left:4px solid #7c3aed;border-radius:6px;">
-            <b>${reasonHuman}</b>
-            ${detail ? `<br><span style="font-size:13px;color:#555;">${detail.replace(/</g,"&lt;")}</span>` : ""}
-          </p>
-          ${appealWarn ? `<p style="font-size:13px;color:#a55;">
-            Puedes escribirnos si consideras que ha sido un error, pero
-            <b>tu apelación puede no ser revisada</b> dependiendo del motivo.
-          </p>` : ""}
-          <p style="font-size:13px;color:#777;">Equipo de Aura</p>
-        </div>`;
-      await pool.execute(
-        `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
-         VALUES (?, ?, ?, 'account_deleted', 'pending', NOW())`,
-        [email, subject, wrapEmailHtml(bodyHtml, { preheader: subject })]
-      );
-    } catch (e) { /* no bloquea */ }
-  }
-
-  // 4) Borrar registros del usuario en BD (best-effort, protegidas por try).
-  try {
-    await pool.execute("DELETE FROM identity_verifications WHERE id=?", [id]);
-    if (userId) {
-      // Tablas dependientes conocidas.
-      const tables = ["user_gps","user_swipes","user_matches","messages","chats",
-                      "user_reports","user_appeals","user_infractions","user_photos",
-                      "user_settings","user_credits","user_subscriptions","otp_codes"];
-      for (const t of tables) {
-        try { await pool.execute(`DELETE FROM ${t} WHERE user_id=?`, [userId]); } catch {}
-      }
-      try { await pool.execute("DELETE FROM users WHERE id=?", [userId]); } catch {}
-    }
-  } catch (e) {}
-
-  try { await logActivity("kyc", `Cuenta ${email} (#${userId}) eliminada por ${admin} — motivo: ${reason}`); } catch {}
-  res.json({ ok: true });
-}));
-
 app.get("/api/admin/kyc/blocks", wrap(async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   const limit = Math.min(500, parseInt(req.query.limit || 100, 10) || 100);
@@ -3390,17 +3007,6 @@ app.delete("/api/admin/waitlist/:id", wrap(async (req, res) => {
   await pool.execute("DELETE FROM beta_waitlist WHERE id=?", [id]);
   try { await logActivity("waitlist", `Eliminada entrada de lista beta #${id}`); } catch {}
   res.json({ ok: true });
-}));
-
-// Bulk delete
-app.post("/api/admin/waitlist/bulk-delete", wrap(async (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Boolean) : [];
-  if (!ids.length) return res.status(400).json({ error: "ids_required" });
-  const admin = res.locals?.admin?.email || "admin";
-  const placeholders = ids.map(() => "?").join(",");
-  const [r] = await pool.execute(`DELETE FROM beta_waitlist WHERE id IN (${placeholders})`, ids);
-  try { await logActivity("waitlist", `Bulk delete de waitlist por ${admin}: ${r.affectedRows || 0} filas`); } catch {}
-  res.json({ ok: true, deleted: r.affectedRows || 0 });
 }));
 
 // Editar el email de una entrada (por si el usuario se equivocó al escribirlo)
@@ -3551,51 +3157,6 @@ app.get("/api/admin/maintenance/recipients", wrap(async (req, res) => {
     last_sent_at: lastRun.length ? lastRun[0].last_at : null,
     last_template: lastRun.length ? lastRun[0].template_id : null,
   });
-}));
-
-/* -------------------------------------------------------------------------
-   Gestión del historial de emails de mantenimiento (borrado admin).
-   Estos endpoints NO cancelan envíos ya realizados: solo limpian el registro
-   de email_outbox para las plantillas maintenance_notice / maintenance_ended.
-   ------------------------------------------------------------------------- */
-
-// Borrar un registro individual del historial.
-app.delete("/api/admin/maintenance/recipients/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid_id" });
-  const [r] = await pool.execute(
-    `DELETE FROM email_outbox
-      WHERE id = ?
-        AND template_id IN ('maintenance_notice','maintenance_ended')`,
-    [id]
-  );
-  await logActivity("admin", `Registro mantenimiento #${id} eliminado (${r.affectedRows} filas)`);
-  res.json({ ok: true, deleted: r.affectedRows });
-}));
-
-// Borrar varios registros por ids.
-app.post("/api/admin/maintenance/recipients/bulk-delete", wrap(async (req, res) => {
-  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(x => parseInt(x, 10)).filter(Number.isFinite) : [];
-  if (!ids.length) return res.status(400).json({ error: "no_ids" });
-  const placeholders = ids.map(() => "?").join(",");
-  const [r] = await pool.execute(
-    `DELETE FROM email_outbox
-      WHERE id IN (${placeholders})
-        AND template_id IN ('maintenance_notice','maintenance_ended')`,
-    ids
-  );
-  await logActivity("admin", `Borrado masivo mantenimiento: ${r.affectedRows} registros`);
-  res.json({ ok: true, deleted: r.affectedRows });
-}));
-
-// Borrar todo el historial de mantenimiento.
-app.delete("/api/admin/maintenance/recipients", wrap(async (req, res) => {
-  const [r] = await pool.execute(
-    `DELETE FROM email_outbox
-      WHERE template_id IN ('maintenance_notice','maintenance_ended')`
-  );
-  await logActivity("admin", `Historial mantenimiento vaciado (${r.affectedRows} registros)`);
-  res.json({ ok: true, deleted: r.affectedRows });
 }));
 
 app.get("/api/admin/waitlist/export.csv", wrap(async (req, res) => {
@@ -3925,17 +3486,6 @@ app.get("/api/logs", wrap(async (req, res) => {
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const [rows] = await pool.query(`SELECT * FROM logs ${where} ORDER BY created_at DESC LIMIT ?`, [...params, Number(limit)]);
   res.json(rows);
-}));
-
-// DELETE /api/admin/logs/purge?days=30 — Elimina logs anteriores a N días.
-app.delete("/api/admin/logs/purge", wrap(async (req, res) => {
-  const days = Math.max(1, Math.min(365, parseInt(req.query.days || 30, 10) || 30));
-  const admin = res.locals?.admin?.email || "admin";
-  const [r] = await pool.execute(
-    `DELETE FROM logs WHERE created_at < NOW() - INTERVAL ? DAY`, [days]
-  );
-  try { await logActivity("admin", `Logs purgados (>${days}d) por ${admin} — filas: ${r.affectedRows || 0}`); } catch {}
-  res.json({ ok: true, deleted: r.affectedRows || 0 });
 }));
 
 // Settings
@@ -4565,88 +4115,6 @@ async function enforceAccess(req, res, opts = {}) {
 }
 
 // GET /api/my/restrictions → current user's active restrictions
-/* ============================================================
-   /api/my/account-status
-   ------------------------------------------------------------
-   Devuelve al usuario logueado el estado de su cuenta:
-     · KYC (verificación de edad)
-     · Apelaciones enviadas (open/reviewed/accepted/rejected)
-     · Infracciones registradas (severity, resolved)
-   Usado por screenAccountStatus() y el banner de screenMe().
-============================================================ */
-app.get("/api/my/account-status", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-
-  const out = {
-    kyc_status: "none",
-    kyc_reason: null,
-    kyc_updated_at: null,
-    appeals: [],
-    appeals_open: 0,
-    infractions: [],
-    infractions_open: 0,
-  };
-
-  // KYC
-  try {
-    const [rows] = await pool.query(
-      `SELECT status, last_reason, updated_at
-         FROM identity_verifications
-        WHERE user_id=?
-        ORDER BY id DESC LIMIT 1`, [me]);
-    if (rows.length) {
-      out.kyc_status     = rows[0].status || "pending";
-      out.kyc_reason     = rows[0].last_reason || null;
-      out.kyc_updated_at = rows[0].updated_at || null;
-    }
-  } catch {}
-
-  // Apelaciones
-  try {
-    // Autocreación defensiva si la tabla no existe.
-    await pool.execute(`CREATE TABLE IF NOT EXISTS user_appeals (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      user_id INT,
-      subject VARCHAR(200),
-      body TEXT,
-      status VARCHAR(20) DEFAULT 'open',
-      admin_response TEXT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-    const [rows] = await pool.query(
-      `SELECT id, subject, status, admin_response, created_at
-         FROM user_appeals WHERE user_id=? ORDER BY id DESC LIMIT 20`, [me]);
-    out.appeals = rows;
-    out.appeals_open = rows.filter(r => r.status === "open").length;
-  } catch {}
-
-  // Infracciones
-  try {
-    await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      user_id INT,
-      type VARCHAR(60),
-      title VARCHAR(200),
-      detail TEXT,
-      severity VARCHAR(20) DEFAULT 'low',
-      status VARCHAR(20) DEFAULT 'active',
-      created_by VARCHAR(120),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-    const [rows] = await pool.query(
-      `SELECT id, type, title, detail, severity, status, created_at
-         FROM user_infractions WHERE user_id=? ORDER BY id DESC LIMIT 20`, [me]);
-    out.infractions = rows;
-    out.infractions_open = rows.filter(r => r.status !== "resolved").length;
-  } catch {}
-
-  res.json(out);
-}));
-
 app.get("/api/my/restrictions", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
@@ -5526,37 +4994,11 @@ if (SMTP_URL) {
 const SMTP_MAILERS = new Map();
 let SMTP_CFG = null;
 function loadSmtpConfig() {
-  // Try file first
   try {
     const p = require("path").join(__dirname, "data", "smtp.json");
     const raw = require("fs").readFileSync(p, "utf8");
     return JSON.parse(raw);
-  } catch (e) {}
-  // Fallback: build config from environment variables
-  if (process.env.SMTP_HOST) {
-    const cfg = {
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT || "587", 10),
-      secure: String(process.env.SMTP_SECURE || "false").toLowerCase() === "true",
-      requireTLS: String(process.env.SMTP_REQUIRE_TLS || "true").toLowerCase() === "true",
-      shared_password: process.env.SMTP_SHARED_PASS || "",
-      boxes: {},
-    };
-    // Read known Arsys boxes from env
-    const knownBoxes = [
-      ["hola@citasaura.es", "Aura", "SMTP_PASS_HOLA"],
-      ["seguridad@citasaura.es", "Aura Seguridad", "SMTP_PASS_SEGURIDAD"],
-      ["soporte@citasaura.es", "Aura Soporte", "SMTP_PASS_SOPORTE"],
-      ["suscripciones@citasaura.es", "Aura Suscripciones", "SMTP_PASS_SUSCRIPCIONES"],
-      ["no-reply@citasaura.es", "Aura", "SMTP_PASS_NOREPLY"],
-    ];
-    for (const [addr, name, envKey] of knownBoxes) {
-      const pass = process.env[envKey] || cfg.shared_password;
-      if (pass) cfg.boxes[addr] = { name, password: pass };
-    }
-    if (Object.keys(cfg.boxes).length > 0) return cfg;
-  }
-  return null;
+  } catch (e) { return null; }
 }
 function initSmtpMailers() {
   SMTP_CFG = loadSmtpConfig();
@@ -5567,14 +5009,9 @@ function initSmtpMailers() {
   const host   = process.env.SMTP_HOST   || SMTP_CFG.host;
   const port   = parseInt(process.env.SMTP_PORT || SMTP_CFG.port || 587, 10);
   const secure = String(process.env.SMTP_SECURE || SMTP_CFG.secure || "false").toLowerCase() === "true";
-  // Si secure=true (465), NO requireTLS; solo aplica en 587 STARTTLS
-  const requireTLS = !secure && (SMTP_CFG.requireTLS !== false);
+  const requireTLS = SMTP_CFG.requireTLS !== false;
   const boxes = SMTP_CFG.boxes || {};
   const sharedPass = SMTP_CFG.shared_password || "";
-  // Login SMTP compartido: si SMTP_LOGIN_USER está definido (Brevo/SendGrid), lo
-  // usamos como user para todos los buzones. El "From" sigue siendo la dirección
-  // real del buzón para que el email salga con "hola@citasaura.es" etc.
-  const smtpLoginUser = process.env.SMTP_LOGIN_USER || "";
   Object.keys(boxes).forEach((addr) => {
     const b = boxes[addr] || {};
     const envKey = "SMTP_PASS_" + addr.replace(/[^a-z0-9]/gi, "_").toUpperCase();
@@ -5583,11 +5020,8 @@ function initSmtpMailers() {
     try {
       const t = nodemailer.createTransport({
         host, port, secure, requireTLS,
-        auth: { user: smtpLoginUser || addr, pass },
+        auth: { user: addr, pass },
         tls: { rejectUnauthorized: false },
-        connectionTimeout: 15000,
-        greetingTimeout: 15000,
-        socketTimeout: 20000,
       });
       SMTP_MAILERS.set(addr, { transporter: t, name: b.name || "Aura", address: addr });
     } catch (e) {
@@ -5650,66 +5084,12 @@ function _sanitizeDemoRecipients(to, cc, subject) {
   return { to: newTo, cc: newCc, subject: newSubject };
 }
 
-// Brevo HTTP API fallback (para hostings con SMTP saliente bloqueado)
-const BREVO_API_KEY = process.env.BREVO_API_KEY || "";
-async function sendViaBrevoAPI({ from, fromName, to, cc, subject, html, replyTo }) {
-  const https = require("https");
-  const body = JSON.stringify({
-    sender: { email: from, name: fromName || "Aura" },
-    to: [{ email: to }],
-    cc: cc ? String(cc).split(",").map(e => ({ email: e.trim() })).filter(x => x.email) : undefined,
-    replyTo: replyTo ? { email: replyTo } : undefined,
-    subject,
-    htmlContent: html,
-  });
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: "api.brevo.com",
-      port: 443,
-      path: "/v3/smtp/email",
-      method: "POST",
-      headers: {
-        "api-key": BREVO_API_KEY,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Content-Length": Buffer.byteLength(body),
-      },
-      timeout: 15000,
-    }, (res) => {
-      let data = "";
-      res.on("data", (c) => data += c);
-      res.on("end", () => {
-        if (res.statusCode >= 200 && res.statusCode < 300) {
-          try { resolve(JSON.parse(data)); } catch { resolve({ ok: true }); }
-        } else {
-          reject(new Error("brevo_api_" + res.statusCode + ":" + data));
-        }
-      });
-    });
-    req.on("timeout", () => { req.destroy(); reject(new Error("brevo_api_timeout")); });
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
-}
-
 async function sendMailByRoute({ templateId, category, to, cc, subject, html, replyTo }) {
   const boxAddr = pickSmtpBoxAddress(templateId, category);
-  const s = _sanitizeDemoRecipients(to, cc, subject);
-  to = s.to; cc = s.cc; subject = s.subject;
-  // Si hay BREVO_API_KEY, usar API HTTPS (bypass SMTP bloqueado)
-  if (BREVO_API_KEY) {
-    const boxCfg = (SMTP_CFG && SMTP_CFG.boxes && SMTP_CFG.boxes[boxAddr]) || { name: "Aura" };
-    const info = await sendViaBrevoAPI({
-      from: boxAddr,
-      fromName: boxCfg.name || "Aura",
-      to, cc, subject, html,
-      replyTo: replyTo || boxAddr,
-    });
-    return { ok: true, messageId: info && info.messageId };
-  }
   const box = SMTP_MAILERS.get(boxAddr);
   if (!box) throw new Error("smtp_box_not_configured:" + boxAddr);
+  const s = _sanitizeDemoRecipients(to, cc, subject);
+  to = s.to; cc = s.cc; subject = s.subject;
   const fromStr = `"${box.name}" <${box.address}>`;
   const info = await box.transporter.sendMail({
     from: fromStr,
@@ -5721,7 +5101,7 @@ async function sendMailByRoute({ templateId, category, to, cc, subject, html, re
   });
   return { ok: true, messageId: info && info.messageId };
 }
-function isSmtpReady() { return SMTP_MAILERS.size > 0 || !!BREVO_API_KEY; }
+function isSmtpReady() { return SMTP_MAILERS.size > 0; }
 
 // --- Routing por categoría hacia los buzones de Arsys ---
 // Cada categoría de plantilla se envía "desde" un buzón concreto y sus
@@ -5800,85 +5180,14 @@ function routeCcAddress(templateId, category) {
   }
 }
 
-function _emailBase({ title, preheader, bodyHtml, cta, ctaUrl, footerNote, headerStyle }) {
-  const brand = getSetting("content.brand.name","Aura") || "Aura";
-  const brand1 = getSetting("content.design.brand1","#7c3aed") || "#7c3aed";
-  const brand2 = getSetting("content.design.brand2","#ec4899") || "#ec4899";
-
-  // headerStyle: "dark" (default, gradiente color) | "light" (fondo blanco)
-  const hstyle = headerStyle === "light" ? "light" : "dark";
-
-  // Luminosidad aproximada de un color hex para decidir cabecera
-  function _lum(hex){
-    const m = String(hex||"").match(/^#?([0-9a-f]{6})$/i); if(!m) return 0;
-    const n = parseInt(m[1],16); const r=(n>>16)&255, g=(n>>8)&255, b=n&255;
-    return (0.2126*r + 0.7152*g + 0.0722*b)/255;
-  }
-  // Si el usuario forzó tema claro o el gradiente es muy claro → cabecera clara
-  const gradientIsLight = (_lum(brand1) + _lum(brand2)) / 2 > 0.75;
-  const useLightHeader = hstyle === "light" || gradientIsLight;
-
-  // Logo: si cabecera oscura → logo claro (aura-logo normal / _light variant);
-  // si cabecera clara → logo oscuro (variante para fondos blancos)
-  const logoDark = getSetting("admin.logo_image","") || getSetting("content.design.logo_image","") || "";
-  const logoLight = getSetting("admin.logo_image_light","") || getSetting("content.design.logo_image_light","") || "";
-  const chosenLogo = useLightHeader
-    ? (logoDark || logoLight)     // fondo blanco → logo oscuro
-    : (logoLight || logoDark);    // fondo oscuro → logo claro
-
-  const headerBg = useLightHeader
-    ? "background:#ffffff;border-bottom:1px solid #eee6f7"
-    : `background:linear-gradient(135deg,${brand1},${brand2})`;
-  const headerTextColor = useLightHeader ? "#1a1a2e" : "#ffffff";
-  const logoBgFallback = useLightHeader ? "rgba(124,58,237,.10)" : "rgba(255,255,255,.2)";
-
-  const logoHtml = chosenLogo
-    ? `<img src="${chosenLogo}" alt="${brand}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;background:${logoBgFallback};margin-bottom:10px;display:inline-block"/>`
-    : `<div style="display:inline-block;width:56px;height:56px;border-radius:16px;background:${logoBgFallback};line-height:56px;font-size:32px;margin-bottom:10px">💜</div>`;
-  return `<!doctype html>
-<html lang="es">
-<head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>${title}</title>
-</head>
-<body style="margin:0;padding:0;background:#f5f3fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a2e">
-<div style="display:none;max-height:0;overflow:hidden;color:transparent">${preheader || ""}</div>
-<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:#f5f3fa;padding:32px 16px">
-  <tr><td align="center">
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;background:#ffffff;border-radius:20px;box-shadow:0 10px 40px rgba(124,58,237,.08);overflow:hidden">
-      <tr><td style="${headerBg};padding:28px 32px;text-align:center">
-        ${logoHtml}
-        <div style="color:${headerTextColor};font-size:22px;font-weight:800;letter-spacing:.3px">${brand}</div>
-      </td></tr>
-      <tr><td style="padding:32px 32px 24px">
-        <h1 style="margin:0 0 8px;font-size:20px;font-weight:800;color:#1a1a2e">${title}</h1>
-        ${bodyHtml}
-        ${cta ? `<div style="text-align:center;margin:24px 0 8px"><a href="${ctaUrl || "#"}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;text-decoration:none;padding:14px 28px;border-radius:999px;font-weight:700;font-size:15px;box-shadow:0 10px 30px rgba(124,58,237,.35)">${cta}</a></div>` : ""}
-      </td></tr>
-      <tr><td style="padding:16px 32px 28px;border-top:1px solid #eee6f7;color:#88839a;font-size:12px;line-height:1.5;text-align:center">
-        ${footerNote || `¿Necesitas ayuda? Escríbenos a <a href="mailto:soporte@citasaura.es" style="color:#7c3aed;text-decoration:none">soporte@citasaura.es</a>`}
-        <div style="margin-top:12px;color:#b5b0c5">© ${new Date().getFullYear()} ${brand} · citasaura.es</div>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body></html>`;
-}
-
 function otpEmailHTML(code) {
-  const body = `
-    <p style="margin:0 0 18px;color:#4a475b;font-size:15px;line-height:1.6">Introduce este código para continuar en Aura. Es válido durante 10 minutos.</p>
-    <div style="background:linear-gradient(135deg,#faf5ff,#fdf2f8);border:1px solid #ede4fb;border-radius:16px;padding:22px;text-align:center;margin:8px 0 4px">
-      <div style="font-size:38px;font-weight:900;letter-spacing:12px;color:#7c3aed;font-family:'Courier New',monospace">${code}</div>
-    </div>
-    <p style="margin:20px 0 0;color:#88839a;font-size:13px;line-height:1.5">Si no solicitaste este código, ignora este email. Tu cuenta sigue segura.</p>
-  `;
-  return _emailBase({
-    title: "Tu código de verificación",
-    preheader: `Tu código Aura es ${code}`,
-    bodyHtml: body,
-  });
+  return `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#fdf2f5;padding:24px">
+  <div style="max-width:480px;margin:auto;background:#fff;border-radius:16px;padding:28px;box-shadow:0 8px 24px rgba(0,0,0,.06)">
+    <h1 style="margin:0 0 8px;color:#ff3b6b">Aura</h1>
+    <p style="color:#555">Tu código de verificación es:</p>
+    <div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#111;background:#fff5f7;border-radius:12px;padding:16px;text-align:center;margin:16px 0">${code}</div>
+    <p style="color:#777;font-size:13px">Este código expira en 10 minutos. Si no lo solicitaste, ignora este correo.</p>
+  </div></body></html>`;
 }
 
 async function sendOtpEmail(email, code) {
@@ -5965,16 +5274,8 @@ app.post("/api/verify/send", wrap(async (req, res) => {
       __lang: reqLang,
     }).catch(() => {});
   } catch {}
-  // Only expose the code when SMTP is not configured (demo mode).
-  // También devolvemos expires_at (ISO) para que el frontend muestre el
-  // contador de expiración en la pantalla de OTP.
-  res.json({
-    ok: true,
-    sent: result.sent,
-    demoCode: result.sent ? null : code,
-    expires_at: expires.toISOString(),
-    ttl_seconds: 10 * 60,
-  });
+  // Only expose the code when SMTP is not configured (demo mode)
+  res.json({ ok: true, sent: result.sent, demoCode: result.sent ? null : code });
 }));
 
 app.post("/api/verify/check", wrap(async (req, res) => {
@@ -6140,7 +5441,7 @@ app.put("/api/content", wrap(async (req, res) => {
 
 // Admin auth
 app.post("/api/admin/login", wrap(async (req, res) => {
-  const { email, password, totp_code } = req.body || {};
+  const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing" });
   // Allow the admin to override the password from the panel (stored in settings).
   const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
@@ -6150,210 +5451,9 @@ app.post("/api/admin/login", wrap(async (req, res) => {
   if (String(email).toLowerCase() !== activeEmail || String(password) !== activePass) {
     return res.status(401).json({ error: "invalid_credentials" });
   }
-  // 2FA check — mandatory when admin has TOTP enabled
-  const totpEnabled = String(getSetting("admin.totp_enabled","") || "") === "1";
-  const totpSecret  = getSetting("admin.totp_secret","") || "";
-  if (totpEnabled && totpSecret) {
-    if (!totp_code) return res.status(200).json({ needs_2fa: true });
-    let speakeasy;
-    try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-    const ok = speakeasy.totp.verify({ secret: totpSecret, encoding: "base32", token: String(totp_code).replace(/\s+/g,""), window: 2 });
-    if (!ok) return res.status(401).json({ error: "invalid_2fa" });
-  }
   const token = await issueAdminToken(activeEmail);
   await logActivity("admin", `Inicio de sesión de administrador (${activeEmail})`);
-  res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS, totp_enabled: totpEnabled });
-}));
-
-/* ============ Admin Email Login (recovery when 2FA is lost) ============ */
-// Sends a 6-digit code to the admin email. Then verify to receive a full session token.
-app.post("/api/admin/email-login/send", wrap(async (req, res) => {
-  const { email } = req.body || {};
-  const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
-  const activeEmail = overrideEmail || ADMIN_EMAIL;
-  if (String(email || "").toLowerCase() !== activeEmail) {
-    return res.status(400).json({ error: "invalid_email" });
-  }
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  await pool.execute(
-    "INSERT INTO verifications (email, code, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))",
-    [activeEmail, code]
-  );
-  try { await sendOtpEmail(activeEmail, code); } catch(e){}
-  await logActivity("admin", `Envío de código por email para acceso admin (${activeEmail})`);
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/email-login/verify", wrap(async (req, res) => {
-  const { email, code } = req.body || {};
-  const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
-  const activeEmail = overrideEmail || ADMIN_EMAIL;
-  if (String(email || "").toLowerCase() !== activeEmail) {
-    return res.status(400).json({ error: "invalid_email" });
-  }
-  const [rows] = await pool.query(
-    "SELECT id FROM verifications WHERE email=? AND code=? AND used=0 AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
-    [activeEmail, String(code || "").trim()]
-  );
-  if (!rows.length) return res.status(401).json({ error: "invalid_code" });
-  await pool.execute("UPDATE verifications SET used=1 WHERE id=?", [rows[0].id]);
-  const token = await issueAdminToken(activeEmail);
-  await logActivity("admin", `Acceso admin por código email (${activeEmail})`);
   res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS });
-}));
-
-/* ============ 2FA (TOTP) — Admin ============ */
-app.get("/api/admin/2fa/status", wrap(async (req, res) => {
-  const entry = await verifyAdminToken(readAdminToken(req));
-  if (!entry) return res.status(401).json({ error: "unauthorized" });
-  const enabled = String(getSetting("admin.totp_enabled","") || "") === "1";
-  res.json({ enabled });
-}));
-
-app.post("/api/admin/2fa/setup", wrap(async (req, res) => {
-  const entry = await verifyAdminToken(readAdminToken(req));
-  if (!entry) return res.status(401).json({ error: "unauthorized" });
-  let speakeasy, QRCode;
-  try { speakeasy = require("speakeasy"); QRCode = require("qrcode"); }
-  catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const brand = getSetting("content.brand.name", "Aura") || "Aura";
-  const s = speakeasy.generateSecret({ length: 20, name: `${brand} Admin (${entry.email})`, issuer: brand });
-  // Store as pending secret; only activated after verify
-  await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
-    ["admin.totp_secret_pending", s.base32]);
-  runtimeSettingsLoadedAt = 0; await loadRuntimeSettings();
-  const qr = await QRCode.toDataURL(s.otpauth_url);
-  res.json({ ok: true, secret: s.base32, otpauth_url: s.otpauth_url, qr });
-}));
-
-app.post("/api/admin/2fa/enable", wrap(async (req, res) => {
-  const entry = await verifyAdminToken(readAdminToken(req));
-  if (!entry) return res.status(401).json({ error: "unauthorized" });
-  const { code } = req.body || {};
-  const pending = getSetting("admin.totp_secret_pending","") || "";
-  if (!pending) return res.status(400).json({ error: "no_pending_setup" });
-  let speakeasy;
-  try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const ok = speakeasy.totp.verify({ secret: pending, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 2 });
-  if (!ok) return res.status(400).json({ error: "invalid_code" });
-  await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
-    ["admin.totp_secret", pending]);
-  await pool.execute("INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
-    ["admin.totp_enabled", "1"]);
-  await pool.execute("DELETE FROM settings WHERE k=?", ["admin.totp_secret_pending"]);
-  runtimeSettingsLoadedAt = 0; await loadRuntimeSettings();
-  await logActivity("admin", `2FA activado para admin (${entry.email})`);
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/2fa/disable", wrap(async (req, res) => {
-  const entry = await verifyAdminToken(readAdminToken(req));
-  if (!entry) return res.status(401).json({ error: "unauthorized" });
-  const { password, code } = req.body || {};
-  const overridePass = getSetting("admin.password_override","") || "";
-  const activePass = overridePass || ADMIN_PASSWORD;
-  if (String(password||"") !== activePass) return res.status(400).json({ error: "wrong_password" });
-  const secret = getSetting("admin.totp_secret","") || "";
-  if (secret && code) {
-    let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){}
-    if (speakeasy) {
-      const ok = speakeasy.totp.verify({ secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 2 });
-      if (!ok) return res.status(400).json({ error: "invalid_code" });
-    }
-  }
-  await pool.execute("DELETE FROM settings WHERE k IN ('admin.totp_enabled','admin.totp_secret','admin.totp_secret_pending')");
-  runtimeSettingsLoadedAt = 0; await loadRuntimeSettings();
-  await logActivity("admin", `2FA desactivado para admin (${entry.email})`);
-  res.json({ ok: true });
-}));
-
-/* ============ 2FA (TOTP) — Usuarios ============ */
-app.get("/api/2fa/status", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const [[row]] = await pool.query("SELECT totp_enabled, totp_last_reminder FROM users WHERE id=? LIMIT 1", [uid]);
-  res.json({ enabled: !!(row && row.totp_enabled), last_reminder: row ? row.totp_last_reminder : null });
-}));
-
-app.post("/api/2fa/setup", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  let speakeasy, QRCode;
-  try { speakeasy = require("speakeasy"); QRCode = require("qrcode"); }
-  catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const [[u]] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [uid]);
-  const brand = getSetting("content.brand.name", "Aura") || "Aura";
-  const s = speakeasy.generateSecret({ length: 20, name: `${brand} (${u && u.email || "user"})`, issuer: brand });
-  await pool.execute("UPDATE users SET totp_secret=? WHERE id=?", [s.base32, uid]);
-  const qr = await QRCode.toDataURL(s.otpauth_url);
-  res.json({ ok: true, secret: s.base32, otpauth_url: s.otpauth_url, qr });
-}));
-
-app.post("/api/2fa/enable", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const { code } = req.body || {};
-  const [[u]] = await pool.query("SELECT totp_secret FROM users WHERE id=? LIMIT 1", [uid]);
-  if (!u || !u.totp_secret) return res.status(400).json({ error: "no_pending_setup" });
-  let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 2 });
-  if (!ok) return res.status(400).json({ error: "invalid_code" });
-  await pool.execute("UPDATE users SET totp_enabled=1, totp_enabled_at=NOW() WHERE id=?", [uid]);
-  res.json({ ok: true });
-}));
-
-app.post("/api/2fa/disable", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const { code } = req.body || {};
-  const [[u]] = await pool.query("SELECT totp_secret, totp_enabled FROM users WHERE id=? LIMIT 1", [uid]);
-  if (u && u.totp_enabled && u.totp_secret) {
-    let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){}
-    if (speakeasy) {
-      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code||"").replace(/\s+/g,""), window: 2 });
-      if (!ok) return res.status(400).json({ error: "invalid_code" });
-    }
-  }
-  await pool.execute("UPDATE users SET totp_enabled=0, totp_secret=NULL WHERE id=?", [uid]);
-  res.json({ ok: true });
-}));
-
-// Verify TOTP during user login (call after password check)
-app.post("/api/2fa/verify-login", wrap(async (req, res) => {
-  const { user_id, code } = req.body || {};
-  if (!user_id || !code) return res.status(400).json({ error: "missing" });
-  const [[u]] = await pool.query("SELECT totp_secret, totp_enabled FROM users WHERE id=? LIMIT 1", [Number(user_id)]);
-  if (!u || !u.totp_enabled || !u.totp_secret) return res.json({ ok: true, skipped: true });
-  let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-  const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: String(code).replace(/\s+/g,""), window: 2 });
-  if (!ok) return res.status(401).json({ error: "invalid_code" });
-  res.json({ ok: true });
-}));
-
-// Snooze reminder popup (called by app when user dismisses)
-app.post("/api/2fa/snooze-reminder", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  await pool.execute("UPDATE users SET totp_last_reminder=NOW() WHERE id=?", [uid]);
-  res.json({ ok: true });
-}));
-
-// Admin: view/manage 2FA of any user
-app.get("/api/admin/users/:id/2fa", wrap(async (req, res) => {
-  const entry = await verifyAdminToken(readAdminToken(req));
-  if (!entry) return res.status(401).json({ error: "unauthorized" });
-  const [[u]] = await pool.query("SELECT id, email, totp_enabled, totp_enabled_at FROM users WHERE id=? LIMIT 1", [Number(req.params.id)]);
-  if (!u) return res.status(404).json({ error: "not_found" });
-  res.json({ ok: true, user: u });
-}));
-
-app.post("/api/admin/users/:id/2fa/reset", wrap(async (req, res) => {
-  const entry = await verifyAdminToken(readAdminToken(req));
-  if (!entry) return res.status(401).json({ error: "unauthorized" });
-  const uid = Number(req.params.id);
-  await pool.execute("UPDATE users SET totp_enabled=0, totp_secret=NULL WHERE id=?", [uid]);
-  await logActivity("admin", `2FA reseteado para usuario ${uid} por ${entry.email}`);
-  res.json({ ok: true });
 }));
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const tok = readAdminToken(req);
@@ -6599,54 +5699,6 @@ function interpolate(str, vars) {
   });
 }
 
-/* ============================================================
-   wrapEmailHtml — envuelve cualquier cuerpo HTML con la cabecera
-   Aura (logo transparente sobre fondo blanco) y un pie corporativo.
-   - Si el HTML ya trae <!--AURA_WRAPPED--> no lo envuelve otra vez.
-   - El logo se toma de settings "content.design.logo_image" o de
-     una URL fija por defecto. Si el logo es data:image se incrusta.
-============================================================ */
-function wrapEmailHtml(innerHtml, opts = {}) {
-  const src = String(innerHtml || "");
-  if (src.includes("<!--AURA_WRAPPED-->")) return src;
-  const brand = String(getSetting("app.name", "Aura") || "Aura");
-  let logo = String(getSetting("content.design.logo_image", "") || "").trim();
-  if (!logo) logo = `${appPublicUrl()}/assets/logo-aura.png`;
-  const preheader = String(opts.preheader || "").slice(0, 140);
-  const year = new Date().getFullYear();
-  const footerAddr = String(getSetting("app.company_footer", `${brand} · citasaura.es`) || "");
-  return `<!--AURA_WRAPPED--><!doctype html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>${brand}</title></head>
-<body style="margin:0;padding:0;background:#f6f6fb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#1f2937;">
-${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${preheader}</div>` : ""}
-<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f6f6fb;padding:24px 0;">
-  <tr><td align="center">
-    <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.06);">
-      <tr>
-        <td align="center" style="background:#ffffff;padding:28px 20px 18px;border-bottom:1px solid #f0f0f5;">
-          <img src="${logo}" alt="${brand}" style="max-height:52px;max-width:200px;display:block;margin:0 auto;">
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:26px 30px;line-height:1.55;font-size:15px;color:#1f2937;">
-          ${src}
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:20px 30px 28px;background:#fafafd;border-top:1px solid #f0f0f5;font-size:12px;color:#6b7280;text-align:center;">
-          <div>${footerAddr}</div>
-          <div style="margin-top:6px;">© ${year} ${brand}. Todos los derechos reservados.</div>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-</table>
-</body></html>`;
-}
-
 function sampleVarsFor(row) {
   let sv = {};
   try {
@@ -6803,18 +5855,8 @@ async function enqueueEmail(templateId, userId, vars = {}) {
     let subject = interpolate(subjectTemplate, vars);
     if (vars.__test_redirect_prefix) subject = String(vars.__test_redirect_prefix) + subject;
     // Interpolar el HTML en español y luego traducir su cuerpo con el diccionario.
-    let htmlEs  = interpolate(tpl.html, vars);
-    // Fallback para nota adicional (__extra_html): si el bloque no acabó
-    // presente porque la plantilla no usaba {{extra_note_html}}, lo inyectamos
-    // antes del pie del email o del cierre de body.
-    if (vars.__extra_html && !htmlEs.includes(vars.__extra_html)) {
-      const anchor = /(<hr\b|<footer\b|©|<\/body>)/i;
-      if (anchor.test(htmlEs)) htmlEs = htmlEs.replace(anchor, vars.__extra_html + "$1");
-      else htmlEs = htmlEs + vars.__extra_html;
-    }
-    const bodyHtml = emailTx.translateBody(htmlEs, userLang);
-    // Envolver con la cabecera de marca (logo Aura sobre fondo blanco).
-    const html    = wrapEmailHtml(bodyHtml, { preheader: subject });
+    const htmlEs  = interpolate(tpl.html, vars);
+    const html    = emailTx.translateBody(htmlEs, userLang);
 
     // Resolver remitente y Reply-To según la categoría/id de la plantilla.
     const sender = routeSender(templateId, tpl.category);
@@ -7151,7 +6193,7 @@ app.post("/api/admin/invites", wrap(async (req, res) => {
 
 /* Envío del email de invitación (usa enqueueEmail si existe, si no registra el
    evento de envío para permitir seguir el flujo de tracking manualmente). */
-async function sendInviteEmail(inv, extraNote) {
+async function sendInviteEmail(inv) {
   if (!inv || !inv.email) return;
   const baseUrl = process.env.PUBLIC_BASE_URL || "https://citasaura.es";
   const token = inv.track_token || genTrackToken();
@@ -7160,31 +6202,12 @@ async function sendInviteEmail(inv, extraNote) {
   }
   const openPixel = `${baseUrl}/t/o/${token}.png`;
   const clickUrl = `${baseUrl}/t/c/${token}`;
-  // Sanitiza nota adicional (permite saltos de línea, escapa HTML)
-  const rawNote = String(extraNote || "").trim();
-  let noteHtml = "";
-  if (rawNote) {
-    const esc = rawNote
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/\n/g, "<br/>");
-    noteHtml = `<div style="margin:18px 0;padding:16px 18px;background:#fff8e1;border:1px solid #ffe082;border-left:4px solid #ffb300;border-radius:12px;color:#3f2c00;font-size:14px;line-height:1.55">
-      <div style="font-weight:700;margin-bottom:4px;color:#8a5b00">📝 Nota del equipo:</div>
-      ${esc}
-    </div>`;
-  }
   const vars = {
     code: inv.code,
     invite_url: clickUrl,
     pixel: openPixel,
     role: inv.role || "tester",
     campaign: inv.campaign || "beta",
-    extra_note: rawNote,
-    extra_note_html: noteHtml,
-    // Fallback: si la plantilla no contiene {{extra_note_html}}, enqueueEmail
-    // insertará este bloque antes del pie del email.
-    __extra_html: noteHtml,
     __lang: null,
   };
   try {
@@ -7193,22 +6216,16 @@ async function sendInviteEmail(inv, extraNote) {
     }
   } catch (e) { /* si no hay template, seguimos marcando enviado */ }
   await pool.execute("UPDATE invites SET sent_at=NOW() WHERE id=?", [inv.id]);
-  try {
-    await pool.execute(
-      "INSERT INTO invite_events (invite_id, kind, ua) VALUES (?, 'sent', ?)",
-      [inv.id, rawNote ? ("note:" + rawNote.slice(0,200)) : null]
-    );
-  } catch {}
+  try { await pool.execute("INSERT INTO invite_events (invite_id, kind) VALUES (?, 'sent')", [inv.id]); } catch {}
 }
 
-/* Reenviar invitación por email (acepta note opcional en el body) */
+/* Reenviar invitación por email */
 app.post("/api/admin/invites/:id/send", wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT * FROM invites WHERE id=?", [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: "not_found" });
   const inv = rows[0];
   if (!inv.email) return res.status(400).json({ error: "no_email" });
-  const note = String((req.body && req.body.note) || "").slice(0, 2000);
-  await sendInviteEmail(inv, note);
+  await sendInviteEmail(inv);
   res.json({ ok: true });
 }));
 
@@ -7711,139 +6728,6 @@ app.get("/api/admin/chats/:id/context", wrap(async (req, res) => {
   res.json({ ok: true, conversation: conv, a: ctxA, b: ctxB, reasons: MODERATION_REASONS });
 }));
 
-// GET /api/admin/users/:uid/account-status
-// KYC + apelaciones + infracciones del usuario, para el drawer admin.
-app.get("/api/admin/users/:uid/account-status", wrap(async (req, res) => {
-  const uid = parseInt(req.params.uid, 10);
-  if (!uid) return res.status(400).json({ error: "invalid_uid" });
-
-  const out = {
-    kyc_status: "none",
-    kyc_reason: null,
-    kyc_updated_at: null,
-    appeals: [], appeals_open: 0,
-    infractions: [], infractions_open: 0,
-  };
-
-  try {
-    const [rows] = await pool.query(
-      `SELECT status, last_reason, updated_at FROM identity_verifications
-        WHERE user_id=? ORDER BY id DESC LIMIT 1`, [uid]);
-    if (rows.length) {
-      out.kyc_status     = rows[0].status || "pending";
-      out.kyc_reason     = rows[0].last_reason || null;
-      out.kyc_updated_at = rows[0].updated_at || null;
-    }
-  } catch {}
-
-  try {
-    await pool.execute(`CREATE TABLE IF NOT EXISTS user_appeals (
-      id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, subject VARCHAR(200), body TEXT,
-      status VARCHAR(20) DEFAULT 'open', admin_response TEXT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-    const [rows] = await pool.query(
-      `SELECT id, subject, status, admin_response, created_at
-         FROM user_appeals WHERE user_id=? ORDER BY id DESC LIMIT 30`, [uid]);
-    out.appeals = rows;
-    out.appeals_open = rows.filter(r => r.status === "open").length;
-  } catch {}
-
-  try {
-    await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
-      id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, type VARCHAR(60),
-      title VARCHAR(200), detail TEXT, severity VARCHAR(20) DEFAULT 'low',
-      status VARCHAR(20) DEFAULT 'active', created_by VARCHAR(120),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-    const [rows] = await pool.query(
-      `SELECT id, type, title, detail, severity, status, created_at
-         FROM user_infractions WHERE user_id=? ORDER BY id DESC LIMIT 30`, [uid]);
-    out.infractions = rows;
-    out.infractions_open = rows.filter(r => r.status !== "resolved").length;
-  } catch {}
-
-  res.json(out);
-}));
-
-// GET /api/admin/infractions — listado global de infracciones
-app.get("/api/admin/infractions", wrap(async (req, res) => {
-  try {
-    await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
-      id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, type VARCHAR(60),
-      title VARCHAR(200), detail TEXT, severity VARCHAR(20) DEFAULT 'low',
-      status VARCHAR(20) DEFAULT 'active', created_by VARCHAR(120),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_user (user_id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-  } catch {}
-  const where = [];
-  const args = [];
-  const status = String(req.query.status || "").trim();
-  const severity = String(req.query.severity || "").trim();
-  if (status) { where.push("i.status=?"); args.push(status); }
-  if (severity) { where.push("i.severity=?"); args.push(severity); }
-  const limit = Math.min(500, parseInt(req.query.limit || 300, 10) || 300);
-  args.push(limit);
-  const w = where.length ? "WHERE " + where.join(" AND ") : "";
-  const [rows] = await pool.query(
-    `SELECT i.id, i.user_id, i.type, i.title, i.detail, i.severity, i.status,
-            i.created_by, i.created_at, u.email
-       FROM user_infractions i
-       LEFT JOIN users u ON u.id = i.user_id
-       ${w}
-       ORDER BY i.id DESC
-       LIMIT ?`, args
-  );
-  res.json({ ok: true, rows });
-}));
-
-app.post("/api/admin/infractions/:id/resolve", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const admin = res.locals?.admin?.email || "admin";
-  await pool.execute("UPDATE user_infractions SET status='resolved' WHERE id=?", [id]);
-  try { await logActivity("user", `Infracción #${id} marcada como resuelta por ${admin}`); } catch {}
-  res.json({ ok: true });
-}));
-
-app.delete("/api/admin/infractions/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const admin = res.locals?.admin?.email || "admin";
-  await pool.execute("DELETE FROM user_infractions WHERE id=?", [id]);
-  try { await logActivity("user", `Infracción #${id} eliminada por ${admin}`); } catch {}
-  res.json({ ok: true });
-}));
-
-// POST /api/admin/users/:uid/infractions — añadir infracción manual
-app.post("/api/admin/users/:uid/infractions", wrap(async (req, res) => {
-  const uid = parseInt(req.params.uid, 10);
-  if (!uid) return res.status(400).json({ error: "invalid_uid" });
-  const admin = res.locals?.admin?.email || "admin";
-  const b = req.body || {};
-  const type = String(b.type || "").slice(0, 60);
-  const title = String(b.title || "").slice(0, 200) || type;
-  const detail = String(b.detail || "").slice(0, 2000);
-  const severity = ["low","medium","high"].includes(b.severity) ? b.severity : "low";
-
-  await pool.execute(`CREATE TABLE IF NOT EXISTS user_infractions (
-    id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, type VARCHAR(60),
-    title VARCHAR(200), detail TEXT, severity VARCHAR(20) DEFAULT 'low',
-    status VARCHAR(20) DEFAULT 'active', created_by VARCHAR(120),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP, INDEX idx_user (user_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  await pool.execute(
-    `INSERT INTO user_infractions (user_id, type, title, detail, severity, created_by)
-     VALUES (?,?,?,?,?,?)`,
-    [uid, type, title, detail, severity, admin]
-  );
-  try { await logActivity("user", `Infracción [${severity}] añadida a user #${uid} por ${admin}: ${title}`); } catch {}
-  res.json({ ok: true });
-}));
-
 // GET /api/admin/users/:uid/live-context
 // Devuelve el contexto completo del usuario (dispositivos, IP, geo, OS,
 // restricciones, señales) para el drawer de Usuarios con mapa en vivo.
@@ -8206,63 +7090,31 @@ function isAccessLockedFor(email) {
 // Simple demo login (no password — demo mode)
 app.post("/api/login", wrap(async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase();
-  const totpCode = String(req.body?.totp_code || "").replace(/\s+/g, "");
-  const emailCode = String(req.body?.email_code || "").trim();
   if (!email) return res.status(400).json({ error: "email_required" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes","15"),10) });
   // Bloqueo unificado: IP + estado + restricción login
   if (await enforceAccess(req, res, { email })) return;
-  const [rows] = await pool.query("SELECT id, email, name, role, plan, zone, photo_url, totp_enabled, totp_secret FROM users WHERE email=? LIMIT 1", [email]);
+  const [rows] = await pool.query("SELECT id, email, name, role, plan, zone, photo_url FROM users WHERE email=? LIMIT 1", [email]);
   if (!rows.length) {
     recordLoginFail(email);
     const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
     await logActivity("system", `Intento de login fallido para ${email}${ipMsg}`);
     return res.status(404).json({ error: "not_found" });
   }
-  const u = rows[0];
-  // 2FA check
-  if (u.totp_enabled && u.totp_secret) {
-    // Email recovery path
-    if (emailCode) {
-      const [vrows] = await pool.query(
-        "SELECT id FROM verifications WHERE email=? AND code=? AND used=0 AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
-        [email, emailCode]
-      );
-      if (!vrows.length) return res.status(401).json({ error: "invalid_email_code" });
-      await pool.execute("UPDATE verifications SET used=1 WHERE id=?", [vrows[0].id]);
-    } else if (totpCode) {
-      let speakeasy; try { speakeasy = require("speakeasy"); } catch(e){ return res.status(500).json({ error: "2fa_module_missing" }); }
-      const ok = speakeasy.totp.verify({ secret: u.totp_secret, encoding: "base32", token: totpCode, window: 2 });
-      if (!ok) return res.status(401).json({ error: "invalid_2fa" });
-    } else {
-      return res.json({ needs_2fa: true, user_id: u.id });
-    }
-  }
   clearLoginFails(email);
-  await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
-  await touchUserDevice(req, u.id);
+  // ¿Tiene 2FA activo? En ese caso NO iniciamos sesión aún — el cliente debe
+  // pedir el código TOTP (o de recuperación) y llamar a /api/2fa/login-verify.
+  if (await is2FAEnabled(rows[0].id)) {
+    try { await logStream(rows[0].id, "login_2fa_pending", { detail: rows[0].email, req }); } catch {}
+    return res.json({ ok: false, needs_2fa: true, email: rows[0].email });
+  }
+  await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
+  await touchUserDevice(req, rows[0].id);
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
-  await logActivity("user", `Login ${u.email}${ipMsg}`);
-  try { await logStream(u.id, "login", { detail: u.email, req }); } catch {}
-  const { totp_enabled, totp_secret, ...userSafe } = u;
-  res.json({ ok: true, user: userSafe });
-}));
-
-// User email recovery for 2FA — sends a 6-digit code to their registered email
-app.post("/api/login/email-recovery/send", wrap(async (req, res) => {
-  const email = String(req.body?.email || "").toLowerCase();
-  if (!email) return res.status(400).json({ error: "email_required" });
-  const [rows] = await pool.query("SELECT id, totp_enabled FROM users WHERE email=? LIMIT 1", [email]);
-  if (!rows.length || !rows[0].totp_enabled) return res.status(400).json({ error: "invalid_request" });
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  await pool.execute(
-    "INSERT INTO verifications (email, code, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 15 MINUTE))",
-    [email, code]
-  );
-  try { await sendOtpEmail(email, code); } catch(e){}
-  await logActivity("user", `Código 2FA por email enviado a ${email}`);
-  res.json({ ok: true });
+  await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
+  try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
+  res.json({ ok: true, user: rows[0] });
 }));
 
 /* ============================================================
@@ -8279,6 +7131,248 @@ function readMyUserId(req) {
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
 }
+
+/* ============================================================
+   2FA (TOTP) — Autenticador tipo Google Authenticator / Authy
+   ------------------------------------------------------------
+   Implementación mínima RFC 4226 (HOTP) + RFC 6238 (TOTP)
+   usando solo el módulo crypto nativo de Node. No añade dependencias.
+   ============================================================ */
+const TOTP_ISSUER = "Aura";
+const TOTP_STEP   = 30;   // seg
+const TOTP_DIGITS = 6;
+const TOTP_WINDOW = 1;    // acepta el código actual ±1 paso (30 s antes / después)
+
+// Alfabeto base32 estándar RFC 4648.
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function base32Encode(buf) {
+  let bits = "", out = "";
+  for (const b of buf) bits += b.toString(2).padStart(8, "0");
+  for (let i = 0; i < bits.length; i += 5) {
+    const chunk = bits.slice(i, i + 5);
+    if (chunk.length < 5) { out += B32[parseInt(chunk.padEnd(5, "0"), 2)]; break; }
+    out += B32[parseInt(chunk, 2)];
+  }
+  return out;
+}
+function base32Decode(str) {
+  const clean = String(str || "").toUpperCase().replace(/[^A-Z2-7]/g, "");
+  let bits = "";
+  for (const ch of clean) {
+    const idx = B32.indexOf(ch);
+    if (idx < 0) continue;
+    bits += idx.toString(2).padStart(5, "0");
+  }
+  const bytes = [];
+  for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(bytes);
+}
+function hotp(secretBuf, counter) {
+  const buf = Buffer.alloc(8);
+  buf.writeBigUInt64BE(BigInt(counter));
+  const hmac = require("crypto").createHmac("sha1", secretBuf).update(buf).digest();
+  const off = hmac[hmac.length - 1] & 0x0f;
+  const code =
+    ((hmac[off] & 0x7f) << 24) |
+    ((hmac[off + 1] & 0xff) << 16) |
+    ((hmac[off + 2] & 0xff) << 8) |
+     (hmac[off + 3] & 0xff);
+  return String(code % (10 ** TOTP_DIGITS)).padStart(TOTP_DIGITS, "0");
+}
+function totpVerify(secretB32, token) {
+  if (!secretB32 || !token) return false;
+  const clean = String(token).replace(/\D/g, "");
+  if (clean.length !== TOTP_DIGITS) return false;
+  const secret = base32Decode(secretB32);
+  if (!secret.length) return false;
+  const now = Math.floor(Date.now() / 1000 / TOTP_STEP);
+  for (let w = -TOTP_WINDOW; w <= TOTP_WINDOW; w++) {
+    if (hotp(secret, now + w) === clean) return true;
+  }
+  return false;
+}
+function generateSecret(bytes = 20) {
+  return base32Encode(require("crypto").randomBytes(bytes));
+}
+function buildOtpauthUrl(email, secretB32) {
+  const label  = encodeURIComponent(`${TOTP_ISSUER}:${email}`);
+  const params = new URLSearchParams({
+    secret: secretB32, issuer: TOTP_ISSUER, algorithm: "SHA1",
+    digits: String(TOTP_DIGITS), period: String(TOTP_STEP),
+  });
+  return `otpauth://totp/${label}?${params.toString()}`;
+}
+function genRecoveryCodes(n = 8) {
+  const out = [];
+  const crypto = require("crypto");
+  for (let i = 0; i < n; i++) {
+    // Formato: XXXX-XXXX (mayúsculas+números legibles)
+    const raw = crypto.randomBytes(5).toString("hex").toUpperCase();
+    out.push(raw.slice(0, 4) + "-" + raw.slice(4, 8));
+  }
+  return out;
+}
+function hashRecovery(code) {
+  return require("crypto").createHash("sha256")
+    .update(String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, ""))
+    .digest("hex");
+}
+
+async function get2FA(uid) {
+  const [rows] = await pool.query(
+    "SELECT user_id, secret, enabled, recovery FROM user_2fa WHERE user_id=? LIMIT 1", [uid]);
+  return rows[0] || null;
+}
+async function is2FAEnabled(uid) {
+  const r = await get2FA(uid);
+  return !!(r && r.enabled);
+}
+
+/* --- POST /api/2fa/setup ---------------------------------------------------
+   Empieza el enrolamiento. Genera un secret nuevo (aún no activo) y devuelve
+   el otpauth URL para el QR. NO habilita 2FA hasta que se llame a /verify. */
+app.post("/api/2fa/setup", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const [uRows] = await pool.query("SELECT id, email FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!uRows.length) return res.status(404).json({ error: "user_not_found" });
+  const email = uRows[0].email;
+  const secret = generateSecret();
+  // Guarda como pendiente: enabled=0. Si ya existe registro, lo sobreescribe.
+  await pool.execute(
+    `INSERT INTO user_2fa (user_id, secret, enabled, recovery, activated_at)
+     VALUES (?, ?, 0, NULL, NULL)
+     ON DUPLICATE KEY UPDATE secret=VALUES(secret), enabled=0, recovery=NULL, activated_at=NULL`,
+    [uid, secret]
+  );
+  res.json({
+    ok: true,
+    secret,
+    otpauth: buildOtpauthUrl(email, secret),
+    issuer: TOTP_ISSUER,
+    email,
+    digits: TOTP_DIGITS,
+    step: TOTP_STEP,
+  });
+}));
+
+/* --- POST /api/2fa/verify --------------------------------------------------
+   Finaliza el enrolamiento: verifica el primer código introducido en la app
+   autenticadora, y si es válido activa el 2FA y genera 8 códigos de
+   recuperación (los devuelve UNA vez, en claro; solo se guardan sus hashes). */
+app.post("/api/2fa/verify", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const token = String(req.body?.token || "");
+  const r = await get2FA(uid);
+  if (!r || !r.secret) return res.status(400).json({ error: "no_setup" });
+  if (!totpVerify(r.secret, token)) return res.status(400).json({ error: "invalid_code" });
+  const codes = genRecoveryCodes(8);
+  const hashes = codes.map(hashRecovery);
+  await pool.execute(
+    `UPDATE user_2fa SET enabled=1, recovery=?, activated_at=NOW(), last_used_at=NOW() WHERE user_id=?`,
+    [JSON.stringify(hashes), uid]
+  );
+  try { await logStream(uid, "2fa_enabled", { req }); } catch {}
+  res.json({ ok: true, recovery_codes: codes });
+}));
+
+/* --- POST /api/2fa/disable -------------------------------------------------
+   Desactiva 2FA. Requiere código TOTP válido o un código de recuperación
+   sin usar (para evitar que alguien con la sesión abierta lo quite sin más). */
+app.post("/api/2fa/disable", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const token = String(req.body?.token || "").trim();
+  const r = await get2FA(uid);
+  if (!r || !r.enabled) return res.json({ ok: true, was_enabled: false });
+  let ok = false;
+  if (/^\d{6}$/.test(token)) ok = totpVerify(r.secret, token);
+  else if (token) {
+    // ¿es un código de recuperación?
+    let recArr = [];
+    try { recArr = JSON.parse(r.recovery || "[]") || []; } catch {}
+    ok = recArr.includes(hashRecovery(token));
+  }
+  if (!ok) return res.status(400).json({ error: "invalid_code" });
+  await pool.execute("DELETE FROM user_2fa WHERE user_id=?", [uid]);
+  try { await logStream(uid, "2fa_disabled", { req }); } catch {}
+  res.json({ ok: true });
+}));
+
+/* --- GET /api/2fa/status ---------------------------------------------------
+   Estado del 2FA del usuario actual (para pintar el toggle en Ajustes). */
+app.get("/api/2fa/status", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const r = await get2FA(uid);
+  let recoveryRemaining = 0;
+  if (r && r.recovery) {
+    try { recoveryRemaining = (JSON.parse(r.recovery) || []).length; } catch {}
+  }
+  res.json({
+    ok: true,
+    enabled: !!(r && r.enabled),
+    recovery_remaining: recoveryRemaining,
+  });
+}));
+
+/* --- POST /api/2fa/recovery/regenerate ------------------------------------
+   Genera un nuevo lote de 8 códigos de recuperación (invalida los anteriores).
+   Requiere código TOTP válido para confirmar identidad. */
+app.post("/api/2fa/recovery/regenerate", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const token = String(req.body?.token || "");
+  const r = await get2FA(uid);
+  if (!r || !r.enabled) return res.status(400).json({ error: "not_enabled" });
+  if (!totpVerify(r.secret, token)) return res.status(400).json({ error: "invalid_code" });
+  const codes = genRecoveryCodes(8);
+  const hashes = codes.map(hashRecovery);
+  await pool.execute("UPDATE user_2fa SET recovery=? WHERE user_id=?", [JSON.stringify(hashes), uid]);
+  try { await logStream(uid, "2fa_recovery_regenerated", { req }); } catch {}
+  res.json({ ok: true, recovery_codes: codes });
+}));
+
+/* --- POST /api/2fa/login-verify -------------------------------------------
+   Endpoint auxiliar usado por el flujo de login cuando /api/login devuelve
+   { needs_2fa:true }. Verifica un TOTP o un código de recuperación (que se
+   consume) y solo entonces confirma el login. */
+app.post("/api/2fa/login-verify", wrap(async (req, res) => {
+  const email = String(req.body?.email || "").toLowerCase();
+  const token = String(req.body?.token || "").trim();
+  if (!email || !token) return res.status(400).json({ error: "bad_request" });
+  if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
+  const [uRows] = await pool.query(
+    "SELECT id, email, name, role, plan, zone, photo_url FROM users WHERE email=? LIMIT 1", [email]);
+  if (!uRows.length) return res.status(404).json({ error: "not_found" });
+  const u = uRows[0];
+  const r = await get2FA(u.id);
+  if (!r || !r.enabled) return res.status(400).json({ error: "not_enabled" });
+  let ok = false, usedRecovery = false;
+  if (/^\d{6}$/.test(token)) {
+    ok = totpVerify(r.secret, token);
+  } else {
+    let recArr = [];
+    try { recArr = JSON.parse(r.recovery || "[]") || []; } catch {}
+    const h = hashRecovery(token);
+    if (recArr.includes(h)) {
+      ok = true; usedRecovery = true;
+      const remaining = recArr.filter(x => x !== h);
+      await pool.execute("UPDATE user_2fa SET recovery=? WHERE user_id=?", [JSON.stringify(remaining), u.id]);
+    }
+  }
+  if (!ok) {
+    try { await logStream(u.id, "2fa_login_fail", { req }); } catch {}
+    return res.status(400).json({ error: "invalid_code" });
+  }
+  await pool.execute("UPDATE user_2fa SET last_used_at=NOW() WHERE user_id=?", [u.id]);
+  await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
+  await touchUserDevice(req, u.id);
+  try { await logStream(u.id, usedRecovery ? "2fa_login_recovery" : "2fa_login_ok", { req }); } catch {}
+  res.json({ ok: true, user: u, used_recovery: usedRecovery });
+}));
 
 /* ============================================================
    GPS opcional (RGPD) — Endpoints usuario
@@ -8345,22 +7439,6 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
     `UPDATE user_gps SET lat=?, lng=?, accuracy=?, heading=?, speed=?, captured_at=NOW() WHERE user_id=?`,
     [lat, lng, acc, heading, speed, uid]
   );
-  res.json({ ok: true });
-}));
-
-/*  Heartbeat desde el Service Worker (PWA Android con Periodic Sync).
-    No trae GPS pero confirma que la app sigue instalada y viva. Actualiza
-    last_seen del dispositivo para que en admin sepamos que el usuario tuvo
-    la PWA activa recientemente, aunque no envíe ubicación. */
-app.post("/api/my/gps/heartbeat", wrap(async (req, res) => {
-  const uid = readMyUserId(req);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  try {
-    // Toca last_seen del dispositivo actual del usuario si existe.
-    await pool.execute(
-      `UPDATE user_devices SET last_seen=NOW() WHERE user_id=? AND is_current=1`, [uid]
-    );
-  } catch {}
   res.json({ ok: true });
 }));
 
@@ -9085,24 +8163,6 @@ app.post("/api/my/messages", wrap(async (req, res) => {
       targetType: "conversation", targetId: cid, req,
     });
   } catch {}
-  // Push notification al otro usuario de la conversación
-  try {
-    const otherId = c[0].user_a === me ? c[0].user_b : c[0].user_a;
-    if (otherId && typeof notifyUser === "function") {
-      const [sender] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
-      const senderName = sender.length ? sender[0].name : "Alguien";
-      const preview = media_type === "text"
-        ? String(body || "").slice(0, 80)
-        : (media_type === "photo" ? "📷 Te envió una foto" : "🎤 Te envió un audio");
-      notifyUser(otherId, {
-        kind: "message",
-        title: senderName,
-        body: preview,
-        url: `/app#/chat/${cid}`,
-        meta: { conversation_id: cid, sender_id: me },
-      });
-    }
-  } catch {}
   res.json({ ok: true, id: r.insertId });
 }));
 
@@ -9158,267 +8218,6 @@ app.get("/api/public-config", (req, res) => {
     },
   });
 });
-
-/* ==================================================================
-   SISTEMA ANTI-DUPLICADOS (scoring de sospecha)
-   ------------------------------------------------------------------
-   Idea: cuando un usuario completa el KYC, comparamos sus datos con
-   los de todos los usuarios existentes y calculamos un score con 8
-   señales. Umbrales:
-     ≥70: bloqueo automático (marca duplicate_status='blocked')
-     ≥40: revisión manual (marca duplicate_status='flagged')
-     ≥20: registro silencioso (queda listado en /api/admin/duplicates)
-     <20: sin acción
-   Cada par (user_a, user_b) se guarda una única vez en
-   duplicate_matches con el desglose de señales.
-================================================================== */
-const DUP_WEIGHTS = {
-  face_hash: 50,        // Misma cara detectada por Didit
-  doc_hash: 30,         // Mismo DNI/pasaporte
-  phone: 25,            // Mismo teléfono verificado
-  name_dob: 20,         // Mismo nombre + fecha nacimiento
-  fingerprint: 15,      // Misma huella de dispositivo
-  ip: 10,               // Misma IP en registro
-  email_similar: 10,    // Emails similares (mismo local part)
-  tz_lang_res: 5,       // Timezone + idioma + resolución iguales
-};
-
-function _sha256(str) {
-  return require("crypto").createHash("sha256").update(String(str || "")).digest("hex");
-}
-
-// Extrae el "local part" del email (todo antes de @). Se usa para detectar
-// duplicados con dominios distintos: "manu@gmail" vs "manu@outlook".
-function _emailLocal(email) {
-  return String(email || "").toLowerCase().split("@")[0].replace(/[.+_-]/g, "");
-}
-
-async function computeDuplicateScore(newUser) {
-  // newUser: { user_id, email, name, birth_date, register_fingerprint,
-  //   register_ip, doc_hash, face_hash, phone }
-  const signals = [];
-  const matches = new Map(); // user_id -> { score, signals: [] }
-
-  function bump(otherId, signalKey, extraInfo) {
-    if (!otherId || otherId === newUser.user_id) return;
-    if (!matches.has(otherId)) matches.set(otherId, { score: 0, signals: [] });
-    const m = matches.get(otherId);
-    m.score += DUP_WEIGHTS[signalKey] || 0;
-    m.signals.push({ key: signalKey, weight: DUP_WEIGHTS[signalKey] || 0, ...extraInfo });
-  }
-
-  // 1) FACE HASH — buscamos otros users con misma face_hash en identity_verifications
-  if (newUser.face_hash) {
-    const [rows] = await pool.query(
-      `SELECT DISTINCT user_id FROM identity_verifications
-        WHERE face_hash = ? AND user_id IS NOT NULL AND user_id <> ?`,
-      [newUser.face_hash, newUser.user_id]);
-    for (const r of rows) bump(r.user_id, "face_hash", { value: newUser.face_hash });
-  }
-
-  // 2) DOC HASH — mismo documento
-  if (newUser.doc_hash) {
-    const [rows] = await pool.query(
-      `SELECT DISTINCT user_id FROM identity_verifications
-        WHERE doc_hash = ? AND user_id IS NOT NULL AND user_id <> ?`,
-      [newUser.doc_hash, newUser.user_id]);
-    for (const r of rows) bump(r.user_id, "doc_hash", { value: newUser.doc_hash });
-  }
-
-  // 3) TELÉFONO — si guardamos phone verificado
-  if (newUser.phone) {
-    try {
-      const [rows] = await pool.query(
-        "SELECT id FROM users WHERE phone = ? AND id <> ?", [newUser.phone, newUser.user_id]);
-      for (const r of rows) bump(r.id, "phone", { value: newUser.phone });
-    } catch {} // columna phone puede no existir
-  }
-
-  // 4) NOMBRE + FECHA NACIMIENTO
-  if (newUser.name && newUser.birth_date) {
-    const [rows] = await pool.query(
-      `SELECT id FROM users
-        WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))
-          AND birth_date = ?
-          AND id <> ?`,
-      [newUser.name, newUser.birth_date, newUser.user_id]);
-    for (const r of rows) bump(r.id, "name_dob", { name: newUser.name, dob: newUser.birth_date });
-  }
-
-  // 5) HUELLA DISPOSITIVO
-  if (newUser.register_fingerprint) {
-    const [rows] = await pool.query(
-      `SELECT id FROM users WHERE register_fingerprint = ? AND id <> ?`,
-      [newUser.register_fingerprint, newUser.user_id]);
-    for (const r of rows) bump(r.id, "fingerprint", { value: newUser.register_fingerprint });
-  }
-
-  // 6) IP DE REGISTRO
-  if (newUser.register_ip) {
-    const [rows] = await pool.query(
-      `SELECT id FROM users WHERE register_ip = ? AND id <> ?`,
-      [newUser.register_ip, newUser.user_id]);
-    for (const r of rows) bump(r.id, "ip", { value: newUser.register_ip });
-  }
-
-  // 7) EMAIL SIMILAR (mismo local part antes del @)
-  if (newUser.email) {
-    const localNew = _emailLocal(newUser.email);
-    if (localNew && localNew.length >= 3) {
-      const [rows] = await pool.query(
-        `SELECT id, email FROM users WHERE id <> ? AND email IS NOT NULL AND email <> ?`,
-        [newUser.user_id, newUser.email]);
-      for (const r of rows) {
-        if (_emailLocal(r.email) === localNew) bump(r.id, "email_similar", { new: newUser.email, existing: r.email });
-      }
-    }
-  }
-
-  // Guarda cada par en duplicate_matches. INSERT ... ON DUPLICATE KEY para
-  // ir sumando puntos si aparece más señal en otro momento.
-  const results = [];
-  for (const [otherId, m] of matches.entries()) {
-    // Normaliza el par para que (a,b) y (b,a) sean la misma fila
-    const [a, b] = newUser.user_id < otherId ? [newUser.user_id, otherId] : [otherId, newUser.user_id];
-    const autoAction = m.score >= 70 ? "blocked" : m.score >= 40 ? "flagged" : "none";
-    try {
-      await pool.execute(
-        `INSERT INTO duplicate_matches (user_a_id, user_b_id, score, signals, auto_action)
-         VALUES (?,?,?,?,?)
-         ON DUPLICATE KEY UPDATE
-           score = GREATEST(score, VALUES(score)),
-           signals = VALUES(signals),
-           auto_action = VALUES(auto_action)`,
-        [a, b, m.score, JSON.stringify(m.signals), autoAction]);
-    } catch (e) { /* silent */ }
-    results.push({ other_user_id: otherId, score: m.score, signals: m.signals, auto_action: autoAction });
-  }
-
-  // Retorna el máximo score para poder aplicar a users.duplicate_score
-  const maxScore = results.reduce((mx, r) => Math.max(mx, r.score), 0);
-  const maxAction = maxScore >= 70 ? "blocked" : maxScore >= 40 ? "flagged" : "none";
-  if (maxScore > 0) {
-    try {
-      const newStatus = maxScore >= 70 ? "blocked" : maxScore >= 40 ? "flagged" : "none";
-      await pool.execute(
-        "UPDATE users SET duplicate_score=?, duplicate_status=? WHERE id=?",
-        [maxScore, newStatus, newUser.user_id]);
-      // Si es bloqueo automático → suspendemos la cuenta y logeamos.
-      if (maxScore >= 70) {
-        try {
-          await pool.execute(
-            "UPDATE users SET status='suspended' WHERE id=? AND status='active'",
-            [newUser.user_id]);
-          await logActivity("security",
-            `Cuenta ${newUser.user_id} suspendida automáticamente por posible duplicado (score=${maxScore})`);
-        } catch {}
-      }
-    } catch {}
-  }
-  return { max_score: maxScore, max_action: maxAction, matches: results };
-}
-
-// GET /api/admin/duplicates?status=pending  → lista pares detectados
-app.get("/api/admin/duplicates", wrap(async (req, res) => {
-  const status = String(req.query.status || "").trim();
-  const limit  = Math.min(200, Math.max(10, parseInt(req.query.limit, 10) || 100));
-  let where = "1=1"; const params = [];
-  if (status && ["pending","confirmed","dismissed","merged"].includes(status)) {
-    where = "dm.status = ?"; params.push(status);
-  }
-  const [rows] = await pool.query(
-    `SELECT dm.*,
-            ua.email AS user_a_email, ua.name AS user_a_name, ua.photo_url AS user_a_photo,
-            ua.created_at AS user_a_created, ua.status AS user_a_status,
-            ub.email AS user_b_email, ub.name AS user_b_name, ub.photo_url AS user_b_photo,
-            ub.created_at AS user_b_created, ub.status AS user_b_status
-       FROM duplicate_matches dm
-       LEFT JOIN users ua ON ua.id = dm.user_a_id
-       LEFT JOIN users ub ON ub.id = dm.user_b_id
-       WHERE ${where}
-       ORDER BY dm.score DESC, dm.created_at DESC
-       LIMIT ${limit}`,
-    params);
-  // Parsea signals JSON
-  for (const r of rows) {
-    try { r.signals = JSON.parse(r.signals || "[]"); } catch { r.signals = []; }
-  }
-  res.json({ ok: true, matches: rows });
-}));
-
-// POST /api/admin/duplicates/:id/action  { action: 'confirm'|'dismiss'|'merge'|'ban_b', note? }
-app.post("/api/admin/duplicates/:id/action", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  const action = String(req.body?.action || "").trim();
-  const note = String(req.body?.note || "").slice(0, 500);
-  if (!id) return res.status(400).json({ error: "bad_id" });
-  if (!["confirm","dismiss","merge","ban_b","ban_a"].includes(action)) {
-    return res.status(400).json({ error: "bad_action" });
-  }
-  const [[m]] = await pool.query("SELECT * FROM duplicate_matches WHERE id=?", [id]);
-  if (!m) return res.status(404).json({ error: "not_found" });
-  const reviewer = String(req.headers["x-admin-email"] || req.body?.reviewer || "admin");
-
-  if (action === "dismiss") {
-    await pool.execute(
-      "UPDATE duplicate_matches SET status='dismissed', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
-      [note, reviewer, id]);
-    // Reset badge en los users si no tenían otros duplicados activos
-    for (const uid of [m.user_a_id, m.user_b_id]) {
-      const [[other]] = await pool.query(
-        `SELECT MAX(score) AS mx FROM duplicate_matches
-          WHERE (user_a_id=? OR user_b_id=?) AND status IN ('pending','confirmed')`, [uid, uid]);
-      const mx = other?.mx || 0;
-      const st = mx >= 70 ? "blocked" : mx >= 40 ? "flagged" : "none";
-      await pool.execute("UPDATE users SET duplicate_score=?, duplicate_status=? WHERE id=?", [mx, st, uid]);
-    }
-  } else if (action === "confirm") {
-    await pool.execute(
-      "UPDATE duplicate_matches SET status='confirmed', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
-      [note, reviewer, id]);
-    await pool.execute("UPDATE users SET duplicate_status='confirmed_dup' WHERE id IN (?,?)",
-      [m.user_a_id, m.user_b_id]);
-  } else if (action === "ban_a" || action === "ban_b") {
-    const target = action === "ban_a" ? m.user_a_id : m.user_b_id;
-    await pool.execute("UPDATE users SET status='banned' WHERE id=?", [target]);
-    await pool.execute(
-      "UPDATE duplicate_matches SET status='confirmed', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
-      [`Baneo cuenta ${target}: ${note}`, reviewer, id]);
-    await logActivity("admin", `Duplicado ${id}: baneada cuenta ${target} por admin ${reviewer}`);
-  } else if (action === "merge") {
-    // Merge: no borra datos automáticamente, solo marca. La fusión real la
-    // decide el admin migrando manualmente (matches, mensajes, etc).
-    await pool.execute(
-      "UPDATE duplicate_matches SET status='merged', reviewer_note=?, reviewed_by=?, reviewed_at=NOW() WHERE id=?",
-      [note, reviewer, id]);
-  }
-  res.json({ ok: true });
-}));
-
-// POST /api/admin/duplicates/rescan/:userId  → recalcula duplicados de un user
-app.post("/api/admin/duplicates/rescan/:userId", wrap(async (req, res) => {
-  const uid = parseInt(req.params.userId, 10);
-  if (!uid) return res.status(400).json({ error: "bad_id" });
-  const [[u]] = await pool.query(
-    `SELECT u.id AS user_id, u.email, u.name, u.birth_date, u.register_fingerprint, u.register_ip
-       FROM users u WHERE u.id=?`, [uid]);
-  if (!u) return res.status(404).json({ error: "not_found" });
-  const [[iv]] = await pool.query(
-    `SELECT doc_hash, face_hash FROM identity_verifications
-      WHERE user_id=? AND status='verified' ORDER BY id DESC LIMIT 1`, [uid]);
-  const result = await computeDuplicateScore({
-    user_id: u.user_id,
-    email: u.email,
-    name: u.name,
-    birth_date: u.birth_date,
-    register_fingerprint: u.register_fingerprint,
-    register_ip: u.register_ip,
-    doc_hash: iv?.doc_hash || null,
-    face_hash: iv?.face_hash || null,
-    phone: null,
-  });
-  res.json({ ok: true, ...result });
-}));
 
 // Public admin-panel branding (no auth): only used by the login page and by
 // admin.js on load to render the logo. Deliberately does NOT expose any other
@@ -9521,16 +8320,6 @@ app.use(express.static(path.join(__dirname, "public"), {
 }));
 
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
-
-// Public appeal page (V510): /appeal/:token → sirve appeal.html
-app.get("/appeal/:token", (req, res) => {
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.sendFile(path.join(__dirname, "public", "appeal.html"));
-});
-app.get("/appeal", (req, res) => {
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.sendFile(path.join(__dirname, "public", "appeal.html"));
-});
 
 // SPA fallback: rutas cliente (deep-links de emails y navegación interna)
 // como /likes, /chats/123, /verify, /me, /subscription, etc. sirven index.html
@@ -9741,2426 +8530,6 @@ async function ensureSuperadminAccessSettings() {
   } catch (e) { console.warn("[superadmin] ensure settings:", e.message); }
 }
 
-/* ================================================================
-   V450+ · STAFF (admins/moderadores), NOTIFICACIONES DE USUARIO,
-   POPUPS IN-APP y NEWSLETTER/CAMPAÑAS ESTACIONALES
-   ================================================================ */
-
-// Lista de permisos disponibles por sección.
-const STAFF_PERMS = [
-  "users","moderation","reports","appeals","tickets","chats","otp",
-  "subscriptions","payments","promos","notifications","emails","kyc",
-  "duplicates","infractions","waitlist","newsletter","popups",
-  "stats","content","design","ads","backup","logs","settings",
-];
-
-// Autocreación de tablas Staff, notif prefs, push subs, popups, newsletter.
-async function ensureStaffAndNotifTables() {
-  await pool.execute(`CREATE TABLE IF NOT EXISTS staff_members (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    email VARCHAR(190) UNIQUE,
-    name VARCHAR(120),
-    role VARCHAR(20) DEFAULT 'moderator',
-    permissions TEXT,
-    status VARCHAR(20) DEFAULT 'active',
-    invited_by VARCHAR(190),
-    invited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_login DATETIME NULL,
-    invite_token VARCHAR(80) NULL,
-    INDEX idx_email (email)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  await pool.execute(`CREATE TABLE IF NOT EXISTS user_notification_prefs (
-    user_id INT PRIMARY KEY,
-    push_enabled TINYINT(1) DEFAULT 1,
-    email_enabled TINYINT(1) DEFAULT 1,
-    matches TINYINT(1) DEFAULT 1,
-    likes TINYINT(1) DEFAULT 1,
-    chats TINYINT(1) DEFAULT 1,
-    news TINYINT(1) DEFAULT 1,
-    marketing TINYINT(1) DEFAULT 0,
-    quiet_hours_start VARCHAR(5) DEFAULT '',
-    quiet_hours_end VARCHAR(5) DEFAULT '',
-    channel VARCHAR(10) DEFAULT 'both',
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  await pool.execute(`CREATE TABLE IF NOT EXISTS user_push_subscriptions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT,
-    endpoint TEXT,
-    p256dh VARCHAR(255),
-    auth VARCHAR(120),
-    device_name VARCHAR(120),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_used DATETIME NULL,
-    INDEX idx_user (user_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  await pool.execute(`CREATE TABLE IF NOT EXISTS inapp_popups (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(200),
-    body TEXT,
-    image_url VARCHAR(500),
-    cta_text VARCHAR(80),
-    cta_url VARCHAR(500),
-    theme VARCHAR(20) DEFAULT 'gradient',
-    segment VARCHAR(40) DEFAULT 'all',
-    target_user_ids TEXT,
-    starts_at DATETIME NULL,
-    ends_at DATETIME NULL,
-    priority INT DEFAULT 50,
-    status VARCHAR(20) DEFAULT 'draft',
-    show_once TINYINT(1) DEFAULT 1,
-    created_by VARCHAR(190),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    views INT DEFAULT 0,
-    clicks INT DEFAULT 0
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  await pool.execute(`CREATE TABLE IF NOT EXISTS inapp_popup_views (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    popup_id INT,
-    user_id INT,
-    action VARCHAR(20),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_popup_user (popup_id, user_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  await pool.execute(`CREATE TABLE IF NOT EXISTS newsletters (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(200),
-    subject VARCHAR(300),
-    body_html LONGTEXT,
-    segment VARCHAR(40) DEFAULT 'all',
-    target_user_ids TEXT,
-    occasion VARCHAR(40),
-    channel VARCHAR(20) DEFAULT 'email',
-    scheduled_at DATETIME NULL,
-    sent_at DATETIME NULL,
-    sent_count INT DEFAULT 0,
-    open_count INT DEFAULT 0,
-    click_count INT DEFAULT 0,
-    status VARCHAR(20) DEFAULT 'draft',
-    created_by VARCHAR(190),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  // Tabla auto-reglas para usuarios
-  await pool.execute(`CREATE TABLE IF NOT EXISTS user_auto_rules (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(120),
-    condition_key VARCHAR(60),
-    action_key VARCHAR(60),
-    enabled TINYINT(1) DEFAULT 1,
-    last_run DATETIME NULL,
-    last_affected INT DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-
-  // Añadir columna tags a users si no existe
-  try { await pool.execute("ALTER TABLE users ADD COLUMN tags VARCHAR(500) NULL"); } catch {}
-  // Añadir columna internal_notes si no existe
-  try { await pool.execute("ALTER TABLE users ADD COLUMN internal_notes TEXT NULL"); } catch {}
-}
-
-/* ==================== USERS BULK / EXPORT / RULES ==================== */
-app.post("/api/users/bulk", requireAdmin, wrap(async (req, res) => {
-  const b = req.body || {};
-  const ids = Array.isArray(b.ids) ? b.ids.map(n => Number(n)).filter(Boolean) : [];
-  if (!ids.length) return res.status(400).json({ error: "no_ids" });
-  const action = String(b.action || "");
-  const value = b.value != null ? String(b.value) : null;
-  const inClause = ids.map(() => "?").join(",");
-  let affected = 0;
-
-  try {
-    if (action === "verify") {
-      const [r] = await pool.execute(`UPDATE users SET verified=1 WHERE id IN (${inClause})`, ids);
-      affected = r.affectedRows;
-    } else if (action === "unverify") {
-      const [r] = await pool.execute(`UPDATE users SET verified=0 WHERE id IN (${inClause})`, ids);
-      affected = r.affectedRows;
-    } else if (action === "suspend") {
-      const [r] = await pool.execute(`UPDATE users SET status='suspended' WHERE id IN (${inClause})`, ids);
-      affected = r.affectedRows;
-    } else if (action === "ban") {
-      const [r] = await pool.execute(`UPDATE users SET status='banned' WHERE id IN (${inClause})`, ids);
-      affected = r.affectedRows;
-      if (value) {
-        try {
-          for (const id of ids) {
-            await pool.execute("INSERT INTO admin_activity (admin_email, event, detail, user_id) VALUES (?,?,?,?)",
-              [req.admin?.email || "admin", "bulk_ban", value, id]);
-          }
-        } catch {}
-      }
-    } else if (action === "activate") {
-      const [r] = await pool.execute(`UPDATE users SET status='active' WHERE id IN (${inClause})`, ids);
-      affected = r.affectedRows;
-    } else if (action === "tag" && value) {
-      // Añadir tag preservando existentes
-      for (const id of ids) {
-        try {
-          const [[row]] = await pool.query("SELECT tags FROM users WHERE id=?", [id]);
-          const cur = (row?.tags || "").split(",").map(s => s.trim()).filter(Boolean);
-          if (!cur.includes(value)) cur.push(value);
-          await pool.execute("UPDATE users SET tags=? WHERE id=?", [cur.join(","), id]);
-          affected++;
-        } catch {}
-      }
-    } else if (action === "plan" && value) {
-      const [r] = await pool.execute(`UPDATE users SET plan=? WHERE id IN (${inClause})`, [value, ...ids]);
-      affected = r.affectedRows;
-    } else if (action === "email") {
-      const subject = String(b.subject || "Aura");
-      const body = String(b.body || "");
-      const [rows] = await pool.query(`SELECT id, email, name FROM users WHERE id IN (${inClause})`, ids);
-      for (const u of rows) {
-        try {
-          if (typeof enqueueEmail === "function") {
-            await enqueueEmail("bulk_admin", u.id, { subject, body_html: body, name: u.name || "" });
-          }
-          affected++;
-        } catch {}
-      }
-    } else if (action === "delete") {
-      // V510 — Borrar también sesiones Didit antes de eliminar identity_verifications
-      try {
-        const [kycRows] = await pool.query(
-          `SELECT didit_session_id FROM identity_verifications WHERE user_id IN (${inClause})`, ids);
-        for (const k of kycRows) {
-          if (k.didit_session_id && typeof deleteDiditSession === "function") {
-            await deleteDiditSession(k.didit_session_id);
-          }
-        }
-      } catch (e) { console.warn("Bulk Didit delete:", e.message); }
-      const [r] = await pool.execute(`DELETE FROM users WHERE id IN (${inClause})`, ids);
-      affected = r.affectedRows;
-      try { await pool.execute(`DELETE FROM identity_verifications WHERE user_id IN (${inClause})`, ids); } catch {}
-    } else {
-      return res.status(400).json({ error: "unknown_action" });
-    }
-    try {
-      if (typeof logActivity === "function") {
-        await logActivity({ admin_email: req.admin?.email, event: "users_bulk", detail: `${action} x${affected}` });
-      }
-    } catch {}
-    res.json({ ok: true, affected });
-  } catch (e) {
-    console.error("[users/bulk]", e);
-    res.status(500).json({ error: e.message });
-  }
-}));
-
-app.get("/api/users/export", requireAdmin, wrap(async (req, res) => {
-  const format = String(req.query.format || "csv").toLowerCase();
-  const ids = req.query.ids ? String(req.query.ids).split(",").map(Number).filter(Boolean) : null;
-  const where = ids && ids.length ? `WHERE id IN (${ids.map(() => "?").join(",")})` : "";
-  const [rows] = await pool.query(
-    `SELECT id, email, name, age, gender, orientation, zone, city, country, plan, status, verified, role, created_at, last_login
-       FROM users ${where} ORDER BY id DESC LIMIT 100000`,
-    ids || []
-  );
-  if (format === "json") {
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Disposition", `attachment; filename="users_${Date.now()}.json"`);
-    return res.send(JSON.stringify(rows, null, 2));
-  }
-  if (format === "xlsx") {
-    // Enviar como CSV con extensión xls (Excel lo abre); si hay librería instalada, mejor.
-    res.setHeader("Content-Type", "application/vnd.ms-excel");
-    res.setHeader("Content-Disposition", `attachment; filename="users_${Date.now()}.xls"`);
-  } else {
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="users_${Date.now()}.csv"`);
-  }
-  const cols = rows.length ? Object.keys(rows[0]) : ["id"];
-  const esc = (v) => {
-    if (v == null) return "";
-    const s = String(v).replace(/"/g, '""');
-    return /[",\n]/.test(s) ? `"${s}"` : s;
-  };
-  const lines = [cols.join(",")];
-  for (const r of rows) lines.push(cols.map(c => esc(r[c])).join(","));
-  res.send(lines.join("\n"));
-}));
-
-app.get("/api/admin/user-rules", requireAdmin, wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const [rows] = await pool.query("SELECT id,name,condition_key AS `condition`,action_key AS action,enabled,last_run,last_affected,created_at FROM user_auto_rules ORDER BY id DESC");
-  res.json({ items: rows });
-}));
-app.post("/api/admin/user-rules", requireAdmin, wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const b = req.body || {};
-  const [r] = await pool.execute(
-    "INSERT INTO user_auto_rules (name, condition_key, action_key, enabled) VALUES (?,?,?,?)",
-    [String(b.name||"regla"), String(b.condition||""), String(b.action||""), b.enabled ? 1 : 0]
-  );
-  res.json({ ok: true, id: r.insertId });
-}));
-app.patch("/api/admin/user-rules/:id", requireAdmin, wrap(async (req, res) => {
-  const b = req.body || {};
-  const sets = []; const params = [];
-  ["name","condition","action","enabled"].forEach(k => {
-    if (k in b) {
-      const col = k === "condition" ? "condition_key" : (k === "action" ? "action_key" : k);
-      sets.push(col + "=?"); params.push(b[k]);
-    }
-  });
-  if (!sets.length) return res.json({ ok: true });
-  params.push(Number(req.params.id));
-  await pool.execute(`UPDATE user_auto_rules SET ${sets.join(",")} WHERE id=?`, params);
-  res.json({ ok: true });
-}));
-app.delete("/api/admin/user-rules/:id", requireAdmin, wrap(async (req, res) => {
-  await pool.execute("DELETE FROM user_auto_rules WHERE id=?", [Number(req.params.id)]);
-  res.json({ ok: true });
-}));
-
-// Ejecutor de reglas: se puede llamar manualmente o vía cron.
-async function runUserAutoRules() {
-  try {
-    const [rules] = await pool.query("SELECT * FROM user_auto_rules WHERE enabled=1");
-    for (const r of rules) {
-      let ids = [];
-      try {
-        if (r.condition_key === "reports_gte_3" || r.condition_key === "reports_gte_5") {
-          const n = r.condition_key === "reports_gte_3" ? 3 : 5;
-          const [rows] = await pool.query(`SELECT target_user_id AS id, COUNT(*) c FROM reports GROUP BY target_user_id HAVING c >= ?`, [n]);
-          ids = rows.map(x => x.id);
-        } else if (r.condition_key === "no_activity_30d") {
-          const [rows] = await pool.query("SELECT id FROM users WHERE last_login < NOW() - INTERVAL 30 DAY AND status='active'");
-          ids = rows.map(x => x.id);
-        } else if (r.condition_key === "no_activity_90d") {
-          const [rows] = await pool.query("SELECT id FROM users WHERE last_login < NOW() - INTERVAL 90 DAY AND status='active'");
-          ids = rows.map(x => x.id);
-        } else if (r.condition_key === "unverified_over_7d") {
-          const [rows] = await pool.query("SELECT id FROM users WHERE verified=0 AND created_at < NOW() - INTERVAL 7 DAY");
-          ids = rows.map(x => x.id);
-        }
-        if (!ids.length) continue;
-        const inClause = ids.map(() => "?").join(",");
-        if (r.action_key === "suspend") await pool.execute(`UPDATE users SET status='suspended' WHERE id IN (${inClause}) AND status<>'banned'`, ids);
-        else if (r.action_key === "ban") await pool.execute(`UPDATE users SET status='banned' WHERE id IN (${inClause})`, ids);
-        else if (r.action_key === "tag") await pool.execute(`UPDATE users SET tags=CONCAT(COALESCE(tags,''),'auto_rule,') WHERE id IN (${inClause})`, ids);
-        else if (r.action_key === "delete_account") await pool.execute(`DELETE FROM users WHERE id IN (${inClause})`, ids);
-        await pool.execute("UPDATE user_auto_rules SET last_run=NOW(), last_affected=? WHERE id=?", [ids.length, r.id]);
-      } catch (e) { console.warn("[auto-rule]", r.name, e.message); }
-    }
-  } catch (e) { console.warn("[runUserAutoRules]", e.message); }
-}
-// Ejecutar cada 6 horas
-setInterval(() => { runUserAutoRules().catch(() => {}); }, 6 * 60 * 60 * 1000);
-
-/* ==================== MODERATION EXTENSIONS ==================== */
-async function ensureModTables() {
-  await pool.execute(`CREATE TABLE IF NOT EXISTS mod_templates (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(120), action VARCHAR(40), body TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-  await pool.execute(`CREATE TABLE IF NOT EXISTS mod_rules (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(120), trigger_key VARCHAR(60), action_key VARCHAR(60),
-    enabled TINYINT(1) DEFAULT 1, last_run DATETIME NULL, last_hits INT DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-  try { await pool.execute("ALTER TABLE reports ADD COLUMN assigned_to VARCHAR(190) NULL"); } catch {}
-  try { await pool.execute("ALTER TABLE reports ADD COLUMN priority TINYINT DEFAULT 0"); } catch {}
-  try { await pool.execute("ALTER TABLE reports ADD COLUMN internal_notes TEXT NULL"); } catch {}
-  try { await pool.execute("ALTER TABLE reports ADD COLUMN sla_due DATETIME NULL"); } catch {}
-}
-
-app.get("/api/admin/mod-templates", requireAdmin, wrap(async (req, res) => {
-  await ensureModTables();
-  const [rows] = await pool.query("SELECT * FROM mod_templates ORDER BY id DESC");
-  res.json({ items: rows });
-}));
-app.post("/api/admin/mod-templates", requireAdmin, wrap(async (req, res) => {
-  await ensureModTables();
-  const b = req.body || {};
-  const [r] = await pool.execute("INSERT INTO mod_templates (name,action,body) VALUES (?,?,?)",
-    [String(b.name || ""), String(b.action || "warn"), String(b.body || "")]);
-  res.json({ ok: true, id: r.insertId });
-}));
-app.delete("/api/admin/mod-templates/:id", requireAdmin, wrap(async (req, res) => {
-  await pool.execute("DELETE FROM mod_templates WHERE id=?", [Number(req.params.id)]);
-  res.json({ ok: true });
-}));
-
-app.get("/api/admin/mod-rules", requireAdmin, wrap(async (req, res) => {
-  await ensureModTables();
-  const [rows] = await pool.query("SELECT id,name,trigger_key AS trigger,action_key AS action,enabled,last_run,last_hits,created_at FROM mod_rules ORDER BY id DESC");
-  res.json({ items: rows });
-}));
-app.post("/api/admin/mod-rules", requireAdmin, wrap(async (req, res) => {
-  await ensureModTables();
-  const b = req.body || {};
-  const [r] = await pool.execute("INSERT INTO mod_rules (name,trigger_key,action_key,enabled) VALUES (?,?,?,?)",
-    [String(b.name || ""), String(b.trigger || ""), String(b.action || ""), b.enabled ? 1 : 0]);
-  res.json({ ok: true, id: r.insertId });
-}));
-app.patch("/api/admin/mod-rules/:id", requireAdmin, wrap(async (req, res) => {
-  const b = req.body || {};
-  const sets = []; const params = [];
-  ["name","enabled"].forEach(k => { if (k in b) { sets.push(k+"=?"); params.push(b[k]); } });
-  if (b.trigger) { sets.push("trigger_key=?"); params.push(b.trigger); }
-  if (b.action) { sets.push("action_key=?"); params.push(b.action); }
-  if (!sets.length) return res.json({ ok: true });
-  params.push(Number(req.params.id));
-  await pool.execute(`UPDATE mod_rules SET ${sets.join(",")} WHERE id=?`, params);
-  res.json({ ok: true });
-}));
-app.delete("/api/admin/mod-rules/:id", requireAdmin, wrap(async (req, res) => {
-  await pool.execute("DELETE FROM mod_rules WHERE id=?", [Number(req.params.id)]);
-  res.json({ ok: true });
-}));
-
-// Denuncias agrupadas por usuario objetivo
-app.get("/api/reports/grouped-by-user", requireAdmin, wrap(async (req, res) => {
-  const [rows] = await pool.query(`
-    SELECT r.target_user_id AS user_id, u.name, u.email, COUNT(*) AS count,
-           GROUP_CONCAT(DISTINCT r.reason SEPARATOR ' | ') AS reasons
-    FROM reports r
-    LEFT JOIN users u ON u.id = r.target_user_id
-    WHERE r.status IN ('open','reviewing','escalated')
-    GROUP BY r.target_user_id, u.name, u.email
-    ORDER BY count DESC
-    LIMIT 100
-  `);
-  res.json({ items: rows.map(r => ({ ...r, reasons: (r.reasons || "").split(" | ").filter(Boolean) })) });
-}));
-
-// Cerrar todas las denuncias de un usuario
-app.post("/api/reports/user/:uid/resolve-all", requireAdmin, wrap(async (req, res) => {
-  const uid = Number(req.params.uid);
-  const [r] = await pool.execute("UPDATE reports SET status='resolved' WHERE target_user_id=? AND status<>'resolved'", [uid]);
-  res.json({ ok: true, affected: r.affectedRows });
-}));
-
-// Auto-asignar denuncias abiertas al admin actual (round-robin implícito)
-app.post("/api/moderation/auto-assign", requireAdmin, wrap(async (req, res) => {
-  await ensureModTables();
-  const me = req.admin?.email || "admin";
-  const [r] = await pool.execute(
-    "UPDATE reports SET assigned_to=?, status='reviewing' WHERE status='open' AND (assigned_to IS NULL OR assigned_to='') ORDER BY created_at ASC LIMIT 10",
-    [me]
-  );
-  res.json({ ok: true, count: r.affectedRows });
-}));
-
-/* ==================== TICKETS EXTENSIONS ==================== */
-async function ensureTicketTables() {
-  await pool.execute(`CREATE TABLE IF NOT EXISTS ticket_macros (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(120), category VARCHAR(40), body TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-  try { await pool.execute("ALTER TABLE tickets ADD COLUMN assigned_to VARCHAR(190) NULL"); } catch {}
-  try { await pool.execute("ALTER TABLE tickets ADD COLUMN sla_due DATETIME NULL"); } catch {}
-  try { await pool.execute("ALTER TABLE tickets ADD COLUMN internal_notes TEXT NULL"); } catch {}
-}
-app.get("/api/admin/ticket-macros", requireAdmin, wrap(async (req, res) => {
-  await ensureTicketTables();
-  const [rows] = await pool.query("SELECT * FROM ticket_macros ORDER BY id DESC");
-  res.json({ items: rows });
-}));
-app.post("/api/admin/ticket-macros", requireAdmin, wrap(async (req, res) => {
-  await ensureTicketTables();
-  const b = req.body || {};
-  const [r] = await pool.execute("INSERT INTO ticket_macros (name,category,body) VALUES (?,?,?)",
-    [String(b.name||""), String(b.category||"general"), String(b.body||"")]);
-  res.json({ ok: true, id: r.insertId });
-}));
-app.delete("/api/admin/ticket-macros/:id", requireAdmin, wrap(async (req, res) => {
-  await pool.execute("DELETE FROM ticket_macros WHERE id=?", [Number(req.params.id)]);
-  res.json({ ok: true });
-}));
-
-app.post("/api/tickets/auto-assign", requireAdmin, wrap(async (req, res) => {
-  await ensureTicketTables();
-  const me = req.admin?.email || "admin";
-  const [r] = await pool.execute(
-    "UPDATE tickets SET assigned_to=?, status='in_progress' WHERE status IN ('open','waiting') AND (assigned_to IS NULL OR assigned_to='') ORDER BY created_at ASC LIMIT 10",
-    [me]
-  );
-  res.json({ ok: true, count: r.affectedRows });
-}));
-
-// Cron: auto-cerrar tickets resueltos según setting
-async function runTicketAutoClose() {
-  try {
-    const [[row]] = await pool.query("SELECT v FROM settings WHERE k='tickets.auto_close_solved_days' LIMIT 1");
-    const days = Number(row?.v || 0);
-    if (!days || days <= 0) return;
-    await pool.execute("UPDATE tickets SET status='closed' WHERE status='resolved' AND updated_at < NOW() - INTERVAL ? DAY", [days]);
-  } catch {}
-}
-setInterval(() => { runTicketAutoClose().catch(() => {}); }, 60 * 60 * 1000);
-
-/* ==================== STAFF ENDPOINTS ==================== */
-app.get("/api/admin/staff", wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const [rows] = await pool.query(
-    `SELECT id, email, name, role, permissions, status,
-            invited_by, invited_at, last_login
-       FROM staff_members ORDER BY id DESC`
-  );
-  const staff = rows.map(r => ({
-    ...r,
-    permissions: (() => { try { return JSON.parse(r.permissions || "[]"); } catch { return []; } })(),
-  }));
-  res.json({ ok: true, staff, available_permissions: STAFF_PERMS });
-}));
-
-app.post("/api/admin/staff", wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const admin = req.admin?.email || "admin";
-  const b = req.body || {};
-  const email = String(b.email || "").trim().toLowerCase();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
-    return res.status(400).json({ error: "invalid_email" });
-  const name = String(b.name || "").slice(0, 120);
-  const role = ["admin","moderator","viewer"].includes(b.role) ? b.role : "moderator";
-  let perms = Array.isArray(b.permissions) ? b.permissions.filter(p => STAFF_PERMS.includes(p)) : [];
-  // Rol admin → todos los permisos
-  if (role === "admin") perms = STAFF_PERMS.slice();
-  const token = crypto.randomBytes(24).toString("hex");
-  await pool.execute(
-    `INSERT INTO staff_members (email, name, role, permissions, invited_by, invite_token, status)
-     VALUES (?,?,?,?,?,?, 'invited')
-     ON DUPLICATE KEY UPDATE name=VALUES(name), role=VALUES(role),
-       permissions=VALUES(permissions), invite_token=VALUES(invite_token)`,
-    [email, name, role, JSON.stringify(perms), admin, token]
-  );
-
-  // Email de invitación (envolver con el wrapper de marca).
-  const inviteUrl = `${appPublicUrl()}/admin?invite=${token}`;
-  const roleLabel = role === "admin" ? "Administrador"
-                  : role === "moderator" ? "Moderador" : "Consulta";
-  const body = `
-    <h2 style="margin:0 0 8px;color:#7c3aed;">Bienvenido al equipo de Aura</h2>
-    <p>Hola ${name || email},</p>
-    <p>Has sido invitado como <b>${roleLabel}</b> al panel de administración de <b>Aura</b>.</p>
-    <p>Con este rol podrás acceder a las siguientes secciones:</p>
-    <ul style="padding-left:20px;">${perms.map(p => `<li>${p}</li>`).join("")}</ul>
-    <p style="text-align:center;margin:24px 0;">
-      <a href="${inviteUrl}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;text-decoration:none;padding:12px 28px;border-radius:999px;font-weight:600;">Acceder al panel</a>
-    </p>
-    <p style="font-size:12px;color:#888;">Este enlace es personal e intransferible.</p>`;
-  try {
-    await pool.execute(
-      `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
-       VALUES (?,?,?, 'staff_invite', 'pending', NOW())`,
-      [email, "Invitación al equipo de Aura",
-       wrapEmailHtml(body, { preheader: "Bienvenido al equipo de Aura" })]
-    );
-  } catch {}
-  try { await logActivity("admin", `${admin} invitó a ${email} como ${role}`); } catch {}
-  res.json({ ok: true });
-}));
-
-app.patch("/api/admin/staff/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const b = req.body || {};
-  const patch = [];
-  const args = [];
-  if (b.name != null) { patch.push("name=?"); args.push(String(b.name).slice(0, 120)); }
-  if (b.role && ["admin","moderator","viewer"].includes(b.role)) {
-    patch.push("role=?"); args.push(b.role);
-  }
-  if (Array.isArray(b.permissions)) {
-    const perms = b.permissions.filter(p => STAFF_PERMS.includes(p));
-    patch.push("permissions=?"); args.push(JSON.stringify(perms));
-  }
-  if (b.status && ["active","suspended","invited"].includes(b.status)) {
-    patch.push("status=?"); args.push(b.status);
-  }
-  if (!patch.length) return res.json({ ok: true });
-  args.push(id);
-  await pool.execute(`UPDATE staff_members SET ${patch.join(",")} WHERE id=?`, args);
-  res.json({ ok: true });
-}));
-
-app.delete("/api/admin/staff/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  await pool.execute("DELETE FROM staff_members WHERE id=?", [id]);
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/staff/:id/resend-invite", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const [rows] = await pool.query("SELECT * FROM staff_members WHERE id=?", [id]);
-  if (!rows.length) return res.status(404).json({ error: "not_found" });
-  const s = rows[0];
-  const token = s.invite_token || crypto.randomBytes(24).toString("hex");
-  await pool.execute("UPDATE staff_members SET invite_token=?, status='invited' WHERE id=?", [token, id]);
-  const inviteUrl = `${appPublicUrl()}/admin?invite=${token}`;
-  const body = `<h2 style="color:#7c3aed;">Reenvío de invitación</h2>
-    <p>Hola ${s.name || s.email}, tu invitación al panel de Aura sigue activa.</p>
-    <p style="text-align:center;"><a href="${inviteUrl}" style="display:inline-block;background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;padding:12px 28px;border-radius:999px;text-decoration:none;font-weight:600;">Acceder al panel</a></p>`;
-  await pool.execute(
-    `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
-     VALUES (?,?,?, 'staff_invite', 'pending', NOW())`,
-    [s.email, "Reenvío de invitación · Aura", wrapEmailHtml(body)]
-  );
-  res.json({ ok: true });
-}));
-
-/* ==================== NOTIFICATION PREFS ==================== */
-app.get("/api/my/notification-prefs", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-  await ensureStaffAndNotifTables();
-  const [rows] = await pool.query(
-    "SELECT * FROM user_notification_prefs WHERE user_id=? LIMIT 1", [me]
-  );
-  if (!rows.length) {
-    return res.json({
-      user_id: me, push_enabled: 1, email_enabled: 1,
-      matches: 1, likes: 1, chats: 1, news: 1, marketing: 0,
-      channel: "both", quiet_hours_start: "", quiet_hours_end: "",
-    });
-  }
-  res.json(rows[0]);
-}));
-
-app.put("/api/my/notification-prefs", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-  await ensureStaffAndNotifTables();
-  const b = req.body || {};
-  const bool01 = (v) => (v === true || v === 1 || v === "1" || v === "true") ? 1 : 0;
-  const channel = ["push","email","both","none"].includes(b.channel) ? b.channel : "both";
-  await pool.execute(
-    `INSERT INTO user_notification_prefs
-      (user_id, push_enabled, email_enabled, matches, likes, chats, news, marketing,
-       quiet_hours_start, quiet_hours_end, channel)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?)
-     ON DUPLICATE KEY UPDATE
-       push_enabled=VALUES(push_enabled), email_enabled=VALUES(email_enabled),
-       matches=VALUES(matches), likes=VALUES(likes), chats=VALUES(chats),
-       news=VALUES(news), marketing=VALUES(marketing),
-       quiet_hours_start=VALUES(quiet_hours_start), quiet_hours_end=VALUES(quiet_hours_end),
-       channel=VALUES(channel)`,
-    [me, bool01(b.push_enabled), bool01(b.email_enabled),
-     bool01(b.matches), bool01(b.likes), bool01(b.chats), bool01(b.news), bool01(b.marketing),
-     String(b.quiet_hours_start || "").slice(0,5),
-     String(b.quiet_hours_end || "").slice(0,5), channel]
-  );
-  res.json({ ok: true });
-}));
-
-/* ==================== WEB PUSH ==================== */
-let webPush = null;
-try {
-  webPush = require("web-push");
-  if (process.env.VAPID_PUBLIC && process.env.VAPID_PRIVATE) {
-    webPush.setVapidDetails(
-      process.env.VAPID_EMAIL || "mailto:soporte@citasaura.es",
-      process.env.VAPID_PUBLIC,
-      process.env.VAPID_PRIVATE
-    );
-    console.log("Web Push: configurado con VAPID");
-  } else {
-    console.log("Web Push: falta VAPID_PUBLIC/VAPID_PRIVATE en env");
-    webPush = null;
-  }
-} catch (e) {
-  console.log("Web Push: módulo no instalado (npm install web-push)");
-}
-
-// Endpoint público para que el cliente obtenga la clave pública
-app.get("/api/push/vapid-public-key", (req, res) => {
-  res.json({ key: process.env.VAPID_PUBLIC || "" });
-});
-
-// Envía notificación push a todos los dispositivos de un usuario
-async function sendPushToUser(userId, payload) {
-  if (!webPush) return { sent: 0 };
-  try {
-    const [rows] = await pool.query(
-      "SELECT id, endpoint, p256dh, auth FROM user_push_subscriptions WHERE user_id=?",
-      [userId]
-    );
-    if (!rows.length) return { sent: 0 };
-    const data = JSON.stringify(payload || {});
-    let ok = 0;
-    for (const s of rows) {
-      try {
-        await webPush.sendNotification(
-          { endpoint: s.endpoint, keys: { p256dh: s.p256dh, auth: s.auth } },
-          data,
-          { TTL: 60 * 60 * 24 }
-        );
-        ok++;
-      } catch (e) {
-        // Endpoint expirado o inválido: eliminar
-        if (e && (e.statusCode === 404 || e.statusCode === 410)) {
-          try { await pool.execute("DELETE FROM user_push_subscriptions WHERE id=?", [s.id]); } catch {}
-        }
-      }
-    }
-    return { sent: ok };
-  } catch (e) {
-    console.error("push send error:", e.message);
-    return { sent: 0, error: e.message };
-  }
-}
-
-// Helper que crea notificación in-app (fila en tabla notifications) + envía push si tiene consentimiento
-async function notifyUser(userId, { kind, title, body, url, icon, meta }) {
-  try {
-    await pool.execute(
-      "INSERT INTO notifications (user_id, kind, title, body, url, meta, created_at) VALUES (?,?,?,?,?,?,NOW())",
-      [userId, String(kind||""), String(title||""), String(body||""), String(url||""), meta ? JSON.stringify(meta) : null]
-    );
-  } catch (e) {
-    // Si la tabla notifications no tiene todas esas columnas, no rompemos
-  }
-  // Enviar push (best-effort)
-  sendPushToUser(userId, {
-    title: title || "Aura",
-    body: body || "",
-    url: url || "/",
-    icon: icon || "/assets/aura-logo.png",
-    tag: kind || "aura",
-  }).catch(() => {});
-}
-
-app.post("/api/my/push-subscribe", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-  await ensureStaffAndNotifTables();
-  const b = req.body || {};
-  const endpoint = String(b.endpoint || "").slice(0, 2000);
-  const p256dh = String(b.keys?.p256dh || "").slice(0, 255);
-  const auth = String(b.keys?.auth || "").slice(0, 120);
-  const dev = String(b.device_name || "").slice(0, 120);
-  if (!endpoint) return res.status(400).json({ error: "no_endpoint" });
-  // Evita duplicados por endpoint.
-  await pool.execute("DELETE FROM user_push_subscriptions WHERE endpoint=?", [endpoint]);
-  await pool.execute(
-    `INSERT INTO user_push_subscriptions (user_id, endpoint, p256dh, auth, device_name)
-     VALUES (?,?,?,?,?)`,
-    [me, endpoint, p256dh, auth, dev]
-  );
-  res.json({ ok: true });
-}));
-
-app.post("/api/my/push-unsubscribe", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-  const endpoint = String(req.body?.endpoint || "");
-  if (endpoint) await pool.execute("DELETE FROM user_push_subscriptions WHERE endpoint=? AND user_id=?", [endpoint, me]);
-  else await pool.execute("DELETE FROM user_push_subscriptions WHERE user_id=?", [me]);
-  res.json({ ok: true });
-}));
-
-/* --- Suscripciones anónimas ---
-   Guardamos endpoints push de visitantes que instalaron la PWA pero aún NO
-   se han registrado. Se guarda un fingerprint del dispositivo/idioma/UA para
-   segmentación básica. Al registrarse, la app llama a /api/my/push-claim
-   pasando el mismo endpoint y la suscripción se promueve a la cuenta creada. */
-async function ensureAnonPushTable() {
-  try {
-    await pool.query(`CREATE TABLE IF NOT EXISTS anon_push_subscriptions (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      endpoint VARCHAR(500) NOT NULL,
-      p256dh VARCHAR(255) DEFAULT NULL,
-      auth VARCHAR(120) DEFAULT NULL,
-      device_fingerprint VARCHAR(120) DEFAULT NULL,
-      user_agent VARCHAR(500) DEFAULT NULL,
-      lang VARCHAR(20) DEFAULT NULL,
-      country VARCHAR(80) DEFAULT NULL,
-      city VARCHAR(120) DEFAULT NULL,
-      ip VARCHAR(80) DEFAULT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      UNIQUE KEY uniq_endpoint (endpoint(191)),
-      INDEX idx_lang (lang),
-      INDEX idx_country (country)
-    )`);
-  } catch (e) { console.error("ensureAnonPushTable:", e.message); }
-}
-ensureAnonPushTable().catch(() => {});
-
-// Suscripción anónima (sin login). Cualquiera puede llamarla.
-app.post("/api/push-subscribe-anon", wrap(async (req, res) => {
-  const b = req.body || {};
-  const endpoint = String(b.endpoint || "").slice(0, 500);
-  if (!endpoint) return res.status(400).json({ error: "no_endpoint" });
-  const p256dh = String(b.keys?.p256dh || "").slice(0, 255);
-  const auth = String(b.keys?.auth || "").slice(0, 120);
-  const fingerprint = String(b.fingerprint || "").slice(0, 120);
-  const ua = String(req.headers["user-agent"] || "").slice(0, 500);
-  const lang = String(b.lang || req.headers["accept-language"] || "").slice(0, 20);
-  const country = b.country ? String(b.country).slice(0, 80) : null;
-  const city = b.city ? String(b.city).slice(0, 120) : null;
-  const ip = String(clientIp(req) || "").slice(0, 80);
-  try {
-    // Si ya está registrado como usuario, no duplicar en anon.
-    const [dup] = await pool.query("SELECT id FROM user_push_subscriptions WHERE endpoint=? LIMIT 1", [endpoint]);
-    if (dup.length) return res.json({ ok: true, already_registered: true });
-    await pool.execute(
-      `INSERT INTO anon_push_subscriptions (endpoint, p256dh, auth, device_fingerprint, user_agent, lang, country, city, ip)
-       VALUES (?,?,?,?,?,?,?,?,?)
-       ON DUPLICATE KEY UPDATE p256dh=VALUES(p256dh), auth=VALUES(auth),
-         device_fingerprint=VALUES(device_fingerprint), user_agent=VALUES(user_agent),
-         lang=VALUES(lang), country=VALUES(country), city=VALUES(city), ip=VALUES(ip)`,
-      [endpoint, p256dh, auth, fingerprint, ua, lang, country, city, ip]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error("push-subscribe-anon:", e.message);
-    res.status(500).json({ error: "internal" });
-  }
-}));
-
-// Reclamar una suscripción anónima al registrarse (mueve el endpoint a la
-// cuenta del usuario y elimina el anónimo).
-app.post("/api/my/push-claim", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-  const endpoint = String((req.body||{}).endpoint || "").slice(0, 500);
-  if (!endpoint) return res.status(400).json({ error: "no_endpoint" });
-  const [rows] = await pool.query("SELECT * FROM anon_push_subscriptions WHERE endpoint=? LIMIT 1", [endpoint]);
-  if (!rows.length) return res.json({ ok: true, claimed: false });
-  const s = rows[0];
-  try {
-    await pool.execute("DELETE FROM user_push_subscriptions WHERE endpoint=?", [endpoint]);
-    await pool.execute(
-      `INSERT INTO user_push_subscriptions (user_id, endpoint, p256dh, auth, device_name)
-       VALUES (?,?,?,?,?)`,
-      [me, endpoint, s.p256dh, s.auth, (s.user_agent||"").slice(0,120)]
-    );
-    await pool.execute("DELETE FROM anon_push_subscriptions WHERE endpoint=?", [endpoint]);
-    res.json({ ok: true, claimed: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-}));
-
-// Desuscribir anónimo
-app.post("/api/push-unsubscribe-anon", wrap(async (req, res) => {
-  const endpoint = String((req.body||{}).endpoint || "").slice(0, 500);
-  if (endpoint) await pool.execute("DELETE FROM anon_push_subscriptions WHERE endpoint=?", [endpoint]);
-  res.json({ ok: true });
-}));
-
-/* ==================== ADMIN PUSH CAMPAIGNS ====================
-   Sistema para que el admin envíe notificaciones push masivas o segmentadas.
-   Segmentación: all | premium | free | zone | country | age | user_ids | active_days
-   Estados: draft | queued | sending | sent | failed | scheduled
-   Métricas: enviadas, entregadas, clics (via /api/my/push/click-track).
-   ============================================================= */
-async function ensurePushCampaignTables() {
-  try {
-    await pool.query(`CREATE TABLE IF NOT EXISTS push_campaigns (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      title VARCHAR(200) NOT NULL,
-      body TEXT NOT NULL,
-      url VARCHAR(500) DEFAULT '/',
-      icon VARCHAR(500) DEFAULT NULL,
-      image VARCHAR(500) DEFAULT NULL,
-      tag VARCHAR(80) DEFAULT 'aura-campaign',
-      segment VARCHAR(40) DEFAULT 'all',
-      segment_params TEXT DEFAULT NULL,
-      target_user_ids TEXT DEFAULT NULL,
-      status ENUM('draft','queued','sending','sent','failed','scheduled') DEFAULT 'draft',
-      scheduled_at DATETIME NULL,
-      sent_at DATETIME NULL,
-      target_count INT DEFAULT 0,
-      delivered_count INT DEFAULT 0,
-      click_count INT DEFAULT 0,
-      failed_count INT DEFAULT 0,
-      error_message TEXT DEFAULT NULL,
-      created_by VARCHAR(190) DEFAULT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      INDEX idx_status (status),
-      INDEX idx_scheduled (scheduled_at)
-    )`);
-  } catch (e) { console.error("ensurePushCampaignTables:", e.message); }
-}
-ensurePushCampaignTables().catch(() => {});
-
-// Resuelve segmento. Devuelve { userIds: [], anonEndpoints: [] }
-async function resolvePushAudience(segment, params) {
-  const p = params || {};
-  const seg = String(segment || "all").toLowerCase();
-  const out = { userIds: [], anonEndpoints: [] };
-  // ----- Segmentos que apuntan SOLO a anónimos -----
-  if (seg === "anon" || seg === "anon_country" || seg === "anon_lang") {
-    let sql = "SELECT endpoint FROM anon_push_subscriptions WHERE 1=1";
-    const args = [];
-    if (seg === "anon_country" && p.country) { sql += " AND country=?"; args.push(String(p.country)); }
-    if (seg === "anon_lang" && p.lang) { sql += " AND lang LIKE ?"; args.push(String(p.lang) + "%"); }
-    sql += " LIMIT 200000";
-    try {
-      const [rows] = await pool.query(sql, args);
-      out.anonEndpoints = rows.map(r => r.endpoint);
-    } catch (e) { console.error("anon audience:", e.message); }
-    return out;
-  }
-
-  // ----- Segmentos de usuarios registrados -----
-  let sql = "SELECT DISTINCT u.id FROM users u INNER JOIN user_push_subscriptions ps ON ps.user_id=u.id WHERE 1=1";
-  const args = [];
-  if (seg === "premium") {
-    sql += " AND (u.is_premium=1 OR u.premium_until > NOW())";
-  } else if (seg === "free") {
-    sql += " AND (u.is_premium=0 OR u.is_premium IS NULL) AND (u.premium_until IS NULL OR u.premium_until < NOW())";
-  } else if (seg === "zone" && p.zone) {
-    sql += " AND u.zone=?"; args.push(String(p.zone));
-  } else if (seg === "country" && p.country) {
-    sql += " AND u.country=?"; args.push(String(p.country));
-  } else if (seg === "city" && p.city) {
-    sql += " AND u.city=?"; args.push(String(p.city));
-  } else if (seg === "age" && (p.min_age || p.max_age)) {
-    if (p.min_age) { sql += " AND u.age >= ?"; args.push(parseInt(p.min_age,10)||18); }
-    if (p.max_age) { sql += " AND u.age <= ?"; args.push(parseInt(p.max_age,10)||99); }
-  } else if (seg === "user_ids" && Array.isArray(p.user_ids) && p.user_ids.length) {
-    const ids = p.user_ids.map(x => parseInt(x,10)).filter(Boolean).slice(0, 5000);
-    if (!ids.length) return out;
-    sql += ` AND u.id IN (${ids.map(()=>"?").join(",")})`;
-    args.push(...ids);
-  } else if (seg === "active_days" && p.days) {
-    const d = parseInt(p.days,10) || 30;
-    sql += ` AND u.last_seen_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`;
-    args.push(d);
-  }
-  // "all", "all_including_anon" o inválido → no añade filtro
-  sql += " LIMIT 200000";
-  try {
-    const [rows] = await pool.query(sql, args);
-    out.userIds = rows.map(r => r.id);
-  } catch (e) {
-    console.error("resolvePushAudience users:", e.message);
-  }
-
-  // Incluir anónimos si el segmento lo pide
-  if (seg === "all_including_anon") {
-    try {
-      const [aRows] = await pool.query("SELECT endpoint FROM anon_push_subscriptions LIMIT 200000");
-      out.anonEndpoints = aRows.map(r => r.endpoint);
-    } catch (e) { console.error("all_including_anon anon:", e.message); }
-  }
-  return out;
-}
-
-// Enviar push a un endpoint arbitrario (usado para anónimos)
-async function sendPushToEndpoint(sub, payload) {
-  if (!webPush) return { sent: 0 };
-  try {
-    await webPush.sendNotification(
-      { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-      JSON.stringify(payload || {}),
-      { TTL: 60 * 60 * 24 }
-    );
-    return { sent: 1 };
-  } catch (e) {
-    if (e && (e.statusCode === 404 || e.statusCode === 410)) {
-      try { await pool.execute("DELETE FROM anon_push_subscriptions WHERE endpoint=?", [sub.endpoint]); } catch {}
-    }
-    return { sent: 0, error: e.message };
-  }
-}
-
-// Envío efectivo de una campaña (idempotente: marca sent tras terminar)
-async function runPushCampaign(campaignId) {
-  const [rows] = await pool.query("SELECT * FROM push_campaigns WHERE id=? LIMIT 1", [campaignId]);
-  if (!rows.length) return { ok: false, error: "not_found" };
-  const c = rows[0];
-  if (c.status === "sending" || c.status === "sent") return { ok: false, error: "already_" + c.status };
-  await pool.execute("UPDATE push_campaigns SET status='sending' WHERE id=?", [campaignId]);
-  let params = {};
-  try { params = c.segment_params ? JSON.parse(c.segment_params) : {}; } catch {}
-  // Si viene target_user_ids explícito, priorizarlo
-  let userIds = [];
-  let anonEndpoints = [];
-  if (c.target_user_ids && c.target_user_ids.trim()) {
-    userIds = c.target_user_ids.split(",").map(x => parseInt(x,10)).filter(Boolean);
-  } else {
-    const aud = await resolvePushAudience(c.segment, params);
-    userIds = aud.userIds || [];
-    anonEndpoints = aud.anonEndpoints || [];
-  }
-  const payload = {
-    title: c.title || "Aura",
-    body: c.body || "",
-    url: c.url || "/",
-    icon: c.icon || "/assets/aura-logo.png",
-    image: c.image || undefined,
-    tag: c.tag || `aura-campaign-${c.id}`,
-    campaign_id: c.id,
-  };
-  let delivered = 0, failed = 0;
-  // Registrados
-  for (const uid of userIds) {
-    try {
-      const r = await sendPushToUser(uid, payload);
-      delivered += (r.sent || 0);
-      if (!r.sent) failed++;
-    } catch { failed++; }
-  }
-  // Anónimos
-  if (anonEndpoints.length) {
-    try {
-      const [subs] = await pool.query(
-        `SELECT endpoint, p256dh, auth FROM anon_push_subscriptions WHERE endpoint IN (${anonEndpoints.map(()=>"?").join(",")})`,
-        anonEndpoints
-      );
-      for (const s of subs) {
-        const r = await sendPushToEndpoint(s, payload);
-        delivered += (r.sent || 0);
-        if (!r.sent) failed++;
-      }
-    } catch (e) { console.error("anon send batch:", e.message); }
-  }
-  const totalTarget = userIds.length + anonEndpoints.length;
-  await pool.execute(
-    "UPDATE push_campaigns SET status='sent', sent_at=NOW(), target_count=?, delivered_count=?, failed_count=? WHERE id=?",
-    [totalTarget, delivered, failed, campaignId]
-  );
-  // Guardar en notifications in-app (solo usuarios registrados; los anónimos no tienen user_id)
-  try {
-    for (const uid of userIds.slice(0, 20000)) {
-      await pool.execute(
-        "INSERT INTO notifications (user_id, kind, title, body, url, meta, created_at) VALUES (?,?,?,?,?,?,NOW())",
-        [uid, "campaign", c.title, c.body, c.url || "/", JSON.stringify({ campaign_id: c.id })]
-      );
-    }
-  } catch {}
-  return { ok: true, target: totalTarget, users: userIds.length, anons: anonEndpoints.length, delivered, failed };
-}
-
-// Loop de programaciones (cada 60s revisa campañas scheduled cuyo scheduled_at <= NOW)
-setInterval(async () => {
-  try {
-    const [rows] = await pool.query(
-      "SELECT id FROM push_campaigns WHERE status='scheduled' AND scheduled_at <= NOW() LIMIT 10"
-    );
-    for (const r of rows) {
-      runPushCampaign(r.id).catch(() => {});
-    }
-  } catch {}
-}, 60000);
-
-// Lista de campañas (paginada)
-app.get("/api/admin/push/campaigns", wrap(async (req, res) => {
-  await ensurePushCampaignTables();
-  const limit = Math.min(200, parseInt(req.query.limit,10) || 50);
-  const [rows] = await pool.query(
-    "SELECT id, title, body, url, segment, status, scheduled_at, sent_at, target_count, delivered_count, click_count, failed_count, created_by, created_at FROM push_campaigns ORDER BY id DESC LIMIT ?",
-    [limit]
-  );
-  res.json({ ok: true, campaigns: rows });
-}));
-
-// Detalle de campaña
-app.get("/api/admin/push/campaigns/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id,10);
-  const [rows] = await pool.query("SELECT * FROM push_campaigns WHERE id=? LIMIT 1", [id]);
-  if (!rows.length) return res.status(404).json({ error: "not_found" });
-  res.json({ ok: true, campaign: rows[0] });
-}));
-
-// Preview: cuántos usuarios recibirían la campaña
-app.post("/api/admin/push/preview-audience", wrap(async (req, res) => {
-  const b = req.body || {};
-  const aud = await resolvePushAudience(b.segment, b.segment_params || {});
-  const users = (aud.userIds || []).length;
-  const anons = (aud.anonEndpoints || []).length;
-  res.json({
-    ok: true,
-    count: users + anons,
-    users,
-    anons,
-    sample_users: (aud.userIds || []).slice(0, 20),
-  });
-}));
-
-// Estadísticas globales de suscripciones push
-app.get("/api/admin/push/stats", wrap(async (req, res) => {
-  try {
-    const [[u]] = await pool.query("SELECT COUNT(*) AS n FROM user_push_subscriptions");
-    const [[a]] = await pool.query("SELECT COUNT(*) AS n FROM anon_push_subscriptions");
-    const [[uu]] = await pool.query("SELECT COUNT(DISTINCT user_id) AS n FROM user_push_subscriptions");
-    const [byLang] = await pool.query("SELECT lang, COUNT(*) AS n FROM anon_push_subscriptions GROUP BY lang ORDER BY n DESC LIMIT 10");
-    const [byCountry] = await pool.query("SELECT country, COUNT(*) AS n FROM anon_push_subscriptions WHERE country IS NOT NULL GROUP BY country ORDER BY n DESC LIMIT 10");
-    res.json({ ok: true, total_registered_devices: u.n, unique_registered_users: uu.n, anon_devices: a.n, anon_by_lang: byLang, anon_by_country: byCountry });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-}));
-
-// Crear campaña (draft / scheduled / send-now)
-app.post("/api/admin/push/campaigns", wrap(async (req, res) => {
-  await ensurePushCampaignTables();
-  const b = req.body || {};
-  const admin = req.admin?.email || "admin";
-  const title = String(b.title || "").slice(0, 200);
-  const body = String(b.body || "").slice(0, 2000);
-  if (!title || !body) return res.status(400).json({ error: "title_body_required" });
-  const url = String(b.url || "/").slice(0, 500);
-  const icon = b.icon ? String(b.icon).slice(0, 500) : null;
-  const image = b.image ? String(b.image).slice(0, 500) : null;
-  const tag = String(b.tag || "aura-campaign").slice(0, 80);
-  const segment = String(b.segment || "all").slice(0, 40);
-  const segmentParams = b.segment_params ? JSON.stringify(b.segment_params).slice(0, 4000) : null;
-  const targetUserIds = Array.isArray(b.target_user_ids) ? b.target_user_ids.join(",").slice(0, 20000) : (b.target_user_ids || null);
-  let status = "draft";
-  let scheduledAt = null;
-  if (b.send_now) status = "queued";
-  else if (b.scheduled_at) { status = "scheduled"; scheduledAt = new Date(b.scheduled_at); }
-  const [ins] = await pool.execute(
-    `INSERT INTO push_campaigns (title, body, url, icon, image, tag, segment, segment_params, target_user_ids, status, scheduled_at, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [title, body, url, icon, image, tag, segment, segmentParams, targetUserIds, status, scheduledAt, admin]
-  );
-  const id = ins.insertId;
-  // Si es send-now, lanza en background
-  if (status === "queued") {
-    runPushCampaign(id).catch(err => {
-      pool.execute("UPDATE push_campaigns SET status='failed', error_message=? WHERE id=?", [String(err.message||err).slice(0,500), id]).catch(()=>{});
-    });
-  }
-  res.json({ ok: true, id, status });
-}));
-
-// Reenviar una campaña existente (crea copia como queued)
-app.post("/api/admin/push/campaigns/:id/send-now", wrap(async (req, res) => {
-  const id = parseInt(req.params.id,10);
-  const [rows] = await pool.query("SELECT * FROM push_campaigns WHERE id=? LIMIT 1", [id]);
-  if (!rows.length) return res.status(404).json({ error: "not_found" });
-  await pool.execute("UPDATE push_campaigns SET status='queued', scheduled_at=NULL WHERE id=?", [id]);
-  runPushCampaign(id).catch(err => {
-    pool.execute("UPDATE push_campaigns SET status='failed', error_message=? WHERE id=?", [String(err.message||err).slice(0,500), id]).catch(()=>{});
-  });
-  res.json({ ok: true, id });
-}));
-
-// Enviar prueba a mi propio usuario (o a un user_id concreto)
-app.post("/api/admin/push/test", wrap(async (req, res) => {
-  const b = req.body || {};
-  const testUserId = parseInt(b.user_id,10);
-  if (!testUserId) return res.status(400).json({ error: "user_id_required" });
-  const payload = {
-    title: String(b.title || "Prueba Aura").slice(0, 200),
-    body: String(b.body || "Notificación de prueba").slice(0, 500),
-    url: String(b.url || "/").slice(0, 500),
-    icon: b.icon || "/assets/aura-logo.png",
-    tag: "aura-test",
-  };
-  const r = await sendPushToUser(testUserId, payload);
-  res.json({ ok: true, ...r });
-}));
-
-// Borrar campaña
-app.delete("/api/admin/push/campaigns/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id,10);
-  await pool.execute("DELETE FROM push_campaigns WHERE id=?", [id]);
-  res.json({ ok: true });
-}));
-
-// Track de clics: el sw.js lo llama cuando el usuario abre la notificación
-app.post("/api/my/push/click-track", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  const cid = parseInt((req.body||{}).campaign_id, 10);
-  if (!cid) return res.json({ ok: true });
-  try { await pool.execute("UPDATE push_campaigns SET click_count = click_count + 1 WHERE id=?", [cid]); } catch {}
-  try {
-    if (me) await pool.execute(
-      "INSERT INTO push_campaign_clicks (campaign_id, user_id, clicked_at) VALUES (?,?,NOW())",
-      [cid, me]
-    );
-  } catch {}
-  res.json({ ok: true });
-}));
-
-// Tabla auxiliar para clicks (best-effort)
-pool.query(`CREATE TABLE IF NOT EXISTS push_campaign_clicks (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  campaign_id INT NOT NULL,
-  user_id INT DEFAULT NULL,
-  clicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_campaign (campaign_id)
-)`).catch(() => {});
-
-/* ==================== IN-APP POPUPS ==================== */
-app.get("/api/admin/popups", wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const [rows] = await pool.query("SELECT * FROM inapp_popups ORDER BY id DESC LIMIT 500");
-  res.json({ ok: true, popups: rows });
-}));
-
-app.post("/api/admin/popups", wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const admin = req.admin?.email || "admin";
-  const b = req.body || {};
-  const targets = Array.isArray(b.target_user_ids) ? b.target_user_ids.join(",") : (b.target_user_ids || "");
-  const [r] = await pool.execute(
-    `INSERT INTO inapp_popups
-      (title, body, image_url, cta_text, cta_url, theme, segment, target_user_ids,
-       starts_at, ends_at, priority, status, show_once, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [String(b.title||"").slice(0,200), String(b.body||""), String(b.image_url||"").slice(0,500),
-     String(b.cta_text||"").slice(0,80), String(b.cta_url||"").slice(0,500),
-     String(b.theme||"gradient").slice(0,20), String(b.segment||"all").slice(0,40),
-     targets, b.starts_at || null, b.ends_at || null,
-     parseInt(b.priority,10)||50, String(b.status||"draft").slice(0,20),
-     b.show_once === false ? 0 : 1, admin]
-  );
-  res.json({ ok: true, id: r.insertId });
-}));
-
-app.patch("/api/admin/popups/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const b = req.body || {};
-  const patch = []; const args = [];
-  const map = { title:"title", body:"body", image_url:"image_url", cta_text:"cta_text",
-    cta_url:"cta_url", theme:"theme", segment:"segment", starts_at:"starts_at",
-    ends_at:"ends_at", priority:"priority", status:"status", show_once:"show_once" };
-  for (const [k, col] of Object.entries(map)) {
-    if (b[k] !== undefined) { patch.push(`${col}=?`); args.push(b[k]); }
-  }
-  if (Array.isArray(b.target_user_ids)) {
-    patch.push("target_user_ids=?"); args.push(b.target_user_ids.join(","));
-  }
-  if (!patch.length) return res.json({ ok: true });
-  args.push(id);
-  await pool.execute(`UPDATE inapp_popups SET ${patch.join(",")} WHERE id=?`, args);
-  res.json({ ok: true });
-}));
-
-app.delete("/api/admin/popups/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  await pool.execute("DELETE FROM inapp_popups WHERE id=?", [id]);
-  res.json({ ok: true });
-}));
-
-// Usuario: pide el próximo popup activo aplicable
-app.get("/api/my/popup-active", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.json({ popup: null });
-  await ensureStaffAndNotifTables();
-  const now = new Date();
-  const [rows] = await pool.query(
-    `SELECT * FROM inapp_popups
-      WHERE status='active'
-        AND (starts_at IS NULL OR starts_at <= ?)
-        AND (ends_at IS NULL OR ends_at >= ?)
-      ORDER BY priority DESC, id DESC LIMIT 50`,
-    [now, now]
-  );
-  // Filtrar por segmento / target user ids / visto ya
-  const [viewed] = await pool.query(
-    "SELECT popup_id FROM inapp_popup_views WHERE user_id=? AND action='shown'", [me]
-  );
-  const seen = new Set(viewed.map(r => r.popup_id));
-  const [urow] = await pool.query("SELECT * FROM users WHERE id=? LIMIT 1", [me]);
-  const u = urow[0] || {};
-  function matches(p) {
-    if (p.show_once && seen.has(p.id)) return false;
-    if (p.target_user_ids) {
-      const ids = String(p.target_user_ids).split(",").map(x => parseInt(x,10)).filter(Boolean);
-      if (ids.length) return ids.includes(me);
-    }
-    const seg = p.segment || "all";
-    if (seg === "all") return true;
-    if (seg === "premium") return !!u.is_premium;
-    if (seg === "free") return !u.is_premium;
-    if (seg === "verified") return !!u.verified;
-    if (seg === "unverified") return !u.verified;
-    if (seg === "male") return u.gender === "male";
-    if (seg === "female") return u.gender === "female";
-    if (seg === "lgbt") return u.zone === "lgtb";
-    if (seg === "hetero") return u.zone === "hetero";
-    return true;
-  }
-  const popup = rows.find(matches) || null;
-  res.json({ popup });
-}));
-
-app.post("/api/my/popup/:id/event", wrap(async (req, res) => {
-  const me = readMyUserId(req);
-  if (!me) return res.status(401).json({ error: "unauthorized" });
-  const id = parseInt(req.params.id, 10);
-  const action = String(req.body?.action || "shown");
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  await pool.execute(
-    "INSERT INTO inapp_popup_views (popup_id, user_id, action) VALUES (?,?,?)",
-    [id, me, action]
-  );
-  if (action === "shown")   await pool.execute("UPDATE inapp_popups SET views=views+1 WHERE id=?", [id]);
-  if (action === "clicked") await pool.execute("UPDATE inapp_popups SET clicks=clicks+1 WHERE id=?", [id]);
-  res.json({ ok: true });
-}));
-
-/* ==================== NEWSLETTER ==================== */
-app.get("/api/admin/newsletters", wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const [rows] = await pool.query("SELECT * FROM newsletters ORDER BY id DESC LIMIT 500");
-  res.json({ ok: true, newsletters: rows });
-}));
-
-app.post("/api/admin/newsletters", wrap(async (req, res) => {
-  await ensureStaffAndNotifTables();
-  const admin = req.admin?.email || "admin";
-  const b = req.body || {};
-  const targets = Array.isArray(b.target_user_ids) ? b.target_user_ids.join(",") : (b.target_user_ids || "");
-  const [r] = await pool.execute(
-    `INSERT INTO newsletters
-      (name, subject, body_html, segment, target_user_ids, occasion,
-       channel, scheduled_at, status, created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`,
-    [String(b.name||"").slice(0,200), String(b.subject||"").slice(0,300),
-     String(b.body_html||""), String(b.segment||"all").slice(0,40),
-     targets, String(b.occasion||"").slice(0,40),
-     String(b.channel||"email").slice(0,20),
-     b.scheduled_at || null, String(b.status||"draft").slice(0,20), admin]
-  );
-  res.json({ ok: true, id: r.insertId });
-}));
-
-app.patch("/api/admin/newsletters/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const b = req.body || {};
-  const patch = []; const args = [];
-  const map = { name:"name", subject:"subject", body_html:"body_html",
-    segment:"segment", occasion:"occasion", channel:"channel",
-    scheduled_at:"scheduled_at", status:"status" };
-  for (const [k, col] of Object.entries(map)) {
-    if (b[k] !== undefined) { patch.push(`${col}=?`); args.push(b[k]); }
-  }
-  if (Array.isArray(b.target_user_ids)) {
-    patch.push("target_user_ids=?"); args.push(b.target_user_ids.join(","));
-  }
-  if (!patch.length) return res.json({ ok: true });
-  args.push(id);
-  await pool.execute(`UPDATE newsletters SET ${patch.join(",")} WHERE id=?`, args);
-  res.json({ ok: true });
-}));
-
-app.delete("/api/admin/newsletters/:id", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  await pool.execute("DELETE FROM newsletters WHERE id=?", [id]);
-  res.json({ ok: true });
-}));
-
-// Enviar newsletter — encola en email_outbox usando el wrapper.
-app.post("/api/admin/newsletters/:id/send", wrap(async (req, res) => {
-  const id = parseInt(req.params.id, 10);
-  if (!id) return res.status(400).json({ error: "invalid_id" });
-  const [nrows] = await pool.query("SELECT * FROM newsletters WHERE id=? LIMIT 1", [id]);
-  if (!nrows.length) return res.status(404).json({ error: "not_found" });
-  const nl = nrows[0];
-
-  // Resolver destinatarios por segmento o por IDs específicos.
-  let recipients = [];
-  if (nl.target_user_ids && String(nl.target_user_ids).trim()) {
-    const ids = String(nl.target_user_ids).split(",").map(x => parseInt(x,10)).filter(Boolean);
-    if (ids.length) {
-      const ph = ids.map(() => "?").join(",");
-      const [urs] = await pool.query(
-        `SELECT id, email, name FROM users WHERE id IN (${ph}) AND email IS NOT NULL`, ids
-      );
-      recipients = urs;
-    }
-  } else {
-    let where = "email IS NOT NULL";
-    const args = [];
-    if (nl.segment === "verified")   where += " AND verified=1";
-    if (nl.segment === "unverified") where += " AND (verified=0 OR verified IS NULL)";
-    if (nl.segment === "premium")    where += " AND is_premium=1";
-    if (nl.segment === "free")       where += " AND (is_premium=0 OR is_premium IS NULL)";
-    if (nl.segment === "male")       where += " AND gender='male'";
-    if (nl.segment === "female")     where += " AND gender='female'";
-    if (nl.segment === "lgbt")       where += " AND zone='lgtb'";
-    if (nl.segment === "hetero")     where += " AND zone='hetero'";
-    if (nl.segment === "new")        where += " AND created_at > NOW() - INTERVAL 7 DAY";
-    const [urs] = await pool.query(
-      `SELECT id, email, name FROM users WHERE ${where} LIMIT 20000`, args);
-    recipients = urs;
-  }
-
-  // Respetar preferencias de notificación de cada usuario (marketing).
-  const [prefs] = await pool.query(
-    "SELECT user_id, email_enabled, marketing, channel FROM user_notification_prefs"
-  );
-  const prefMap = new Map(prefs.map(p => [p.user_id, p]));
-
-  let queued = 0;
-  for (const r of recipients) {
-    const p = prefMap.get(r.id);
-    if (p && (!p.email_enabled || !p.marketing || p.channel === "push" || p.channel === "none")) continue;
-    const subject = interpolate(nl.subject || nl.name, { user_name: r.name || "" });
-    const html = wrapEmailHtml(
-      interpolate(nl.body_html || "", { user_name: r.name || "", user_email: r.email }),
-      { preheader: subject }
-    );
-    try {
-      await pool.execute(
-        `INSERT INTO email_outbox (to_email, subject, body_html, template_id, status, created_at)
-         VALUES (?,?,?, 'newsletter', 'pending', NOW())`,
-        [r.email, subject, html]
-      );
-      queued++;
-    } catch {}
-  }
-  await pool.execute(
-    "UPDATE newsletters SET status='sent', sent_at=NOW(), sent_count=? WHERE id=?",
-    [queued, id]
-  );
-  try { await logActivity("admin", `Newsletter "${nl.name}" enviada: ${queued} destinatarios`); } catch {}
-  res.json({ ok: true, sent: queued });
-}));
-
-// Plantillas estacionales predefinidas
-app.get("/api/admin/newsletters/seasonal-templates", wrap(async (req, res) => {
-  res.json({
-    ok: true, templates: [
-      { key: "lgbt_pride", name: "🏳️‍🌈 Orgullo LGTB+",
-        subject: "Celebramos el Orgullo contigo",
-        body_html: `<h2 style="color:#e91e63;">Celebra quién eres 🏳️‍🌈</h2><p>Este mes de junio Aura se viste con los colores del arcoíris. Tu identidad es tu superpoder.</p><p>Aprovecha nuestras funciones especiales de Zona LGTB+ y encuentra tu comunidad.</p>` },
-      { key: "valentine", name: "💘 San Valentín",
-        subject: "El amor está en el aire",
-        body_html: `<h2 style="color:#e11d48;">Feliz San Valentín 💘</h2><p>Regálate una historia nueva. Este 14 de febrero descubre a alguien especial en Aura.</p>` },
-      { key: "summer", name: "☀️ Verano",
-        subject: "Nuevas conexiones bajo el sol",
-        body_html: `<h2 style="color:#f59e0b;">Verano en Aura ☀️</h2><p>Terraza, playa, planes espontáneos… tu próximo match te espera.</p>` },
-      { key: "christmas", name: "🎄 Navidad",
-        subject: "Regálate una historia estas Navidades",
-        body_html: `<h2 style="color:#059669;">Feliz Navidad 🎄</h2><p>Estas fiestas, comparte una copa con alguien especial. Aura te ayuda a conectar.</p>` },
-      { key: "new_year", name: "🎊 Año Nuevo",
-        subject: "Empieza el año con una nueva historia",
-        body_html: `<h2 style="color:#7c3aed;">Feliz Año Nuevo 🎊</h2><p>Nuevo año, nuevas conexiones. Da el primer paso.</p>` },
-      { key: "womens_day", name: "♀️ Día de la Mujer",
-        subject: "Celebramos a las mujeres de Aura",
-        body_html: `<h2 style="color:#be185d;">8 de marzo · Día Internacional de la Mujer ♀️</h2><p>Gracias por formar parte de esta comunidad. Hoy y siempre, contigo.</p>` },
-      { key: "halloween", name: "🎃 Halloween",
-        subject: "Un match escalofriante te espera",
-        body_html: `<h2 style="color:#ea580c;">Halloween en Aura 🎃</h2><p>Sube tu foto más terroríficamente atractiva y encuentra tu media naranja de la noche.</p>` },
-      { key: "black_friday", name: "🖤 Black Friday",
-        subject: "-50% en Premium solo hoy",
-        body_html: `<h2 style="color:#111;">Black Friday 🖤</h2><p>Solo durante 24 horas: 50% de descuento en Aura Premium. No lo dejes escapar.</p>` },
-    ]
-  });
-}));
-
-/* ============================================================
-   V450+++ · Endpoints avanzados: KYC bulk, Subs, Payments, Promos, Stats
-   ============================================================ */
-async function ensureAdvancedTables() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS kyc_rejection_reasons (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    label VARCHAR(200) NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS scheduled_reports (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    email VARCHAR(190) NOT NULL,
-    frequency ENUM('daily','weekly','monthly') DEFAULT 'weekly',
-    metrics VARCHAR(500) DEFAULT '',
-    last_sent TIMESTAMP NULL,
-    active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`);
-  try { await pool.query("ALTER TABLE payments ADD COLUMN dispute_status VARCHAR(40) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE payments ADD COLUMN dispute_reason VARCHAR(400) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE identity_verifications ADD COLUMN rejection_reason VARCHAR(400) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE subscriptions ADD COLUMN gifted_by VARCHAR(190) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE subscriptions ADD COLUMN gift_reason VARCHAR(400) NULL"); } catch(e){}
-}
-
-/* ---------- KYC Bulk & Stats ---------- */
-app.post("/api/kyc/bulk", wrap(async (req, res) => {
-  const { action, reason } = req.body || {};
-  let affected = 0;
-  if (action === "approve_all_pending") {
-    const [r] = await pool.execute(
-      "UPDATE identity_verifications SET didit_status='approved', didit_decision='approved' WHERE didit_status IN ('pending','review','in_review') OR didit_status IS NULL"
-    );
-    affected = r.affectedRows || 0;
-    await logActivity("admin", `KYC bulk approve (${affected})`);
-  } else if (action === "reject_all_pending") {
-    const [r] = await pool.execute(
-      "UPDATE identity_verifications SET didit_status='declined', didit_decision='declined', rejection_reason=? WHERE didit_status IN ('pending','review','in_review')",
-      [reason || "Bulk rejection"]
-    );
-    affected = r.affectedRows || 0;
-    await logActivity("admin", `KYC bulk reject (${affected}) — ${reason || ""}`);
-  } else if (action === "resend_expired") {
-    const [rows] = await pool.query(
-      "SELECT DISTINCT email FROM identity_verifications WHERE didit_status='expired' AND email IS NOT NULL"
-    );
-    affected = rows.length;
-    // Emails would be sent here — we log for now.
-    await logActivity("admin", `KYC re-solicitud enviada a ${affected} usuarios`);
-  } else {
-    return res.status(400).json({ error: "invalid_action" });
-  }
-  res.json({ ok: true, affected });
-}));
-
-app.get("/api/kyc/stats", wrap(async (_req, res) => {
-  const [[a]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications WHERE didit_status='approved'");
-  const [[p]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications WHERE didit_status IN ('pending','in_review','review')");
-  const [[d]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications WHERE didit_status='declined'");
-  const [[t]] = await pool.query("SELECT COUNT(*) c FROM identity_verifications");
-  const total = t.c || 0;
-  res.json({
-    approved: a.c || 0,
-    pending: p.c || 0,
-    declined: d.c || 0,
-    total,
-    approve_rate: total ? Math.round((a.c * 100) / total) : 0,
-    reject_rate: total ? Math.round((d.c * 100) / total) : 0
-  });
-}));
-
-app.get("/api/admin/kyc-reasons", wrap(async (_req, res) => {
-  const [rows] = await pool.query("SELECT * FROM kyc_rejection_reasons ORDER BY id DESC");
-  res.json(rows);
-}));
-app.post("/api/admin/kyc-reasons", wrap(async (req, res) => {
-  const { label } = req.body || {};
-  if (!label) return res.status(400).json({ error: "label_required" });
-  await pool.execute("INSERT INTO kyc_rejection_reasons (label) VALUES (?)", [label]);
-  res.json({ ok: true });
-}));
-app.delete("/api/admin/kyc-reasons/:id", wrap(async (req, res) => {
-  await pool.execute("DELETE FROM kyc_rejection_reasons WHERE id=?", [req.params.id]);
-  res.json({ ok: true });
-}));
-
-/* ---------- Subscriptions ---------- */
-app.get("/api/subscriptions/active", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT s.*, u.name user_name, u.email, u.photo_url, p.name plan_name
-    FROM subscriptions s
-    LEFT JOIN users u ON u.id = s.user_id
-    LEFT JOIN plans p ON p.id = s.plan_id
-    WHERE s.status='active'
-    ORDER BY s.started_at DESC LIMIT 500`);
-  res.json({ items: rows, total: rows.length });
-}));
-
-app.get("/api/subscriptions/churn", wrap(async (req, res) => {
-  const days = Math.max(1, parseInt(req.query.days || "30", 10));
-  const [[c]] = await pool.query(
-    "SELECT COUNT(*) c FROM subscriptions WHERE status='cancelled' AND cancelled_at >= DATE_SUB(NOW(), INTERVAL ? DAY)", [days]
-  );
-  const [[a]] = await pool.query("SELECT COUNT(*) c FROM subscriptions WHERE status='active'");
-  const [[mrr]] = await pool.query(`
-    SELECT COALESCE(SUM(CASE WHEN s.period='monthly' THEN p.price_monthly ELSE p.price_yearly/12 END),0) m
-    FROM subscriptions s LEFT JOIN plans p ON p.id = s.plan_id WHERE s.status='active'`);
-  const cancellations = c.c || 0;
-  const active = a.c || 0;
-  const rate = active + cancellations > 0 ? Math.round((cancellations * 1000) / (active + cancellations)) / 10 : 0;
-  res.json({ cancellations, active, rate, mrr: Number(mrr.m || 0).toFixed(2), days });
-}));
-
-app.post("/api/subscriptions/gift", wrap(async (req, res) => {
-  const { email, plan, days, reason } = req.body || {};
-  if (!email || !plan || !days) return res.status(400).json({ error: "missing_fields" });
-  const [[u]] = await pool.query("SELECT id FROM users WHERE email=? LIMIT 1", [email]);
-  if (!u) return res.status(404).json({ error: "user_not_found" });
-  const [[pl]] = await pool.query("SELECT id FROM plans WHERE code=? OR name=? LIMIT 1", [plan, plan]);
-  const planId = pl ? pl.id : 1;
-  const renew = new Date(Date.now() + Number(days) * 86400 * 1000);
-  await pool.execute(
-    `INSERT INTO subscriptions (user_id, plan_id, period, status, renew_at, gifted_by, gift_reason)
-     VALUES (?,?, 'monthly', 'active', ?, ?, ?)`,
-    [u.id, planId, renew, (req.admin && req.admin.email) || "admin", reason || null]
-  );
-  await logActivity("admin", `Premium regalado a ${email} (${days} días) — ${reason || ""}`);
-  res.json({ ok: true });
-}));
-
-/* ---------- Payments ---------- */
-app.get("/api/payments/refunds", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT p.*, u.name user_name, u.email
-    FROM payments p LEFT JOIN users u ON u.id=p.user_id
-    WHERE p.status='refunded' ORDER BY p.created_at DESC LIMIT 200`);
-  res.json({ items: rows });
-}));
-
-app.get("/api/payments/disputes", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT p.*, u.name user_name, u.email
-    FROM payments p LEFT JOIN users u ON u.id=p.user_id
-    WHERE p.dispute_status IS NOT NULL AND p.dispute_status != ''
-    ORDER BY p.created_at DESC LIMIT 200`);
-  res.json({ items: rows });
-}));
-
-app.get("/api/payments/metrics", wrap(async (_req, res) => {
-  const [[mrr]] = await pool.query(`
-    SELECT COALESCE(SUM(CASE WHEN s.period='monthly' THEN p.price_monthly ELSE p.price_yearly/12 END),0) m
-    FROM subscriptions s LEFT JOIN plans p ON p.id = s.plan_id WHERE s.status='active'`);
-  const mrrN = Number(mrr.m || 0);
-  const [[avg]] = await pool.query("SELECT AVG(amount) a FROM payments WHERE status='completed'");
-  const [[topM]] = await pool.query("SELECT method m, COUNT(*) c FROM payments WHERE status='completed' GROUP BY method ORDER BY c DESC LIMIT 1");
-  const [[ltv]] = await pool.query("SELECT COALESCE(SUM(amount)/NULLIF(COUNT(DISTINCT user_id),0),0) l FROM payments WHERE status='completed'");
-  res.json({
-    mrr: mrrN.toFixed(2),
-    arr: (mrrN * 12).toFixed(2),
-    avg_ticket: Number(avg.a || 0).toFixed(2),
-    top_method: topM ? topM.m : "n/a",
-    ltv: Number(ltv.l || 0).toFixed(2)
-  });
-}));
-
-app.get("/api/payments/invoices-export", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT p.invoice_no, p.amount, p.currency, p.method, p.status, p.created_at,
-           u.name user_name, u.email
-    FROM payments p LEFT JOIN users u ON u.id=p.user_id
-    ORDER BY p.created_at DESC`);
-  const header = ["invoice_no","user_name","email","amount","currency","method","status","created_at"];
-  const csv = [header.join(",")].concat(
-    rows.map(r => header.map(k => `"${String(r[k] ?? "").replace(/"/g,'""')}"`).join(","))
-  ).join("\n");
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="facturas-${Date.now()}.csv"`);
-  res.send(csv);
-}));
-
-/* ---------- Promos ---------- */
-app.get("/api/promos/roi", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT pr.id, pr.code, pr.discount_percent, pr.uses, pr.max_uses, pr.status,
-           pr.starts_at, pr.ends_at
-    FROM promotions pr ORDER BY pr.uses DESC LIMIT 200`);
-  const items = rows.map(r => ({
-    ...r,
-    roi_estimate: (r.uses || 0) * 5,
-    conversion_rate: r.max_uses ? Math.round((r.uses * 100) / r.max_uses) : 0
-  }));
-  res.json({ items });
-}));
-
-app.post("/api/promos/bulk-generate", wrap(async (req, res) => {
-  const { count, prefix, discount_percent, max_uses, ends_at } = req.body || {};
-  const n = Math.min(1000, Math.max(1, parseInt(count || "10", 10)));
-  const pfx = String(prefix || "AURA").toUpperCase().slice(0, 20);
-  const codes = [];
-  for (let i = 0; i < n; i++) {
-    const code = `${pfx}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    try {
-      await pool.execute(
-        "INSERT INTO promotions (code, description, discount_percent, max_uses, status, ends_at) VALUES (?,?,?,?,?,?)",
-        [code, `Bulk ${pfx}`, discount_percent || 10, max_uses || 1, "active", ends_at || null]
-      );
-      codes.push(code);
-    } catch(e){}
-  }
-  await logActivity("admin", `Generados ${codes.length} códigos bulk (${pfx})`);
-  res.json({ ok: true, count: codes.length, codes });
-}));
-
-/* ---------- Stats extras ---------- */
-app.get("/api/stats/compare", wrap(async (req, res) => {
-  const days = Math.max(1, parseInt(req.query.days || "30", 10));
-  const [[a]] = await pool.query("SELECT COUNT(*) c FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)", [days]);
-  const [[b]] = await pool.query(
-    "SELECT COUNT(*) c FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY) AND created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
-    [days * 2, days]
-  );
-  const cur = a.c || 0, prev = b.c || 0;
-  const delta = prev ? Math.round(((cur - prev) * 100) / prev) : 0;
-  res.json({ current: cur, previous: prev, delta, days });
-}));
-
-app.get("/api/stats/geo-points", wrap(async (_req, res) => {
-  const [rows] = await pool.query(
-    "SELECT g.lat, g.lng, u.id, u.name FROM user_gps g LEFT JOIN users u ON u.id=g.user_id WHERE g.lat IS NOT NULL AND g.lng IS NOT NULL LIMIT 5000"
-  );
-  res.json({ points: rows });
-}));
-
-app.get("/api/stats/cohorts", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT DATE_FORMAT(created_at,'%Y-%m') as cohort, COUNT(*) as signups
-    FROM users
-    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
-    GROUP BY cohort ORDER BY cohort DESC`);
-  res.json({ cohorts: rows });
-}));
-
-app.get("/api/stats/report.pdf", wrap(async (_req, res) => {
-  // Simple text report for now — full PDF would require pdfkit.
-  const [[u]] = await pool.query("SELECT COUNT(*) c FROM users");
-  const [[p]] = await pool.query("SELECT COUNT(*) c FROM payments WHERE status='completed'");
-  const [[s]] = await pool.query("SELECT COUNT(*) c FROM subscriptions WHERE status='active'");
-  const txt = `AURA · Informe ejecutivo\n\nUsuarios totales: ${u.c}\nPagos completados: ${p.c}\nSuscripciones activas: ${s.c}\nFecha: ${new Date().toISOString()}\n`;
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="aura-informe-${Date.now()}.txt"`);
-  res.send(txt);
-}));
-
-app.post("/api/stats/scheduled-report", wrap(async (req, res) => {
-  const { email, frequency, metrics } = req.body || {};
-  if (!email) return res.status(400).json({ error: "email_required" });
-  await pool.execute(
-    "INSERT INTO scheduled_reports (email, frequency, metrics) VALUES (?,?,?)",
-    [email, frequency || "weekly", (metrics || []).join(",")]
-  );
-  await logActivity("admin", `Informe programado a ${email} (${frequency})`);
-  res.json({ ok: true });
-}));
-
-/* ============================================================
-   V500 · Device Incidents (Dispositivo perdido / robado)
-   ============================================================
-   Flujo:
-   1) Usuario abre incidente desde app (motivo, denuncia adjunta obligatoria).
-   2) Sistema pide selfie en vivo → compara contra KYC.
-   3) Admin revisa: aprueba → puede emitir sonido, mensaje, bloqueo.
-   4) Push + email + SMS al dispositivo perdido.
-   5) Seguimiento GPS + log de custodia legal (hash firmado por admin).
-   6) Auto-cierre a los 60 días si sin actividad.
-   7) Bloqueo escalonado: X horas sin confirmar → bloqueo automático.
-============================================================ */
-async function ensureDeviceIncidentsTables() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS device_incidents (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    type ENUM('lost','stolen','suspicious','other') DEFAULT 'lost',
-    status ENUM('pending_evidence','pending_selfie','pending_admin','approved','active','denied','closed','archived') DEFAULT 'pending_evidence',
-    reason TEXT NULL,
-    police_report_url VARCHAR(500) NULL,
-    verify_selfie_url VARCHAR(500) NULL,
-    verify_match_score DECIMAL(5,2) NULL,
-    frozen_last_lat DECIMAL(10,6) NULL,
-    frozen_last_lng DECIMAL(10,6) NULL,
-    frozen_last_ip VARCHAR(64) NULL,
-    frozen_device_ua VARCHAR(255) NULL,
-    lock_scheduled_at TIMESTAMP NULL,
-    locked_at TIMESTAMP NULL,
-    emergency_contact_email VARCHAR(190) NULL,
-    emergency_contact_phone VARCHAR(40) NULL,
-    lock_screen_message TEXT NULL,
-    admin_notes TEXT NULL,
-    requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    approved_at TIMESTAMP NULL,
-    closed_at TIMESTAMP NULL,
-    last_action_at TIMESTAMP NULL,
-    INDEX idx_user (user_id),
-    INDEX idx_status (status)
-  )`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_actions (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    incident_id INT NOT NULL,
-    action VARCHAR(40) NOT NULL,
-    admin_id VARCHAR(190) NULL,
-    payload JSON NULL,
-    signature_hash VARCHAR(120) NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_inc (incident_id)
-  )`);
-  try { await pool.query("ALTER TABLE users ADD COLUMN emergency_email VARCHAR(190) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE users ADD COLUMN emergency_phone VARCHAR(40) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE users ADD COLUMN device_locked TINYINT(1) DEFAULT 0"); } catch(e){}
-  try { await pool.query("ALTER TABLE users ADD COLUMN device_locked_reason VARCHAR(400) NULL"); } catch(e){}
-  // 2FA (TOTP) columns for regular users
-  try { await pool.query("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64) NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE users ADD COLUMN totp_enabled TINYINT(1) NOT NULL DEFAULT 0"); } catch(e){}
-  try { await pool.query("ALTER TABLE users ADD COLUMN totp_enabled_at TIMESTAMP NULL"); } catch(e){}
-  try { await pool.query("ALTER TABLE users ADD COLUMN totp_last_reminder TIMESTAMP NULL"); } catch(e){}
-}
-
-function signAction(payload, adminId) {
-  const crypto = require("crypto");
-  const raw = JSON.stringify(payload || {}) + "|" + (adminId || "system") + "|" + Date.now();
-  return crypto.createHash("sha256").update(raw).digest("hex").slice(0, 64);
-}
-
-async function logIncidentAction(incidentId, action, adminId, payload) {
-  const sig = signAction(payload, adminId);
-  await pool.execute(
-    "INSERT INTO device_incident_actions (incident_id, action, admin_id, payload, signature_hash) VALUES (?,?,?,?,?)",
-    [incidentId, action, adminId || null, JSON.stringify(payload || {}), sig]
-  );
-  await pool.execute("UPDATE device_incidents SET last_action_at=NOW() WHERE id=?", [incidentId]);
-}
-
-/* ---- Usuario ---- */
-app.get("/api/my/device-incidents", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const [rows] = await pool.query(
-    "SELECT * FROM device_incidents WHERE user_id=? ORDER BY id DESC LIMIT 50", [uid]
-  );
-  res.json({ items: rows });
-}));
-
-app.post("/api/my/device-incidents", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const { type, reason, police_report_url, emergency_contact_email, emergency_contact_phone, lock_screen_message } = req.body || {};
-  if (!police_report_url) return res.status(400).json({ error: "police_report_required" });
-  // Congelar última posición conocida
-  const [[gps]] = await pool.query("SELECT lat, lng FROM user_gps WHERE user_id=?", [uid]);
-  const ua = req.headers["user-agent"] || "";
-  const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
-  const [r] = await pool.execute(
-    `INSERT INTO device_incidents
-     (user_id, type, status, reason, police_report_url, emergency_contact_email, emergency_contact_phone, lock_screen_message,
-      frozen_last_lat, frozen_last_lng, frozen_last_ip, frozen_device_ua)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [uid, type || "lost", "pending_selfie", reason || null, police_report_url,
-     emergency_contact_email || null, emergency_contact_phone || null, lock_screen_message || null,
-     gps ? gps.lat : null, gps ? gps.lng : null, ip, ua]
-  );
-  await logIncidentAction(r.insertId, "opened", `user:${uid}`, { type, reason });
-  await logActivity("user", `Incidente dispositivo abierto (id ${r.insertId}, user ${uid})`);
-  res.json({ ok: true, incident_id: r.insertId });
-}));
-
-app.post("/api/my/device-incidents/:id/selfie", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  const { selfie_url } = req.body || {};
-  if (!uid || !selfie_url) return res.status(400).json({ error: "bad_request" });
-  const [[inc]] = await pool.query("SELECT id, user_id FROM device_incidents WHERE id=? AND user_id=?", [req.params.id, uid]);
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  // Simulación de match — en producción cruzar con provider (Didit/AWS Rekognition)
-  const [[kyc]] = await pool.query(
-    "SELECT selfie_match_score FROM identity_verifications WHERE user_id=? ORDER BY id DESC LIMIT 1", [uid]
-  );
-  const match = kyc ? Number(kyc.selfie_match_score || 85) : 80;
-  await pool.execute(
-    "UPDATE device_incidents SET verify_selfie_url=?, verify_match_score=?, status='pending_admin' WHERE id=?",
-    [selfie_url, match, inc.id]
-  );
-  await logIncidentAction(inc.id, "selfie_uploaded", `user:${uid}`, { match });
-  res.json({ ok: true, match });
-}));
-
-/* ---- Admin ---- */
-app.get("/api/admin/device-incidents/kpis", wrap(async (_req, res) => {
-  const [[a]] = await pool.query("SELECT COUNT(*) c FROM device_incidents WHERE status='active'");
-  const [[p]] = await pool.query("SELECT COUNT(*) c FROM device_incidents WHERE status='pending_admin'");
-  const [[l]] = await pool.query("SELECT COUNT(*) c FROM users WHERE device_locked=1");
-  const [[a7]] = await pool.query("SELECT COUNT(*) c FROM device_incidents WHERE status='approved' AND approved_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)");
-  const [[t]] = await pool.query("SELECT COUNT(*) c FROM device_incidents");
-  res.json({ active: a.c, pending_admin: p.c, locked: l.c, approved_7d: a7.c, total: t.c });
-}));
-
-app.get("/api/admin/device-incidents", wrap(async (req, res) => {
-  const status = req.query.status || "";
-  let sql = `SELECT i.*, u.name user_name, u.email, u.photo_url, u.phone
-             FROM device_incidents i LEFT JOIN users u ON u.id = i.user_id`;
-  const params = [];
-  if (status) { sql += " WHERE i.status=?"; params.push(status); }
-  sql += " ORDER BY i.id DESC LIMIT 500";
-  const [rows] = await pool.query(sql, params);
-  res.json({ items: rows });
-}));
-
-app.get("/api/admin/device-incidents/:id", wrap(async (req, res) => {
-  const [[inc]] = await pool.query(
-    `SELECT i.*, u.name user_name, u.email, u.photo_url, u.phone
-     FROM device_incidents i LEFT JOIN users u ON u.id = i.user_id WHERE i.id=?`, [req.params.id]
-  );
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  const [actions] = await pool.query(
-    "SELECT * FROM device_incident_actions WHERE incident_id=? ORDER BY id ASC", [req.params.id]
-  );
-  const [[kyc]] = await pool.query(
-    "SELECT didit_status, selfie_match_score, extracted_name, didit_session_url as selfie_url FROM identity_verifications WHERE user_id=? ORDER BY id DESC LIMIT 1", [inc.user_id]
-  );
-  const [[gps]] = await pool.query("SELECT lat, lng, captured_at FROM user_gps WHERE user_id=?", [inc.user_id]);
-  res.json({ incident: inc, actions, kyc: kyc || null, current_gps: gps || null });
-}));
-
-app.post("/api/admin/device-incidents/:id/approve", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  await pool.execute("UPDATE device_incidents SET status='approved', approved_at=NOW() WHERE id=?", [req.params.id]);
-  await logIncidentAction(req.params.id, "approved", adminId, {});
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/device-incidents/:id/deny", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const { reason } = req.body || {};
-  await pool.execute("UPDATE device_incidents SET status='denied', admin_notes=? WHERE id=?", [reason || null, req.params.id]);
-  await logIncidentAction(req.params.id, "denied", adminId, { reason });
-  res.json({ ok: true });
-}));
-
-async function notifyIncidentDevice(incidentId, kind, payload) {
-  const [[inc]] = await pool.query(
-    "SELECT i.*, u.email, u.phone, u.emergency_email, u.emergency_phone, u.name FROM device_incidents i LEFT JOIN users u ON u.id=i.user_id WHERE i.id=?", [incidentId]
-  );
-  if (!inc) return;
-  // Push via SW: registrar en tabla notifications para que el SW lo entregue
-  try {
-    await pool.execute(
-      "INSERT INTO notifications (user_id, type, title, body, data) VALUES (?,?,?,?,?)",
-      [inc.user_id, "device_alert", kind === "sound" ? "🔊 ALERTA" : (kind === "message" ? "📢 Mensaje" : "🔒 Bloqueo"),
-       payload.message || "Dispositivo reportado como perdido", JSON.stringify({ ...payload, kind, incident_id: incidentId, sound: kind === "sound" })]
-    );
-  } catch(e){}
-  // Email refuerzo — usamos sendMailSafe si existe
-  try {
-    if (typeof sendMailSafe === "function") {
-      await sendMailSafe({
-        to: inc.email,
-        subject: kind === "sound" ? "🔊 Alerta activa en tu dispositivo" : (kind === "lock" ? "🔒 Tu cuenta ha sido bloqueada" : "📢 Mensaje de Aura"),
-        html: `<div style="font-family:system-ui,sans-serif;padding:20px"><h2>Aura Seguridad</h2><p>${payload.message || "Tu dispositivo ha sido reportado como perdido."}</p></div>`
-      });
-      if (inc.emergency_email) {
-        await sendMailSafe({
-          to: inc.emergency_email,
-          subject: `Aviso: dispositivo de ${inc.name} reportado como perdido`,
-          html: `<p>Aviso de emergencia: ${inc.name} ha reportado su dispositivo como perdido.</p>`
-        });
-      }
-    }
-  } catch(e){}
-  // SMS (si hay proveedor configurado)
-  try {
-    if (typeof sendSmsSafe === "function") {
-      if (inc.phone) await sendSmsSafe(inc.phone, payload.message || "Aura: dispositivo reportado como perdido.");
-      if (inc.emergency_phone) await sendSmsSafe(inc.emergency_phone, `Aura: ${inc.name} reportó su dispositivo como perdido.`);
-    }
-  } catch(e){}
-}
-
-app.post("/api/admin/device-incidents/:id/play-sound", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const { message, duration_sec, volume } = req.body || {};
-  await pool.execute("UPDATE device_incidents SET status='active' WHERE id=?", [req.params.id]);
-  await logIncidentAction(req.params.id, "play_sound", adminId, { message, duration_sec, volume });
-  await notifyIncidentDevice(req.params.id, "sound", { message, duration_sec: duration_sec || 30, volume: volume || 1.0 });
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/device-incidents/:id/send-message", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const { message } = req.body || {};
-  if (!message) return res.status(400).json({ error: "message_required" });
-  await pool.execute("UPDATE device_incidents SET status='active' WHERE id=?", [req.params.id]);
-  await logIncidentAction(req.params.id, "send_message", adminId, { message });
-  await notifyIncidentDevice(req.params.id, "message", { message });
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/device-incidents/:id/lock", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const { reason, message } = req.body || {};
-  const [[inc]] = await pool.query("SELECT user_id FROM device_incidents WHERE id=?", [req.params.id]);
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  await pool.execute("UPDATE users SET device_locked=1, device_locked_reason=? WHERE id=?", [reason || "Reportado como perdido", inc.user_id]);
-  await pool.execute("UPDATE device_incidents SET status='active', locked_at=NOW(), lock_screen_message=COALESCE(?,lock_screen_message) WHERE id=?", [message || null, req.params.id]);
-  await logIncidentAction(req.params.id, "lock", adminId, { reason, message });
-  await notifyIncidentDevice(req.params.id, "lock", { message: message || "Este dispositivo ha sido bloqueado por el propietario." });
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/device-incidents/:id/schedule-lock", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const { hours } = req.body || {};
-  const h = Math.max(1, Number(hours || 24));
-  await pool.execute(
-    "UPDATE device_incidents SET lock_scheduled_at = DATE_ADD(NOW(), INTERVAL ? HOUR) WHERE id=?",
-    [h, req.params.id]
-  );
-  await logIncidentAction(req.params.id, "schedule_lock", adminId, { hours: h });
-  res.json({ ok: true, scheduled_in_hours: h });
-}));
-
-app.post("/api/admin/device-incidents/:id/unlock", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const [[inc]] = await pool.query("SELECT user_id FROM device_incidents WHERE id=?", [req.params.id]);
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  await pool.execute("UPDATE users SET device_locked=0, device_locked_reason=NULL WHERE id=?", [inc.user_id]);
-  await pool.execute("UPDATE device_incidents SET status='closed', closed_at=NOW() WHERE id=?", [req.params.id]);
-  await logIncidentAction(req.params.id, "unlock", adminId, {});
-  res.json({ ok: true });
-}));
-
-app.post("/api/admin/device-incidents/:id/close", wrap(async (req, res) => {
-  const adminId = (req.admin && req.admin.email) || "admin";
-  const { notes } = req.body || {};
-  await pool.execute("UPDATE device_incidents SET status='closed', closed_at=NOW(), admin_notes=COALESCE(?,admin_notes) WHERE id=?", [notes || null, req.params.id]);
-  await logIncidentAction(req.params.id, "close", adminId, { notes });
-  res.json({ ok: true });
-}));
-
-app.get("/api/admin/device-incidents/:id/audit", wrap(async (req, res) => {
-  const [rows] = await pool.query("SELECT * FROM device_incident_actions WHERE incident_id=? ORDER BY id ASC", [req.params.id]);
-  res.json({ actions: rows });
-}));
-
-// Middleware: si device_locked=1, cualquier request del usuario devuelve 423
-app.use((req, res, next) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return next();
-  if (req.path === "/api/my/device-status" || req.path.startsWith("/api/my/device-incidents")) return next();
-  pool.query("SELECT device_locked, device_locked_reason FROM users WHERE id=?", [uid]).then(([rows]) => {
-    if (rows.length && rows[0].device_locked) {
-      return res.status(423).json({
-        error: "device_locked",
-        reason: rows[0].device_locked_reason || "Cuenta bloqueada por reporte de dispositivo perdido"
-      });
-    }
-    next();
-  }).catch(() => next());
-});
-
-app.get("/api/my/device-status", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.json({ locked: false });
-  const [[u]] = await pool.query("SELECT device_locked, device_locked_reason FROM users WHERE id=?", [uid]);
-  res.json({ locked: !!(u && u.device_locked), reason: u ? u.device_locked_reason : null });
-}));
-
-/* ============================================================
-   V510 · Eliminación completa de usuario (users + KYC + Didit + email + bloqueo re-registro)
-   ============================================================ */
-async function ensureDeletionTables() {
-  await pool.query(`CREATE TABLE IF NOT EXISTS deletion_reasons (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    code VARCHAR(40) UNIQUE,
-    label VARCHAR(200) NOT NULL,
-    email_subject VARCHAR(200) DEFAULT 'Tu cuenta en Aura ha sido cerrada',
-    email_body TEXT,
-    appeal_days INT DEFAULT 30,
-    send_email TINYINT(1) DEFAULT 1,
-    allow_appeal TINYINT(1) DEFAULT 1,
-    block_email TINYINT(1) DEFAULT 1,
-    block_phone TINYINT(1) DEFAULT 0,
-    block_device TINYINT(1) DEFAULT 0,
-    block_ip TINYINT(1) DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS deleted_users_log (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    name VARCHAR(190),
-    email VARCHAR(190),
-    phone VARCHAR(40),
-    device_fingerprint VARCHAR(190),
-    ip VARCHAR(64),
-    reason_code VARCHAR(40),
-    reason_label VARCHAR(200),
-    admin_id VARCHAR(190),
-    email_sent TINYINT(1) DEFAULT 0,
-    appeal_deadline TIMESTAMP NULL,
-    didit_deleted TINYINT(1) DEFAULT 0,
-    hash_signature VARCHAR(120),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_email (email),
-    INDEX idx_phone (phone),
-    INDEX idx_device (device_fingerprint),
-    INDEX idx_ip (ip)
-  )`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS registration_blocks (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    block_type ENUM('email','phone','device','ip') NOT NULL,
-    value VARCHAR(190) NOT NULL,
-    reason_code VARCHAR(40),
-    expires_at TIMESTAMP NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uniq_block (block_type, value)
-  )`);
-  await pool.query(`CREATE TABLE IF NOT EXISTS user_appeals_public (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    deletion_log_id INT NOT NULL,
-    email VARCHAR(190) NOT NULL,
-    message TEXT NOT NULL,
-    status ENUM('pending','approved','denied') DEFAULT 'pending',
-    admin_notes TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP NULL
-  )`);
-  // Seed motivos por defecto
-  const [rc] = await pool.query("SELECT COUNT(*) c FROM deletion_reasons");
-  if (rc[0].c === 0) {
-    const defaults = [
-      ["fraud", "Fraude o suplantación de identidad", "Tu cuenta en Aura ha sido cerrada", "Hemos detectado indicios de suplantación de identidad o fraude en tu cuenta. Se ha cerrado de forma inmediata.", 30, 1, 1, 1, 1, 1, 1],
-      ["underage", "Edad no válida (menor de edad)", "Cuenta cerrada por edad no válida", "Detectamos que no cumples la edad mínima requerida (18 años). No es posible mantener la cuenta abierta.", 0, 1, 0, 1, 1, 1, 0],
-      ["rules_violation", "Incumplimiento grave de normas", "Tu cuenta ha sido cerrada", "Tu comportamiento en la plataforma incumple nuestras normas de comunidad. Puedes apelar en 30 días.", 30, 1, 1, 1, 0, 0, 0],
-      ["duplicate", "Cuenta duplicada", "Cuenta cerrada por duplicidad", "Se ha detectado que ya tienes otra cuenta activa. Solo se permite una cuenta por persona.", 15, 1, 1, 1, 1, 0, 0],
-      ["user_request", "Solicitud del propio usuario", "Cuenta cerrada a petición", "Tu cuenta ha sido cerrada tal como solicitaste. Si quieres volver, puedes registrarte de nuevo.", 0, 1, 0, 0, 0, 0, 0],
-      ["kyc_failed", "KYC fallido repetidamente", "Cuenta cerrada por verificación fallida", "No hemos podido verificar tu identidad después de varios intentos. Puedes apelar si crees que es un error.", 15, 1, 1, 1, 0, 0, 0],
-      ["other", "Otro motivo", "Tu cuenta ha sido cerrada", "Tu cuenta ha sido cerrada. Contacta con soporte para más información.", 30, 1, 1, 1, 0, 0, 0],
-    ];
-    for (const d of defaults) {
-      await pool.execute(
-        "INSERT INTO deletion_reasons (code,label,email_subject,email_body,appeal_days,send_email,allow_appeal,block_email,block_phone,block_device,block_ip) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-        d
-      );
-    }
-  }
-}
-
-/* ---- CRUD motivos ---- */
-app.get("/api/admin/deletion-reasons", wrap(async (_req, res) => {
-  const [rows] = await pool.query("SELECT * FROM deletion_reasons ORDER BY id");
-  res.json({ items: rows });
-}));
-app.post("/api/admin/deletion-reasons", wrap(async (req, res) => {
-  const b = req.body || {};
-  await pool.execute(
-    "INSERT INTO deletion_reasons (code,label,email_subject,email_body,appeal_days,send_email,allow_appeal,block_email,block_phone,block_device,block_ip) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-    [b.code, b.label, b.email_subject || null, b.email_body || null, b.appeal_days || 30,
-     b.send_email ? 1 : 0, b.allow_appeal ? 1 : 0, b.block_email ? 1 : 0, b.block_phone ? 1 : 0, b.block_device ? 1 : 0, b.block_ip ? 1 : 0]
-  );
-  res.json({ ok: true });
-}));
-app.patch("/api/admin/deletion-reasons/:id", wrap(async (req, res) => {
-  const b = req.body || {};
-  const fields = ["code","label","email_subject","email_body","appeal_days","send_email","allow_appeal","block_email","block_phone","block_device","block_ip"];
-  const updates = [], params = [];
-  for (const f of fields) if (f in b) { updates.push(`${f}=?`); params.push(typeof b[f] === "boolean" ? (b[f] ? 1 : 0) : b[f]); }
-  if (!updates.length) return res.json({ ok: true });
-  params.push(req.params.id);
-  await pool.execute(`UPDATE deletion_reasons SET ${updates.join(", ")} WHERE id=?`, params);
-  res.json({ ok: true });
-}));
-app.delete("/api/admin/deletion-reasons/:id", wrap(async (req, res) => {
-  await pool.execute("DELETE FROM deletion_reasons WHERE id=?", [req.params.id]);
-  res.json({ ok: true });
-}));
-
-/* ---- Eliminar usuario completamente ---- */
-async function deleteDiditSession(sessionId) {
-  if (!sessionId || !process.env.DIDIT_API_KEY) return false;
-  try {
-    const url = `${process.env.DIDIT_BASE_URL || "https://verification.didit.me"}/v1/session/${sessionId}`;
-    const r = await fetch(url, { method: "DELETE", headers: { "X-Api-Key": process.env.DIDIT_API_KEY } });
-    return r.ok;
-  } catch(e) { console.warn("Didit delete:", e.message); return false; }
-}
-
-app.post("/api/admin/users/:id/full-delete", wrap(async (req, res) => {
-  const uid = Number(req.params.id);
-  const { reason_code, override_email, override_appeal, override_blocks, admin_notes } = req.body || {};
-  const adminId = (req.admin && req.admin.email) || "admin";
-
-  const [[user]] = await pool.query("SELECT * FROM users WHERE id=?", [uid]);
-  if (!user) return res.status(404).json({ error: "user_not_found" });
-
-  const [[reason]] = await pool.query("SELECT * FROM deletion_reasons WHERE code=?", [reason_code || "other"]);
-  const r = reason || { code: "other", label: "Otro motivo", send_email: 1, allow_appeal: 1, appeal_days: 30, block_email: 1, block_phone: 0, block_device: 0, block_ip: 0, email_subject: "Cuenta cerrada", email_body: "Tu cuenta ha sido cerrada." };
-
-  // Overrides desde admin en el momento
-  const sendEmail = override_email !== undefined ? !!override_email : !!r.send_email;
-  const allowAppeal = override_appeal !== undefined ? !!override_appeal : !!r.allow_appeal;
-  const blocks = override_blocks || { email: !!r.block_email, phone: !!r.block_phone, device: !!r.block_device, ip: !!r.block_ip };
-
-  // 1) Borrar sesiones Didit
-  const [kycRows] = await pool.query("SELECT didit_session_id FROM identity_verifications WHERE user_id=?", [uid]);
-  let diditDeleted = false;
-  for (const k of kycRows) { if (k.didit_session_id) { const ok = await deleteDiditSession(k.didit_session_id); diditDeleted = diditDeleted || ok; } }
-
-  // 2) Borrar de identity_verifications
-  await pool.execute("DELETE FROM identity_verifications WHERE user_id=?", [uid]);
-
-  // 3) Registrar en deleted_users_log ANTES de borrar
-  const crypto = require("crypto");
-  const sig = crypto.createHash("sha256").update(`${uid}|${user.email}|${reason_code}|${adminId}|${Date.now()}`).digest("hex").slice(0, 64);
-  const deadline = allowAppeal && r.appeal_days > 0 ? new Date(Date.now() + r.appeal_days * 86400 * 1000) : null;
-  const fingerprint = user.device_fingerprint || null;
-  const lastIp = user.last_ip || null;
-  const [ins] = await pool.execute(
-    `INSERT INTO deleted_users_log (user_id,name,email,phone,device_fingerprint,ip,reason_code,reason_label,admin_id,email_sent,appeal_deadline,didit_deleted,hash_signature)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    [uid, user.name, user.email, user.phone, fingerprint, lastIp, r.code, r.label, adminId, 0, deadline, diditDeleted ? 1 : 0, sig]
-  );
-  const logId = ins.insertId;
-
-  // 4) Registrar bloqueos re-registro
-  const inserts = [];
-  if (blocks.email && user.email) inserts.push(["email", user.email]);
-  if (blocks.phone && user.phone) inserts.push(["phone", user.phone]);
-  if (blocks.device && fingerprint) inserts.push(["device", fingerprint]);
-  if (blocks.ip && lastIp) inserts.push(["ip", lastIp]);
-  for (const [t, v] of inserts) {
-    try { await pool.execute("INSERT IGNORE INTO registration_blocks (block_type,value,reason_code) VALUES (?,?,?)", [t, v, r.code]); } catch {}
-  }
-
-  // 5) Enviar email si aplica
-  if (sendEmail && user.email && typeof sendMailSafe === "function") {
-    const appealLink = allowAppeal && deadline ? `${process.env.APP_URL || ""}/appeal.html?token=${sig}` : null;
-    const bodyHtml = `<div style="font-family:system-ui,sans-serif;max-width:600px;padding:20px;color:#111">
-      <h2 style="color:#dc2626">${r.email_subject}</h2>
-      <p>${(r.email_body || "").replace(/\n/g, "<br>")}</p>
-      <p><strong>Motivo:</strong> ${r.label}</p>
-      ${admin_notes ? `<p><strong>Notas del equipo:</strong> ${admin_notes}</p>` : ""}
-      ${appealLink ? `<p style="margin-top:20px"><a href="${appealLink}" style="background:#3b82f6;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Presentar apelación</a></p><p style="font-size:12px;color:#666">Plazo: ${r.appeal_days} días. Es posible que tu apelación no sea revisada si no aporta información nueva.</p>` : ""}
-      <hr><p style="font-size:11px;color:#666">Aura · citasaura.es</p>
-    </div>`;
-    try {
-      await sendMailSafe({ to: user.email, subject: r.email_subject, html: bodyHtml });
-      await pool.execute("UPDATE deleted_users_log SET email_sent=1 WHERE id=?", [logId]);
-    } catch(e) { console.warn("Email delete send:", e.message); }
-  }
-
-  // 6) Borrar de tablas relacionadas
-  const tables = ["user_gps","user_notification_prefs","user_push_subscriptions","notifications","payments","subscriptions","matches","conversations","messages","likes","reports","tickets","appeals","infractions","device_incidents"];
-  for (const t of tables) { try { await pool.execute(`DELETE FROM ${t} WHERE user_id=?`, [uid]); } catch {} }
-  // Finalmente el usuario
-  await pool.execute("DELETE FROM users WHERE id=?", [uid]);
-
-  await logActivity("admin", `Usuario ${user.email} eliminado completamente. Motivo: ${r.label}. Didit: ${diditDeleted ? "borrado" : "no"}. Bloqueos: ${inserts.map(x=>x[0]).join(",") || "ninguno"}.`);
-  res.json({ ok: true, log_id: logId, didit_deleted: diditDeleted, blocks_created: inserts.map(x=>x[0]), email_sent: sendEmail && !!user.email });
-}));
-
-app.get("/api/admin/deleted-users", wrap(async (_req, res) => {
-  const [rows] = await pool.query("SELECT * FROM deleted_users_log ORDER BY id DESC LIMIT 500");
-  res.json({ items: rows });
-}));
-
-app.get("/api/admin/registration-blocks", wrap(async (_req, res) => {
-  const [rows] = await pool.query("SELECT * FROM registration_blocks ORDER BY id DESC LIMIT 500");
-  res.json({ items: rows });
-}));
-app.delete("/api/admin/registration-blocks/:id", wrap(async (req, res) => {
-  await pool.execute("DELETE FROM registration_blocks WHERE id=?", [req.params.id]);
-  res.json({ ok: true });
-}));
-
-// Middleware: comprobar bloqueos al registrar
-async function isRegistrationBlocked({ email, phone, device_fingerprint, ip }) {
-  const checks = [];
-  if (email) checks.push(["email", email]);
-  if (phone) checks.push(["phone", phone]);
-  if (device_fingerprint) checks.push(["device", device_fingerprint]);
-  if (ip) checks.push(["ip", ip]);
-  for (const [t, v] of checks) {
-    const [[r]] = await pool.query(
-      "SELECT id, reason_code FROM registration_blocks WHERE block_type=? AND value=? AND (expires_at IS NULL OR expires_at > NOW())",
-      [t, v]
-    );
-    if (r) return { blocked: true, by: t, reason_code: r.reason_code };
-  }
-  return { blocked: false };
-}
-
-app.post("/api/auth/check-blocked", wrap(async (req, res) => {
-  const { email, phone } = req.body || {};
-  const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
-  const fp = req.headers["x-device-fingerprint"] || null;
-  const r = await isRegistrationBlocked({ email, phone, device_fingerprint: fp, ip });
-  res.json(r);
-}));
-
-/* ---- Apelación pública (sin login) ---- */
-app.get("/api/public/appeal/:token", wrap(async (req, res) => {
-  const [[row]] = await pool.query("SELECT id, name, email, reason_label, appeal_deadline FROM deleted_users_log WHERE hash_signature=?", [req.params.token]);
-  if (!row) return res.status(404).json({ error: "not_found" });
-  if (row.appeal_deadline && new Date(row.appeal_deadline) < new Date()) return res.status(410).json({ error: "expired" });
-  res.json(row);
-}));
-app.post("/api/public/appeal/:token", wrap(async (req, res) => {
-  const { message } = req.body || {};
-  if (!message || message.length < 20) return res.status(400).json({ error: "message_too_short" });
-  const [[log]] = await pool.query("SELECT id, email, appeal_deadline FROM deleted_users_log WHERE hash_signature=?", [req.params.token]);
-  if (!log) return res.status(404).json({ error: "not_found" });
-  if (log.appeal_deadline && new Date(log.appeal_deadline) < new Date()) return res.status(410).json({ error: "expired" });
-  await pool.execute("INSERT INTO user_appeals_public (deletion_log_id,email,message) VALUES (?,?,?)", [log.id, log.email, message]);
-  res.json({ ok: true });
-}));
-
-app.get("/api/admin/public-appeals", wrap(async (_req, res) => {
-  const [rows] = await pool.query(`
-    SELECT a.*, d.name, d.reason_label, d.admin_id
-    FROM user_appeals_public a
-    LEFT JOIN deleted_users_log d ON d.id=a.deletion_log_id
-    ORDER BY a.id DESC LIMIT 200`);
-  res.json({ items: rows });
-}));
-app.post("/api/admin/public-appeals/:id/resolve", wrap(async (req, res) => {
-  const { status, notes } = req.body || {};
-  await pool.execute(
-    "UPDATE user_appeals_public SET status=?, admin_notes=?, resolved_at=NOW() WHERE id=?",
-    [status || "denied", notes || null, req.params.id]
-  );
-  if (status === "approved") {
-    // Desbloquear registro para ese email
-    const [[a]] = await pool.query("SELECT email FROM user_appeals_public WHERE id=?", [req.params.id]);
-    if (a && a.email) await pool.execute("DELETE FROM registration_blocks WHERE block_type='email' AND value=?", [a.email]);
-  }
-  res.json({ ok: true });
-}));
-
-/* ---- Contactos de emergencia por defecto ---- */
-app.get("/api/my/emergency-contacts", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const [[u]] = await pool.query("SELECT emergency_email, emergency_phone FROM users WHERE id=?", [uid]);
-  res.json(u || { emergency_email: null, emergency_phone: null });
-}));
-
-app.put("/api/my/emergency-contacts", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  if (!uid) return res.status(401).json({ error: "no_user" });
-  const { emergency_email, emergency_phone } = req.body || {};
-  await pool.execute(
-    "UPDATE users SET emergency_email=?, emergency_phone=? WHERE id=?",
-    [emergency_email || null, emergency_phone || null, uid]
-  );
-  res.json({ ok: true });
-}));
-
-/* ---- Confirmación del usuario: soy yo / no soy yo ---- */
-app.post("/api/my/device-incidents/:id/confirm", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  const { confirm_type } = req.body || {}; // "its_me" | "not_me"
-  const [[inc]] = await pool.query("SELECT id FROM device_incidents WHERE id=? AND user_id=?", [req.params.id, uid]);
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  if (confirm_type === "its_me") {
-    // El usuario confirma que está a salvo → cerrar caso + cancelar bloqueo programado
-    await pool.execute("UPDATE device_incidents SET status='closed', closed_at=NOW(), lock_scheduled_at=NULL WHERE id=?", [inc.id]);
-    await pool.execute("UPDATE users SET device_locked=0, device_locked_reason=NULL WHERE id=?", [uid]);
-    await logIncidentAction(inc.id, "user_confirmed_safe", `user:${uid}`, {});
-  } else {
-    // El usuario confirma que NO es él → escalar a bloqueo inmediato
-    await pool.execute("UPDATE users SET device_locked=1, device_locked_reason='Confirmación de robo por el titular' WHERE id=?", [uid]);
-    await pool.execute("UPDATE device_incidents SET status='active', locked_at=NOW() WHERE id=?", [inc.id]);
-    await logIncidentAction(inc.id, "user_confirmed_stolen", `user:${uid}`, {});
-  }
-  res.json({ ok: true });
-}));
-
-/* ---- Plantillas de mensaje / bloqueo (admin) ---- */
-app.get("/api/admin/device-incident-templates", wrap(async (_req, res) => {
-  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_templates (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    kind ENUM('message','lock') NOT NULL,
-    title VARCHAR(120) NOT NULL,
-    body TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )`);
-  const [rows] = await pool.query("SELECT * FROM device_incident_templates ORDER BY kind, id");
-  if (!rows.length) {
-    const defaults = [
-      ["message", "Devuélveme el móvil", "Este teléfono pertenece a %NAME%. Por favor, llame al %PHONE% o escriba a %EMAIL% para devolverlo. Se ha reportado como perdido y está siendo rastreado."],
-      ["message", "Recompensa por devolución", "Recompensa por devolver este dispositivo. Contacto: %PHONE%. Sin preguntas."],
-      ["message", "Aviso legal", "Dispositivo reportado como robado en la Policía Nacional (denuncia adjunta en Aura). El uso continuado es delito."],
-      ["lock", "Bloqueo estándar", "Este dispositivo ha sido bloqueado por el propietario tras su pérdida. Para devolverlo, contacte con %EMAIL% o %PHONE%."],
-      ["lock", "Bloqueo por robo", "Dispositivo bloqueado por reporte de robo. Denuncia policial nº %CASE%. Cualquier uso queda registrado."],
-    ];
-    for (const [k, t, b] of defaults) {
-      await pool.execute("INSERT INTO device_incident_templates (kind, title, body) VALUES (?,?,?)", [k, t, b]);
-    }
-    const [r2] = await pool.query("SELECT * FROM device_incident_templates ORDER BY kind, id");
-    return res.json({ items: r2 });
-  }
-  res.json({ items: rows });
-}));
-app.post("/api/admin/device-incident-templates", wrap(async (req, res) => {
-  const { kind, title, body } = req.body || {};
-  if (!kind || !title || !body) return res.status(400).json({ error: "missing" });
-  await pool.execute("INSERT INTO device_incident_templates (kind, title, body) VALUES (?,?,?)", [kind, title, body]);
-  res.json({ ok: true });
-}));
-app.delete("/api/admin/device-incident-templates/:id", wrap(async (req, res) => {
-  await pool.execute("DELETE FROM device_incident_templates WHERE id=?", [req.params.id]);
-  res.json({ ok: true });
-}));
-
-/* ---- GPS live durante caso activo ---- */
-app.post("/api/my/device-incidents/:id/gps-live", wrap(async (req, res) => {
-  const uid = Number(req.headers["x-user-id"] || 0);
-  const { lat, lng, accuracy } = req.body || {};
-  const [[inc]] = await pool.query("SELECT id, status FROM device_incidents WHERE id=? AND user_id=?", [req.params.id, uid]);
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_gps (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    incident_id INT NOT NULL,
-    lat DECIMAL(10,6), lng DECIMAL(10,6), accuracy INT,
-    captured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_inc (incident_id)
-  )`);
-  await pool.execute(
-    "INSERT INTO device_incident_gps (incident_id, lat, lng, accuracy) VALUES (?,?,?,?)",
-    [inc.id, lat, lng, accuracy || null]
-  );
-  res.json({ ok: true });
-}));
-
-app.get("/api/admin/device-incidents/:id/gps-trail", wrap(async (req, res) => {
-  const [rows] = await pool.query(
-    "SELECT lat, lng, accuracy, captured_at FROM device_incident_gps WHERE incident_id=? ORDER BY id DESC LIMIT 500",
-    [req.params.id]
-  );
-  res.json({ points: rows });
-}));
-
-/* ---- Exportar auditoría (TXT firmable) ---- */
-app.get("/api/admin/device-incidents/:id/audit-export", wrap(async (req, res) => {
-  const [[inc]] = await pool.query(
-    `SELECT i.*, u.name user_name, u.email FROM device_incidents i LEFT JOIN users u ON u.id=i.user_id WHERE i.id=?`,
-    [req.params.id]
-  );
-  if (!inc) return res.status(404).json({ error: "not_found" });
-  const [actions] = await pool.query(
-    "SELECT * FROM device_incident_actions WHERE incident_id=? ORDER BY id ASC", [req.params.id]
-  );
-  const lines = [];
-  lines.push("=================================================");
-  lines.push("AURA · Informe de custodia legal");
-  lines.push("=================================================");
-  lines.push(`Caso #${inc.id}`);
-  lines.push(`Usuario: ${inc.user_name} <${inc.email}>`);
-  lines.push(`Tipo: ${inc.type}`);
-  lines.push(`Estado: ${inc.status}`);
-  lines.push(`Denuncia: ${inc.police_report_url || "n/d"}`);
-  lines.push(`GPS congelado: ${inc.frozen_last_lat || "-"}, ${inc.frozen_last_lng || "-"}`);
-  lines.push(`IP: ${inc.frozen_last_ip || "-"}`);
-  lines.push(`UA: ${inc.frozen_device_ua || "-"}`);
-  lines.push(`Abierto: ${inc.requested_at}`);
-  lines.push(`Cerrado: ${inc.closed_at || "-"}`);
-  lines.push("");
-  lines.push("--- Cadena de acciones firmadas (SHA-256) ---");
-  actions.forEach(a => {
-    lines.push(`[${a.created_at}] ${a.admin_id || "system"} · ${a.action}`);
-    lines.push(`   payload: ${a.payload || "{}"}`);
-    lines.push(`   sig    : ${a.signature_hash}`);
-  });
-  lines.push("");
-  lines.push("Fin del informe.");
-  const out = lines.join("\n");
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Content-Disposition", `attachment; filename="aura-case-${inc.id}-audit.txt"`);
-  res.send(out);
-}));
-
-// Cron: bloqueos programados + auto-cierre 60 días
-async function runIncidentCrons() {
-  try {
-    const [scheduled] = await pool.query(
-      "SELECT id, user_id, lock_screen_message FROM device_incidents WHERE lock_scheduled_at IS NOT NULL AND lock_scheduled_at <= NOW() AND locked_at IS NULL"
-    );
-    for (const s of scheduled) {
-      await pool.execute("UPDATE users SET device_locked=1, device_locked_reason='Bloqueo escalonado automático' WHERE id=?", [s.user_id]);
-      await pool.execute("UPDATE device_incidents SET locked_at=NOW(), status='active' WHERE id=?", [s.id]);
-      await logIncidentAction(s.id, "auto_lock", "system", {});
-      await notifyIncidentDevice(s.id, "lock", { message: s.lock_screen_message || "Bloqueo automático activado." });
-    }
-    await pool.execute(
-      "UPDATE device_incidents SET status='archived' WHERE status IN ('closed','denied') AND (last_action_at < DATE_SUB(NOW(), INTERVAL 60 DAY) OR requested_at < DATE_SUB(NOW(), INTERVAL 60 DAY))"
-    );
-  } catch(e) { console.error("runIncidentCrons:", e.message); }
-}
-setInterval(runIncidentCrons, 15 * 60 * 1000);
-
 (async () => {
   try {
     await migrate();
@@ -12172,10 +8541,6 @@ setInterval(runIncidentCrons, 15 * 60 * 1000);
     await rebrandAuraOnce();
     await seedConversations();
     await ensureSuperadminAccessSettings();
-    await ensureStaffAndNotifTables();
-    await ensureAdvancedTables();
-    await ensureDeviceIncidentsTables();
-    await ensureDeletionTables();
     await loadRuntimeSettings();
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT));
