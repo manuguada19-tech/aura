@@ -5336,6 +5336,13 @@ function screenLogin(root) {
         });
         return;
       }
+      // El backend nos indica que este usuario tiene 2FA activo: no
+      // completamos el login aún, abrimos el modal pidiendo el código TOTP
+      // (o un código de recuperación).
+      if (r.ok && data && data.needs_2fa) {
+        openTwoFactorLoginPrompt(data.email || email);
+        return;
+      }
       if (!r.ok || !data.ok) {
         toast(r.status === 404 ? "Cuenta no encontrada. Regístrate primero." : "Error al iniciar sesión");
         return;
@@ -5351,6 +5358,72 @@ function screenLogin(root) {
   });
   root.appendChild(form);
   hideApp();
+}
+
+/* Modal que aparece durante el login cuando el usuario tiene 2FA activo.
+   Acepta un código TOTP de 6 dígitos o un código de recuperación (con guión). */
+function openTwoFactorLoginPrompt(email) {
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <div style="text-align:center;font-size:36px;margin-bottom:6px">🔐</div>
+    <h3 style="margin:0 0 6px;font-size:19px;font-weight:800;text-align:center">Verificación en 2 pasos</h3>
+    <p style="margin:0 0 14px;font-size:14px;color:#e6d9ff;text-align:center;line-height:1.4">
+      Introduce el código de 6 dígitos de tu app autenticadora.<br>
+      <small style="color:#c9bce4">También puedes usar un código de recuperación.</small>
+    </p>
+    <input class="twofa-token" type="text" inputmode="numeric" maxlength="12" placeholder="123456"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:22px;text-align:center;font-family:monospace;letter-spacing:4px">
+    <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none;text-align:center"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="twofa-cancel" type="button" style="flex:0 0 auto;height:46px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="twofa-ok" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Verificar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const tokenI = card.querySelector(".twofa-token");
+  const errEl  = card.querySelector(".twofa-err");
+  const okBtn  = card.querySelector(".twofa-ok");
+  setTimeout(() => { try { tokenI.focus(); } catch {} }, 100);
+  const close = () => { try { overlay.remove(); } catch {} };
+  card.querySelector(".twofa-cancel").addEventListener("click", close);
+  tokenI.addEventListener("keydown", (e) => { if (e.key === "Enter") okBtn.click(); });
+
+  async function submit() {
+    const token = tokenI.value.trim();
+    if (!token) { errEl.textContent = "Introduce el código"; errEl.style.display = "block"; return; }
+    okBtn.disabled = true; okBtn.textContent = "Verificando…";
+    try {
+      const r = await fetch("/api/2fa/login-verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, token }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) {
+        errEl.textContent = data.error === "invalid_code" ? "Código incorrecto" : "No se pudo verificar";
+        errEl.style.display = "block";
+        okBtn.disabled = false; okBtn.textContent = "Verificar";
+        return;
+      }
+      state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
+      state.zone = data.user.zone || state.zone || "hetero";
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      close();
+      toast(data.used_recovery ? "Has iniciado sesión con un código de recuperación" : `Bienvenido, ${data.user.name.split(" ")[0]}`);
+      setTimeout(() => showApp(), 400);
+    } catch {
+      errEl.textContent = "Error de red";
+      errEl.style.display = "block";
+      okBtn.disabled = false; okBtn.textContent = "Verificar";
+    }
+  }
+  okBtn.addEventListener("click", submit);
 }
 
 /* ---- Forgot ---- */
@@ -7905,12 +7978,258 @@ function screenSecurity(root) {
 
   wrap.appendChild(el("h3", { class: "info-section" }, T("content.me.sec_2fa") || "Verificación en 2 pasos"));
   const c2 = el("div", { class: "info-card" });
-  c2.appendChild(switchRow(T("content.me.sec_2fa_sms") || "SMS al móvil (+34 ••• ••• 342)", true, () => toast(T("content.me.saved_short") || "Guardado")));
-  c2.appendChild(switchRow(T("content.me.sec_2fa_app") || "App autenticadora", false, () => toast(T("content.me.saved_short") || "Guardado")));
-  c2.appendChild(switchRow(T("content.me.sec_2fa_email") || "Código por email", false, () => toast(T("content.me.saved_short") || "Guardado")));
+
+  // Fila real de App autenticadora — se conecta con /api/2fa/*
+  const authRow = el("div", { class: "switch-row" });
+  const authLabel = el("div", { style: "display:flex;flex-direction:column;gap:2px;flex:1;min-width:0" }, [
+    el("span", { style: "font-size:14px;font-weight:600" }, T("content.me.sec_2fa_app") || "App autenticadora"),
+    el("small", { class: "sec-2fa-status", style: "font-size:12px;color:var(--text-muted,#8f95a3)" }, "Comprobando…"),
+  ]);
+  const authInp = el("input", { type: "checkbox" });
+  const authSwitch = el("label", { class: "switch" }, [authInp, el("span")]);
+  authRow.appendChild(authLabel);
+  authRow.appendChild(authSwitch);
+  c2.appendChild(authRow);
+
+  // Los otros dos métodos siguen siendo visuales (no implementados aún).
+  const smsRow = switchRow(T("content.me.sec_2fa_sms") || "SMS al móvil (próximamente)", false, (v) => {
+    if (v) { toast("SMS aún no disponible. Usa App autenticadora."); setTimeout(() => location.reload(), 800); }
+  });
+  const emailRow = switchRow(T("content.me.sec_2fa_email") || "Código por email (próximamente)", false, (v) => {
+    if (v) { toast("Email 2FA aún no disponible. Usa App autenticadora."); setTimeout(() => location.reload(), 800); }
+  });
+  c2.appendChild(smsRow);
+  c2.appendChild(emailRow);
   wrap.appendChild(c2);
+
+  // Estado inicial + conexión con endpoints.
+  const statusEl = authLabel.querySelector(".sec-2fa-status");
+  async function refresh2FAStatus() {
+    try {
+      const r = await fetch("/api/2fa/status", {
+        headers: { "X-User-Id": String(state.user?.id || "") },
+        cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d && d.ok) {
+        authInp.checked = !!d.enabled;
+        statusEl.textContent = d.enabled
+          ? `Activada · ${d.recovery_remaining} códigos de recuperación disponibles`
+          : "Recomendado. Añade una capa extra de seguridad a tu cuenta.";
+      } else {
+        statusEl.textContent = "No se pudo cargar el estado.";
+      }
+    } catch { statusEl.textContent = "No se pudo cargar el estado."; }
+  }
+  refresh2FAStatus();
+
+  authInp.addEventListener("change", () => {
+    if (authInp.checked) {
+      authInp.checked = false; // se marcará al confirmar el setup
+      openTwoFactorSetup(refresh2FAStatus);
+    } else {
+      openTwoFactorDisable(refresh2FAStatus);
+    }
+  });
+
   root.appendChild(wrap);
   hideApp();
+}
+
+/* ------------------------------------------------------------
+   Flujo de alta 2FA (TOTP) — modal profesional
+   1. GET secret + otpauth desde /api/2fa/setup
+   2. Muestra QR + código manual
+   3. Pide primer código de 6 dígitos → /api/2fa/verify
+   4. Muestra los 8 códigos de recuperación en claro
+   ------------------------------------------------------------ */
+function openTwoFactorSetup(onDone) {
+  const uid = state.user?.id;
+  if (!uid) { toast("Inicia sesión primero"); return; }
+  const overlay = el("div", { class: "twofa-overlay", style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto"
+  });
+  const card = el("div", { style:
+    "max-width:460px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px 22px 18px;color:#fff;" +
+    "box-shadow:0 30px 80px rgba(0,0,0,.6);max-height:calc(100vh - 32px);overflow-y:auto"
+  });
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0;font-size:19px;font-weight:800">🔐 Activar verificación en 2 pasos</h3>
+      <button class="twofa-close" type="button" aria-label="Cerrar"
+        style="background:rgba(255,255,255,.08);border:0;color:#fff;width:32px;height:32px;border-radius:10px;cursor:pointer;font-size:16px">✕</button>
+    </div>
+    <div class="twofa-step-1">
+      <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
+        Instala una app autenticadora (<strong>Google Authenticator</strong>, <strong>Authy</strong>, <strong>Aegis</strong>…) y escanea el código QR.
+      </p>
+      <div class="twofa-qr" style="background:#fff;padding:14px;border-radius:14px;display:grid;place-items:center;min-height:220px"></div>
+      <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px">
+        <small style="display:block;color:#c9bce4;margin-bottom:6px">¿No puedes escanear? Introduce esta clave manualmente:</small>
+        <code class="twofa-secret" style="display:block;font-family:monospace;font-size:14px;letter-spacing:1.5px;word-break:break-all;color:#ffb37a"></code>
+      </div>
+      <label style="display:block;margin:16px 0 6px;font-size:13px;font-weight:700">Introduce el código de 6 dígitos:</label>
+      <input class="twofa-token" type="text" inputmode="numeric" maxlength="6" placeholder="123 456"
+        style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:20px;letter-spacing:6px;text-align:center;font-family:monospace">
+      <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none"></div>
+      <button class="twofa-verify" type="button" style="margin-top:14px;width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;font-size:15px">
+        Verificar y activar
+      </button>
+    </div>
+    <div class="twofa-step-2" style="display:none">
+      <div style="text-align:center;font-size:34px;margin-bottom:6px">✅</div>
+      <h4 style="margin:0 0 8px;font-size:17px;text-align:center">¡2FA activado!</h4>
+      <p style="margin:0 0 12px;font-size:13.5px;color:#e6d9ff;line-height:1.4">
+        Guarda estos <strong>8 códigos de recuperación</strong> en un sitio seguro. Cada uno se puede usar una sola vez si pierdes acceso a tu app autenticadora.
+      </p>
+      <pre class="twofa-recovery" style="background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:14px;font-family:monospace;font-size:15px;letter-spacing:1.5px;line-height:1.7;color:#ffb37a;white-space:pre-wrap;text-align:center"></pre>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="twofa-copy" type="button" style="flex:1;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">📋 Copiar códigos</button>
+        <button class="twofa-download" type="button" style="flex:1;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">💾 Descargar .txt</button>
+      </div>
+      <button class="twofa-done" type="button" style="margin-top:14px;width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;font-size:15px">
+        Los he guardado, terminar
+      </button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => { try { overlay.remove(); } catch {}; if (typeof onDone === "function") onDone(); };
+  card.querySelector(".twofa-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+  // 1. Setup
+  fetch("/api/2fa/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+    body: "{}",
+  }).then(r => r.json()).then(d => {
+    if (!d || !d.ok) { toast("No se pudo iniciar el 2FA"); close(); return; }
+    card.querySelector(".twofa-secret").textContent = d.secret;
+    // QR con librería externa cargada bajo demanda.
+    renderTwoFactorQR(card.querySelector(".twofa-qr"), d.otpauth);
+  }).catch(() => { toast("Error de red"); close(); });
+
+  // 2. Verify
+  const tokenI = card.querySelector(".twofa-token");
+  const errEl = card.querySelector(".twofa-err");
+  tokenI.addEventListener("input", () => {
+    tokenI.value = tokenI.value.replace(/\D/g, "").slice(0, 6);
+    errEl.style.display = "none";
+  });
+  card.querySelector(".twofa-verify").addEventListener("click", async () => {
+    const token = tokenI.value.trim();
+    if (token.length !== 6) { errEl.textContent = "Introduce los 6 dígitos"; errEl.style.display = "block"; return; }
+    try {
+      const r = await fetch("/api/2fa/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        body: JSON.stringify({ token }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        errEl.textContent = d.error === "invalid_code" ? "Código incorrecto. Prueba de nuevo." : "No se pudo verificar";
+        errEl.style.display = "block";
+        return;
+      }
+      // Mostrar códigos de recuperación
+      const codes = d.recovery_codes || [];
+      card.querySelector(".twofa-step-1").style.display = "none";
+      card.querySelector(".twofa-step-2").style.display = "block";
+      card.querySelector(".twofa-recovery").textContent = codes.join("\n");
+      card.querySelector(".twofa-copy").addEventListener("click", () => {
+        try { navigator.clipboard.writeText(codes.join("\n")); toast("Códigos copiados"); } catch { toast("No se pudo copiar"); }
+      });
+      card.querySelector(".twofa-download").addEventListener("click", () => {
+        try {
+          const blob = new Blob([`Aura · Códigos de recuperación 2FA\nGuárdalos en un sitio seguro.\n\n${codes.join("\n")}\n`], { type: "text/plain" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = "aura-2fa-recovery.txt";
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch { toast("No se pudo descargar"); }
+      });
+      card.querySelector(".twofa-done").addEventListener("click", close);
+    } catch { errEl.textContent = "Error de red"; errEl.style.display = "block"; }
+  });
+}
+
+/* Modal para desactivar 2FA. Requiere un código TOTP válido. */
+function openTwoFactorDisable(onDone) {
+  const uid = state.user?.id;
+  if (!uid) return;
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <h3 style="margin:0 0 8px;font-size:18px;font-weight:800">Desactivar 2FA</h3>
+    <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
+      Introduce un código de tu app autenticadora (o uno de recuperación) para confirmar.
+    </p>
+    <input class="twofa-token" type="text" inputmode="numeric" maxlength="12" placeholder="123456 o CÓDIGO-RECUP"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:18px;text-align:center;font-family:monospace;letter-spacing:2px">
+    <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="twofa-cancel" type="button" style="flex:1;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="twofa-off" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Desactivar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch {}; if (typeof onDone === "function") onDone(); };
+  card.querySelector(".twofa-cancel").addEventListener("click", close);
+  card.querySelector(".twofa-off").addEventListener("click", async () => {
+    const token = card.querySelector(".twofa-token").value.trim();
+    const errEl = card.querySelector(".twofa-err");
+    if (!token) { errEl.textContent = "Introduce un código"; errEl.style.display = "block"; return; }
+    try {
+      const r = await fetch("/api/2fa/disable", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        body: JSON.stringify({ token }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        errEl.textContent = d.error === "invalid_code" ? "Código incorrecto" : "No se pudo desactivar";
+        errEl.style.display = "block"; return;
+      }
+      toast("Verificación en 2 pasos desactivada");
+      close();
+    } catch { errEl.textContent = "Error de red"; errEl.style.display = "block"; }
+  });
+}
+
+/* Renderiza el QR usando qrcode.js cargado bajo demanda (CDN).
+   Si no hay red muestra el fallback manual (código base32). */
+function renderTwoFactorQR(container, otpauth) {
+  container.innerHTML = "";
+  const doRender = () => {
+    try {
+      const size = 220;
+      const cnv = document.createElement("canvas");
+      cnv.width = size; cnv.height = size;
+      container.appendChild(cnv);
+      // eslint-disable-next-line no-undef
+      QRCode.toCanvas(cnv, otpauth, { width: size, margin: 1 }, (err) => {
+        if (err) container.textContent = "No se pudo generar el QR";
+      });
+    } catch {
+      container.textContent = "QR no disponible";
+    }
+  };
+  if (typeof window.QRCode !== "undefined") { doRender(); return; }
+  const s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js";
+  s.onload = doRender;
+  s.onerror = () => { container.textContent = "QR no disponible"; };
+  document.head.appendChild(s);
 }
 
 /* — Usuarios bloqueados — */
