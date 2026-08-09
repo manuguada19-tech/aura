@@ -1229,7 +1229,11 @@ let _lastConfigHash = "";
 async function loadPublicConfig() {
   try {
     const r = await fetch("/api/public-config", { cache: "no-store" });
-    if (r.ok) publicConfig = await r.json();
+    if (r.ok) {
+      publicConfig = await r.json();
+      // Expose VAPID public key globally so the push-subscribe flow finds it.
+      try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
+    }
   } catch {}
 }
 async function loadContent() {
@@ -1282,6 +1286,7 @@ async function pollLiveConfig() {
         if (sig !== _lastConfigHash) {
           _lastConfigHash = sig;
           publicConfig = data;
+          try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
           if (typeof _rerender === "function") _rerender();
         }
       } catch {}
@@ -2774,6 +2779,8 @@ function showApp() {
   document.body.classList.add("app-open");
   // Ensure the current user is registered in DB for real chat + start heartbeat
   (async () => { try { await chatApi.ensure(); startHeartbeat(); } catch {} })();
+  // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
+  setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
   // Aplica el deep-link pendiente si existe (viene de la URL al arrancar o
   // se guardó en sessionStorage antes del login).
   let dl = state.pendingDeepLink;
@@ -5190,8 +5197,11 @@ function screenRegisterProfile(root) {
   fDesc.value = state.registration.description;
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Descripción"), fDesc ]));
 
-  const fPhone = el("input", { type: "tel", placeholder: "Opcional", value: state.registration.phone });
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Teléfono"), fPhone, el("small", { class: "hint" }, "Opcional — no se mostrará en tu perfil.") ]));
+  // TODO: reactivar campo Teléfono cuando se integre verificación real por SMS
+  // (Firebase Phone Auth gratis hasta 10.000 verificaciones/mes es la opción
+  // recomendada). Mientras tanto se oculta para no pedir datos sin usar.
+  // const fPhone = el("input", { type: "tel", placeholder: "Opcional", value: state.registration.phone });
+  // form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Teléfono"), fPhone, el("small", { class: "hint" }, "Opcional — no se mostrará en tu perfil.") ]));
 
   form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Continuar"));
   form.addEventListener("submit", (e) => {
@@ -5201,7 +5211,7 @@ function screenRegisterProfile(root) {
       gender: fGender.value, orientation: fOrient.value,
       city: fCity.value, province: fProv.value, country: fCountry.value,
       height: +fHeight.value, weight: +fWeight.value, ethnicity: fEth.value,
-      description: fDesc.value, phone: fPhone.value,
+      description: fDesc.value, phone: "",
     });
     render(screenRegisterPhotos);
   });
@@ -7991,15 +8001,9 @@ function screenSecurity(root) {
   authRow.appendChild(authSwitch);
   c2.appendChild(authRow);
 
-  // Los otros dos métodos siguen siendo visuales (no implementados aún).
-  const smsRow = switchRow(T("content.me.sec_2fa_sms") || "SMS al móvil (próximamente)", false, (v) => {
-    if (v) { toast("SMS aún no disponible. Usa App autenticadora."); setTimeout(() => location.reload(), 800); }
-  });
-  const emailRow = switchRow(T("content.me.sec_2fa_email") || "Código por email (próximamente)", false, (v) => {
-    if (v) { toast("Email 2FA aún no disponible. Usa App autenticadora."); setTimeout(() => location.reload(), 800); }
-  });
-  c2.appendChild(smsRow);
-  c2.appendChild(emailRow);
+  // TODO: reactivar 2FA SMS cuando se integre Firebase Phone Auth (gratis 10k/mes).
+  // TODO: reactivar 2FA por email cuando el sistema de emails transaccionales
+  // esté probado en producción. De momento solo mostramos App autenticadora.
   wrap.appendChild(c2);
 
   // Estado inicial + conexión con endpoints.
@@ -10186,8 +10190,10 @@ function screenNotificationSettings(root) {
       const cur = prefs.prefs || {};
       loading.remove();
 
-      const chanBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
-      chanBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "¿Dónde quieres recibir avisos?"));
+      const CARD_STYLE = "background:var(--panel,#14171f);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:14px;padding:14px;margin:12px 0";
+      const H4_STYLE = "margin:0 0 8px;color:var(--text,#ecedf3);font-size:15px;font-weight:700";
+      const chanBox = el("div", { style: CARD_STYLE });
+      chanBox.appendChild(el("h4", { style: H4_STYLE }, "¿Dónde quieres recibir avisos?"));
       const channels = [
         ["push","🔔 Solo push"],
         ["email","✉️ Solo email"],
@@ -10212,8 +10218,8 @@ function screenNotificationSettings(root) {
       chanBox.appendChild(chanSel);
       wrap.appendChild(chanBox);
 
-      const pushBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
-      pushBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "Push en este dispositivo"));
+      const pushBox = el("div", { style: CARD_STYLE });
+      pushBox.appendChild(el("h4", { style: H4_STYLE }, "Push en este dispositivo"));
       const pushInfo = el("p", { class: "muted", style: "margin:0 0 8px;font-size:13px" }, "");
       pushBox.appendChild(pushInfo);
       const pushBtn = el("button", { class: "btn btn-brand", type: "button" }, "Cargando…");
@@ -10275,12 +10281,12 @@ function screenNotificationSettings(root) {
       refreshPushState();
       wrap.appendChild(pushBox);
 
-      const typesBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
-      typesBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "¿Qué avisos quieres recibir?"));
+      const typesBox = el("div", { style: CARD_STYLE });
+      typesBox.appendChild(el("h4", { style: H4_STYLE }, "¿Qué avisos quieres recibir?"));
       const types = cur.types || {};
       TYPES.forEach(([k, label]) => {
-        const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border,#eee);cursor:pointer" });
-        row.appendChild(el("span", {}, label));
+        const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border,#262a36);cursor:pointer;color:var(--text,#ecedf3)" });
+        row.appendChild(el("span", { style: "color:var(--text,#ecedf3);font-size:14px" }, label));
         const cb = el("input", { type: "checkbox" });
         cb.checked = types[k] !== false;
         cb.addEventListener("change", async () => {
@@ -10297,8 +10303,8 @@ function screenNotificationSettings(root) {
       });
       wrap.appendChild(typesBox);
 
-      const quietBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
-      quietBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "🌙 No molestar"));
+      const quietBox = el("div", { style: CARD_STYLE });
+      quietBox.appendChild(el("h4", { style: H4_STYLE }, "🌙 No molestar"));
       quietBox.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "Silencia todos los avisos entre estas horas."));
       const from = el("input", { type: "time", value: cur.quiet_from || "" });
       const to = el("input", { type: "time", value: cur.quiet_to || "" });
@@ -10336,6 +10342,51 @@ function urlBase64ToUint8Array(base64String) {
   const outputArray = new Uint8Array(rawData.length);
   for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
   return outputArray;
+}
+
+// Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
+// Se llama tras showApp() (login/registro OK). No molesta si ya está permitido
+// o si el usuario ya lo denegó.
+async function maybePromptForPush() {
+  try {
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (Notification.permission === "denied") return;
+    const vapid = window.__vapidPublicKey || null;
+    if (!vapid) return; // backend sin VAPID configurado
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      if (Notification.permission === "default") {
+        // Guardamos flag para no volver a pedir cada login si el usuario cierra el prompt.
+        try {
+          const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
+          if (Date.now() - lastAsk < 3 * 24 * 3600 * 1000) return; // no más de 1 vez cada 3 días
+          localStorage.setItem("aura_push_last_ask", String(Date.now()));
+        } catch {}
+        const p = await Notification.requestPermission();
+        if (p !== "granted") return;
+      }
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapid),
+        });
+      } catch (e) { return; }
+    }
+    const raw = sub.toJSON();
+    let lang = ""; try { lang = (navigator.language || "").slice(0, 8); } catch {}
+    await fetch("/api/my/push-subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        endpoint: raw.endpoint,
+        p256dh: raw.keys?.p256dh,
+        auth: raw.keys?.auth,
+        ua: navigator.userAgent,
+        lang,
+      }),
+    }).catch(()=>{});
+  } catch {}
 }
 
 function authHeaders() {
