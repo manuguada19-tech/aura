@@ -7223,3 +7223,39 @@ body:not(.app-open) #twofaReminder {
   .app-viewport .screen.screen-hero .welcome-trust { display: none !important; }
   .app-viewport .screen.screen-hero .welcome-terms { display: none !important; }
 }
+
+/* V523 — Footer del hero SIEMPRE visible en móvil, anclado al fondo.
+   Se posiciona absoluto respecto al hero, así no depende del flex layout
+   y garantiza que se pinte aunque el contenido superior deborde. */
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
+  .app-viewport .screen.screen-hero {
+    position: relative !important;
+  }
+  .app-viewport .screen.screen-hero .welcome-cta,
+  .app-viewport .screen.screen-hero .welcome-below {
+    /* reservar espacio inferior para el footer absoluto */
+    padding-bottom: 44px !important;
+  }
+  .app-viewport .screen.screen-hero .welcome-foot,
+  .app-viewport .screen.screen-hero .welcome-below .welcome-foot {
+    position: absolute !important;
+    left: 12px !important;
+    right: 12px !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 6px) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    text-align: center !important;
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 5 !important;
+    line-height: 1.35 !important;
+    white-space: normal !important;
+    background: transparent !important;
+  }
+  .app-viewport .screen.screen-hero .welcome-foot a {
+    white-space: nowrap !important;
+    display: inline-block !important;
+    margin: 0 1px !important;
+  }
+}
