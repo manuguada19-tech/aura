@@ -8740,16 +8740,34 @@ async function viewDesign(root) {
     const num = el("input", { type: "number", min, max, value: design[key], class: "input", style: "width:88px; text-align:right", "data-key-num": key });
     const uSpan = el("span", { class: "muted", style: "margin-left:2px" }, unit || "");
     const clamp = (v) => Math.max(min, Math.min(max, parseInt(v, 10) || min));
+    // Debounced preview to avoid re-render on every keystroke/drag frame
+    let _rafId = 0;
+    const previewSoon = () => {
+      if (_rafId) return;
+      _rafId = requestAnimationFrame(() => { _rafId = 0; renderPreview(); });
+    };
     const sync = (v, src) => {
       const cv = clamp(v);
       design[key] = String(cv);
       if (src !== "r") r.value = cv;
       if (src !== "n") num.value = cv;
-      renderPreview(); scheduleAutoSave();
+      previewSoon(); scheduleAutoSave();
     };
     r.addEventListener("input", () => sync(r.value, "r"));
     num.addEventListener("input", () => sync(num.value, "n"));
     num.addEventListener("change", () => sync(num.value, "n"));
+    // Evita que el wheel sobre el slider cambie el valor (comportamiento nativo del navegador)
+    // y libera el foco para que la rueda scrollee la página en vez del control.
+    r.addEventListener("wheel", (e) => {
+      if (document.activeElement === r) { try { r.blur(); } catch {} }
+      // no e.preventDefault: dejamos que el scroll de la página funcione normal
+    }, { passive: true });
+    // Al enfocarse un slider algunos navegadores hacen scrollIntoView automático.
+    // Anulamos el reajuste envolviendo el focus para restaurar posición.
+    r.addEventListener("focus", () => {
+      const y = window.scrollY;
+      requestAnimationFrame(() => { if (window.scrollY !== y) window.scrollTo({ top: y }); });
+    });
     const row = el("div", { style: "display:flex; align-items:center; gap:10px;" }, [ r, num, uSpan ]);
     return el("label", { class: "field" }, [ el("span", {}, label), row ]);
   }
