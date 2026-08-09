@@ -8584,28 +8584,28 @@ const DESIGN_DEFAULTS = {
   logo_bg:"gradient", logo_color:"#ffffff",
   logo_size:"88", logo_radius:"22",
   // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
-  welc_logo_size:"110",      // Diámetro del logo en la pantalla de bienvenida
-  welc_sub_size:"14",        // Tamaño del subtítulo
-  welc_card_pad:"12",        // Padding de la tarjeta "pruebas privadas"
-  welc_input_h:"46",         // Altura del input de código de invitación
-  welc_btn_h:"48",           // Altura del botón principal
-  welc_beta_h:"46",          // Altura del botón beta / superadmin
-  welc_steps_pad:"10",       // Padding vertical de cada tarjeta de paso
-  welc_step_ic:"28",         // Tamaño del icono numérico
-  welc_step_h_size:"14",     // Tamaño del título del paso
-  welc_step_p_size:"12.5",   // Tamaño del texto del paso
-  welc_chip_h:"36",          // Altura de los chips de confianza
-  welc_chip_font:"11.5",     // Tamaño de fuente de los chips
-  welc_foot_size:"11.5",     // Tamaño del texto del footer
-  welc_title_size:"22",      // Título grande "Aura"
-  welc_closed_title:"15",    // Título "Aura está en pruebas privadas"
-  welc_closed_p:"12.5",      // Texto explicativo bajo el título rojo
-  welc_terms_size:"11.5",    // Texto "Al continuar aceptas los términos..."
-  welc_steps_title:"12.5",   // Título "CÓMO FUNCIONA"
-  welc_or_size:"10",         // Separador "o continúa con"
-  welc_oauth_h:"38",         // Altura de botones OAuth
-  welc_gap:"10",             // Gap general entre bloques del hero
-  welc_below_gap:"6",        // Gap dentro de la sección "cómo funciona"
+  welc_logo_size:"90",       // Diámetro del logo en la pantalla de bienvenida
+  welc_sub_size:"13",        // Tamaño del subtítulo
+  welc_card_pad:"8",         // Padding de la tarjeta "pruebas privadas"
+  welc_input_h:"40",         // Altura del input de código de invitación
+  welc_btn_h:"42",           // Altura del botón principal
+  welc_beta_h:"38",          // Altura del botón beta / superadmin
+  welc_steps_pad:"6",        // Padding vertical de cada tarjeta de paso
+  welc_step_ic:"24",         // Tamaño del icono numérico
+  welc_step_h_size:"13",     // Tamaño del título del paso
+  welc_step_p_size:"11.5",   // Tamaño del texto del paso
+  welc_chip_h:"28",          // Altura de los chips de confianza
+  welc_chip_font:"10.5",     // Tamaño de fuente de los chips
+  welc_foot_size:"10.5",     // Tamaño del texto del footer
+  welc_title_size:"20",      // Título grande "Aura"
+  welc_closed_title:"14",    // Título "Aura está en pruebas privadas"
+  welc_closed_p:"11.5",      // Texto explicativo bajo el título rojo
+  welc_terms_size:"10.5",    // Texto "Al continuar aceptas los términos..."
+  welc_steps_title:"11.5",   // Título "CÓMO FUNCIONA"
+  welc_or_size:"9.5",        // Separador "o continúa con"
+  welc_oauth_h:"32",         // Altura de botones OAuth
+  welc_gap:"6",              // Gap general entre bloques del hero
+  welc_below_gap:"4",        // Gap dentro de la sección "cómo funciona"
   welc_pad_top:"20",         // Espacio superior del hero (móvil)
   welc_pad_bot:"8",          // Espacio inferior del hero (móvil)
   // Aviso "bots en pruebas privadas" — popup al entrar a bienvenida
