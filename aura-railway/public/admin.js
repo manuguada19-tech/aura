@@ -8584,7 +8584,7 @@ const DESIGN_DEFAULTS = {
   logo_bg:"gradient", logo_color:"#ffffff",
   logo_size:"88", logo_radius:"22",
   // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
-  welc_logo_size:"140",      // Diámetro del logo en la pantalla de bienvenida
+  welc_logo_size:"110",      // Diámetro del logo en la pantalla de bienvenida
   welc_sub_size:"14",        // Tamaño del subtítulo
   welc_card_pad:"12",        // Padding de la tarjeta "pruebas privadas"
   welc_input_h:"46",         // Altura del input de código de invitación
@@ -8606,8 +8606,17 @@ const DESIGN_DEFAULTS = {
   welc_oauth_h:"38",         // Altura de botones OAuth
   welc_gap:"10",             // Gap general entre bloques del hero
   welc_below_gap:"6",        // Gap dentro de la sección "cómo funciona"
-  welc_pad_top:"56",         // Espacio superior del hero (móvil)
-  welc_pad_bot:"16",         // Espacio inferior del hero (móvil)
+  welc_pad_top:"20",         // Espacio superior del hero (móvil)
+  welc_pad_bot:"8",          // Espacio inferior del hero (móvil)
+  // Aviso "bots en pruebas privadas" — popup al entrar a bienvenida
+  beta_notice_enabled:"1",   // "1" activo, "0" desactivado
+  beta_notice_freq:"session",// always | session | once | daily | weekly
+  beta_notice_icon:"🤖",
+  beta_notice_badge:"🧪 Modo pruebas",
+  beta_notice_title:"Aviso importante",
+  beta_notice_body1:"Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.",
+  beta_notice_body2:"Ninguno es una persona real todavía. Sirven para que puedas probar todas las funciones (matches, chats, filtros, etc.) antes del lanzamiento público.",
+  beta_notice_cta:"Entendido",
 };
 
 async function viewDesign(root) {
@@ -8775,6 +8784,19 @@ async function viewDesign(root) {
     const inp = el("input", { class: "input", value: design[key], placeholder: placeholder || "", "data-key": key });
     inp.addEventListener("input", () => { design[key] = inp.value; renderPreview(); scheduleAutoSave(); });
     return el("label", { class: "field" }, [ el("span", {}, label), inp ]);
+  }
+  function textarea(label, key, placeholder, rows) {
+    const ta = el("textarea", { class: "input", rows: String(rows || 3), placeholder: placeholder || "", "data-key": key });
+    ta.value = design[key] || "";
+    ta.addEventListener("input", () => { design[key] = ta.value; renderPreview(); scheduleAutoSave(); });
+    return el("label", { class: "field" }, [ el("span", {}, label), ta ]);
+  }
+  function checkbox(label, key) {
+    const cb = el("input", { type: "checkbox", "data-key": key });
+    cb.checked = (design[key] === "1" || design[key] === true || design[key] === "true");
+    cb.addEventListener("change", () => { design[key] = cb.checked ? "1" : "0"; renderPreview(); scheduleAutoSave(); });
+    const row = el("div", { style: "display:flex; align-items:center; gap:10px;" }, [ cb, el("span", {}, label) ]);
+    return el("label", { class: "field" }, [ el("span", {}, "\u00A0"), row ]);
   }
   function colorOrEmpty(label, key, placeholder) {
     const wrap = el("div", { class: "design-color-row" });
@@ -9061,6 +9083,29 @@ async function viewDesign(root) {
       bSz.appendChild(range("Espacio superior del hero (móvil)", "welc_pad_top", 8, 120, "px"));
       bSz.appendChild(range("Espacio inferior del hero (móvil)", "welc_pad_bot", 4, 60, "px"));
       fieldsWrap.appendChild(pSz);
+
+      // ── Aviso emergente "bots en pruebas privadas" ──
+      const pBn = panel("Aviso emergente (bots en pruebas privadas)", [], []);
+      const bBn = pBn.querySelector(".panel-body");
+      bBn.appendChild(el("p", { class: "help" },
+        "Popup que aparece al entrar a la pantalla de bienvenida cuando la app está en pruebas privadas. Ajusta textos y frecuencia de aparición."));
+      bBn.appendChild(checkbox("Mostrar el aviso", "beta_notice_enabled"));
+      bBn.appendChild(select("Frecuencia de aparición", "beta_notice_freq", [
+        { v: "always",  l: "Siempre (cada vez que entra)" },
+        { v: "session", l: "Una vez por sesión (recomendado)" },
+        { v: "daily",   l: "Una vez al día por dispositivo" },
+        { v: "weekly",  l: "Una vez a la semana por dispositivo" },
+        { v: "once",    l: "Solo la primera vez (nunca más)" },
+      ]));
+      bBn.appendChild(text("Icono (emoji)", "beta_notice_icon", "🤖"));
+      bBn.appendChild(text("Insignia superior", "beta_notice_badge", "🧪 Modo pruebas"));
+      bBn.appendChild(text("Título", "beta_notice_title", "Aviso importante"));
+      bBn.appendChild(textarea("Cuerpo — primera línea (admite <strong>, <em>, <br>)", "beta_notice_body1",
+        "Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.", 2));
+      bBn.appendChild(textarea("Cuerpo — segunda línea", "beta_notice_body2",
+        "Ninguno es una persona real todavía.", 3));
+      bBn.appendChild(text("Texto del botón", "beta_notice_cta", "Entendido"));
+      fieldsWrap.appendChild(pBn);
 
       fieldsWrap.appendChild(sectionTextPanel("welcome", "Bienvenida"));
     }

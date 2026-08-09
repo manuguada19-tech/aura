@@ -1474,7 +1474,7 @@ function applyDesign() {
     const v = parseFloat(g("content.design." + key, def)) || parseFloat(def);
     r.setProperty(name, v + "px");
   };
-  setPx("--welc-logo-size", "welc_logo_size", "140");
+  setPx("--welc-logo-size", "welc_logo_size", "110");
   setPx("--welc-sub-size", "welc_sub_size", "14");
   setPx("--welc-card-pad", "welc_card_pad", "12");
   setPx("--welc-input-h", "welc_input_h", "46");
@@ -1496,8 +1496,8 @@ function applyDesign() {
   setPx("--welc-oauth-h", "welc_oauth_h", "38");
   setPx("--welc-gap", "welc_gap", "10");
   setPx("--welc-below-gap", "welc_below_gap", "6");
-  setPx("--welc-pad-top", "welc_pad_top", "56");
-  setPx("--welc-pad-bot", "welc_pad_bot", "16");
+  setPx("--welc-pad-top", "welc_pad_top", "20");
+  setPx("--welc-pad-bot", "welc_pad_bot", "8");
 }
 
 /* Build the welcome logo inner HTML based on current settings. */
@@ -3171,12 +3171,37 @@ function buildWelcomeLangSelector() {
   return wrap;
 }
 
-/* Popup informativo que se muestra en modo pruebas privadas cada vez que
-   se entra a la pantalla de bienvenida. Explica que los perfiles que verá
-   el tester son bots creados para la fase de pruebas, no personas reales. */
+/* Popup informativo del modo pruebas privadas. Configurable desde admin:
+   - content.beta_bots.enabled: "1"/"0" (default "1")
+   - content.beta_bots.frequency: "always" | "session" | "once" | "daily" | "weekly" (default "session")
+   - content.beta_bots.badge, title, body_1, body_2, cta: textos personalizables
+   - content.beta_bots.icon: emoji del icono
+*/
+function _betaNoticeShouldShow() {
+  const enabled = T("content.design.beta_notice_enabled");
+  if (enabled === "0" || enabled === "false") return false;
+  const freq = T("content.design.beta_notice_freq") || "session";
+  const KEY = "aura-beta-bots-notice";
+  try {
+    if (freq === "always") return true;
+    if (freq === "session") {
+      if (sessionStorage.getItem(KEY) === "1") return false;
+      sessionStorage.setItem(KEY, "1"); return true;
+    }
+    if (freq === "once") {
+      if (localStorage.getItem(KEY) === "1") return false;
+      localStorage.setItem(KEY, "1"); return true;
+    }
+    const now = Date.now();
+    const prev = parseInt(localStorage.getItem(KEY + "-ts") || "0", 10);
+    const wait = freq === "weekly" ? 7*24*3600*1000 : 24*3600*1000; // daily default
+    if (prev && (now - prev) < wait) return false;
+    localStorage.setItem(KEY + "-ts", String(now)); return true;
+  } catch { return true; }
+}
 function showBetaBotsNotice() {
-  // Evita duplicados si ya está montado en esta sesión de pantalla.
   if (document.querySelector(".beta-bots-notice-overlay")) return;
+  if (!_betaNoticeShouldShow()) return;
 
   const overlay = document.createElement("div");
   overlay.className = "beta-bots-notice-overlay";
@@ -3201,31 +3226,38 @@ function showBetaBotsNotice() {
     "animation:popIn .35s cubic-bezier(.2,.9,.2,1)",
   ].join(";");
 
+  const _bIcon  = T("content.design.beta_notice_icon")  || "🤖";
+  const _bBadge = T("content.design.beta_notice_badge") || "🧪 Modo pruebas";
+  const _bTitle = T("content.design.beta_notice_title") || "Aviso importante";
+  const _bBody1 = T("content.design.beta_notice_body1") || "Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.";
+  const _bBody2 = T("content.design.beta_notice_body2") || "Ninguno es una persona real todavía. Sirven para que puedas probar todas las funciones (matches, chats, filtros, etc.) antes del lanzamiento público.";
+  const _bCta   = T("content.design.beta_notice_cta")   || "Entendido";
+  const _esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  // Body admits limited HTML (strong/em/br); do not escape those admin-authored strings.
   card.innerHTML = `
     <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:16px;
                 background:linear-gradient(135deg,#ff3b6b,#ff8a3b,#a855f7);
                 display:grid;place-items:center;font-size:32px;
-                box-shadow:0 10px 30px rgba(168,85,247,.35)">🤖</div>
+                box-shadow:0 10px 30px rgba(168,85,247,.35)">${_esc(_bIcon)}</div>
     <div style="display:inline-block;padding:6px 14px;border-radius:999px;
                 background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
                 font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
-                color:#f2e8ff;margin-bottom:10px">🧪 Modo pruebas</div>
+                color:#f2e8ff;margin-bottom:10px">${_esc(_bBadge)}</div>
     <h3 style="margin:0 0 10px;font-size:20px;font-weight:800;line-height:1.2">
-      Aviso importante
+      ${_esc(_bTitle)}
     </h3>
     <p style="margin:0 0 8px;font-size:15px;line-height:1.45;color:#e6d9ff">
-      Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.
+      ${_bBody1}
     </p>
     <p style="margin:0 0 18px;font-size:14px;line-height:1.45;color:#c9bce4">
-      Ninguno es una persona real todavía. Sirven para que puedas probar
-      todas las funciones (matches, chats, filtros, etc.) antes del lanzamiento público.
+      ${_bBody2}
     </p>
     <button type="button" class="beta-bots-notice-ok"
       style="width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;
              background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);
              color:#fff;font-weight:800;font-size:15px;letter-spacing:.3px;
              box-shadow:0 10px 24px rgba(255,90,150,.35)">
-      Entendido
+      ${_esc(_bCta)}
     </button>
   `;
 
