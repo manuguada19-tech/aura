@@ -236,7 +236,22 @@
 
       function isDesktop() {
         try {
-          return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+          // Escritorio real: hover + pointer fino
+          var hoverFine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+          if (!hoverFine) return false;
+          // Excepción: tablets en portrait (768–1200px de ancho en vertical)
+          // deben mostrarse a pantalla completa, no dentro del marco phone.
+          var isTabletPortrait = window.matchMedia(
+            "(min-width: 601px) and (max-width: 1400px) and (orientation: portrait)"
+          ).matches;
+          if (isTabletPortrait) return false;
+          // Excepción: móvil/tablet en landscape con alto muy pequeño
+          // (ej: 844×390) tampoco debe usar marco phone.
+          var isShortLandscape = window.matchMedia(
+            "(max-height: 500px) and (orientation: landscape)"
+          ).matches;
+          if (isShortLandscape) return false;
+          return true;
         } catch (_) {
           return true;
         }
