@@ -8583,6 +8583,20 @@ const DESIGN_DEFAULTS = {
   logo_mode:"heart", logo_image:"", logo_image_light:"", logo_emoji:"💘",
   logo_bg:"gradient", logo_color:"#ffffff",
   logo_size:"88", logo_radius:"22",
+  // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
+  welc_logo_size:"140",      // Diámetro del logo en la pantalla de bienvenida
+  welc_sub_size:"14",        // Tamaño del subtítulo
+  welc_card_pad:"12",        // Padding de la tarjeta "pruebas privadas"
+  welc_input_h:"46",         // Altura del input de código de invitación
+  welc_btn_h:"48",           // Altura del botón principal
+  welc_beta_h:"46",          // Altura del botón beta / superadmin
+  welc_steps_pad:"10",       // Padding vertical de cada tarjeta de paso
+  welc_step_ic:"28",         // Tamaño del icono numérico
+  welc_step_h_size:"14",     // Tamaño del título del paso
+  welc_step_p_size:"12.5",   // Tamaño del texto del paso
+  welc_chip_h:"36",          // Altura de los chips de confianza
+  welc_chip_font:"11.5",     // Tamaño de fuente de los chips
+  welc_foot_size:"11.5",     // Tamaño del texto del footer
 };
 
 async function viewDesign(root) {
@@ -8987,6 +9001,27 @@ async function viewDesign(root) {
       b3.appendChild(colorOrEmpty("Color del título hero", "text_hero_title", "Vacío = blanco por defecto"));
       b3.appendChild(colorOrEmpty("Color del subtítulo hero", "text_hero_sub", "Vacío = blanco 90%"));
       fieldsWrap.appendChild(p3);
+
+      // ── Tamaños por bloque de la pantalla de bienvenida ──
+      const pSz = panel("Tamaños de los bloques (bienvenida)", [], []);
+      const bSz = pSz.querySelector(".panel-body");
+      bSz.appendChild(el("p", { class: "help" },
+        "Ajusta el tamaño de cada elemento de la pantalla de bienvenida. Los valores se aplican en tiempo real a todos los usuarios."));
+      bSz.appendChild(range("Logo (diámetro)", "welc_logo_size", 60, 220, "px"));
+      bSz.appendChild(range("Subtítulo (tamaño de fuente)", "welc_sub_size", 10, 22, "px"));
+      bSz.appendChild(range("Tarjeta pruebas privadas (padding)", "welc_card_pad", 4, 24, "px"));
+      bSz.appendChild(range("Input código invitación (altura)", "welc_input_h", 32, 64, "px"));
+      bSz.appendChild(range("Botón principal (altura)", "welc_btn_h", 36, 68, "px"));
+      bSz.appendChild(range("Botón beta / superadmin (altura)", "welc_beta_h", 32, 64, "px"));
+      bSz.appendChild(range("Paso — padding vertical", "welc_steps_pad", 4, 20, "px"));
+      bSz.appendChild(range("Paso — tamaño del icono", "welc_step_ic", 18, 44, "px"));
+      bSz.appendChild(range("Paso — título (fuente)", "welc_step_h_size", 11, 20, "px"));
+      bSz.appendChild(range("Paso — descripción (fuente)", "welc_step_p_size", 10, 18, "px"));
+      bSz.appendChild(range("Chip de confianza (altura)", "welc_chip_h", 24, 56, "px"));
+      bSz.appendChild(range("Chip de confianza (fuente)", "welc_chip_font", 9, 16, "px"));
+      bSz.appendChild(range("Footer (fuente)", "welc_foot_size", 9, 16, "px"));
+      fieldsWrap.appendChild(pSz);
+
       fieldsWrap.appendChild(sectionTextPanel("welcome", "Bienvenida"));
     }
     if (active === "discover") {

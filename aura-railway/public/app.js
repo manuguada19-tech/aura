@@ -1468,6 +1468,25 @@ function applyDesign() {
     : lbg === "transparent" ? "transparent"
     : `linear-gradient(135deg, ${b1}, ${b2})`;
   r.setProperty("--logo-bg", lbgVal);
+
+  // Welcome — tamaños por bloque (px). Se aplican vía variables CSS.
+  const setPx = (name, key, def) => {
+    const v = parseFloat(g("content.design." + key, def)) || parseFloat(def);
+    r.setProperty(name, v + "px");
+  };
+  setPx("--welc-logo-size", "welc_logo_size", "140");
+  setPx("--welc-sub-size", "welc_sub_size", "14");
+  setPx("--welc-card-pad", "welc_card_pad", "12");
+  setPx("--welc-input-h", "welc_input_h", "46");
+  setPx("--welc-btn-h", "welc_btn_h", "48");
+  setPx("--welc-beta-h", "welc_beta_h", "46");
+  setPx("--welc-steps-pad", "welc_steps_pad", "10");
+  setPx("--welc-step-ic", "welc_step_ic", "28");
+  setPx("--welc-step-h-size", "welc_step_h_size", "14");
+  setPx("--welc-step-p-size", "welc_step_p_size", "12.5");
+  setPx("--welc-chip-h", "welc_chip_h", "36");
+  setPx("--welc-chip-font", "welc_chip_font", "11.5");
+  setPx("--welc-foot-size", "welc_foot_size", "11.5");
 }
 
 /* Build the welcome logo inner HTML based on current settings. */
