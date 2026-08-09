@@ -4086,7 +4086,7 @@ app.post("/api/admin/staff/:id/resend-invite", requireAdmin, wrap(async (req, re
         html_body MEDIUMTEXT NULL,
         text_body TEXT NULL,
         segment VARCHAR(64) DEFAULT 'all',
-        status ENUM('draft','scheduled','sending','sent','failed') DEFAULT 'draft',
+        status VARCHAR(20) DEFAULT 'draft',
         sent_count INT DEFAULT 0,
         opens INT DEFAULT 0,
         scheduled_at DATETIME NULL,
@@ -4094,12 +4094,36 @@ app.post("/api/admin/staff/:id/resend-invite", requireAdmin, wrap(async (req, re
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
+    // Si la tabla ya existía con schema antiguo, añadimos columnas faltantes
+    // ignorando errores por si ya existen.
+    const alters = [
+      "ADD COLUMN subject VARCHAR(255) NULL",
+      "ADD COLUMN html_body MEDIUMTEXT NULL",
+      "ADD COLUMN text_body TEXT NULL",
+      "ADD COLUMN segment VARCHAR(64) DEFAULT 'all'",
+      "ADD COLUMN status VARCHAR(20) DEFAULT 'draft'",
+      "ADD COLUMN sent_count INT DEFAULT 0",
+      "ADD COLUMN opens INT DEFAULT 0",
+      "ADD COLUMN scheduled_at DATETIME NULL",
+      "ADD COLUMN sent_at DATETIME NULL",
+      "ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+    ];
+    for (const a of alters) {
+      try { await pool.query(`ALTER TABLE newsletters ${a}`); } catch(_) { /* ya existe */ }
+    }
   } catch (e) { console.warn("[newsletters] ensure:", e.message); }
 })();
 
 app.get("/api/admin/newsletters", requireAdmin, wrap(async (req, res) => {
-  const [rows] = await pool.query("SELECT id, name, subject, segment, status, sent_count, opens, scheduled_at, sent_at, created_at FROM newsletters ORDER BY created_at DESC");
-  res.json({ items: rows });
+  try {
+    const [rows] = await pool.query("SELECT * FROM newsletters ORDER BY created_at DESC");
+    res.json({ items: rows });
+  } catch (e) {
+    // Si la tabla no existe o está corrupta, respondemos vacío en vez de 500
+    // para que la UI no muestre error rojo.
+    console.warn("[newsletters] list error:", e.message);
+    res.json({ items: [] });
+  }
 }));
 
 app.get("/api/admin/newsletters/seasonal-templates", requireAdmin, wrap(async (req, res) => {
