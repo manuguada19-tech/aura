@@ -1,0 +1,10842 @@
+/* ================================================================
+   AMORA — Dating App Demo (single-file SPA)
+   Author: MuleRun Super Agent
+   ================================================================ */
+window.__AURA_VER__ = "V237";
+
+/* ---------- Utilities ---------- */
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const el = (tag, opts = {}, children = []) => {
+  const n = document.createElement(tag);
+  Object.entries(opts).forEach(([k, v]) => {
+    if (k === "class") n.className = v;
+    else if (k === "style") n.setAttribute("style", v);
+    else if (k === "html") n.innerHTML = v;
+    else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+    else if (v === true) n.setAttribute(k, "");
+    else if (v !== false && v != null) n.setAttribute(k, v);
+  });
+  (Array.isArray(children) ? children : [children]).forEach(c => {
+    if (c == null || c === false) return;
+    n.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  });
+  return n;
+};
+
+const toast = (msg, ms = 2200) => {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove("show"), ms);
+};
+
+const modal = {
+  open(node) {
+    const m = $("#modal");
+    const s = $("#modalSheet");
+    s.innerHTML = "";
+    s.appendChild(node);
+    m.hidden = false;
+    m.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", modal.close, { once: true }));
+    document.addEventListener("keydown", modal._esc);
+  },
+  close() {
+    $("#modal").hidden = true;
+    document.removeEventListener("keydown", modal._esc);
+  },
+  _esc(e) { if (e.key === "Escape") modal.close(); }
+};
+
+/* ---------- Content (loaded from /api/content, editable in admin) ---------- */
+const contentFallback = {
+  "content.brand.name": "Aura",
+  "content.brand.tag": "Conexiones reales, momentos únicos.",
+  "content.welcome.title": "Aura",
+  "content.welcome.subtitle": "Conexiones reales, momentos únicos.",
+  "content.welcome.cta_register": "Crear cuenta",
+  "content.welcome.cta_login": "Ya tengo cuenta",
+  "content.welcome.terms": "Al continuar aceptas los Términos y la Política de privacidad.",
+  "content.desktop.point1": "Perfiles verificados",
+  "content.desktop.point2": "Chat privado & seguro",
+  "content.desktop.point3": "Zona Hetero & LGTB",
+  "content.desktop.point4": "Match inteligente",
+  "content.desktop.card1_badge": "✨ Nuevo",
+  "content.desktop.card1_title": "Elige tus mejores fotos",
+  "content.desktop.card1_sub": "La IA de Aura elige la mejor portada.",
+  "content.desktop.card2_title": "Matches inteligentes y con tus intereses",
+  "content.desktop.card3_title": "Zona Hetero · LGTB",
+  "content.desktop.card3_sub": "Cambia la zona de registro cuando quieras desde Ajustes.",
+  "content.register.email.title": "¿Cuál es tu correo?",
+  "content.register.email.subtitle": "Te enviaremos un código de 6 dígitos para verificarlo.",
+  "content.register.email.button": "Enviar código",
+  "content.register.email.topbar_title": "Crear cuenta",
+  "content.register.email.input_label": "Email",
+  "content.register.email.default_email": "",
+  "content.common.email_placeholder": "tu@email.com",
+  "content.register.email.placeholder": "tu@correo.com",
+  "content.register.otp.title": "Introduce el código",
+  "content.register.otp.button": "Verificar",
+  "content.register.otp.resend": "¿No lo recibiste? Reenviar",
+  "content.register.zone.title": "¿Cómo quieres conectar?",
+  "content.register.zone.subtitle": "Puedes cambiarlo cuando quieras desde Ajustes.",
+  "content.zone.hetero.emoji": "💞",
+  "content.zone.hetero.title": "Zona Heterosexual",
+  "content.zone.hetero.desc": "Conecta con personas del otro género.",
+  "content.zone.lgtb.emoji": "🏳️‍🌈",
+  "content.zone.lgtb.title": "Zona LGTB+",
+  "content.zone.lgtb.desc": "Espacio inclusivo y respetuoso para todas las identidades.",
+  "content.login.title": "Bienvenido de nuevo",
+  "content.login.subtitle": "Nos alegra verte otra vez.",
+  "content.login.button": "Entrar",
+  "content.login.forgot": "¿Olvidaste tu contraseña?",
+  "content.tabs.discover": "Descubrir",
+  "content.tabs.search": "Buscar",
+  "content.tabs.likes": "Likes",
+  "content.tabs.chats": "Chats",
+  "content.tabs.me": "Yo",
+  "content.discover.empty": "No hay más perfiles por ahora. ¡Vuelve pronto!",
+  "content.search.placeholder": "Buscar por nombre, ciudad, intereses…",
+  "content.search.title": "Explora",
+  "content.likes.title": "Te han dado like",
+  "content.chats.title": "Mensajes",
+  "content.me.edit": "Editar perfil",
+  "content.me.settings": "Ajustes",
+  "content.me.plan": "Mi plan",
+  "content.me.zone_switch": "Cambiar zona",
+  "content.me.logout": "Cerrar sesión",
+  "content.welcome.stat1_n": "+250K",
+  "content.welcome.stat1_l": "Personas conectadas",
+  "content.welcome.stat2_n": "92%",
+  "content.welcome.stat2_l": "Perfiles verificados",
+  "content.welcome.stat3_n": "4,8★",
+  "content.welcome.stat3_l": "Valoración media",
+  "content.welcome.steps_title": "Cómo funciona",
+  "content.welcome.step1_h": "Crea tu perfil",
+  "content.welcome.step1_p": "Añade fotos y una bio corta. Menos de 2 minutos.",
+  "content.welcome.step2_h": "Descubre personas",
+  "content.welcome.step2_p": "Nuestro algoritmo encuentra personas afines a ti y a tus gustos, y elige tus fotos.",
+  "content.welcome.step3_h": "Habla y quedad",
+  "content.welcome.step3_p": "Chat privado seguro y sin anuncios que te distraigan.",
+  "content.welcome.quote_txt": "Aura me devolvió las ganas de conocer gente. En dos semanas ya había hecho match con alguien real y cercano. Sin ruido, sin postureo.",
+  "content.welcome.quote_name": "Lucía, 29",
+  "content.welcome.quote_role": "Barcelona · usuaria desde hace 3 meses",
+  "content.welcome.trust1": "Verificación de identidad",
+  "content.welcome.trust2": "Chat cifrado",
+  "content.welcome.trust3": "Cumple RGPD",
+  "content.welcome.trust4": "Sin bots",
+  "content.welcome.foot_help": "Ayuda",
+  "content.welcome.foot_faq": "Preguntas frecuentes",
+  "content.welcome.foot_rules": "Normas",
+  "content.welcome.foot_terms": "Términos",
+  "content.welcome.foot_privacy": "Privacidad",
+  "content.welcome.foot_contact": "Contacto",
+  "content.welcome.foot_copy": "© 2026 Aura · Hecho con ❤ en España",
+
+  // V441 · Info screens (titles used in topbar + info-hero title/subtitle)
+  "content.info.help.title": "Ayuda",
+  "content.info.help.hero_title": "Centro de ayuda",
+  "content.info.help.hero_sub": "Resolvemos tus dudas para que Aura sea una experiencia sin fricciones.",
+  "content.info.faq.title": "Preguntas frecuentes",
+  "content.info.faq.hero_title": "Preguntas frecuentes",
+  "content.info.faq.hero_sub": "Todo lo que necesitas saber, organizado por temas.",
+  "content.info.rules.title": "Normas de la comunidad",
+  "content.info.rules.hero_title": "Normas de la comunidad",
+  "content.info.rules.hero_sub": "Un espacio seguro y respetuoso empieza por ti.",
+  "content.info.terms.title": "Términos y condiciones",
+  "content.info.terms.hero_title": "Términos y condiciones",
+  "content.info.terms.hero_sub": "Las reglas del juego, explicadas de forma clara.",
+  "content.info.privacy.title": "Política de privacidad",
+  "content.info.privacy.hero_title": "Política de privacidad",
+  "content.info.privacy.hero_sub": "Cómo protegemos, usamos y respetamos tus datos.",
+  "content.info.contact.title": "Contacto",
+  "content.info.contact.hero_title": "Contacto",
+  "content.info.contact.hero_sub": "Estamos a un mensaje de distancia. Elige el canal que prefieras.",
+  "content.pull.pull": "Desliza para actualizar",
+  "content.pull.release": "Suelta para actualizar",
+  "content.pull.loading": "Actualizando…",
+  "content.welcome.rules_prefix": " Revisa también las ",
+  "content.welcome.rules_link": "normas de la comunidad",
+  "content.welcome.rules_suffix": ".",
+  "content.theme_card.to_light": "Ver en modo claro",
+  "content.theme_card.to_dark": "Ver en modo oscuro",
+  "content.theme_card.using_dark": "Estás usando el tema oscuro",
+  "content.theme_card.using_light": "Estás usando el tema claro",
+  "content.welcome.invite_beta_title": "Aura está en pruebas privadas",
+  "content.welcome.invite_beta_desc": "Para evitar fallos durante las pruebas, el acceso es solo por invitación. Si tienes un código de tester, introdúcelo abajo.",
+  "content.welcome.invite_closed_title": "Registros cerrados",
+  "content.welcome.invite_closed_desc": "En este momento no aceptamos nuevas cuentas. Si tienes un código de invitación, introdúcelo abajo.",
+  "content.welcome.invite_placeholder": "Código de invitación (ej: ABCD-1234-EFGH)",
+  "content.welcome.invite_cta": "Entrar con invitación",
+  "content.welcome.invite_empty": "Introduce un código de invitación",
+  "content.welcome.invite_ok": "Código válido — continúa el registro",
+  "content.welcome.invite_err_generic": "Código no válido",
+  "content.welcome.invite_err_not_found": "Código no válido",
+  "content.welcome.invite_err_revoked": "Este código ha sido revocado",
+  "content.welcome.invite_err_expired": "Este código ha caducado",
+  "content.welcome.invite_err_used_up": "Este código ya se ha usado el número máximo de veces",
+  "content.welcome.invite_err_email_mismatch": "Este código pertenece a otro email",
+  "content.welcome.invite_err_validate": "No se pudo validar el código",
+  "content.gps.title": "Activa tu ubicación",
+  "content.gps.lead": "Aura funciona mejor cuando conoce tu ciudad real. Con tu permiso, mostraremos primero personas cerca de ti.",
+  "content.gps.b1": "Personas cerca de tu ubicación real",
+  "content.gps.b2": "Emparejamientos más precisos por cercanía",
+  "content.gps.b3": "Detectar intentos de suplantación o dispositivos robados",
+  "content.gps.legal_title": "🔒 Tu privacidad está protegida",
+  "content.gps.legal_body": "Solo compartimos tu posición con el equipo de moderación cuando es necesario. Puedes revocar el permiso en cualquier momento desde Ajustes → Privacidad. Cumplimos RGPD.",
+  "content.gps.btn_yes": "Activar ubicación",
+  "content.gps.btn_no": "Ahora no",
+  "content.gps.ok": "Ubicación activada 📍",
+  "content.gps.dismissed": "Puedes activarla más tarde desde Ajustes",
+  "content.gps.err_denied": "Has bloqueado la ubicación en el navegador. Actívala en el candado 🔒 junto a la URL.",
+  "content.gps.err_generic": "No se pudo obtener tu ubicación. Inténtalo de nuevo más tarde.",
+  "content.gps.read_privacy": "Leer Política de privacidad",
+  "content.gps.read_terms": "Leer Términos",
+  "content.gps.close_aria": "Cerrar",
+  "content.gps.nearby_off_title": "Tu ubicación está desactivada",
+  "content.gps.nearby_off_lead": "Para ver personas realmente cerca de ti y aparecer en las búsquedas de otras personas cercanas, activa la ubicación.",
+  "content.gps.nearby_off_cta": "Activar ubicación",
+  "content.me.item_gps": "Ubicación (GPS)",
+  "content.me.item_gps_on": "Permiso activo · pulsa para revocar",
+  "content.me.item_gps_off": "Permiso no otorgado",
+  "content.gps.revoke_confirm_title": "Revocar permiso de ubicación",
+  "content.gps.revoke_confirm_body": "Dejaremos de usar tu ubicación. Podrás volver a activarla más tarde. ¿Confirmas?",
+  "content.gps.revoke_warn_title": "Antes de revocar, ten en cuenta",
+  "content.gps.revoke_warn_body": "Sin permiso de ubicación, algunas funciones como <b>«Cerca de ti»</b>, el filtro por distancia y las sugerencias por proximidad podrían dejar de funcionar o mostrar personas y lugares que no coincidan con tu zona real. Podrás volver a activar el permiso cuando quieras. ¿Continuar con la revocación?",
+  "content.gps.revoke_warn_continue": "Sí, continuar y revocar",
+  "content.gps.revoke_yes": "Revocar",
+  "content.gps.revoke_no": "Cancelar",
+  "content.gps.revoked_ok": "Permiso de ubicación revocado",
+  "content.gps.revoked_err": "No se pudo revocar el permiso",
+  "content.gps.reprompt": "Activar ubicación",
+
+  /* ---- "Yo" (Me / Profile settings) — todos editables desde admin ---- */
+  "content.me.avatar": "https://i.pravatar.cc/300?img=32",
+  "content.me.default_name": "",
+  "content.me.default_email": "Introduce tu correo electrónico",
+  "content.me.tier_label": "★ Premium",
+  "content.me.edit_button": "Editar",
+  "content.me.change_photo": "Cambiar foto",
+  "content.me.save_button": "Guardar cambios",
+  "content.me.saved": "Cambios guardados",
+  "content.me.saved_short": "Guardado",
+  "content.me.close": "Cerrar",
+  "content.me.cancel": "Cancelar",
+  "content.me.field_name": "Nombre",
+  "content.me.field_bio": "Sobre mí",
+  "content.me.field_city": "Ciudad",
+  "content.me.field_job": "Profesión",
+  "content.me.field_height": "Altura (cm)",
+  "content.me.field_interests": "Intereses (separados por comas)",
+  "content.me.default_bio": "Amante del café, las conversaciones largas y los planes espontáneos.",
+  "content.me.default_city": "Madrid",
+  "content.me.default_job": "Diseñadora UX",
+
+  "content.me.group_account": "Cuenta",
+  "content.me.group_prefs": "Preferencias",
+  "content.me.group_privacy": "Privacidad y seguridad",
+  "content.me.group_support": "Soporte",
+  "content.me.group_danger": "Cuenta",
+
+  "content.me.item_edit_profile": "Editar perfil",
+  "content.me.item_photos": "Mis fotos",
+  "content.me.item_verify": "Verificar cuenta",
+  "content.me.item_verify_sub": "Consigue el badge azul",
+  "content.me.item_subs": "Suscripción",
+  "content.me.item_subs_sub": "Premium · renueva 12 dic",
+  "content.me.item_filters": "Filtros de descubrimiento",
+  "content.me.item_zone": "Cambiar zona",
+  "content.me.item_notif": "Notificaciones",
+  "content.me.item_theme": "Tema",
+  "content.me.theme_dark": "Oscuro",
+  "content.me.theme_light": "Claro",
+  "content.me.item_lang": "Idioma",
+  "content.me.item_lang_sub": "Español",
+  "content.me.item_invisible": "Modo invisible",
+  "content.me.item_invisible_sub": "Solo Premium",
+  "content.me.item_security": "Contraseña y 2FA",
+  "content.me.item_blocked": "Usuarios bloqueados",
+  "content.me.item_devices": "Dispositivos activos",
+  "content.me.item_data": "Descargar mis datos",
+  "content.me.item_data_sub": "Exporta un ZIP con toda tu información",
+  "content.me.item_help": "Centro de ayuda",
+  "content.me.item_faq": "Preguntas frecuentes",
+  "content.me.item_contact": "Contacto",
+  "content.me.item_rules": "Normas de la comunidad",
+  "content.me.item_terms": "Términos y privacidad",
+  "content.me.item_about": "Acerca de Aura",
+  "content.me.version": "Versión 1.0.0",
+  "content.me.item_logout": "Cerrar sesión",
+  "content.me.item_delete": "Eliminar cuenta",
+  "content.me.item_delete_sub": "Acción irreversible",
+
+  /* Photos */
+  "content.me.photos_hint": "Añade hasta 6 fotos. La primera será tu foto principal.",
+  "content.me.photo_main": "Principal",
+  "content.me.photo_removed": "Foto eliminada",
+  "content.me.photo_add_toast": "Selecciona una foto (demo)",
+  "content.me.photo_added": "Foto añadida",
+  "content.me.photo_add_button": "+ Añadir foto",
+  "content.me.photos_full": "Máximo 6 fotos",
+
+  /* Verify */
+  "content.me.verify_hero_title": "Consigue el badge azul",
+  "content.me.verify_hero_sub": "Verifica que eres tú con una foto rápida y añade seguridad a tu perfil.",
+  "content.me.verify_s1_h": "Toma un selfie",
+  "content.me.verify_s1_p": "Haremos una comparación rápida con tu foto de perfil.",
+  "content.me.verify_s2_h": "Revisión manual",
+  "content.me.verify_s2_p": "Nuestro equipo lo comprueba en menos de 24h.",
+  "content.me.verify_s3_h": "¡Verificado!",
+  "content.me.verify_s3_p": "Aparecerá el distintivo azul junto a tu nombre.",
+  "content.me.verify_cta_h": "Empieza la verificación",
+  "content.me.verify_cta_p": "Solo te llevará un minuto.",
+  "content.me.verify_button": "Verificar ahora",
+  "content.me.verify_started": "Verificación iniciada",
+  "content.me.verify_choose": "Elegir desde la galería",
+  "content.me.verify_progress": "Enviando para revisión…",
+  "content.me.verify_sent": "¡Recibido! Te avisaremos en menos de 24 h.",
+  "content.me.verify_preview_empty": "Aún no has subido ningún selfie",
+  "content.me.verify_preview_ready": "Selfie listo · revisando…",
+
+  /* Invisible mode */
+  "content.me.invisible_h": "Navega sin ser visto",
+  "content.me.invisible_p": "Aparece solo para quienes tú elijas y explora perfiles sin dejar rastro.",
+  "content.me.invisible_opt1": "Activar modo invisible",
+  "content.me.invisible_opt1_sub": "Tu perfil no aparecerá en la lista de descubrir",
+  "content.me.invisible_opt2": "Ocultar mi edad",
+  "content.me.invisible_opt3": "Ocultar mi distancia",
+  "content.me.invisible_opt4": "Ocultar mi actividad online",
+  "content.me.invisible_note": "Nota: Modo invisible solo está disponible con suscripción Premium.",
+
+  /* Security */
+  "content.me.sec_pass": "Contraseña",
+  "content.me.sec_current": "Contraseña actual",
+  "content.me.sec_new": "Nueva contraseña",
+  "content.me.sec_repeat": "Repite la nueva contraseña",
+  "content.me.sec_update": "Actualizar contraseña",
+  "content.me.pass_saved": "Contraseña actualizada",
+  "content.me.sec_2fa": "Verificación en 2 pasos",
+  "content.me.sec_2fa_sms": "SMS al móvil (+34 ••• ••• 342)",
+  "content.me.sec_2fa_app": "App autenticadora",
+  "content.me.sec_2fa_email": "Código por email",
+
+  /* Blocked */
+  "content.me.blocked_when": "Bloqueado hace 3 días",
+  "content.me.blocked_when2": "Bloqueada hace 1 semana",
+  "content.me.blocked_empty_h": "Sin usuarios bloqueados",
+  "content.me.blocked_empty_p": "Cuando bloquees a alguien aparecerá aquí.",
+  "content.me.blocked_unblock": "Desbloquear",
+  "content.me.blocked_unblock_toast": "Usuario desbloqueado",
+
+  /* Data export */
+  "content.me.data_h": "Tus datos, en tus manos",
+  "content.me.data_p": "Descarga un archivo ZIP con toda la información asociada a tu cuenta.",
+  "content.me.data_i1": "Perfil y biografía",
+  "content.me.data_i2": "Fotos originales",
+  "content.me.data_i3": "Historial de matches y likes",
+  "content.me.data_i4": "Mensajes de chats",
+  "content.me.data_i5": "Metadatos técnicos (dispositivo, IP anonimizada)",
+  "content.me.data_cta_h": "Solicitar exportación",
+  "content.me.data_cta_p": "Te enviaremos el enlace de descarga en menos de 24 h.",
+  "content.me.data_button": "Solicitar mis datos",
+  "content.me.data_requested": "Solicitud enviada. Revisa tu correo.",
+
+  /* About */
+  "content.me.about_p": "Conexiones reales, momentos únicos.",
+  "content.me.about_version": "Versión",
+  "content.me.about_build": "Build",
+  "content.me.about_company": "Empresa",
+  "content.me.about_country": "País",
+
+  /* Language */
+  "content.me.lang_saved": "Idioma actualizado",
+
+  /* Delete */
+  "content.me.delete_h": "⚠️ Eliminar cuenta",
+  "content.me.delete_p": "Esta acción es irreversible. Perderás tu perfil, fotos, matches y todo el historial de mensajes.",
+  "content.me.delete_note": "Al confirmar, tus datos personales se eliminarán en un plazo máximo de 30 días conforme al RGPD.",
+  "content.me.delete_confirm": "Sí, eliminar mi cuenta",
+  "content.me.deleted": "Cuenta eliminada",
+
+  /* Pantalla "Pruebas privadas" (access_locked / beta) */
+  "content.beta.pill": "🧪 Beta privada",
+  "content.beta.title": "Aura está en pruebas",
+  "content.beta.subtitle": "Estamos afinando la app con un grupo cerrado de personas. Muy pronto abriremos el acceso para todos.",
+  "content.beta.point1_ic": "✨",
+  "content.beta.point1_h": "Experiencia cuidada",
+  "content.beta.point1_p": "Estamos puliendo cada detalle para que tu primera cita empiece con buen pie.",
+  "content.beta.point2_ic": "🛡️",
+  "content.beta.point2_h": "Seguridad primero",
+  "content.beta.point2_p": "Verificación, moderación humana y anti-fraude ya activos antes de abrir a todos.",
+  "content.beta.point3_ic": "🚀",
+  "content.beta.point3_h": "Lanzamiento cercano",
+  "content.beta.point3_p": "Te avisaremos por email en cuanto se abra el registro público.",
+  "content.beta.form_label": "¿Quieres que te avisemos cuando abramos?",
+  "content.beta.form_placeholder": "tu@email.com",
+  "content.beta.form_default_email": "",
+  "content.beta.form_cta": "Avísame",
+  "content.beta.sending": "Enviando…",
+  "content.beta.ok_saved": "¡Listo! Te avisaremos en cuanto abramos ✨",
+  "content.beta.ok_btn": "En la lista ✓",
+  "content.beta.err_invalid": "Introduce un email válido",
+  "content.beta.err_save": "No pudimos guardarte ahora. Inténtalo de nuevo.",
+  "content.beta.back": "← Volver al inicio",
+  "content.beta.foot_text": "¿Eres tester? Escríbenos a ",
+  "content.beta.foot_email": "hola@citasaura.es",
+  "content.beta.admin_toggle": "¿Eres administrador?",
+  "content.beta.admin_placeholder": "Código de acceso",
+  "content.beta.admin_cta": "Entrar",
+  "content.beta.admin_err_empty": "Introduce el código",
+  "content.beta.admin_err_invalid": "Código no válido",
+  "content.beta.admin_err_generic": "No se pudo verificar el código",
+  "content.beta.admin_ok": "Acceso concedido ✓",
+};
+let content = Object.assign({}, contentFallback);
+
+/* ---------- Multi-language support ----------
+   translations[lang][key] overrides contentFallback[key] and content[key]
+   when the user selects a language other than 'es'. */
+const translations = {
+  es: {}, // default — uses contentFallback
+
+  en: {
+    "content.welcome.subtitle": "Real connections, unique moments.",
+    "content.welcome.cta_register": "Create account",
+    "content.welcome.cta_login": "I already have an account",
+    "content.welcome.terms": "By continuing you accept the Terms and Privacy Policy.",
+    "content.welcome.steps_title": "How it works",
+    "content.welcome.step1_h": "Sign up in seconds",
+    "content.welcome.step1_p": "Verify your email and complete your profile with photos.",
+    "content.welcome.step2_h": "Match & chat",
+    "content.welcome.step2_p": "Our algorithm finds people compatible with you and your taste, and picks your best photos.",
+    "content.welcome.trust1": "Identity verification",
+    "content.welcome.trust2": "Encrypted chat",
+    "content.welcome.trust3": "GDPR compliant",
+    "content.welcome.trust4": "No bots",
+    "content.welcome.foot_help": "Help",
+    "content.welcome.foot_faq": "FAQ",
+    "content.welcome.foot_rules": "Community rules",
+    "content.welcome.foot_terms": "Terms",
+    "content.welcome.foot_privacy": "Privacy",
+    "content.welcome.foot_contact": "Contact",
+    "content.welcome.foot_copy": "© 2026 Aura · Made with ❤ in Spain",
+
+    "content.info.help.title": "Help",
+    "content.info.help.hero_title": "Help center",
+    "content.info.help.hero_sub": "We answer your questions so Aura is a frictionless experience.",
+    "content.info.faq.title": "FAQ",
+    "content.info.faq.hero_title": "Frequently asked questions",
+    "content.info.faq.hero_sub": "Everything you need to know, organised by topic.",
+    "content.info.rules.title": "Community rules",
+    "content.info.rules.hero_title": "Community rules",
+    "content.info.rules.hero_sub": "A safe, respectful space starts with you.",
+    "content.info.terms.title": "Terms & conditions",
+    "content.info.terms.hero_title": "Terms & conditions",
+    "content.info.terms.hero_sub": "The rules of the road, clearly explained.",
+    "content.info.privacy.title": "Privacy policy",
+    "content.info.privacy.hero_title": "Privacy policy",
+    "content.info.privacy.hero_sub": "How we protect, use and respect your data.",
+    "content.info.contact.title": "Contact",
+    "content.info.contact.hero_title": "Contact",
+    "content.info.contact.hero_sub": "We're one message away. Pick the channel you prefer.",
+    "content.pull.pull": "Pull to refresh",
+    "content.pull.release": "Release to refresh",
+    "content.pull.loading": "Refreshing…",
+    "content.welcome.rules_prefix": " Also review our ",
+    "content.welcome.rules_link": "community rules",
+    "content.welcome.rules_suffix": ".",
+    "content.theme_card.to_light": "View in light mode",
+    "content.theme_card.to_dark": "View in dark mode",
+    "content.theme_card.using_dark": "You're using dark theme",
+    "content.theme_card.using_light": "You're using light theme",
+    "content.brand.tag": "Real connections, unique moments.",
+    "content.welcome.invite_beta_title": "Aura is in private beta",
+    "content.welcome.invite_beta_desc": "To avoid issues during testing, access is invite-only. If you have a tester code, enter it below.",
+    "content.welcome.invite_closed_title": "Registrations closed",
+    "content.welcome.invite_closed_desc": "We are not accepting new accounts right now. If you have an invitation code, enter it below.",
+    "content.welcome.invite_placeholder": "Invitation code (e.g. ABCD-1234-EFGH)",
+    "content.welcome.invite_cta": "Enter with invitation",
+    "content.welcome.invite_empty": "Enter an invitation code",
+    "content.welcome.invite_ok": "Valid code — continue signing up",
+    "content.welcome.invite_err_generic": "Invalid code",
+    "content.welcome.invite_err_not_found": "Invalid code",
+    "content.welcome.invite_err_revoked": "This code has been revoked",
+    "content.welcome.invite_err_expired": "This code has expired",
+    "content.welcome.invite_err_used_up": "This code has already been used the maximum number of times",
+    "content.welcome.invite_err_email_mismatch": "This code belongs to another email",
+    "content.welcome.invite_err_validate": "Could not validate the code",
+    "content.gps.title": "Enable your location",
+    "content.gps.lead": "Aura works best when it knows your real city. With your permission, we'll show people near you first.",
+    "content.gps.b1": "People near your actual location",
+    "content.gps.b2": "More accurate matches by proximity",
+    "content.gps.b3": "Detect impersonation attempts or stolen devices",
+    "content.gps.legal_title": "🔒 Your privacy is protected",
+    "content.gps.legal_body": "We only share your position with the moderation team when needed. You can revoke permission any time from Settings → Privacy. GDPR compliant.",
+    "content.gps.btn_yes": "Enable location",
+    "content.gps.btn_no": "Not now",
+    "content.gps.ok": "Location enabled 📍",
+    "content.gps.dismissed": "You can enable it later from Settings",
+    "content.gps.err_denied": "You have blocked location in the browser. Enable it via the lock 🔒 next to the URL.",
+    "content.gps.err_generic": "Could not get your location. Please try again later.",
+    "content.gps.read_privacy": "Read Privacy Policy",
+    "content.gps.read_terms": "Read Terms",
+    "content.gps.close_aria": "Close",
+    "content.gps.nearby_off_title": "Your location is off",
+    "content.gps.nearby_off_lead": "To see people actually near you and appear in nearby searches from others, please enable location.",
+    "content.gps.nearby_off_cta": "Enable location",
+    "content.me.item_gps": "Location (GPS)",
+    "content.me.item_gps_on": "Permission active · tap to revoke",
+    "content.me.item_gps_off": "Permission not granted",
+    "content.gps.revoke_confirm_title": "Revoke location permission",
+    "content.gps.revoke_confirm_body": "We'll stop using your location. You can re-enable it later. Confirm?",
+    "content.gps.revoke_warn_title": "Before you revoke, keep in mind",
+    "content.gps.revoke_warn_body": "Without the location permission, features like <b>“Nearby”</b>, the distance filter and proximity suggestions may stop working or show people and places that don't match your real area. You can re-enable the permission whenever you want. Continue with the revocation?",
+    "content.gps.revoke_warn_continue": "Yes, continue and revoke",
+    "content.gps.revoke_yes": "Revoke",
+    "content.gps.revoke_no": "Cancel",
+    "content.gps.revoked_ok": "Location permission revoked",
+    "content.gps.revoked_err": "Could not revoke permission",
+    "content.gps.reprompt": "Enable location",
+    "content.desktop.point1": "Verified profiles",
+    "content.desktop.point2": "Private & secure chat",
+    "content.desktop.point3": "Straight & LGBTQ+ zone",
+    "content.desktop.point4": "Smart matching",
+    "content.desktop.card1_badge": "✨ New",
+    "content.desktop.card1_title": "Pick your best photos",
+    "content.desktop.card1_sub": "Aura's AI chooses the best cover.",
+    "content.desktop.card2_title": "Smart matches based on your interests",
+    "content.desktop.card3_title": "Straight · LGBTQ+ zone",
+    "content.desktop.card3_sub": "Switch zone anytime from Settings.",
+    "content.tabs.discover": "Discover",
+    "content.tabs.search": "Search",
+    "content.tabs.likes": "Likes",
+    "content.tabs.chats": "Chats",
+    "content.tabs.me": "Me",
+    "content.me.tier_label": "★ Premium",
+    "content.me.edit_button": "Edit",
+    "content.me.group_account": "Account",
+    "content.me.group_prefs": "Preferences",
+    "content.me.group_privacy": "Privacy & security",
+    "content.me.group_support": "Support",
+    "content.me.group_danger": "Account",
+    "content.me.item_edit_profile": "Edit profile",
+    "content.me.item_photos": "My photos",
+    "content.me.item_verify": "Verify account",
+    "content.me.item_verify_sub": "Get the blue badge",
+    "content.me.item_subs": "Subscription",
+    "content.me.item_subs_sub": "Premium · renews Dec 12",
+    "content.me.item_filters": "Discovery filters",
+    "content.me.item_zone": "Change zone",
+    "content.me.item_notif": "Notifications",
+    "content.me.item_theme": "Theme",
+    "content.me.theme_light": "Light",
+    "content.me.theme_dark": "Dark",
+    "content.me.item_lang": "Language",
+    "content.me.item_lang_sub": "English",
+    "content.me.item_invisible": "Invisible mode",
+    "content.me.item_invisible_sub": "Premium only",
+    "content.me.item_security": "Password & 2FA",
+    "content.me.item_blocked": "Blocked users",
+    "content.me.item_devices": "Active devices",
+    "content.me.item_data": "Download my data",
+    "content.me.item_data_sub": "Export a ZIP with all your info",
+    "content.me.item_help": "Help center",
+    "content.me.item_faq": "FAQ",
+    "content.me.item_contact": "Contact",
+    "content.me.item_terms": "Terms & privacy",
+    "content.me.item_about": "About Aura",
+    "content.me.version": "Version 1.0.0",
+    "content.me.item_logout": "Log out",
+    "content.me.item_delete": "Delete account",
+    "content.me.item_delete_sub": "Irreversible action",
+    "content.me.lang_saved": "Language updated",
+    "content.me.close": "Close",
+    "content.me.cancel": "Cancel",
+    "content.me.saved": "Changes saved",
+    "content.me.saved_short": "Saved",
+    "content.beta.admin_toggle": "Are you an administrator?",
+    "content.beta.admin_placeholder": "Access code",
+    "content.beta.admin_cta": "Enter",
+    "content.beta.admin_err_empty": "Enter the code",
+    "content.beta.admin_err_invalid": "Invalid code",
+    "content.beta.admin_err_generic": "Could not verify the code",
+    "content.beta.admin_ok": "Access granted ✓",
+  },
+
+  fr: {
+    "content.welcome.subtitle": "Des connexions réelles, des moments uniques.",
+    "content.welcome.cta_register": "Créer un compte",
+    "content.welcome.cta_login": "J'ai déjà un compte",
+    "content.welcome.terms": "En continuant vous acceptez les Conditions et la Politique de confidentialité.",
+    "content.welcome.steps_title": "Comment ça marche",
+    "content.welcome.step1_h": "Inscription en quelques secondes",
+    "content.welcome.step1_p": "Vérifiez votre e-mail et complétez votre profil avec des photos.",
+    "content.welcome.step2_h": "Match & discussion",
+    "content.welcome.step2_p": "Notre algorithme trouve des personnes compatibles et choisit vos meilleures photos.",
+    "content.welcome.trust1": "Vérification d'identité",
+    "content.welcome.trust2": "Chat chiffré",
+    "content.welcome.trust3": "Conforme RGPD",
+    "content.welcome.trust4": "Sans bots",
+    "content.welcome.foot_help": "Aide",
+    "content.welcome.foot_faq": "FAQ",
+    "content.welcome.foot_rules": "Règles de la communauté",
+    "content.welcome.foot_terms": "Conditions",
+    "content.welcome.foot_privacy": "Confidentialité",
+    "content.welcome.foot_contact": "Contact",
+    "content.welcome.foot_copy": "© 2026 Aura · Fait avec ❤ en Espagne",
+
+    "content.info.help.title": "Aide",
+    "content.info.help.hero_title": "Centre d'aide",
+    "content.info.help.hero_sub": "Nous répondons à vos questions pour que Aura soit sans friction.",
+    "content.info.faq.title": "FAQ",
+    "content.info.faq.hero_title": "Foire aux questions",
+    "content.info.faq.hero_sub": "Tout ce que vous devez savoir, classé par thème.",
+    "content.info.rules.title": "Règles de la communauté",
+    "content.info.rules.hero_title": "Règles de la communauté",
+    "content.info.rules.hero_sub": "Un espace sûr et respectueux commence par vous.",
+    "content.info.terms.title": "Conditions générales",
+    "content.info.terms.hero_title": "Conditions générales",
+    "content.info.terms.hero_sub": "Les règles du jeu, expliquées clairement.",
+    "content.info.privacy.title": "Politique de confidentialité",
+    "content.info.privacy.hero_title": "Politique de confidentialité",
+    "content.info.privacy.hero_sub": "Comment nous protégeons, utilisons et respectons vos données.",
+    "content.info.contact.title": "Contact",
+    "content.info.contact.hero_title": "Contact",
+    "content.info.contact.hero_sub": "Nous sommes à un message. Choisissez le canal que vous préférez.",
+    "content.pull.pull": "Tirer pour actualiser",
+    "content.pull.release": "Relâcher pour actualiser",
+    "content.pull.loading": "Actualisation…",
+    "content.welcome.rules_prefix": " Consultez également nos ",
+    "content.welcome.rules_link": "règles de la communauté",
+    "content.welcome.rules_suffix": ".",
+    "content.theme_card.to_light": "Voir en mode clair",
+    "content.theme_card.to_dark": "Voir en mode sombre",
+    "content.theme_card.using_dark": "Vous utilisez le thème sombre",
+    "content.theme_card.using_light": "Vous utilisez le thème clair",
+    "content.brand.tag": "Connexions réelles, moments uniques.",
+    "content.welcome.invite_beta_title": "Aura est en bêta privée",
+    "content.welcome.invite_beta_desc": "Pour éviter les problèmes pendant les tests, l'accès se fait uniquement sur invitation. Si vous avez un code testeur, saisissez-le ci-dessous.",
+    "content.welcome.invite_closed_title": "Inscriptions fermées",
+    "content.welcome.invite_closed_desc": "Nous n'acceptons pas de nouveaux comptes pour le moment. Si vous avez un code d'invitation, saisissez-le ci-dessous.",
+    "content.welcome.invite_placeholder": "Code d'invitation (ex : ABCD-1234-EFGH)",
+    "content.welcome.invite_cta": "Entrer avec invitation",
+    "content.welcome.invite_empty": "Saisissez un code d'invitation",
+    "content.welcome.invite_ok": "Code valide — continuez l'inscription",
+    "content.welcome.invite_err_generic": "Code non valide",
+    "content.welcome.invite_err_not_found": "Code non valide",
+    "content.welcome.invite_err_revoked": "Ce code a été révoqué",
+    "content.welcome.invite_err_expired": "Ce code a expiré",
+    "content.welcome.invite_err_used_up": "Ce code a déjà été utilisé le nombre maximum de fois",
+    "content.welcome.invite_err_email_mismatch": "Ce code appartient à un autre email",
+    "content.welcome.invite_err_validate": "Impossible de valider le code",
+    "content.gps.title": "Activez votre position",
+    "content.gps.lead": "Aura fonctionne mieux quand il connaît votre ville réelle. Avec votre permission, nous afficherons d'abord des personnes près de chez vous.",
+    "content.gps.b1": "Des personnes près de votre position réelle",
+    "content.gps.b2": "Des correspondances plus précises par proximité",
+    "content.gps.b3": "Détection d'usurpation d'identité ou d'appareils volés",
+    "content.gps.legal_title": "🔒 Votre vie privée est protégée",
+    "content.gps.legal_body": "Nous ne partageons votre position avec l'équipe de modération que si nécessaire. Vous pouvez révoquer l'autorisation à tout moment dans Paramètres → Confidentialité. Conforme au RGPD.",
+    "content.gps.btn_yes": "Activer la position",
+    "content.gps.btn_no": "Pas maintenant",
+    "content.gps.ok": "Position activée 📍",
+    "content.gps.dismissed": "Vous pouvez l'activer plus tard depuis les Paramètres",
+    "content.gps.err_denied": "Vous avez bloqué la position dans le navigateur. Activez-la via le cadenas 🔒 à côté de l'URL.",
+    "content.gps.err_generic": "Impossible d'obtenir votre position. Réessayez plus tard.",
+    "content.gps.read_privacy": "Lire la Politique de confidentialité",
+    "content.gps.read_terms": "Lire les Conditions",
+    "content.gps.close_aria": "Fermer",
+    "content.gps.nearby_off_title": "Votre position est désactivée",
+    "content.gps.nearby_off_lead": "Pour voir des personnes réellement proches de vous et apparaître dans les recherches à proximité, activez la localisation.",
+    "content.gps.nearby_off_cta": "Activer la position",
+    "content.me.item_gps": "Localisation (GPS)",
+    "content.me.item_gps_on": "Autorisation active · touchez pour révoquer",
+    "content.me.item_gps_off": "Autorisation non accordée",
+    "content.gps.revoke_confirm_title": "Révoquer l'autorisation de localisation",
+    "content.gps.revoke_confirm_body": "Nous cesserons d'utiliser votre localisation. Vous pourrez la réactiver plus tard. Confirmer ?",
+    "content.gps.revoke_warn_title": "Avant de révoquer, à savoir",
+    "content.gps.revoke_warn_body": "Sans autorisation de localisation, les fonctions comme <b>« À proximité »</b>, le filtre par distance et les suggestions par proximité peuvent cesser de fonctionner ou afficher des personnes et des lieux qui ne correspondent pas à votre zone réelle. Vous pourrez réactiver l'autorisation quand vous le souhaitez. Continuer la révocation ?",
+    "content.gps.revoke_warn_continue": "Oui, continuer et révoquer",
+    "content.gps.revoke_yes": "Révoquer",
+    "content.gps.revoke_no": "Annuler",
+    "content.gps.revoked_ok": "Autorisation de localisation révoquée",
+    "content.gps.revoked_err": "Impossible de révoquer l'autorisation",
+    "content.gps.reprompt": "Activer la localisation",
+    "content.desktop.point1": "Profils vérifiés",
+    "content.desktop.point2": "Chat privé et sécurisé",
+    "content.desktop.point3": "Zone Hétéro et LGBTQ+",
+    "content.desktop.point4": "Matching intelligent",
+    "content.desktop.card1_badge": "✨ Nouveau",
+    "content.desktop.card1_title": "Choisis tes meilleures photos",
+    "content.desktop.card1_sub": "L'IA d'Aura choisit la meilleure couverture.",
+    "content.desktop.card2_title": "Matches intelligents selon tes intérêts",
+    "content.desktop.card3_title": "Zone Hétéro · LGBTQ+",
+    "content.desktop.card3_sub": "Change de zone quand tu veux depuis les Paramètres.",
+    "content.tabs.discover": "Découvrir",
+    "content.tabs.search": "Recherche",
+    "content.tabs.likes": "Likes",
+    "content.tabs.chats": "Chats",
+    "content.tabs.me": "Moi",
+    "content.me.edit_button": "Modifier",
+    "content.me.group_account": "Compte",
+    "content.me.group_prefs": "Préférences",
+    "content.me.group_privacy": "Confidentialité et sécurité",
+    "content.me.group_support": "Support",
+    "content.me.group_danger": "Compte",
+    "content.me.item_edit_profile": "Modifier le profil",
+    "content.me.item_photos": "Mes photos",
+    "content.me.item_verify": "Vérifier le compte",
+    "content.me.item_verify_sub": "Obtenir le badge bleu",
+    "content.me.item_subs": "Abonnement",
+    "content.me.item_filters": "Filtres de découverte",
+    "content.me.item_zone": "Changer de zone",
+    "content.me.item_notif": "Notifications",
+    "content.me.item_theme": "Thème",
+    "content.me.theme_light": "Clair",
+    "content.me.theme_dark": "Sombre",
+    "content.me.item_lang": "Langue",
+    "content.me.item_lang_sub": "Français",
+    "content.me.item_invisible": "Mode invisible",
+    "content.me.item_invisible_sub": "Premium uniquement",
+    "content.me.item_security": "Mot de passe & 2FA",
+    "content.me.item_blocked": "Utilisateurs bloqués",
+    "content.me.item_devices": "Appareils actifs",
+    "content.me.item_data": "Télécharger mes données",
+    "content.me.item_help": "Centre d'aide",
+    "content.me.item_faq": "FAQ",
+    "content.me.item_contact": "Contact",
+    "content.me.item_terms": "Conditions et confidentialité",
+    "content.me.item_about": "À propos d'Aura",
+    "content.me.item_logout": "Se déconnecter",
+    "content.me.item_delete": "Supprimer le compte",
+    "content.me.item_delete_sub": "Action irréversible",
+    "content.me.lang_saved": "Langue mise à jour",
+    "content.me.close": "Fermer",
+    "content.me.cancel": "Annuler",
+    "content.me.saved": "Modifications enregistrées",
+    "content.me.saved_short": "Enregistré",
+    "content.beta.admin_toggle": "Vous êtes administrateur ?",
+    "content.beta.admin_placeholder": "Code d'accès",
+    "content.beta.admin_cta": "Entrer",
+    "content.beta.admin_err_empty": "Saisissez le code",
+    "content.beta.admin_err_invalid": "Code invalide",
+    "content.beta.admin_err_generic": "Impossible de vérifier le code",
+    "content.beta.admin_ok": "Accès accordé ✓",
+  },
+
+  de: {
+    "content.welcome.subtitle": "Echte Verbindungen, einzigartige Momente.",
+    "content.welcome.cta_register": "Konto erstellen",
+    "content.welcome.cta_login": "Ich habe bereits ein Konto",
+    "content.welcome.terms": "Wenn du fortfährst, akzeptierst du die Bedingungen und die Datenschutzerklärung.",
+    "content.welcome.steps_title": "So funktioniert es",
+    "content.welcome.step1_h": "In Sekunden anmelden",
+    "content.welcome.step1_p": "E-Mail bestätigen und Profil mit Fotos vervollständigen.",
+    "content.welcome.step2_h": "Match & Chat",
+    "content.welcome.step2_p": "Unser Algorithmus findet passende Personen und wählt deine besten Fotos aus.",
+    "content.welcome.trust1": "Identitätsprüfung",
+    "content.welcome.trust2": "Verschlüsselter Chat",
+    "content.welcome.trust3": "DSGVO-konform",
+    "content.welcome.trust4": "Keine Bots",
+    "content.welcome.foot_help": "Hilfe",
+    "content.welcome.foot_faq": "FAQ",
+    "content.welcome.foot_rules": "Community-Regeln",
+    "content.welcome.foot_terms": "Bedingungen",
+    "content.welcome.foot_privacy": "Datenschutz",
+    "content.welcome.foot_contact": "Kontakt",
+    "content.welcome.foot_copy": "© 2026 Aura · Mit ❤ in Spanien gemacht",
+
+    "content.info.help.title": "Hilfe",
+    "content.info.help.hero_title": "Hilfecenter",
+    "content.info.help.hero_sub": "Wir beantworten deine Fragen, damit Aura reibungslos funktioniert.",
+    "content.info.faq.title": "FAQ",
+    "content.info.faq.hero_title": "Häufig gestellte Fragen",
+    "content.info.faq.hero_sub": "Alles, was du wissen musst, nach Themen geordnet.",
+    "content.info.rules.title": "Community-Regeln",
+    "content.info.rules.hero_title": "Community-Regeln",
+    "content.info.rules.hero_sub": "Ein sicherer, respektvoller Raum beginnt bei dir.",
+    "content.info.terms.title": "AGB",
+    "content.info.terms.hero_title": "Nutzungsbedingungen",
+    "content.info.terms.hero_sub": "Die Spielregeln, klar erklärt.",
+    "content.info.privacy.title": "Datenschutz",
+    "content.info.privacy.hero_title": "Datenschutzerklärung",
+    "content.info.privacy.hero_sub": "Wie wir deine Daten schützen, verwenden und respektieren.",
+    "content.info.contact.title": "Kontakt",
+    "content.info.contact.hero_title": "Kontakt",
+    "content.info.contact.hero_sub": "Wir sind nur eine Nachricht entfernt. Wähle deinen Kanal.",
+    "content.pull.pull": "Zum Aktualisieren ziehen",
+    "content.pull.release": "Zum Aktualisieren loslassen",
+    "content.pull.loading": "Aktualisieren…",
+    "content.welcome.rules_prefix": " Bitte lies auch die ",
+    "content.welcome.rules_link": "Community-Regeln",
+    "content.welcome.rules_suffix": ".",
+    "content.theme_card.to_light": "Im hellen Modus anzeigen",
+    "content.theme_card.to_dark": "Im dunklen Modus anzeigen",
+    "content.theme_card.using_dark": "Du verwendest das dunkle Design",
+    "content.theme_card.using_light": "Du verwendest das helle Design",
+    "content.brand.tag": "Echte Verbindungen, einzigartige Momente.",
+    "content.welcome.invite_beta_title": "Aura befindet sich in einer privaten Beta",
+    "content.welcome.invite_beta_desc": "Um Fehler während der Tests zu vermeiden, ist der Zugang nur mit Einladung möglich. Wenn du einen Tester-Code hast, gib ihn unten ein.",
+    "content.welcome.invite_closed_title": "Registrierungen geschlossen",
+    "content.welcome.invite_closed_desc": "Wir akzeptieren derzeit keine neuen Konten. Wenn du einen Einladungscode hast, gib ihn unten ein.",
+    "content.welcome.invite_placeholder": "Einladungscode (z. B. ABCD-1234-EFGH)",
+    "content.welcome.invite_cta": "Mit Einladung eintreten",
+    "content.welcome.invite_empty": "Gib einen Einladungscode ein",
+    "content.welcome.invite_ok": "Code gültig — fahre mit der Registrierung fort",
+    "content.welcome.invite_err_generic": "Ungültiger Code",
+    "content.welcome.invite_err_not_found": "Ungültiger Code",
+    "content.welcome.invite_err_revoked": "Dieser Code wurde widerrufen",
+    "content.welcome.invite_err_expired": "Dieser Code ist abgelaufen",
+    "content.welcome.invite_err_used_up": "Dieser Code wurde bereits maximal oft verwendet",
+    "content.welcome.invite_err_email_mismatch": "Dieser Code gehört zu einer anderen E-Mail",
+    "content.welcome.invite_err_validate": "Code konnte nicht validiert werden",
+    "content.gps.title": "Standort aktivieren",
+    "content.gps.lead": "Aura funktioniert am besten, wenn wir deine tatsächliche Stadt kennen. Mit deiner Erlaubnis zeigen wir zuerst Personen in deiner Nähe.",
+    "content.gps.b1": "Personen in deiner tatsächlichen Nähe",
+    "content.gps.b2": "Genauere Übereinstimmungen nach Entfernung",
+    "content.gps.b3": "Erkennung von Identitätsdiebstahl oder gestohlenen Geräten",
+    "content.gps.legal_title": "🔒 Deine Privatsphäre ist geschützt",
+    "content.gps.legal_body": "Wir teilen deinen Standort nur bei Bedarf mit dem Moderationsteam. Du kannst die Berechtigung jederzeit unter Einstellungen → Datenschutz widerrufen. DSGVO-konform.",
+    "content.gps.btn_yes": "Standort aktivieren",
+    "content.gps.btn_no": "Nicht jetzt",
+    "content.gps.ok": "Standort aktiviert 📍",
+    "content.gps.dismissed": "Du kannst ihn später in den Einstellungen aktivieren",
+    "content.gps.err_denied": "Du hast den Standort im Browser blockiert. Aktiviere ihn über das Schloss 🔒 neben der URL.",
+    "content.gps.err_generic": "Standort konnte nicht ermittelt werden. Versuche es später erneut.",
+    "content.gps.read_privacy": "Datenschutzerklärung lesen",
+    "content.gps.read_terms": "Bedingungen lesen",
+    "content.gps.close_aria": "Schließen",
+    "content.gps.nearby_off_title": "Dein Standort ist deaktiviert",
+    "content.gps.nearby_off_lead": "Um Personen wirklich in deiner Nähe zu sehen und in den Suchergebnissen anderer aufzutauchen, aktiviere den Standort.",
+    "content.gps.nearby_off_cta": "Standort aktivieren",
+    "content.me.item_gps": "Standort (GPS)",
+    "content.me.item_gps_on": "Berechtigung aktiv · tippen zum Widerrufen",
+    "content.me.item_gps_off": "Berechtigung nicht erteilt",
+    "content.gps.revoke_confirm_title": "Standortberechtigung widerrufen",
+    "content.gps.revoke_confirm_body": "Wir verwenden deinen Standort nicht mehr. Du kannst ihn später erneut aktivieren. Bestätigen?",
+    "content.gps.revoke_warn_title": "Vor dem Widerruf zu beachten",
+    "content.gps.revoke_warn_body": "Ohne Standortberechtigung können Funktionen wie <b>„In der Nähe“</b>, der Entfernungsfilter und Näheempfehlungen ausfallen oder Personen und Orte anzeigen, die nicht deiner tatsächlichen Umgebung entsprechen. Du kannst die Berechtigung jederzeit wieder aktivieren. Mit dem Widerruf fortfahren?",
+    "content.gps.revoke_warn_continue": "Ja, fortfahren und widerrufen",
+    "content.gps.revoke_yes": "Widerrufen",
+    "content.gps.revoke_no": "Abbrechen",
+    "content.gps.revoked_ok": "Standortberechtigung widerrufen",
+    "content.gps.revoked_err": "Berechtigung konnte nicht widerrufen werden",
+    "content.gps.reprompt": "Standort aktivieren",
+    "content.desktop.point1": "Verifizierte Profile",
+    "content.desktop.point2": "Privater & sicherer Chat",
+    "content.desktop.point3": "Hetero- & LGBTQ+-Bereich",
+    "content.desktop.point4": "Intelligentes Matching",
+    "content.desktop.card1_badge": "✨ Neu",
+    "content.desktop.card1_title": "Wähle deine besten Fotos",
+    "content.desktop.card1_sub": "Auras KI wählt das beste Titelbild.",
+    "content.desktop.card2_title": "Intelligente Matches nach deinen Interessen",
+    "content.desktop.card3_title": "Hetero · LGBTQ+",
+    "content.desktop.card3_sub": "Wechsle den Bereich jederzeit in den Einstellungen.",
+    "content.tabs.discover": "Entdecken",
+    "content.tabs.search": "Suche",
+    "content.tabs.me": "Ich",
+    "content.me.edit_button": "Bearbeiten",
+    "content.me.group_account": "Konto",
+    "content.me.group_prefs": "Einstellungen",
+    "content.me.group_privacy": "Datenschutz und Sicherheit",
+    "content.me.group_support": "Support",
+    "content.me.group_danger": "Konto",
+    "content.me.item_edit_profile": "Profil bearbeiten",
+    "content.me.item_photos": "Meine Fotos",
+    "content.me.item_verify": "Konto verifizieren",
+    "content.me.item_subs": "Abonnement",
+    "content.me.item_filters": "Entdeckungsfilter",
+    "content.me.item_zone": "Zone ändern",
+    "content.me.item_notif": "Benachrichtigungen",
+    "content.me.item_theme": "Thema",
+    "content.me.theme_light": "Hell",
+    "content.me.theme_dark": "Dunkel",
+    "content.me.item_lang": "Sprache",
+    "content.me.item_lang_sub": "Deutsch",
+    "content.me.item_invisible": "Unsichtbarer Modus",
+    "content.me.item_security": "Passwort & 2FA",
+    "content.me.item_blocked": "Blockierte Nutzer",
+    "content.me.item_devices": "Aktive Geräte",
+    "content.me.item_data": "Meine Daten herunterladen",
+    "content.me.item_help": "Hilfe-Center",
+    "content.me.item_faq": "FAQ",
+    "content.me.item_contact": "Kontakt",
+    "content.me.item_terms": "Bedingungen und Datenschutz",
+    "content.me.item_about": "Über Aura",
+    "content.me.item_logout": "Abmelden",
+    "content.me.item_delete": "Konto löschen",
+    "content.me.lang_saved": "Sprache aktualisiert",
+    "content.me.close": "Schließen",
+    "content.me.cancel": "Abbrechen",
+    "content.beta.admin_toggle": "Bist du Administrator?",
+    "content.beta.admin_placeholder": "Zugangscode",
+    "content.beta.admin_cta": "Weiter",
+    "content.beta.admin_err_empty": "Gib den Code ein",
+    "content.beta.admin_err_invalid": "Ungültiger Code",
+    "content.beta.admin_err_generic": "Code konnte nicht überprüft werden",
+    "content.beta.admin_ok": "Zugang gewährt ✓",
+  },
+
+  it: {
+    "content.welcome.subtitle": "Connessioni reali, momenti unici.",
+    "content.welcome.cta_register": "Crea un account",
+    "content.welcome.cta_login": "Ho già un account",
+    "content.welcome.terms": "Continuando accetti i Termini e la Privacy Policy.",
+    "content.welcome.steps_title": "Come funziona",
+    "content.welcome.step1_h": "Registrati in pochi secondi",
+    "content.welcome.step2_h": "Match e chat",
+    "content.welcome.trust1": "Verifica identità",
+    "content.welcome.trust2": "Chat cifrata",
+    "content.welcome.trust3": "Conforme al GDPR",
+    "content.welcome.trust4": "Niente bot",
+    "content.welcome.foot_help": "Aiuto",
+    "content.welcome.foot_faq": "FAQ",
+    "content.welcome.foot_rules": "Regole della community",
+    "content.welcome.foot_terms": "Termini",
+    "content.welcome.foot_privacy": "Privacy",
+    "content.welcome.foot_contact": "Contatto",
+    "content.welcome.foot_copy": "© 2026 Aura · Fatto con ❤ in Spagna",
+
+    "content.info.help.title": "Aiuto",
+    "content.info.help.hero_title": "Centro assistenza",
+    "content.info.help.hero_sub": "Rispondiamo alle tue domande così Aura è un'esperienza senza intoppi.",
+    "content.info.faq.title": "FAQ",
+    "content.info.faq.hero_title": "Domande frequenti",
+    "content.info.faq.hero_sub": "Tutto ciò che devi sapere, organizzato per tema.",
+    "content.info.rules.title": "Regole della community",
+    "content.info.rules.hero_title": "Regole della community",
+    "content.info.rules.hero_sub": "Uno spazio sicuro e rispettoso inizia da te.",
+    "content.info.terms.title": "Termini e condizioni",
+    "content.info.terms.hero_title": "Termini e condizioni",
+    "content.info.terms.hero_sub": "Le regole del gioco, spiegate chiaramente.",
+    "content.info.privacy.title": "Informativa privacy",
+    "content.info.privacy.hero_title": "Informativa sulla privacy",
+    "content.info.privacy.hero_sub": "Come proteggiamo, usiamo e rispettiamo i tuoi dati.",
+    "content.info.contact.title": "Contatto",
+    "content.info.contact.hero_title": "Contatto",
+    "content.info.contact.hero_sub": "Siamo a un messaggio di distanza. Scegli il canale che preferisci.",
+    "content.pull.pull": "Trascina per aggiornare",
+    "content.pull.release": "Rilascia per aggiornare",
+    "content.pull.loading": "Aggiornamento…",
+    "content.welcome.rules_prefix": " Consulta anche le ",
+    "content.welcome.rules_link": "regole della community",
+    "content.welcome.rules_suffix": ".",
+    "content.theme_card.to_light": "Visualizza in modalità chiara",
+    "content.theme_card.to_dark": "Visualizza in modalità scura",
+    "content.theme_card.using_dark": "Stai usando il tema scuro",
+    "content.theme_card.using_light": "Stai usando il tema chiaro",
+    "content.brand.tag": "Connessioni reali, momenti unici.",
+    "content.welcome.invite_beta_title": "Aura è in beta privata",
+    "content.welcome.invite_beta_desc": "Per evitare problemi durante i test, l'accesso è solo su invito. Se hai un codice tester, inseriscilo qui sotto.",
+    "content.welcome.invite_closed_title": "Registrazioni chiuse",
+    "content.welcome.invite_closed_desc": "In questo momento non accettiamo nuovi account. Se hai un codice di invito, inseriscilo qui sotto.",
+    "content.welcome.invite_placeholder": "Codice di invito (es: ABCD-1234-EFGH)",
+    "content.welcome.invite_cta": "Entra con invito",
+    "content.welcome.invite_empty": "Inserisci un codice di invito",
+    "content.welcome.invite_ok": "Codice valido — continua la registrazione",
+    "content.welcome.invite_err_generic": "Codice non valido",
+    "content.welcome.invite_err_not_found": "Codice non valido",
+    "content.welcome.invite_err_revoked": "Questo codice è stato revocato",
+    "content.welcome.invite_err_expired": "Questo codice è scaduto",
+    "content.welcome.invite_err_used_up": "Questo codice è già stato usato il numero massimo di volte",
+    "content.welcome.invite_err_email_mismatch": "Questo codice appartiene a un'altra email",
+    "content.welcome.invite_err_validate": "Impossibile convalidare il codice",
+    "content.gps.title": "Attiva la tua posizione",
+    "content.gps.lead": "Aura funziona meglio quando conosce la tua città reale. Con il tuo permesso, mostreremo prima persone vicino a te.",
+    "content.gps.b1": "Persone vicino alla tua posizione reale",
+    "content.gps.b2": "Corrispondenze più precise per vicinanza",
+    "content.gps.b3": "Rilevamento di tentativi di furto d'identità o dispositivi rubati",
+    "content.gps.legal_title": "🔒 La tua privacy è protetta",
+    "content.gps.legal_body": "Condividiamo la tua posizione con il team di moderazione solo quando necessario. Puoi revocare il permesso in qualsiasi momento da Impostazioni → Privacy. Conforme al GDPR.",
+    "content.gps.btn_yes": "Attiva posizione",
+    "content.gps.btn_no": "Non ora",
+    "content.gps.ok": "Posizione attivata 📍",
+    "content.gps.dismissed": "Puoi attivarla più tardi dalle Impostazioni",
+    "content.gps.err_denied": "Hai bloccato la posizione nel browser. Attivala tramite il lucchetto 🔒 accanto all'URL.",
+    "content.gps.err_generic": "Impossibile ottenere la posizione. Riprova più tardi.",
+    "content.gps.read_privacy": "Leggi l'Informativa sulla privacy",
+    "content.gps.read_terms": "Leggi i Termini",
+    "content.gps.close_aria": "Chiudi",
+    "content.gps.nearby_off_title": "La tua posizione è disattivata",
+    "content.gps.nearby_off_lead": "Per vedere persone realmente vicine a te e apparire nelle ricerche di chi ti è vicino, attiva la posizione.",
+    "content.gps.nearby_off_cta": "Attiva posizione",
+    "content.me.item_gps": "Posizione (GPS)",
+    "content.me.item_gps_on": "Permesso attivo · tocca per revocare",
+    "content.me.item_gps_off": "Permesso non concesso",
+    "content.gps.revoke_confirm_title": "Revoca il permesso di posizione",
+    "content.gps.revoke_confirm_body": "Smetteremo di usare la tua posizione. Potrai riattivarla più tardi. Confermi?",
+    "content.gps.revoke_warn_title": "Prima di revocare, considera",
+    "content.gps.revoke_warn_body": "Senza il permesso di posizione, funzioni come <b>«Vicino a te»</b>, il filtro per distanza e i suggerimenti per vicinanza potrebbero non funzionare o mostrare persone e luoghi che non corrispondono alla tua zona reale. Potrai riattivare il permesso quando vuoi. Continuare con la revoca?",
+    "content.gps.revoke_warn_continue": "Sì, continua e revoca",
+    "content.gps.revoke_yes": "Revoca",
+    "content.gps.revoke_no": "Annulla",
+    "content.gps.revoked_ok": "Permesso di posizione revocato",
+    "content.gps.revoked_err": "Impossibile revocare il permesso",
+    "content.gps.reprompt": "Attiva posizione",
+    "content.desktop.point1": "Profili verificati",
+    "content.desktop.point2": "Chat privata e sicura",
+    "content.desktop.point3": "Zona Etero e LGBTQ+",
+    "content.desktop.point4": "Match intelligenti",
+    "content.desktop.card1_badge": "✨ Novità",
+    "content.desktop.card1_title": "Scegli le tue foto migliori",
+    "content.desktop.card1_sub": "L'IA di Aura sceglie la copertina migliore.",
+    "content.desktop.card2_title": "Match intelligenti con i tuoi interessi",
+    "content.desktop.card3_title": "Zona Etero · LGBTQ+",
+    "content.desktop.card3_sub": "Cambia la zona di registrazione quando vuoi da Impostazioni.",
+    "content.tabs.discover": "Scopri",
+    "content.tabs.search": "Cerca",
+    "content.tabs.me": "Io",
+    "content.me.edit_button": "Modifica",
+    "content.me.group_account": "Account",
+    "content.me.group_prefs": "Preferenze",
+    "content.me.group_privacy": "Privacy e sicurezza",
+    "content.me.group_support": "Supporto",
+    "content.me.group_danger": "Account",
+    "content.me.item_edit_profile": "Modifica profilo",
+    "content.me.item_photos": "Le mie foto",
+    "content.me.item_verify": "Verifica account",
+    "content.me.item_subs": "Abbonamento",
+    "content.me.item_filters": "Filtri di scoperta",
+    "content.me.item_zone": "Cambia zona",
+    "content.me.item_notif": "Notifiche",
+    "content.me.item_theme": "Tema",
+    "content.me.theme_light": "Chiaro",
+    "content.me.theme_dark": "Scuro",
+    "content.me.item_lang": "Lingua",
+    "content.me.item_lang_sub": "Italiano",
+    "content.me.item_invisible": "Modalità invisibile",
+    "content.me.item_security": "Password e 2FA",
+    "content.me.item_blocked": "Utenti bloccati",
+    "content.me.item_devices": "Dispositivi attivi",
+    "content.me.item_data": "Scarica i miei dati",
+    "content.me.item_help": "Centro assistenza",
+    "content.me.item_contact": "Contatto",
+    "content.me.item_terms": "Termini e privacy",
+    "content.me.item_about": "Informazioni su Aura",
+    "content.me.item_logout": "Esci",
+    "content.me.item_delete": "Elimina account",
+    "content.me.lang_saved": "Lingua aggiornata",
+    "content.me.close": "Chiudi",
+    "content.me.cancel": "Annulla",
+    "content.beta.admin_toggle": "Sei un amministratore?",
+    "content.beta.admin_placeholder": "Codice di accesso",
+    "content.beta.admin_cta": "Entra",
+    "content.beta.admin_err_empty": "Inserisci il codice",
+    "content.beta.admin_err_invalid": "Codice non valido",
+    "content.beta.admin_err_generic": "Impossibile verificare il codice",
+    "content.beta.admin_ok": "Accesso concesso ✓",
+  },
+
+  pt: {
+    "content.welcome.subtitle": "Conexões reais, momentos únicos.",
+    "content.welcome.cta_register": "Criar conta",
+    "content.welcome.cta_login": "Já tenho conta",
+    "content.welcome.terms": "Ao continuar aceita os Termos e a Política de Privacidade.",
+    "content.welcome.steps_title": "Como funciona",
+    "content.welcome.step1_h": "Registe-se em segundos",
+    "content.welcome.step2_h": "Match e conversa",
+    "content.welcome.trust1": "Verificação de identidade",
+    "content.welcome.trust2": "Chat cifrado",
+    "content.welcome.trust3": "Cumpre RGPD",
+    "content.welcome.trust4": "Sem bots",
+    "content.welcome.foot_help": "Ajuda",
+    "content.welcome.foot_faq": "Perguntas frequentes",
+    "content.welcome.foot_rules": "Normas da comunidade",
+    "content.welcome.foot_terms": "Termos",
+    "content.welcome.foot_privacy": "Privacidade",
+    "content.welcome.foot_contact": "Contacto",
+    "content.welcome.foot_copy": "© 2026 Aura · Feito com ❤ em Espanha",
+
+    "content.info.help.title": "Ajuda",
+    "content.info.help.hero_title": "Centro de ajuda",
+    "content.info.help.hero_sub": "Respondemos às tuas dúvidas para que o Aura seja uma experiência sem atritos.",
+    "content.info.faq.title": "Perguntas frequentes",
+    "content.info.faq.hero_title": "Perguntas frequentes",
+    "content.info.faq.hero_sub": "Tudo o que precisas de saber, organizado por temas.",
+    "content.info.rules.title": "Normas da comunidade",
+    "content.info.rules.hero_title": "Normas da comunidade",
+    "content.info.rules.hero_sub": "Um espaço seguro e respeitoso começa em ti.",
+    "content.info.terms.title": "Termos e condições",
+    "content.info.terms.hero_title": "Termos e condições",
+    "content.info.terms.hero_sub": "As regras do jogo, explicadas de forma clara.",
+    "content.info.privacy.title": "Política de privacidade",
+    "content.info.privacy.hero_title": "Política de privacidade",
+    "content.info.privacy.hero_sub": "Como protegemos, usamos e respeitamos os teus dados.",
+    "content.info.contact.title": "Contacto",
+    "content.info.contact.hero_title": "Contacto",
+    "content.info.contact.hero_sub": "Estamos a uma mensagem. Escolhe o canal que preferires.",
+    "content.pull.pull": "Puxa para atualizar",
+    "content.pull.release": "Solta para atualizar",
+    "content.pull.loading": "A atualizar…",
+    "content.welcome.rules_prefix": " Consulta também as ",
+    "content.welcome.rules_link": "normas da comunidade",
+    "content.welcome.rules_suffix": ".",
+    "content.theme_card.to_light": "Ver no modo claro",
+    "content.theme_card.to_dark": "Ver no modo escuro",
+    "content.theme_card.using_dark": "Estás a usar o tema escuro",
+    "content.theme_card.using_light": "Estás a usar o tema claro",
+    "content.brand.tag": "Conexões reais, momentos únicos.",
+    "content.welcome.invite_beta_title": "O Aura está em beta privado",
+    "content.welcome.invite_beta_desc": "Para evitar falhas durante os testes, o acesso é apenas por convite. Se tem um código de tester, introduza-o abaixo.",
+    "content.welcome.invite_closed_title": "Registos fechados",
+    "content.welcome.invite_closed_desc": "De momento não aceitamos novas contas. Se tem um código de convite, introduza-o abaixo.",
+    "content.welcome.invite_placeholder": "Código de convite (ex: ABCD-1234-EFGH)",
+    "content.welcome.invite_cta": "Entrar com convite",
+    "content.welcome.invite_empty": "Introduza um código de convite",
+    "content.welcome.invite_ok": "Código válido — continue o registo",
+    "content.welcome.invite_err_generic": "Código inválido",
+    "content.welcome.invite_err_not_found": "Código inválido",
+    "content.welcome.invite_err_revoked": "Este código foi revogado",
+    "content.welcome.invite_err_expired": "Este código expirou",
+    "content.welcome.invite_err_used_up": "Este código já foi usado o número máximo de vezes",
+    "content.welcome.invite_err_email_mismatch": "Este código pertence a outro email",
+    "content.welcome.invite_err_validate": "Não foi possível validar o código",
+    "content.gps.title": "Ativa a tua localização",
+    "content.gps.lead": "O Aura funciona melhor quando conhece a tua cidade real. Com a tua permissão, mostraremos primeiro pessoas perto de ti.",
+    "content.gps.b1": "Pessoas perto da tua localização real",
+    "content.gps.b2": "Correspondências mais precisas por proximidade",
+    "content.gps.b3": "Deteção de tentativas de personificação ou dispositivos roubados",
+    "content.gps.legal_title": "🔒 A tua privacidade está protegida",
+    "content.gps.legal_body": "Apenas partilhamos a tua posição com a equipa de moderação quando necessário. Podes revogar a permissão a qualquer momento em Definições → Privacidade. Cumpre o RGPD.",
+    "content.gps.btn_yes": "Ativar localização",
+    "content.gps.btn_no": "Agora não",
+    "content.gps.ok": "Localização ativada 📍",
+    "content.gps.dismissed": "Podes ativá-la mais tarde nas Definições",
+    "content.gps.err_denied": "Bloqueaste a localização no navegador. Ativa-a através do cadeado 🔒 junto ao URL.",
+    "content.gps.err_generic": "Não foi possível obter a tua localização. Tenta novamente mais tarde.",
+    "content.gps.read_privacy": "Ler a Política de privacidade",
+    "content.gps.read_terms": "Ler os Termos",
+    "content.gps.close_aria": "Fechar",
+    "content.gps.nearby_off_title": "A tua localização está desativada",
+    "content.gps.nearby_off_lead": "Para ver pessoas realmente perto de ti e aparecer nas pesquisas de quem está por perto, ativa a localização.",
+    "content.gps.nearby_off_cta": "Ativar localização",
+    "content.me.item_gps": "Localização (GPS)",
+    "content.me.item_gps_on": "Permissão ativa · toque para revogar",
+    "content.me.item_gps_off": "Permissão não concedida",
+    "content.gps.revoke_confirm_title": "Revogar permissão de localização",
+    "content.gps.revoke_confirm_body": "Deixaremos de usar a tua localização. Podes reativá-la mais tarde. Confirmas?",
+    "content.gps.revoke_warn_title": "Antes de revogar, tem em conta",
+    "content.gps.revoke_warn_body": "Sem permissão de localização, funcionalidades como <b>«Perto de ti»</b>, o filtro por distância e as sugestões por proximidade podem deixar de funcionar ou mostrar pessoas e locais que não correspondem à tua zona real. Podes reativar a permissão quando quiseres. Continuar com a revogação?",
+    "content.gps.revoke_warn_continue": "Sim, continuar e revogar",
+    "content.gps.revoke_yes": "Revogar",
+    "content.gps.revoke_no": "Cancelar",
+    "content.gps.revoked_ok": "Permissão de localização revogada",
+    "content.gps.revoked_err": "Não foi possível revogar a permissão",
+    "content.gps.reprompt": "Ativar localização",
+    "content.desktop.point1": "Perfis verificados",
+    "content.desktop.point2": "Chat privado e seguro",
+    "content.desktop.point3": "Zona Hetero e LGBTQ+",
+    "content.desktop.point4": "Matches inteligentes",
+    "content.desktop.card1_badge": "✨ Novo",
+    "content.desktop.card1_title": "Escolhe as tuas melhores fotos",
+    "content.desktop.card1_sub": "A IA do Aura escolhe a melhor capa.",
+    "content.desktop.card2_title": "Matches inteligentes com os teus interesses",
+    "content.desktop.card3_title": "Zona Hetero · LGBTQ+",
+    "content.desktop.card3_sub": "Muda a zona de registo quando quiseres nas Definições.",
+    "content.tabs.discover": "Descobrir",
+    "content.tabs.search": "Pesquisar",
+    "content.tabs.me": "Eu",
+    "content.me.edit_button": "Editar",
+    "content.me.group_account": "Conta",
+    "content.me.group_prefs": "Preferências",
+    "content.me.group_privacy": "Privacidade e segurança",
+    "content.me.group_support": "Suporte",
+    "content.me.group_danger": "Conta",
+    "content.me.item_edit_profile": "Editar perfil",
+    "content.me.item_photos": "As minhas fotos",
+    "content.me.item_verify": "Verificar conta",
+    "content.me.item_subs": "Subscrição",
+    "content.me.item_filters": "Filtros de descoberta",
+    "content.me.item_zone": "Mudar zona",
+    "content.me.item_notif": "Notificações",
+    "content.me.item_theme": "Tema",
+    "content.me.theme_light": "Claro",
+    "content.me.theme_dark": "Escuro",
+    "content.me.item_lang": "Idioma",
+    "content.me.item_lang_sub": "Português",
+    "content.me.item_invisible": "Modo invisível",
+    "content.me.item_security": "Palavra-passe e 2FA",
+    "content.me.item_blocked": "Utilizadores bloqueados",
+    "content.me.item_devices": "Dispositivos ativos",
+    "content.me.item_data": "Descarregar os meus dados",
+    "content.me.item_help": "Centro de ajuda",
+    "content.me.item_contact": "Contacto",
+    "content.me.item_terms": "Termos e privacidade",
+    "content.me.item_about": "Sobre a Aura",
+    "content.me.item_logout": "Terminar sessão",
+    "content.me.item_delete": "Eliminar conta",
+    "content.me.lang_saved": "Idioma atualizado",
+    "content.me.close": "Fechar",
+    "content.me.cancel": "Cancelar",
+    "content.beta.admin_toggle": "És administrador?",
+    "content.beta.admin_placeholder": "Código de acesso",
+    "content.beta.admin_cta": "Entrar",
+    "content.beta.admin_err_empty": "Introduz o código",
+    "content.beta.admin_err_invalid": "Código inválido",
+    "content.beta.admin_err_generic": "Não foi possível verificar o código",
+    "content.beta.admin_ok": "Acesso concedido ✓",
+  },
+};
+
+let currentLang = (typeof localStorage !== "undefined" && localStorage.getItem("aura-lang")) || "es";
+document.documentElement.setAttribute("lang", currentLang);
+
+function T(k) {
+  const map = translations[currentLang] || {};
+  if (map[k] != null) return map[k];
+  return content[k] ?? contentFallback[k] ?? k;
+}
+
+// Devuelve el placeholder de un input de email. Prioridad:
+//   1) Clave específica de la pantalla (si el admin la personalizó).
+//   2) Clave global content.common.email_placeholder (si el admin la personalizó).
+//   3) Valor por defecto de la clave específica (o "tu@email.com").
+// Ese fallback global permite que "Introduce tu correo electrónico" escrito
+// una sola vez se refleje en todos los formularios que aceptan email.
+function emailPlaceholder(specificKey) {
+  const spec  = content[specificKey];
+  const commonAdm = content["content.common.email_placeholder"];
+  if (spec  && spec  !== contentFallback[specificKey])              return spec;
+  if (commonAdm && commonAdm !== contentFallback["content.common.email_placeholder"]) return commonAdm;
+  return spec || commonAdm || contentFallback[specificKey] || "tu@email.com";
+}
+
+function setLanguage(lang) {
+  if (!translations[lang]) lang = "es";
+  currentLang = lang;
+  try { localStorage.setItem("aura-lang", lang); } catch {}
+  document.documentElement.setAttribute("lang", lang);
+  // Sincroniza con el servidor si hay usuario autenticado para que los emails
+  // y notificaciones se envien en el idioma seleccionado.
+  try {
+    if (state && state.user && state.user.id) {
+      fetch("/api/my/lang", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        body: JSON.stringify({ lang }),
+      }).catch(() => {});
+    }
+  } catch {}
+  // Re-render current screen if any
+  try { _rerender(); } catch {}
+  // Reapply lateral desktop panels (bullets, mock cards, theme card, brand tag)
+  // que se generan una sola vez y viven fuera del .screen actual.
+  try { applyContent(); } catch {}
+}
+let publicConfig = { app: {}, payments: {} };
+let _lastContentHash = "";
+let _lastConfigHash = "";
+async function loadPublicConfig() {
+  try {
+    const r = await fetch("/api/public-config", { cache: "no-store" });
+    if (r.ok) {
+      publicConfig = await r.json();
+      // Expose VAPID public key globally so the push-subscribe flow finds it.
+      try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
+    }
+  } catch {}
+}
+async function loadContent() {
+  try {
+    const r = await fetch("/api/content", { cache: "no-store" });
+    if (r.ok) {
+      const data = await r.json();
+      content = Object.assign({}, contentFallback, data);
+    }
+  } catch {}
+  await loadPublicConfig();
+  applyContent();
+}
+// Live-update polling: fetch content + public-config every 4s; when changed,
+// re-apply so admin edits appear in the app in real time.
+// Compare two objects by their key/value pairs after sorting keys, so
+// unrelated order or map iteration differences don't produce false diffs
+// that would cause the app to re-render every poll (visible flicker).
+function _stableStringify(v) {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return JSON.stringify(v);
+  const keys = Object.keys(v).sort();
+  return "{" + keys.map(k => JSON.stringify(k) + ":" + _stableStringify(v[k])).join(",") + "}";
+}
+async function pollLiveConfig() {
+  try {
+    const [cr, pr] = await Promise.all([
+      fetch("/api/content", { cache: "no-store" }),
+      fetch("/api/public-config", { cache: "no-store" }),
+    ]);
+    if (cr.ok) {
+      try {
+        const data = await cr.json();
+        const sig = _stableStringify(data);
+        if (sig !== _lastContentHash) {
+          _lastContentHash = sig;
+          content = Object.assign({}, contentFallback, data);
+          // Rerender first so a fresh .screen-hero exists, then applyContent()
+          // applies inline styles to it. render() also calls applyDesign()
+          // internally, so applyContent() here just refreshes labels + tab
+          // badges + logo tokens without wiping styles.
+          if (typeof _rerender === "function") _rerender();
+          applyContent();
+        }
+      } catch {}
+    }
+    if (pr.ok) {
+      try {
+        const data = await pr.json();
+        const sig = _stableStringify(data);
+        if (sig !== _lastConfigHash) {
+          _lastConfigHash = sig;
+          publicConfig = data;
+          try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
+          if (typeof _rerender === "function") _rerender();
+        }
+      } catch {}
+    }
+  } catch {}
+}
+function startLivePolling() {
+  // Only when tab is visible; also on visibility change to catch up quickly.
+  const tick = () => { if (!document.hidden) pollLiveConfig(); };
+  setInterval(tick, 4000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollLiveConfig(); });
+}
+function applyDesign() {
+  const r = document.documentElement.style;
+  const g = (k, fb) => T(k) || fb;
+  const isDark = (document.documentElement.dataset.theme === "dark");
+  const b1 = g("content.design.brand1", "#ff3b6b");
+  const b2 = g("content.design.brand2", "#ff8a3b");
+  const bg = g("content.design.bg", "");
+  const tx = g("content.design.text", "");
+  const rad = g("content.design.radius", "18");
+  const font = g("content.design.font", "system");
+  const btn = g("content.design.btn_style", "pill");
+  r.setProperty("--brand-1", b1);
+  r.setProperty("--brand-2", b2);
+  r.setProperty("--grad-brand", `linear-gradient(135deg, ${b1}, ${b2})`);
+  r.setProperty("--shadow-brand", `0 10px 30px ${b1}55`);
+  if (!isDark) {
+    if (bg) r.setProperty("--surface", bg);
+    if (tx) r.setProperty("--text", tx);
+  } else {
+    // In dark mode, clear light overrides so [data-theme="dark"] tokens win
+    r.removeProperty("--surface");
+    r.removeProperty("--text");
+  }
+  r.setProperty("--radius", `${parseInt(rad,10)||18}px`);
+  const btnR = btn === "square" ? "10px" : (btn === "soft" ? "14px" : "999px");
+  r.setProperty("--btn-radius", btnR);
+  const fontStack = font === "serif" ? 'Georgia, "Times New Roman", serif'
+    : font === "rounded" ? '"Nunito","Segoe UI Rounded",system-ui,sans-serif'
+    : font === "mono" ? '"SF Mono", Menlo, Consolas, monospace'
+    : '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  r.setProperty("--font", fontStack);
+  document.body && (document.body.style.fontFamily = fontStack);
+
+  // Per-section tokens
+  r.setProperty("--card-radius", (parseInt(g("content.design.card_radius","16"),10)||16) + "px");
+  const cs = g("content.design.card_shadow","medium");
+  const shadow = cs === "none" ? "none"
+    : cs === "soft" ? "0 2px 8px rgba(0,0,0,.05)"
+    : cs === "strong" ? "0 20px 40px rgba(0,0,0,.15)"
+    : "0 8px 24px rgba(0,0,0,.08)";
+  r.setProperty("--card-shadow", shadow);
+  if (!isDark) {
+    r.setProperty("--card-border", g("content.design.card_border","#e5e7eb"));
+    r.setProperty("--tab-bg", g("content.design.tab_bg","#ffffff"));
+    r.setProperty("--tab-inactive", g("content.design.tab_inactive","#9ca3af"));
+  } else {
+    r.removeProperty("--card-border");
+    r.removeProperty("--tab-bg");
+    r.removeProperty("--tab-inactive");
+  }
+  r.setProperty("--tab-active", g("content.design.tab_active", b1));
+  const avs = g("content.design.avatar_shape","circle");
+  r.setProperty("--avatar-radius", avs === "square" ? "8px" : (avs === "rounded" ? "16px" : "50%"));
+  r.setProperty("--profile-accent", g("content.design.profile_accent", b1));
+  r.setProperty("--match-badge", g("content.design.match_badge_color", b1));
+  r.setProperty("--chat-me", g("content.design.chat_bubble_me", b1));
+  r.setProperty("--chat-other", g("content.design.chat_bubble_other","#f1f2f5"));
+  const cbs = g("content.design.chat_bubble_style","rounded");
+  r.setProperty("--chat-radius", cbs === "pill" ? "20px" : (cbs === "square" ? "6px" : "14px"));
+
+  // Hero style
+  const hero = document.querySelector(".screen-hero");
+  let heroStyle = g("content.design.hero_style","gradient");
+  const heroImage = T("content.design.hero_image");
+  const rawSolid = (T("content.design.hero_solid_color") || "").trim();
+  // Helper: is a hex color visually "light" (luminance > 0.6)?
+  const isLightHex = (hex) => {
+    const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex || "");
+    if (!m) return false;
+    let h = m[1];
+    if (h.length === 3) h = h.split("").map(c => c+c).join("");
+    const r = parseInt(h.slice(0,2),16)/255;
+    const g = parseInt(h.slice(2,4),16)/255;
+    const b = parseInt(h.slice(4,6),16)/255;
+    // relative luminance (sRGB, gamma 2.2 approx)
+    const lum = 0.2126*r + 0.7152*g + 0.0722*b;
+    return lum > 0.6;
+  };
+  const heroSolid = rawSolid || bg || "#ffffff";
+  if (hero) {
+    hero.classList.remove("hero-gradient","hero-image","hero-solid","hero-radial","hero-light");
+    hero.classList.add("hero-" + heroStyle);
+    if (heroStyle === "image" && heroImage) {
+      hero.style.background = "";
+      hero.style.backgroundImage = `linear-gradient(180deg,rgba(0,0,0,.3),rgba(0,0,0,.55)), url("${heroImage}")`;
+      hero.style.backgroundSize = "cover";
+      hero.style.backgroundPosition = "center";
+      hero.style.backgroundColor = "";
+    } else if (heroStyle === "solid") {
+      hero.style.backgroundImage = "";
+      hero.style.background = heroSolid;
+      if (isLightHex(heroSolid)) hero.classList.add("hero-light");
+    } else {
+      // gradient (default) or radial: clear inline styles and let CSS apply --grad-brand
+      hero.style.background = "";
+      hero.style.backgroundImage = "";
+      hero.style.backgroundColor = "";
+      // If brand-1 is light-ish, gradient can be pale (e.g. rose) — apply .hero-light too
+      if (isLightHex(b1) && isLightHex(b2)) hero.classList.add("hero-light");
+    }
+  }
+  // Expose as CSS var for stylesheets that want it
+  r.setProperty("--hero-solid", heroSolid);
+
+  // Desktop side backgrounds
+  const sideBg = (mode) => {
+    if (mode === "radial") return `radial-gradient(600px 400px at 30% 30%, ${b1}55, transparent 60%)`;
+    if (mode === "solid") return "var(--surface)";
+    if (mode === "dark") return "linear-gradient(135deg, #14141c, #22222e)";
+    if (mode === "linear") return `linear-gradient(135deg, ${b1}, ${b2})`;
+    return "transparent"; // "none" / default: let the .stage background show through
+  };
+  const sideText = (mode) => ((mode === "solid" || mode === "none") ? "var(--text)" : "#fff");
+  const left = document.querySelector(".stage-side-left");
+  const right = document.querySelector(".stage-side-right");
+  const lmode = g("content.design.side_left_bg","none");
+  const rmode = g("content.design.side_right_bg","none");
+  if (left) { left.style.background = sideBg(lmode); left.style.color = sideText(lmode); }
+  if (right) { right.style.background = sideBg(rmode); right.style.color = sideText(rmode); }
+
+  // ---- Per-section fonts & text colors ----
+  const fontMap = {
+    system: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    serif: 'Georgia, "Times New Roman", serif',
+    rounded: '"Nunito","Segoe UI Rounded",system-ui,sans-serif',
+    mono: '"SF Mono", Menlo, Consolas, monospace',
+  };
+  const resolveFont = (val) => val && fontMap[val] ? fontMap[val] : (val || "");
+  const sections = ["welcome","discover","search","likes","chats","profile","tabbar"];
+  sections.forEach(sec => {
+    const fv = resolveFont(T("content.design.font_" + sec));
+    const tv = T("content.design.text_" + sec);
+    r.setProperty("--font-" + sec, fv || "var(--font)");
+    r.setProperty("--text-" + sec, tv || "var(--text)");
+  });
+  // Extra text colors
+  const muted = T("content.design.text_muted");
+  const heroT = T("content.design.text_hero_title");
+  const heroS = T("content.design.text_hero_sub");
+  if (muted) r.setProperty("--text-soft", muted);
+  // Auto-pick hero title/sub color based on hero background luminance
+  function hexIsDark(hex) {
+    if (!hex || typeof hex !== "string") return false;
+    const m = hex.trim().match(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i);
+    if (!m) return false;
+    let h = m[1];
+    if (h.length === 3) h = h.split("").map(c=>c+c).join("");
+    const rr = parseInt(h.substr(0,2),16), gg = parseInt(h.substr(2,2),16), bb = parseInt(h.substr(4,2),16);
+    return (0.299*rr + 0.587*gg + 0.114*bb) < 140;
+  }
+  const heroIsDark = (heroStyle === "gradient" || heroStyle === "image")
+    || (heroStyle === "solid" && hexIsDark(heroSolid))
+    || (heroStyle === "radial" && hexIsDark(bg));
+  const defTitle = heroIsDark ? "#ffffff" : "#111111";
+  const defSub = heroIsDark ? "rgba(255,255,255,.9)" : "rgba(0,0,0,.6)";
+  r.setProperty("--text-hero-title", heroT || defTitle);
+  r.setProperty("--text-hero-sub", heroS || defSub);
+
+  // Logo tokens
+  const logoSize = parseInt(g("content.design.logo_size","88"),10) || 88;
+  const logoRad = parseInt(g("content.design.logo_radius","22"),10) || 22;
+  r.setProperty("--logo-size", logoSize + "px");
+  r.setProperty("--logo-radius", logoRad + "px");
+  r.setProperty("--logo-color", g("content.design.logo_color","#ffffff"));
+  const lbg = g("content.design.logo_bg","gradient");
+  const lbgVal = lbg === "solid" ? "rgba(255,255,255,.18)"
+    : lbg === "transparent" ? "transparent"
+    : `linear-gradient(135deg, ${b1}, ${b2})`;
+  r.setProperty("--logo-bg", lbgVal);
+}
+
+/* Build the welcome logo inner HTML based on current settings. */
+function buildLogoInnerHTML() {
+  const mode = T("content.design.logo_mode") || "heart";
+  const color = T("content.design.logo_color") || "#ffffff";
+  if (mode === "image") {
+    // Choose a light-mode alternate if configured and current theme is light
+    const theme = document.documentElement.dataset.theme || "dark";
+    const urlLight = T("content.design.logo_image_light") || "";
+    const urlDark = T("content.design.logo_image") || "";
+    const url = (theme === "light" && urlLight) ? urlLight : urlDark;
+    if (url) return `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
+  }
+  if (mode === "emoji") {
+    const em = T("content.design.logo_emoji") || "💘";
+    return `<span style="font-size:calc(var(--logo-size,88px) * .55);line-height:1">${em}</span>`;
+  }
+  if (mode === "initial") {
+    const name = T("content.brand.name") || "A";
+    const init = String(name).trim().charAt(0).toUpperCase() || "A";
+    return `<span style="font-size:calc(var(--logo-size,88px) * .5);font-weight:800;color:${color};line-height:1">${init}</span>`;
+  }
+  // default heart
+  return `<svg viewBox="0 0 24 24" width="52" height="52" fill="${color}"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`;
+}
+
+function applyContent() {
+  applyDesign();
+  // Update tab labels
+  const tabLabels = {
+    discover: T("content.tabs.discover"), search: T("content.tabs.search"),
+    likes: T("content.tabs.likes"), chats: T("content.tabs.chats"), me: T("content.tabs.me"),
+  };
+  document.querySelectorAll("#tabbar .tab").forEach(b => {
+    const key = b.getAttribute("data-tab");
+    if (tabLabels[key]) {
+      const span = b.querySelector("span");
+      if (span) span.textContent = tabLabels[key];
+      b.setAttribute("aria-label", tabLabels[key]);
+    }
+  });
+  // Update desktop side panel
+  const brandName = document.querySelector(".stage-side-left .brand-name");
+  if (brandName) brandName.textContent = T("content.brand.name");
+  const brandTag = document.querySelector(".stage-side-left .brand-tag");
+  if (brandTag) brandTag.textContent = T("content.brand.tag");
+  // Sync desktop sidebar logo with the same tokens used on the welcome hero
+  const sideLogo = document.getElementById("sideBrandLogo");
+  if (sideLogo) {
+    const mode = T("content.design.logo_mode") || "heart";
+    const color = T("content.design.logo_color") || "#ff3b6b";
+    const bgMode = T("content.design.logo_bg") || "gradient";
+    const b1c = T("content.design.brand1") || "#ff3b6b";
+    const b2c = T("content.design.brand2") || "#ff8a3b";
+    const bgVal = bgMode === "solid" ? "rgba(255,255,255,.18)"
+      : bgMode === "transparent" ? "transparent"
+      : `linear-gradient(135deg, ${b1c}, ${b2c})`;
+    // Reuse the same size/radius as the welcome hero logo but scaled down for the sidebar
+    const rawSize = parseInt(T("content.design.logo_size") || "88", 10) || 88;
+    const size = Math.max(40, Math.round(rawSize * 0.7));
+    const radius = parseInt(T("content.design.logo_radius") || "22", 10) || 22;
+    let inner = "";
+    if (mode === "image" && (T("content.design.logo_image") || T("content.design.logo_image_light"))) {
+      const theme = document.documentElement.dataset.theme || "dark";
+      const urlLight = T("content.design.logo_image_light") || "";
+      const urlDark = T("content.design.logo_image") || "";
+      const url = (theme === "light" && urlLight) ? urlLight : (urlDark || urlLight);
+      inner = `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
+    } else if (mode === "emoji") {
+      inner = `<span style="font-size:${Math.round(size*.55)}px;line-height:1">${T("content.design.logo_emoji") || "💘"}</span>`;
+    } else if (mode === "initial") {
+      const init = String(T("content.brand.name") || "A").trim().charAt(0).toUpperCase() || "A";
+      inner = `<span style="font-size:${Math.round(size*.5)}px;font-weight:800;color:${color};line-height:1">${init}</span>`;
+    } else {
+      // Heart with brand gradient fill by default
+      inner = `<svg viewBox="0 0 100 100" width="${Math.round(size*.7)}" height="${Math.round(size*.7)}" aria-hidden="true">
+        <defs><linearGradient id="sideLg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="${b1c}"/><stop offset="1" stop-color="${b2c}"/>
+        </linearGradient></defs>
+        <path fill="url(#sideLg)" d="M50 88 C20 68 8 48 8 30 A22 22 0 0 1 50 22 A22 22 0 0 1 92 30 C92 48 80 68 50 88Z"/>
+      </svg>`;
+    }
+    sideLogo.innerHTML = inner;
+    sideLogo.style.width = size + "px";
+    sideLogo.style.height = size + "px";
+    sideLogo.style.borderRadius = radius + "px";
+    sideLogo.style.background = bgVal;
+    sideLogo.style.display = "flex";
+    sideLogo.style.alignItems = "center";
+    sideLogo.style.justifyContent = "center";
+    sideLogo.style.overflow = "hidden";
+    sideLogo.style.color = color;
+    sideLogo.style.marginBottom = "12px";
+  }
+  const pts = document.querySelectorAll(".stage-side-left .brand-points li");
+  const values = [T("content.desktop.point1"), T("content.desktop.point2"), T("content.desktop.point3"), T("content.desktop.point4")];
+  pts.forEach((li, i) => {
+    if (values[i]) {
+      // preserve leading span icon
+      const icon = li.querySelector("span");
+      li.textContent = "";
+      if (icon) li.appendChild(icon);
+      li.appendChild(document.createTextNode(" " + values[i]));
+    }
+  });
+  // Right-side mock cards (fully editable from admin)
+  const setNodeText = (id, val) => {
+    const n = document.getElementById(id);
+    if (!n) return;
+    if (val && String(val).trim()) { n.textContent = val; n.hidden = false; n.style.display = ""; }
+    else { n.hidden = true; n.style.display = "none"; }
+  };
+  const hideCardIfEmpty = (cardId, textIds) => {
+    const card = document.getElementById(cardId);
+    if (!card) return;
+    const anyVisible = textIds.some(id => {
+      const v = T("content.desktop." + id);
+      return v && String(v).trim();
+    });
+    card.style.display = anyVisible ? "" : "none";
+  };
+  setNodeText("mockBadge1", T("content.desktop.card1_badge"));
+  setNodeText("mockTitle1", T("content.desktop.card1_title"));
+  setNodeText("mockSub1",   T("content.desktop.card1_sub"));
+  hideCardIfEmpty("mockCard1", ["card1_badge","card1_title","card1_sub"]);
+  setNodeText("mockTitle2", T("content.desktop.card2_title"));
+  const avatars = document.querySelectorAll("#mockAvatars span");
+  const av = [T("content.desktop.card2_avatar1"), T("content.desktop.card2_avatar2"), T("content.desktop.card2_avatar3")];
+  avatars.forEach((sp, i) => {
+    if (av[i]) { sp.style.backgroundImage = `url("${av[i]}")`; sp.style.display = ""; }
+    else { sp.style.display = "none"; }
+  });
+  hideCardIfEmpty("mockCard2", ["card2_title","card2_avatar1","card2_avatar2","card2_avatar3"]);
+  setNodeText("mockTitle3", T("content.desktop.card3_title"));
+  setNodeText("mockSub3",   T("content.desktop.card3_sub"));
+  hideCardIfEmpty("mockCard3", ["card3_title","card3_sub"]);
+  // Refresca la tarjeta lateral del tema (título/subtítulo) al cambiar idioma.
+  try { if (typeof paintThemeBackground === "function") paintThemeBackground(); } catch {}
+}
+
+/* ---------- State ---------- */
+const state = {
+  // Rehidratamos la sesión guardada para que el heartbeat/SSE arranque
+  // aunque el usuario aterrice directo en la pantalla de bloqueo.
+  user: (() => { try { return JSON.parse(localStorage.getItem("aura-session") || "null") || null; } catch { return null; } })(),
+  _prev_user: null,
+  zone: null, // 'hetero' | 'lgtb'
+  theme: localStorage.getItem("aura-theme") || "dark",
+  currentTab: "discover",
+  currentTag: null,
+  filters: {
+    ageMin: 21, ageMax: 40, distance: 50,
+    genders: ["Todos"], onlyVerified: false, onlyOnline: false,
+  },
+  favorites: new Set(),
+  myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
+  cardIndex: 0,
+  chatOpen: null,
+  registration: {
+    email: "", code: "", zone: null,
+    name: "", birthDate: "1998-05-14", gender: "", orientation: "",
+    city: "Madrid", province: "Madrid", country: "España",
+    height: 172, weight: 68, ethnicity: "",
+    description: "", phone: "", photos: [],
+  },
+};
+
+/* ---------- Real-chat API helper ---------- */
+const chatApi = {
+  headers() {
+    const h = { "Content-Type": "application/json" };
+    if (state.user && state.user.id) h["X-User-Id"] = String(state.user.id);
+    return h;
+  },
+  async ensure() {
+    if (!state.user || !state.user.email) return null;
+    if (state.user.id) return state.user;
+    const r = await fetch("/api/my/ensure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: state.user.email,
+        name: state.user.name || "",
+        photo: state.user.photo || "",
+        zone: state.zone || "hetero",
+      }),
+    });
+    if (r.status === 403) {
+      let msg = "Tu cuenta no puede iniciar sesión.";
+      let d = null;
+      try { d = await r.json(); if (d?.reason) msg = d.reason; } catch {}
+      if (d && d.error === "access_locked") {
+        try { showPrivateBetaScreen({ email: state.user && state.user.email }); }
+        catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4200); render(screenWelcome); }
+        return null;
+      }
+      if (d && d.user_id) {
+        state.user = {
+          id: d.user_id,
+          name: d.user_name || (state.user && state.user.name) || "",
+          email: d.user_email || (state.user && state.user.email) || "",
+          photo: (state.user && state.user.photo) || "",
+        };
+        try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      }
+      try { showBlockedAccount(msg, {
+        keepSession: !!(d && d.user_id),
+        kind: d?.status || (d?.error && d.error.replace("account_","").replace("ip_","ip")) || null,
+        reason: d?.reason || msg,
+        email: state.user && state.user.email,
+        untilDate: d?.expires_at || null,
+      }); } catch { toast(msg); }
+      return null;
+    }
+    if (!r.ok) return null;
+    const data = await r.json();
+    if (data && data.user && data.user.id) {
+      state.user.id = data.user.id;
+      state.user.photo = data.user.photo_url || state.user.photo;
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+    }
+    return state.user;
+  },
+  async ensurePeer(u) {
+    // Create/lookup a peer user by (synthetic) email so mock cards work with real DB.
+    const em = u.email || `peer_${(u.name || "user").toLowerCase().replace(/[^a-z0-9]/g,"")}_${u.id ?? Math.abs((u.name||"x").split("").reduce((a,c)=>a+c.charCodeAt(0),0))}@aura.local`;
+    const r = await fetch("/api/my/ensure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: em, name: u.name || "Usuario", photo: u.photo || "", zone: state.zone || "hetero" }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return data.user;
+  },
+  async openConversation(peer) {
+    await this.ensure();
+    const peerUser = peer.id && Number.isFinite(peer.id) ? peer : await this.ensurePeer(peer);
+    if (!peerUser || !peerUser.id) return null;
+    const r = await fetch("/api/my/conversations", {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ peer_id: peerUser.id }),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    return { id: data.id, peer: peerUser };
+  },
+  async listConversations() {
+    await this.ensure();
+    const r = await fetch("/api/my/conversations", { headers: this.headers(), cache: "no-store" });
+    if (!r.ok) return [];
+    return await r.json();
+  },
+  async fetchMessages(cid, afterId = 0) {
+    const r = await fetch(`/api/my/messages?conversation_id=${cid}&after_id=${afterId}`, { headers: this.headers(), cache: "no-store" });
+    if (!r.ok) return { messages: [] };
+    return await r.json();
+  },
+  async sendMessage(cid, body, mediaType = "text", mediaUrl = null) {
+    const r = await fetch("/api/my/messages", {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ conversation_id: cid, body, media_type: mediaType, media_url: mediaUrl }),
+    });
+    if (!r.ok) return null;
+    return await r.json();
+  },
+  async heartbeat() {
+    if (!state.user || !state.user.id) return;
+    try { await fetch("/api/my/heartbeat", { method: "POST", headers: this.headers() }); } catch {}
+  },
+  async offline() {
+    if (!state.user || !state.user.id) return;
+    try {
+      // Use sendBeacon so it works during page unload
+      if (navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({ uid: state.user.id })], { type: "application/json" });
+        navigator.sendBeacon("/api/my/offline", blob);
+      } else {
+        await fetch("/api/my/offline", { method: "POST", headers: this.headers(), keepalive: true });
+      }
+    } catch {}
+  },
+};
+
+/* ============================================================
+   GPS opcional con consentimiento RGPD
+   ============================================================
+   - Muestra un modal profesional la 1ª vez tras login pidiendo
+     permiso (con explicación de finalidad + política).
+   - Si el usuario acepta, dispara navigator.geolocation.watchPosition
+     y envía cada actualización a /api/my/gps/report (debounced 60 s).
+   - El consentimiento se guarda en BD (art. 7 RGPD).
+   - Se puede revocar desde Ajustes → Privacidad.
+   ============================================================ */
+const GPS = {
+  _watchId: null,
+  _lastSent: 0,
+  _lastCoords: null,
+  _prefKey: () => "aura.gps.asked." + (state.user?.id || "anon"),
+  hasAsked() { try { return localStorage.getItem(this._prefKey()) === "1"; } catch { return false; } },
+  markAsked() { try { localStorage.setItem(this._prefKey(), "1"); } catch {} },
+  async fetchState() {
+    if (!state.user?.id) return null;
+    try {
+      const r = await fetch("/api/my/gps/state", { headers: { "X-User-Id": String(state.user.id) }, cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async sendConsent(granted) {
+    if (!state.user?.id) return false;
+    try {
+      const r = await fetch("/api/my/gps/consent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        body: JSON.stringify({ granted }),
+      });
+      return r.ok;
+    } catch { return false; }
+  },
+  async report(pos) {
+    if (!state.user?.id || !pos?.coords) return;
+    const now = Date.now();
+    // Debounce a 1 envío / 60 s salvo primer envío
+    if (this._lastSent && now - this._lastSent < 60_000) return;
+    // Ignorar si no ha cambiado significativamente (<30 m aprox)
+    if (this._lastCoords) {
+      const dLat = Math.abs(pos.coords.latitude  - this._lastCoords.latitude);
+      const dLng = Math.abs(pos.coords.longitude - this._lastCoords.longitude);
+      if (dLat < 0.0003 && dLng < 0.0003 && this._lastSent && now - this._lastSent < 5*60_000) return;
+    }
+    this._lastSent = now;
+    this._lastCoords = pos.coords;
+    try {
+      await fetch("/api/my/gps/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        body: JSON.stringify({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy || null,
+          heading: pos.coords.heading || null,
+          speed: pos.coords.speed || null,
+        }),
+      });
+    } catch {}
+  },
+  startWatching() {
+    if (this._watchId != null || !("geolocation" in navigator)) return;
+    try {
+      this._watchId = navigator.geolocation.watchPosition(
+        (pos) => this.report(pos),
+        (err) => { /* silencioso; el usuario puede haber revocado en el navegador */
+          if (err && err.code === 1) this.stopWatching();
+        },
+        { enableHighAccuracy: true, maximumAge: 30_000, timeout: 20_000 }
+      );
+      // Envía una posición al minimizar/cerrar la pestaña, para que en admin
+      // aparezca la última posición conocida aunque el usuario cierre la app.
+      // Los navegadores móviles pausan watchPosition en background — con este
+      // "flush" al pasar a hidden capturamos la posición final antes de perder
+      // el evento. Fetch usa keepalive para que sobreviva al unload.
+      if (!this._visListenerBound) {
+        this._visListenerBound = true;
+        const flush = () => {
+          if (!("geolocation" in navigator) || !state.user?.id) return;
+          if (document.visibilityState !== "hidden") return;
+          try {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => this._reportKeepalive(pos),
+              () => {},
+              { enableHighAccuracy: false, maximumAge: 60_000, timeout: 5_000 }
+            );
+          } catch {}
+        };
+        document.addEventListener("visibilitychange", flush);
+        window.addEventListener("pagehide", flush);
+      }
+    } catch {}
+  },
+  async _reportKeepalive(pos) {
+    if (!state.user?.id || !pos?.coords) return;
+    try {
+      // fetch keepalive permite que la petición termine aunque la pestaña se
+      // esté descargando (unload). Máx 64 KB — suficiente para un JSON GPS.
+      await fetch("/api/my/gps/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        body: JSON.stringify({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy || null,
+          heading: pos.coords.heading || null,
+          speed: pos.coords.speed || null,
+          bg: true,
+        }),
+        keepalive: true,
+      });
+      this._lastSent = Date.now();
+      this._lastCoords = pos.coords;
+    } catch {}
+  },
+  stopWatching() {
+    if (this._watchId != null && "geolocation" in navigator) {
+      try { navigator.geolocation.clearWatch(this._watchId); } catch {}
+    }
+    this._watchId = null;
+  },
+  async requestBrowserPermission() {
+    return new Promise((resolve) => {
+      if (!("geolocation" in navigator)) return resolve({ ok: false, err: "unsupported" });
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ ok: true, pos }),
+        (err) => resolve({ ok: false, err: err && err.code === 1 ? "denied" : "error" }),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15_000 }
+      );
+    });
+  },
+  /* --------- Lector de Política/Términos apilado sobre el modal ---------
+     Renderiza screenInfoPrivacy / screenInfoTerms dentro de un overlay
+     independiente del router. El modal de consentimiento sigue vivo debajo;
+     al cerrar el lector con "Atrás" (o el gesto/tap fuera) volvemos al
+     modal sin haber navegado, evitando así regresar a la pantalla de
+     bienvenida u otra ruta previa.
+  */
+  _openReaderOverlay(screenFn) {
+    // Ocultamos el modal principal para que el lector se lea a pantalla
+    // completa, pero NO lo desmontamos: al cerrar el lector lo re-mostramos
+    // exactamente como estaba (opciones intactas, sin haber marcado "asked").
+    const modal  = document.querySelector(".gps-consent-modal");
+    const scrim  = document.querySelector(".gps-consent-scrim");
+    if (modal) modal.style.visibility = "hidden";
+    if (scrim) scrim.style.visibility = "hidden";
+
+    const reader = document.createElement("div");
+    reader.className = "gps-reader-overlay";
+    reader.innerHTML = `
+      <div class="gps-reader-top">
+        <button type="button" class="gps-reader-back" aria-label="${T("content.gps.close_aria")}">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+      </div>
+      <div class="gps-reader-body"></div>
+    `;
+    document.body.appendChild(reader);
+    try { screenFn(reader.querySelector(".gps-reader-body")); } catch {}
+    requestAnimationFrame(() => reader.classList.add("open"));
+
+    const closeReader = () => {
+      reader.classList.remove("open");
+      setTimeout(() => {
+        reader.remove();
+        if (modal) modal.style.visibility = "";
+        if (scrim) scrim.style.visibility = "";
+      }, 200);
+    };
+    reader.querySelector(".gps-reader-back").onclick = closeReader;
+    // Los enlaces internos entre Política ↔ Términos también deben quedarse
+    // dentro del overlay: los reinterpretamos.
+    reader.addEventListener("click", (ev) => {
+      const a = ev.target.closest("a[data-goto], a.legal-link");
+      if (!a) return;
+      const goto = a.dataset.goto || "";
+      if (goto === "privacy" || goto === "terms" || goto === "kyc") {
+        ev.preventDefault();
+        const fn = goto === "privacy" ? (typeof screenInfoPrivacy === "function" ? screenInfoPrivacy : null)
+                 : goto === "terms"   ? (typeof screenInfoTerms   === "function" ? screenInfoTerms   : null)
+                 : goto === "kyc"     ? (typeof screenInfoKycPolicy === "function" ? screenInfoKycPolicy : null)
+                 : null;
+        if (!fn) return;
+        const body = reader.querySelector(".gps-reader-body");
+        body.innerHTML = "";
+        try { fn(body); } catch {}
+        body.scrollTop = 0;
+      }
+    });
+    // Hardware / gesto "atrás" del navegador → cerrar el lector, no navegar.
+    try {
+      history.pushState({ gpsReader: true }, "");
+      const onPop = () => { window.removeEventListener("popstate", onPop); closeReader(); };
+      window.addEventListener("popstate", onPop);
+    } catch {}
+  },
+  /* --------- Modal profesional de consentimiento (i18n) --------- */
+  showPrompt() {
+    // Evita duplicados
+    if (document.querySelector(".gps-consent-modal")) return;
+    const scrim = document.createElement("div");
+    scrim.className = "gps-consent-scrim";
+    const modal = document.createElement("div");
+    modal.className = "gps-consent-modal";
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    modal.innerHTML = `
+      <div class="gps-consent-head">
+        <div class="gps-consent-ic">📍</div>
+        <h3 class="gps-consent-title">${T("content.gps.title")}</h3>
+      </div>
+      <p class="gps-consent-lead">${T("content.gps.lead")}</p>
+      <ul class="gps-consent-benefits">
+        <li>${T("content.gps.b1")}</li>
+        <li>${T("content.gps.b2")}</li>
+        <li>${T("content.gps.b3")}</li>
+      </ul>
+      <div class="gps-consent-legal">
+        <strong>${T("content.gps.legal_title")}</strong>
+        <p>${T("content.gps.legal_body")}</p>
+        <p class="gps-consent-links">
+          <a href="#" class="gps-consent-link" data-goto="privacy">${T("content.gps.read_privacy")}</a>
+          <span aria-hidden="true"> · </span>
+          <a href="#" class="gps-consent-link" data-goto="terms">${T("content.gps.read_terms")}</a>
+        </p>
+      </div>
+      <div class="gps-consent-actions">
+        <button type="button" class="btn btn-ghost gps-consent-no">${T("content.gps.btn_no")}</button>
+        <button type="button" class="btn btn-primary gps-consent-yes">${T("content.gps.btn_yes")}</button>
+      </div>
+      <button type="button" class="gps-consent-x" aria-label="${T("content.gps.close_aria")}">×</button>
+    `;
+    document.body.appendChild(scrim);
+    document.body.appendChild(modal);
+    requestAnimationFrame(() => { scrim.classList.add("open"); modal.classList.add("open"); });
+    const close = (afterMs = 0) => {
+      modal.classList.remove("open"); scrim.classList.remove("open");
+      setTimeout(() => { modal.remove(); scrim.remove(); }, afterMs || 220);
+    };
+    // V442: cerrar sin decidir NO marca como "asked" → reaparece al próximo
+    //       login mientras el GPS siga inactivo (el usuario debe activarlo
+    //       explícitamente para dejar de ver el recordatorio).
+    modal.querySelector(".gps-consent-x").onclick = () => { GPS.ackReask(); close(); };
+    scrim.onclick = () => { GPS.ackReask(); close(); };
+    // Enlaces a lectura previa (RGPD): abren la política/términos en un
+    // overlay APILADO SOBRE el modal (no navegan). El modal de consentimiento
+    // permanece vivo debajo; al cerrar el lector, el usuario vuelve al modal
+    // sin haber perdido el contexto ni haber sido enviado a la pantalla de
+    // bienvenida.
+    modal.querySelectorAll(".gps-consent-link").forEach(a => {
+      a.onclick = (ev) => {
+        ev.preventDefault();
+        const target = a.dataset.goto;
+        const fn = target === "privacy" ? (typeof screenInfoPrivacy === "function" ? screenInfoPrivacy : null)
+                 : target === "terms"   ? (typeof screenInfoTerms   === "function" ? screenInfoTerms   : null)
+                 : null;
+        if (!fn) return;
+        GPS._openReaderOverlay(fn);
+      };
+    });
+    modal.querySelector(".gps-consent-no").onclick = async () => {
+      // V442: NO marcamos como "asked" → el recordatorio reaparecerá en el
+      //       próximo inicio de sesión mientras el GPS siga inactivo.
+      //       Registramos consent=false en servidor por transparencia RGPD.
+      await GPS.sendConsent(false);
+      await GPS.ackReask();
+      toast(T("content.gps.dismissed"));
+      close();
+    };
+    modal.querySelector(".gps-consent-yes").onclick = async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true; btn.textContent = "…";
+      // Primero disparamos prompt del navegador
+      const perm = await GPS.requestBrowserPermission();
+      if (!perm.ok) {
+        GPS.markAsked();
+        if (perm.err === "denied") toast(T("content.gps.err_denied"), 4500);
+        else toast(T("content.gps.err_generic"), 4000);
+        close();
+        return;
+      }
+      // Aceptado por navegador → registrar consentimiento en servidor
+      GPS.markAsked();
+      await GPS.sendConsent(true);
+      await GPS.ackReask();
+      await GPS.report(perm.pos);
+      GPS.startWatching();
+      toast(T("content.gps.ok"), 3000);
+      close();
+    };
+  },
+  /* --------- Consulta el estado real del permiso del navegador --------- */
+  async browserPermissionState() {
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const p = await navigator.permissions.query({ name: "geolocation" });
+        return p.state; // "granted" | "prompt" | "denied"
+      }
+    } catch {}
+    return "prompt";
+  },
+  /* --------- Boot: se llama tras login --------- */
+  async boot() {
+    if (!state.user?.id) return;
+    const st = await this.fetchState();
+    try { state.gpsConsent = !!(st && st.consent_given); } catch {}
+    // V441 - Si el admin ha pedido re-consentimiento, mostrar SIEMPRE el modal
+    //         (incluso si ya se preguntó antes o si estaba concedido).
+    if (st && st.reask_pending) {
+      try { localStorage.removeItem(this._prefKey()); } catch {}
+      setTimeout(() => this.showPrompt(true), 800);
+      return;
+    }
+    // V442 - Recordatorio en cada inicio de sesión si el GPS NO está activo.
+    //   - Consultamos permiso real del navegador (Permissions API).
+    //   - Solo se considera "GPS activo" cuando: server consent = true
+    //     Y el navegador tiene state === "granted".
+    //   - En cualquier otro caso mostramos el modal recordatorio.
+    //   - "Ahora no" ya NO marca como "asked" → reaparece al próximo login
+    //     mientras el usuario no active la ubicación.
+    const browserState = await this.browserPermissionState();
+    if (st && st.consent_given && browserState === "granted") {
+      // Usuario ya autorizó y el navegador lo confirma → arrancar watch
+      this.startWatching();
+      return;
+    }
+    // GPS apagado / no autorizado — mostrar recordatorio (con pequeño delay).
+    setTimeout(() => this.showPrompt(), 2500);
+  },
+  /* --------- Confirmar al servidor que el reask ya se atendió --------- */
+  async ackReask() {
+    if (!state.user?.id) return;
+    try {
+      await fetch("/api/my/gps/reask-ack", {
+        method: "POST",
+        headers: { "X-User-Id": String(state.user.id) },
+      });
+    } catch {}
+  },
+  /* --------- Volver a pedir el consentimiento desde "Yo" --------- */
+  async reask() {
+    try { localStorage.removeItem(this._prefKey()); } catch {}
+    this.showPrompt(true);
+  },
+  /* --------- Revocación (Yo → Privacidad) --------- */
+  async revoke() {
+    const ok = await this.sendConsent(false);
+    if (ok) {
+      try { state.gpsConsent = false; } catch {}
+      this.stopWatching();
+    }
+    return ok;
+  },
+};
+try { window.GPS = GPS; } catch {}
+
+/* ------------------------------------------------------------------
+   Service Worker: registro y comunicación bidireccional.
+   - Instala sw.js para permitir PWA e ubicación en background (Android).
+   - Envía el user_id al SW para que pueda hacer heartbeats con auth.
+   - Solicita Periodic Background Sync si el navegador lo soporta.
+   - Escucha mensajes del SW (por ejemplo, cuando el SW pide una
+     posición GPS al despertar): la app la manda si tiene watcher activo.
+   ------------------------------------------------------------------ */
+let _swReg = null;
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    _swReg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    // Enviar el user_id al SW para heartbeats en background
+    const sendUser = () => {
+      if (!state.user?.id) return;
+      const send = (target) => target && target.postMessage({ type: "set-user", user_id: state.user.id });
+      send(navigator.serviceWorker.controller);
+      if (_swReg && _swReg.active) send(_swReg.active);
+    };
+    // Cuando el SW ya esté activo, enviamos user
+    if (_swReg.active) sendUser();
+    if (navigator.serviceWorker.controller) sendUser();
+    navigator.serviceWorker.addEventListener("controllerchange", sendUser);
+
+    // Escuchar peticiones del SW (por ejemplo, pedirnos una posición GPS)
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      const data = event.data || {};
+      if (data.type === "sw-request-gps") {
+        // El SW se ha despertado y quiere una posición. Si hay permiso, la mandamos.
+        if (!("geolocation" in navigator) || !state.user?.id) return;
+        try {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => { try { GPS._reportKeepalive(pos); } catch {} },
+            () => {},
+            { enableHighAccuracy: false, maximumAge: 60_000, timeout: 8_000 }
+          );
+        } catch {}
+      }
+    });
+
+    // Periodic Background Sync (solo Chrome/Android con PWA instalada)
+    if ("periodicSync" in _swReg) {
+      try {
+        const status = await navigator.permissions.query({ name: "periodic-background-sync" });
+        if (status.state === "granted") {
+          await _swReg.periodicSync.register("gps-tick", {
+            // El navegador decide la frecuencia real (mínima ~12 h en muchos casos).
+            minInterval: 60 * 60 * 1000, // 1 h ideal, Chrome lo escala si no le da
+          });
+        }
+      } catch {}
+    }
+  } catch (err) {
+    // SW no soportado o bloqueado; no es crítico.
+    try { console.log("[SW] register failed", err && err.message); } catch {}
+  }
+}
+
+// Global heartbeat loop: keeps the current user "online" for the admin panel.
+let _heartbeatTimer = null;
+let _restrictionTimer = null;
+let _restrictionSSE = null;
+function startHeartbeat() {
+  if (_heartbeatTimer) return;
+  _heartbeatTimer = setInterval(() => chatApi.heartbeat(), 45000);
+  // Polling cada 5s — es el canal principal en este hosting (SSE bloqueado por proxy).
+  _restrictionTimer = setInterval(refreshRestrictions, 5000);
+  chatApi.heartbeat();
+  refreshRestrictions();
+  // GPS: dispara el modal de consentimiento la 1ª vez tras login
+  try { GPS.boot(); } catch {}
+  // Registro del Service Worker para PWA + Periodic Background Sync (Android)
+  try { registerServiceWorker(); } catch {}
+  // Push en tiempo real vía Server-Sent Events. Al recibir un evento,
+  // refresca inmediatamente y el banner desaparece/aparece al instante.
+  try {
+    if (!_restrictionSSE && "EventSource" in window && state.user && state.user.id) {
+      const url = "/api/my/restrictions/stream?uid=" + encodeURIComponent(state.user.id);
+      _restrictionSSE = new EventSource(url);
+      _restrictionSSE.addEventListener("restrictions", () => {
+        try { console.log("[SSE] restrictions push recibido"); } catch(_){}
+        // force=true → ignora la firma cacheada y re-renderiza la pantalla
+        // de bloqueo aunque el status principal no haya cambiado (por
+        // ejemplo, sólo se editó el motivo o la duración).
+        refreshRestrictions(true);
+      });
+      _restrictionSSE.addEventListener("open", () => {
+        try { console.log("[SSE] conectado a", url); } catch(_){}
+      });
+      _restrictionSSE.onerror = (e) => {
+        try { console.warn("[SSE] error/desconexión, reintentando…"); } catch(_){}
+        // El navegador reintenta automáticamente con el retry: del server.
+      };
+    }
+  } catch {}
+  // Al volver a la pestaña, refresca inmediatamente (por si el SSE se cayó).
+  if (!startHeartbeat._visWired) {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") refreshRestrictions();
+    });
+    startHeartbeat._visWired = true;
+  }
+}
+
+/* ---- Restrictions (moderation) ---- */
+state.restrictions = [];
+async function refreshRestrictions(force) {
+  try {
+    if (!state.user || !state.user.id) return;
+    const r = await fetch("/api/my/restrictions", { headers: chatApi.headers(), cache: "no-store" });
+    if (!r.ok) return;
+    const data = await r.json();
+    // Sincroniza email/nombre en tiempo real si un admin los modificó — permite
+    // que la pantalla de bloqueo muestre siempre el email actual del usuario.
+    if (data.user_email && state.user && data.user_email !== state.user.email) {
+      state.user.email = data.user_email;
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+    }
+    if (data.user_name && state.user && data.user_name !== state.user.name) {
+      state.user.name = data.user_name;
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+    }
+    // Deduplica por feature — se queda con la que vence más tarde (o la indefinida).
+    const raw = data.restrictions || [];
+    const map = new Map();
+    for (const r of raw) {
+      const key = r.feature || "";
+      const prev = map.get(key);
+      if (!prev) { map.set(key, r); continue; }
+      const prevExp = prev.expires_at ? new Date(prev.expires_at).getTime() : Infinity;
+      const curExp  = r.expires_at    ? new Date(r.expires_at).getTime()    : Infinity;
+      if (curExp > prevExp) map.set(key, r);
+    }
+    state.restrictions = Array.from(map.values());
+    renderRestrictionBanner();
+    // Si la cuenta está suspendida/baneada, bloquea la app entera para que el
+    // usuario NO pueda seguir navegando (aunque tenga sesión iniciada). Se usa
+    // la misma pantalla de bloqueo que en el login para coherencia visual.
+    const statusR = state.restrictions.find(r => r._status === "suspended" || r._status === "banned");
+    if (statusR) {
+      const already = document.querySelector(".blocked-screen");
+      const msg = statusR.reason || (statusR._status === "banned"
+        ? "Tu cuenta ha sido baneada."
+        : "Tu cuenta está suspendida por el equipo de moderación.");
+      const untilTxt = statusR.expires_at
+        ? "Hasta el " + new Date(statusR.expires_at).toLocaleString()
+        : (statusR._status === "banned" ? "Permanente" : "Temporal");
+      // Detectar si los datos relevantes cambiaron para refrescar la pantalla
+      // (kind, motivo, o fecha de expiración) — permite actualización en tiempo
+      // real cuando un admin edita la restricción vía PATCH.
+      const sig = [statusR._status, statusR.reason || "", statusR.expires_at || "", (state.user && state.user.email) || ""].join("|");
+      const currentSig = already ? already.dataset.blkSig || "" : "";
+      if (!already || sig !== currentSig || force) {
+        try {
+          showBlockedAccount(msg, {
+            keepSession: true,
+            kind: statusR._status,
+            reason: statusR.reason || "",
+            until: untilTxt,
+            untilDate: statusR.expires_at || null,
+            email: state.user && state.user.email,
+          });
+          const scr = document.querySelector(".blocked-screen");
+          if (scr) scr.dataset.blkSig = sig;
+        } catch {}
+      }
+    } else {
+      // Si estaba bloqueada y ya se reactivó, quita la pantalla y vuelve a la app.
+      const already = document.querySelector(".blocked-screen");
+      if (already && state.user) {
+        try { showApp(); } catch {}
+      }
+    }
+  } catch {}
+}
+function isRestricted(feature) {
+  if (!state.restrictions || !state.restrictions.length) return null;
+  // "all", "account_suspend" y "account_ban" bloquean todas las funciones.
+  const m = state.restrictions.find(r =>
+    r.feature === "all" || r.feature === "account_suspend" || r.feature === "account_ban" || r.feature === feature
+  );
+  return m || null;
+}
+function renderRestrictionBanner() {
+  const existing = document.getElementById("restrictionBanner");
+  if (!state.restrictions || !state.restrictions.length) {
+    if (existing) existing.remove();
+    document.body.classList.remove("has-restriction");
+    document.body.classList.remove("account-suspended");
+    document.body.classList.remove("account-banned");
+    return;
+  }
+  document.body.classList.add("has-restriction");
+  const featLabel = (f) => ({
+    all: "todas las funciones",
+    login: "acceso a la cuenta",
+    chat: "chats",
+    chat_send: "envío de mensajes",
+    discover: "descubrir perfiles",
+    likes: "likes",
+    profile_edit: "editar perfil",
+    photos: "subir fotos",
+  }[f] || f);
+  // Detecta si es una suspensión/baneo (restricción sintética creada por el server)
+  const statusRestriction = state.restrictions.find(r => r._status === "banned" || r._status === "suspended");
+  const isBanned = statusRestriction && statusRestriction._status === "banned";
+  const isSuspended = statusRestriction && statusRestriction._status === "suspended";
+  document.body.classList.toggle("account-banned", !!isBanned);
+  document.body.classList.toggle("account-suspended", !!isSuspended);
+
+  const banner = existing || el("div", { id: "restrictionBanner", class: "restriction-banner" });
+  banner.innerHTML = "";
+  banner.classList.toggle("rb-severe", !!statusRestriction);
+  const most = statusRestriction || state.restrictions[0];
+  const until = most.expires_at ? new Date(most.expires_at).toLocaleString() : "indefinidamente";
+  let title, detail, icon;
+  if (isBanned) {
+    icon = "🚫";
+    title = "Cuenta baneada";
+    detail = (most.reason || "Tu cuenta ha sido baneada por el equipo de moderación.") +
+      " No podrás acceder a las funciones de la app. Si crees que es un error, contacta con soporte.";
+  } else if (isSuspended) {
+    icon = "⏸️";
+    title = "Cuenta suspendida";
+    detail = (most.reason || "Tu cuenta ha sido suspendida por el equipo de moderación.") +
+      " Mientras dure la suspensión no podrás usar la app. Contacta con soporte para más información.";
+  } else {
+    icon = "⚠️";
+    title = "Cuenta con restricciones activas";
+    const otherFeats = state.restrictions.map(r => featLabel(r.feature)).join(", ");
+    detail = `Se ha limitado: ${otherFeats}. ${most.expires_at ? "Vence el " + until : "Duración indefinida"}. Motivo: ${most.reason || "Incumplimiento de las normas"}.`;
+  }
+  banner.appendChild(el("div", { class: "rb-body" }, [
+    el("div", { class: "rb-ic" }, icon),
+    el("div", {}, [
+      el("strong", {}, title),
+      el("div", { class: "rb-detail" }, detail),
+    ]),
+    el("button", { class: "rb-close", title: "Ver detalle", onclick: () => showRestrictionModal() }, "Ver"),
+  ]));
+  if (!existing) document.body.appendChild(banner);
+}
+function showRestrictionModal() {
+  if (!state.restrictions || !state.restrictions.length) return;
+  const statusR = state.restrictions.find(r => r._status === "banned" || r._status === "suspended");
+  const sheet = el("div", { class: "restriction-sheet" });
+  if (statusR) {
+    sheet.appendChild(el("h3", {}, statusR._status === "banned" ? "🚫 Cuenta baneada" : "⏸️ Cuenta suspendida"));
+    sheet.appendChild(el("p", { class: "small" },
+      statusR._status === "banned"
+        ? "Tu cuenta ha sido baneada por el equipo de moderación. No podrás usar la app. Si consideras que es un error, contacta con soporte."
+        : "Tu cuenta está suspendida por el equipo de moderación. Mientras dure la suspensión no podrás usar la app. Contacta con soporte para más información."
+    ));
+    sheet.appendChild(el("div", { class: "restriction-item" }, [
+      el("b", {}, "Motivo"),
+      el("div", { class: "small" }, statusR.reason || "Incumplimiento de las normas de la comunidad"),
+    ]));
+  } else {
+    sheet.appendChild(el("h3", {}, "Restricciones activas"));
+    sheet.appendChild(el("p", { class: "small" }, "Estas son las limitaciones aplicadas a tu cuenta por el equipo de moderación. Puedes contactar con soporte si consideras que hay un error."));
+  }
+  const list = el("div", { class: "restriction-list" });
+  state.restrictions.filter(r => !r._synthetic).forEach(r => {
+    list.appendChild(el("div", { class: "restriction-item" }, [
+      el("b", {}, r.feature),
+      el("div", { class: "small" }, r.reason || "Incumplimiento de las normas de la comunidad"),
+      el("div", { class: "small muted" }, r.expires_at ? "Hasta el " + new Date(r.expires_at).toLocaleString() : "Duración indefinida"),
+    ]));
+  });
+  if (list.childNodes.length) sheet.appendChild(list);
+  sheet.appendChild(el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cerrar"));
+  modal.open(sheet);
+}
+// Global fetch interceptor to catch 423 restriction responses on protected calls
+(function installRestrictionInterceptor(){
+  const _fetch = window.fetch.bind(window);
+  window.fetch = async function(input, init) {
+    const r = await _fetch(input, init);
+    try {
+      if (r.status === 423) {
+        const clone = r.clone();
+        const data = await clone.json().catch(() => ({}));
+        if (data && data.restrictions) {
+          state.restrictions = data.restrictions;
+          renderRestrictionBanner();
+        }
+        toast("Acción no disponible: cuenta con restricciones");
+      }
+    } catch {}
+    return r;
+  };
+})();
+window.addEventListener("beforeunload", () => { chatApi.offline(); });
+window.addEventListener("pagehide", () => { chatApi.offline(); });
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") chatApi.heartbeat();
+});
+
+document.documentElement.dataset.theme = state.theme;
+
+function paintThemeBackground() {
+  try {
+    const isDark = document.documentElement.dataset.theme === "dark";
+    const imgLight =
+      "radial-gradient(1200px 700px at 10% -10%, rgba(255,59,107,.55), rgba(255,228,236,0) 60%)," +
+      "radial-gradient(1000px 700px at 110% 10%, rgba(168,85,247,.35), rgba(255,228,236,0) 60%)," +
+      "linear-gradient(180deg, #ffe4ec 0%, #ffd1de 100%)";
+    const imgDark =
+      "radial-gradient(1200px 500px at 10% -10%, rgba(255,59,107,.22), rgba(11,12,16,0) 60%)," +
+      "radial-gradient(900px 500px at 110% 10%, rgba(168,85,247,.22), rgba(11,12,16,0) 60%)," +
+      "linear-gradient(180deg, #0b0c10 0%, #0b0c10 100%)";
+    const bgCol = isDark ? "#0b0c10" : "#ffe4ec";
+    const bgImg = isDark ? imgDark : imgLight;
+    // 1) Asegura que la capa auraBg existe (crear si no está)
+    let layer = document.getElementById("auraBg");
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = "auraBg";
+      layer.style.cssText = "position:fixed;inset:0;z-index:0;pointer-events:none";
+      if (document.body.firstChild) document.body.insertBefore(layer, document.body.firstChild);
+      else document.body.appendChild(layer);
+    }
+    // Usar propiedades separadas con !important para evitar overrides
+    layer.style.setProperty("background-color", bgCol, "important");
+    layer.style.setProperty("background-image", bgImg, "important");
+    layer.style.setProperty("background-size", "auto, auto, 100% 100%", "important");
+    layer.style.setProperty("background-repeat", "no-repeat", "important");
+    layer.style.setProperty("position", "fixed", "important");
+    layer.style.setProperty("inset", "0", "important");
+    layer.style.setProperty("z-index", "0", "important");
+    layer.style.setProperty("pointer-events", "none", "important");
+    // 2) Fuerza el body/html también
+    document.documentElement.style.setProperty("background-color", bgCol, "important");
+    document.documentElement.style.setProperty("background-image", "none", "important");
+    document.body.style.setProperty("background-color", "transparent", "important");
+    document.body.style.setProperty("background-image", "none", "important");
+    // 3) Asegura stage transparente con z-index encima de la capa
+    const stage = document.getElementById("stage");
+    if (stage) {
+      stage.style.setProperty("background-color", "transparent", "important");
+      stage.style.setProperty("background-image", "none", "important");
+      stage.style.setProperty("position", "relative", "important");
+      stage.style.setProperty("z-index", "1", "important");
+    }
+    // 4) Cambia el icono luna/sol del botón
+    const sunSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.5" y1="4.5" x2="6" y2="6"/><line x1="18" y1="18" x2="19.5" y2="19.5"/><line x1="4.5" y1="19.5" x2="6" y2="18"/><line x1="18" y1="6" x2="19.5" y2="4.5"/></g></svg>';
+    const moonSvg = '<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>';
+    const btn = document.getElementById("themeToggle");
+    if (btn) {
+      btn.innerHTML = isDark ? moonSvg : sunSvg;
+      // Tooltip claro: si veo el sol => paso a oscuro, si veo la luna => paso a claro.
+      btn.title = isDark
+        ? (T("content.theme_card.to_light") || "Ver en modo claro")
+        : (T("content.theme_card.to_dark") || "Ver en modo oscuro");
+      btn.setAttribute("aria-label", btn.title);
+    }
+    // 5) Actualiza la tarjeta lateral de tema (visible solo en escritorio).
+    const card = document.getElementById("themeCard");
+    if (card) {
+      const cardIc = document.getElementById("themeCardIc");
+      const cardTitle = document.getElementById("themeCardTitle");
+      const cardSub = document.getElementById("themeCardSub");
+      // Icono: cuando estás en oscuro se muestra la luna (estado actual);
+      // cuando estás en claro se muestra el sol. Al pulsarlo cambias al opuesto:
+      // sol → "Ver en modo oscuro", luna → "Ver en modo claro".
+      const bigSun = '<svg viewBox="0 0 24 24" width="22" height="22"><circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.5" y1="4.5" x2="6" y2="6"/><line x1="18" y1="18" x2="19.5" y2="19.5"/><line x1="4.5" y1="19.5" x2="6" y2="18"/><line x1="18" y1="6" x2="19.5" y2="4.5"/></g></svg>';
+      const bigMoon = '<svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>';
+      if (cardIc) cardIc.innerHTML = isDark ? bigMoon : bigSun;
+      if (cardTitle) cardTitle.textContent = isDark
+        ? (T("content.theme_card.to_light") || "Ver en modo claro")
+        : (T("content.theme_card.to_dark") || "Ver en modo oscuro");
+      if (cardSub) cardSub.textContent = isDark
+        ? (T("content.theme_card.using_dark") || "Estás usando el tema oscuro")
+        : (T("content.theme_card.using_light") || "Estás usando el tema claro");
+    }
+  } catch(e){}
+}
+paintThemeBackground();
+
+function _toggleAuraTheme() {
+  state.theme = state.theme === "light" ? "dark" : "light";
+  document.documentElement.dataset.theme = state.theme;
+  localStorage.setItem("aura-theme", state.theme);
+  paintThemeBackground();
+  try { applyDesign(); } catch(e){}
+  // Rebuild logo (welcome hero + side brand) so the light/dark variant swaps
+  try {
+    const heart = document.querySelector(".welcome-heart");
+    if (heart) heart.innerHTML = buildLogoInnerHTML();
+    applyContent();
+  } catch(e){}
+}
+$("#themeToggle").addEventListener("click", _toggleAuraTheme);
+const _themeCardEl = document.getElementById("themeCard");
+if (_themeCardEl) _themeCardEl.addEventListener("click", _toggleAuraTheme);
+
+/* ---------- Mock data ---------- */
+const NAMES_F = ["Sofía","Lucía","Valentina","Camila","Isabella","Emma","Martina","Aitana","Elena","Carla","Noa","Julia","Alba","Nora"];
+const NAMES_M = ["Mateo","Hugo","Leo","Daniel","Alex","Álvaro","Adrián","Diego","Pablo","Marc","Iker","Bruno","Nico","Rodrigo"];
+const NAMES_NB = ["Ari","Sam","Kai","Luca","Ren","Alex","Robin"];
+const CITIES = ["Madrid","Barcelona","Valencia","Sevilla","Bilbao","Málaga","Zaragoza","Palma","Alicante","Granada"];
+const JOBS = ["Diseñadora UX","Fotógrafo","Ingeniera","Chef","Profesor","Marketing","Enfermera","DJ","Arquitecto","Consultora","Piloto","Investigadora"];
+const INTERESTS = ["🎵 Música","🍜 Foodie","🏄 Surf","📸 Fotografía","🎨 Arte","🧗 Escalada","☕ Café","🐕 Perros","🍷 Vino","✈️ Viajar","🎬 Cine","📚 Lectura","🧘 Yoga","🚴 Ciclismo","🎮 Gaming","🌿 Plantas"];
+const LOOKING_FOR_OPTIONS = [
+  { id: "serious",   label: "Relación seria",       emoji: "💞" },
+  { id: "casual",    label: "Algo casual",          emoji: "🌙" },
+  { id: "friends",   label: "Amistad",              emoji: "🤝" },
+  { id: "dating",    label: "Citas sin compromiso", emoji: "🍸" },
+  { id: "openmind",  label: "Abierto a lo que surja", emoji: "✨" },
+  { id: "marriage",  label: "Matrimonio / futuro",  emoji: "💍" },
+];
+const RELATIONSHIP_TYPES = [
+  { id: "mono",      label: "Monógama",             emoji: "❤️" },
+  { id: "poly",      label: "Poliamorosa",          emoji: "♾️" },
+  { id: "open",      label: "Abierta",              emoji: "🌈" },
+  { id: "explore",   label: "Explorando",           emoji: "🔎" },
+  { id: "ldr",       label: "A distancia",          emoji: "✈️" },
+  { id: "any",       label: "Sin preferencia",      emoji: "🎯" },
+];
+
+const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const pick = (arr) => arr[rand(0, arr.length - 1)];
+const shuffle = (arr) => arr.slice().sort(() => Math.random() - 0.5);
+
+function generateUsers(count, opts = {}) {
+  const zone = opts.zone || state.zone || "hetero";
+  const users = [];
+  for (let i = 0; i < count; i++) {
+    let gender, name;
+    if (zone === "hetero") {
+      gender = Math.random() > .5 ? "F" : "M";
+      name = gender === "F" ? pick(NAMES_F) : pick(NAMES_M);
+    } else {
+      const roll = Math.random();
+      if (roll < .4) { gender = "F"; name = pick(NAMES_F); }
+      else if (roll < .8) { gender = "M"; name = pick(NAMES_M); }
+      else { gender = "NB"; name = pick(NAMES_NB); }
+    }
+    const age = rand(20, 42);
+    const photoIdx = rand(1, 70);
+    const photos = [
+      `https://i.pravatar.cc/600?img=${photoIdx}`,
+      `https://picsum.photos/seed/${name}${i}a/600/800`,
+      `https://picsum.photos/seed/${name}${i}b/600/800`,
+    ];
+    users.push({
+      id: `u_${i}_${Date.now()}`,
+      name, age, gender,
+      city: pick(CITIES),
+      distance: rand(1, 40),
+      job: pick(JOBS),
+      interests: shuffle(INTERESTS).slice(0, rand(3, 5)),
+      looking_for: pick(LOOKING_FOR_OPTIONS).id,
+      relationship: pick(RELATIONSHIP_TYPES).id,
+      bio: pick([
+        "Buscando alguien que me haga reír.",
+        "Café por la mañana, planes espontáneos por la tarde.",
+        "Fanática del brunch y las conversaciones largas.",
+        "Amo viajar, cocinar y las tardes de domingo.",
+        "Deportista, curiosa, sin dramas.",
+        "Vivo entre proyectos, música y buenos amigos.",
+      ]),
+      verified: Math.random() > .5,
+      online: Math.random() > .55,
+      photos,
+      photo: photos[0],
+    });
+  }
+  return users;
+}
+
+/* ---------- Routing ---------- */
+const viewport = $("#viewport");
+const tabbar = $("#tabbar");
+
+let _lastScreenFn = null;
+let _lastScreenOpts = null;
+const SECTION_MAP = {
+  screenWelcome: "welcome",
+  screenRegisterEmail: "welcome", screenRegisterOTP: "welcome",
+  screenZoneSelect: "welcome", screenRegisterProfile: "welcome",
+  screenRegisterPhotos: "welcome", screenRegisterInterests: "welcome",
+  screenLogin: "welcome",
+  screenDiscover: "discover", screenProfileDetail: "discover",
+  screenSearch: "search",
+  screenNearby: "nearby",
+  screenLikes: "likes",
+  screenChats: "chats", screenChat: "chats",
+  screenMe: "profile", screenEditProfile: "profile", screenSettings: "profile",
+  screenSubscription: "profile", screenSubscriptions: "profile",
+  screenMyPhotos: "profile", screenVerifyAccount: "profile",
+  screenInvisibleMode: "profile", screenSecurity: "profile",
+  screenBlockedUsers: "profile", screenDataExport: "profile",
+  screenAbout: "profile", screenOffers: "profile", screenAccountStatus: "profile",
+  screenNotificationSettings: "profile",
+  // V437: Info screens usan sección propia para NO heredar el color de
+  // texto del hero de bienvenida (que es blanco) sobre fondo claro. Sin
+  // este mapeo, el contenido de Términos/Privacidad/Normas quedaba
+  // blanco sobre blanco y parecía "vacío".
+  screenInfoHelp: "info", screenInfoFaq: "info", screenInfoTerms: "info",
+  screenInfoPrivacy: "info", screenInfoContact: "info", screenInfoRules: "info",
+  screenInfoPreferences: "info", screenInfoKycPolicy: "info",
+};
+function render(screenFn, opts = {}) {
+  _lastScreenFn = screenFn;
+  _lastScreenOpts = opts;
+  // Remove info-open flag when navigating away from an info screen
+  const infoFns = ["screenInfoHelp","screenInfoFaq","screenInfoTerms","screenInfoPrivacy","screenInfoContact","screenInfoRules","screenInfoPreferences","screenInfoKycPolicy"];
+  if (!infoFns.includes(screenFn && screenFn.name)) {
+    document.body.classList.remove("info-open");
+  }
+  if ((screenFn && screenFn.name) !== "screenProfileDetail") {
+    document.body.classList.remove("profile-open");
+  }
+  viewport.innerHTML = "";
+  const section = SECTION_MAP[screenFn && screenFn.name] || "welcome";
+  const screen = el("div", { class: "screen", "data-section": section });
+  viewport.appendChild(screen);
+  screenFn(screen, opts);
+  // After the screen mounts, re-apply design/content so inline hero styles
+  // and CSS vars land on the newly created nodes (otherwise selectors like
+  // .screen-hero that were styled by applyDesign() before the render lose
+  // their inline background/color).
+  try { applyDesign(); } catch {}
+}
+function _rerender() {
+  if (_lastScreenFn) render(_lastScreenFn, _lastScreenOpts || {});
+}
+
+/* ---------------------------------------------------------------------------
+   V441 · Pull-to-refresh (móvil)
+   Cuando el usuario está en la parte superior del viewport del móvil y arrastra
+   el dedo hacia abajo, mostramos un indicador. Al superar el umbral y soltar,
+   re-renderizamos la pantalla actual. Sólo activo en dispositivos touch para
+   no interferir con el uso normal de escritorio.
+   -------------------------------------------------------------------------- */
+(function installPullToRefresh() {
+  const vp = viewport;
+  if (!vp) return;
+  const isTouch = () => {
+    try {
+      return window.matchMedia("(pointer: coarse), (hover: none)").matches;
+    } catch { return "ontouchstart" in window; }
+  };
+  // Indicador visual
+  let indicator = null;
+  function ensureIndicator() {
+    if (indicator) return indicator;
+    indicator = document.createElement("div");
+    indicator.className = "ptr-indicator";
+    indicator.innerHTML = `
+      <div class="ptr-spinner"></div>
+      <div class="ptr-text">${T("content.pull.pull")}</div>`;
+    Object.assign(indicator.style, {
+      position: "absolute",
+      top: "0", left: "0", right: "0",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "flex-end",
+      pointerEvents: "none",
+      height: "0px", overflow: "hidden",
+      color: "var(--text-soft, #888)",
+      fontSize: "12px", fontWeight: "600",
+      transition: "height .18s ease",
+      zIndex: "20", background: "transparent",
+    });
+    vp.style.position = vp.style.position || "relative";
+    vp.appendChild(indicator);
+    // Estilo del spinner en CSS inline
+    const sp = indicator.querySelector(".ptr-spinner");
+    Object.assign(sp.style, {
+      width: "22px", height: "22px", marginBottom: "4px",
+      borderRadius: "50%",
+      border: "2.4px solid rgba(255,59,107,.25)",
+      borderTopColor: "#ff3b6b",
+      transition: "transform .1s linear",
+    });
+    return indicator;
+  }
+  let startY = 0, curY = 0, pulling = false, refreshing = false;
+  const THRESHOLD = 70; // px
+  const MAX = 120;      // px
+  function screenScrollTop(target) {
+    // Encuentra el ancestro con overflow-y scroll dentro del viewport
+    let node = target;
+    while (node && node !== vp) {
+      const s = getComputedStyle(node);
+      if ((s.overflowY === "auto" || s.overflowY === "scroll") && node.scrollTop > 0) {
+        return node.scrollTop;
+      }
+      node = node.parentNode;
+    }
+    return vp.scrollTop || 0;
+  }
+  vp.addEventListener("touchstart", (e) => {
+    if (!isTouch() || refreshing) return;
+    if (screenScrollTop(e.target) > 0) return;
+    startY = e.touches[0].clientY;
+    curY = startY;
+    pulling = true;
+  }, { passive: true });
+  vp.addEventListener("touchmove", (e) => {
+    if (!pulling || refreshing) return;
+    curY = e.touches[0].clientY;
+    const dy = curY - startY;
+    if (dy <= 0) {
+      if (indicator) indicator.style.height = "0px";
+      return;
+    }
+    const ind = ensureIndicator();
+    const h = Math.min(MAX, dy * 0.5);
+    ind.style.height = h + "px";
+    ind.style.transition = "none";
+    const txt = ind.querySelector(".ptr-text");
+    if (txt) txt.textContent = (h >= THRESHOLD)
+      ? T("content.pull.release")
+      : T("content.pull.pull");
+    const sp = ind.querySelector(".ptr-spinner");
+    if (sp) sp.style.transform = `rotate(${dy * 2}deg)`;
+  }, { passive: true });
+  vp.addEventListener("touchend", () => {
+    if (!pulling) return;
+    pulling = false;
+    const ind = indicator;
+    if (!ind) return;
+    const h = parseInt(ind.style.height || "0", 10);
+    if (h >= THRESHOLD && !refreshing) {
+      refreshing = true;
+      ind.style.transition = "height .2s ease";
+      ind.style.height = "44px";
+      const txt = ind.querySelector(".ptr-text");
+      if (txt) txt.textContent = T("content.pull.loading");
+      const sp = ind.querySelector(".ptr-spinner");
+      if (sp) {
+        sp.style.animation = "ptrSpin 0.9s linear infinite";
+      }
+      // Re-render current screen
+      setTimeout(() => {
+        try { _rerender(); } catch {}
+        setTimeout(() => {
+          ind.style.height = "0px";
+          if (sp) sp.style.animation = "";
+          refreshing = false;
+        }, 220);
+      }, 400);
+    } else {
+      ind.style.transition = "height .2s ease";
+      ind.style.height = "0px";
+    }
+  }, { passive: true });
+})();
+// Keyframes para el spinner del pull-to-refresh
+(function ensurePtrCss() {
+  if (document.getElementById("ptr-css")) return;
+  const s = document.createElement("style");
+  s.id = "ptr-css";
+  s.textContent = `@keyframes ptrSpin { to { transform: rotate(360deg); } }`;
+  document.head.appendChild(s);
+})();
+
+function showApp() {
+  tabbar.hidden = false;
+  document.body.classList.add("app-open");
+  // Ensure the current user is registered in DB for real chat + start heartbeat
+  (async () => { try { await chatApi.ensure(); startHeartbeat(); } catch {} })();
+  // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
+  setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
+  // Aplica el deep-link pendiente si existe (viene de la URL al arrancar o
+  // se guardó en sessionStorage antes del login).
+  let dl = state.pendingDeepLink;
+  if (!dl) {
+    try {
+      const raw = sessionStorage.getItem("aura_deep_link");
+      if (raw) dl = JSON.parse(raw);
+    } catch {}
+  }
+  if (dl) {
+    state.pendingDeepLink = null;
+    try { sessionStorage.removeItem("aura_deep_link"); } catch {}
+    // Limpia la URL para que un refresh no repita el deep-link.
+    try { history.replaceState(null, "", "/"); } catch {}
+    try { applyDeepLink(dl); return; } catch { /* fallback abajo */ }
+  }
+  routeTab(state.currentTab);
+}
+
+// Rutas soportadas para deep-links desde emails o accesos directos.
+// Se resuelven contra location.pathname al arrancar (ver boot()).
+const DEEP_LINK_TABS = {
+  // Inglés (legacy, se mantiene por compatibilidad con links antiguos).
+  discover: "discover", search: "search", nearby: "nearby",
+  likes: "likes", matches: "likes", chats: "chats",
+  me: "me", profile: "me", settings: "me",
+  subscription: "me", billing: "me", invoices: "me",
+  help: "me", support: "me", notifications: "me",
+  safety: "me", boost: "me", premium: "me",
+  // Español (canónico para emails nuevos y SEO).
+  descubrir: "discover", buscar: "search", cerca: "nearby",
+  perfil: "me", ajustes: "me",
+  suscripcion: "me", facturacion: "me", facturas: "me",
+  ayuda: "me", soporte: "me", notificaciones: "me",
+  privacidad: "me", normas: "me", rules: "me",
+  // Info pages accesibles también sin sesión desde los footers de los emails.
+  terminos: "me", "términos": "me", terms: "me", legal: "me",
+  contacto: "me", contact: "me",
+  faq: "me", preguntas: "me", reglas: "me",
+  preferencias: "me", preferences: "me",
+  verificacion: "me", "verificación": "me", kyc: "me", "kyc-policy": "me",
+};
+function parseDeepLink(pathname, search) {
+  const clean = String(pathname || "/").replace(/\/+$/, "") || "/";
+  if (clean === "/" || clean === "") return null;
+  const parts = clean.split("/").filter(Boolean);
+  const head = parts[0];
+  const tab = DEEP_LINK_TABS[head];
+  if (!tab) return null;
+  return { section: head, tab, rest: parts.slice(1), query: search || "" };
+}
+function applyDeepLink(dl) {
+  if (!dl || !dl.tab) return;
+  state.currentTab = dl.tab;
+  // Refleja la pestaña activa en el tabbar
+  try {
+    $$(".tab", tabbar).forEach(b => b.classList.toggle("active", b.dataset.tab === dl.tab));
+  } catch {}
+  routeTab(dl.tab);
+  // Sub-secciones concretas dentro de "me"
+  const subViews = {
+    // Inglés (legacy)
+    subscription: typeof screenSubscription === "function" ? screenSubscription : null,
+    billing:     typeof screenBilling      === "function" ? screenBilling      : null,
+    invoices:    typeof screenBilling      === "function" ? screenBilling      : null,
+    settings:    typeof screenSettings     === "function" ? screenSettings     : null,
+    help:        typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
+    support:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
+    safety:      typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
+    notifications: typeof screenNotifications === "function" ? screenNotifications : null,
+    premium:     typeof screenSubscription === "function" ? screenSubscription : null,
+    boost:       typeof screenSubscription === "function" ? screenSubscription : null,
+    // Español (canónico)
+    suscripcion: typeof screenSubscription === "function" ? screenSubscription : null,
+    facturacion: typeof screenBilling      === "function" ? screenBilling      : null,
+    facturas:    typeof screenBilling      === "function" ? screenBilling      : null,
+    ajustes:     typeof screenSettings     === "function" ? screenSettings     : null,
+    ayuda:       typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
+    soporte:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
+    privacidad:  typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
+    normas:      typeof screenInfoRules    === "function" ? screenInfoRules    : null,
+    rules:       typeof screenInfoRules    === "function" ? screenInfoRules    : null,
+    reglas:      typeof screenInfoRules    === "function" ? screenInfoRules    : null,
+    terminos:    typeof screenInfoTerms    === "function" ? screenInfoTerms    : null,
+    "términos":  typeof screenInfoTerms    === "function" ? screenInfoTerms    : null,
+    terms:       typeof screenInfoTerms    === "function" ? screenInfoTerms    : null,
+    legal:       typeof screenInfoTerms    === "function" ? screenInfoTerms    : null,
+    verificacion:  typeof screenInfoKycPolicy === "function" ? screenInfoKycPolicy : null,
+    "verificación":typeof screenInfoKycPolicy === "function" ? screenInfoKycPolicy : null,
+    kyc:           typeof screenInfoKycPolicy === "function" ? screenInfoKycPolicy : null,
+    "kyc-policy":  typeof screenInfoKycPolicy === "function" ? screenInfoKycPolicy : null,
+    contacto:    typeof screenInfoContact  === "function" ? screenInfoContact  : null,
+    contact:     typeof screenInfoContact  === "function" ? screenInfoContact  : null,
+    faq:         typeof screenInfoFaq      === "function" ? screenInfoFaq      : null,
+    preguntas:   typeof screenInfoFaq      === "function" ? screenInfoFaq      : null,
+    preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
+    preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
+    notificaciones: typeof screenNotifications === "function" ? screenNotifications : null,
+    seguridad:      typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    security:       typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    dispositivo:    typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    "dispositivo-perdido": typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+  };
+  const sv = subViews[dl.section];
+  if (sv) { try { render(sv); } catch {} }
+}
+function hideApp() {
+  tabbar.hidden = true;
+  document.body.classList.remove("app-open");
+}
+
+/* Tab handling */
+tabbar.addEventListener("click", (e) => {
+  const btn = e.target.closest(".tab");
+  if (!btn) return;
+  $$(".tab", tabbar).forEach(b => b.classList.toggle("active", b === btn));
+  state.currentTab = btn.dataset.tab;
+  routeTab(state.currentTab);
+});
+
+function routeTab(tab) {
+  try { stopChatPolling(); } catch {}
+  document.body.classList.remove("chat-open");
+  document.body.classList.remove("profile-open");
+  // Ensure the bottom tabbar is visible when landing on a tab screen
+  // (it gets hidden while inside a chat, profile detail or onboarding).
+  tabbar.hidden = false;
+  document.body.classList.add("app-open");
+  const map = {
+    discover: screenDiscover,
+    search: screenSearch,
+    nearby: screenNearby,
+    likes: screenLikes,
+    chats: screenChats,
+    me: screenMe,
+  };
+  render(map[tab] || screenDiscover);
+  // Cuenta la navegación para posible intersticial
+  try { maybeShowInterstitial(); } catch {}
+}
+
+/* ================================================================
+   Interstitial / Fullscreen ads
+   ================================================================ */
+let __adsCtx = null;
+let __adsCtxLoadedAt = 0;
+let __navCount = 0;
+let __lastInterAt = 0;
+let __lastTriggerSeen = 0;
+let __triggerPollTimer = null;
+
+async function ensureAdsContext(force) {
+  const now = Date.now();
+  if (!force && __adsCtx && (now - __adsCtxLoadedAt) < 30000) return __adsCtx;
+  try {
+    const r = await fetch("/api/my/ads-context", {
+      headers: (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {},
+      cache: "no-store",
+    });
+    if (r.ok) {
+      __adsCtx = await r.json();
+      __adsCtxLoadedAt = now;
+    }
+  } catch(_) {}
+  return __adsCtx;
+}
+
+async function maybeShowInterstitial() {
+  const ctx = await ensureAdsContext();
+  if (!ctx || !ctx.show_ads) return;
+  const inter = ctx.interstitial || {};
+  if (!inter.enabled) return;
+  __navCount += 1;
+  const freq = Math.max(1, parseInt(inter.frequency, 10) || 5);
+  if (__navCount % freq !== 0) return;
+  const cooldown = (parseInt(inter.cooldown_s, 10) || 120) * 1000;
+  if (Date.now() - __lastInterAt < cooldown) return;
+  __lastInterAt = Date.now();
+  showInterstitial(ctx);
+}
+
+// Poll para detectar disparos manuales del admin ("Disparar intersticial ahora")
+function startInterstitialTriggerPoll() {
+  if (__triggerPollTimer) return;
+  __triggerPollTimer = setInterval(async () => {
+    const ctx = await ensureAdsContext(true);
+    if (!ctx) return;
+    const t = parseInt(ctx.interstitial?.trigger_at || 0, 10);
+    if (!__lastTriggerSeen) { __lastTriggerSeen = t; return; }
+    if (t > __lastTriggerSeen) {
+      __lastTriggerSeen = t;
+      // Forzado por admin: ignora cooldown/frecuencia y muestra siempre que show_ads
+      if (ctx.show_ads && ctx.interstitial?.enabled) {
+        __lastInterAt = Date.now();
+        showInterstitial(ctx);
+      }
+    }
+  }, 20000);
+}
+try { startInterstitialTriggerPoll(); } catch(_) {}
+
+function showInterstitial(ctx) {
+  if (document.getElementById("auraInter")) return;
+  const interCfg = ctx?.interstitial || {};
+  const forceClose = !!interCfg.force_close;
+  const duration = Math.max(0, parseInt(interCfg.duration_s, 10) || 0);
+  let delay = Math.max(0, parseInt(interCfg.close_delay_s, 10) || 5);
+  // Si "cierre obligatorio" activo, el retardo mínimo es la duración forzada
+  if (forceClose && duration > 0) delay = duration;
+
+  const overlay = document.createElement("div");
+  overlay.id = "auraInter";
+  overlay.className = "aura-inter" + (forceClose ? " aura-inter-forced" : "");
+  overlay.innerHTML = `
+    <div class="aura-inter-scrim"></div>
+    <div class="aura-inter-card">
+      <div class="aura-inter-label">
+        <span>Publicidad</span>
+        ${duration > 0 ? `<span class="aura-inter-duration" id="auraInterDuration">${duration}s</span>` : ""}
+      </div>
+      <div class="aura-inter-slot" id="auraInterSlot"></div>
+      <button type="button" class="aura-inter-close" id="auraInterClose" disabled aria-label="Cerrar">
+        <span id="auraInterCountdown">${delay || ""}</span>
+      </button>
+    </div>`;
+  document.body.appendChild(overlay);
+
+  const slot = overlay.querySelector("#auraInterSlot");
+  const closeBtn = overlay.querySelector("#auraInterClose");
+  const cd = overlay.querySelector("#auraInterCountdown");
+  const durEl = overlay.querySelector("#auraInterDuration");
+
+  // Si hay duración forzada, autocierra al terminar el tiempo
+  if (duration > 0) {
+    let remaining = duration;
+    const durTimer = setInterval(() => {
+      remaining -= 1;
+      if (durEl) durEl.textContent = remaining + "s";
+      if (remaining <= 0) {
+        clearInterval(durTimer);
+        if (overlay.isConnected) overlay.remove();
+      }
+    }, 1000);
+  }
+
+  // Renderiza el anuncio real o placeholder según red
+  const net = ctx.network || "adsense";
+  const pub = ctx.publisher_id || "";
+  const slotId = ctx.interstitial?.slot || "";
+  if (net === "adsense" && pub && slotId) {
+    ensureAdSenseLoader(pub).then(ok => {
+      if (!ok) { slot.innerHTML = adPlaceholderHtml("AdSense no disponible"); return; }
+      const ins = document.createElement("ins");
+      ins.className = "adsbygoogle";
+      ins.style.display = "block";
+      ins.style.width = "100%";
+      ins.style.height = "100%";
+      ins.setAttribute("data-ad-client", pub);
+      ins.setAttribute("data-ad-slot", slotId);
+      ins.setAttribute("data-ad-format", "auto");
+      ins.setAttribute("data-full-width-responsive", "true");
+      slot.appendChild(ins);
+      try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch(_) {}
+    });
+  } else {
+    slot.innerHTML = adPlaceholderHtml("Anuncio " + (net || "").toUpperCase());
+  }
+
+  let remaining = delay;
+  if (remaining <= 0) {
+    closeBtn.disabled = false;
+    closeBtn.innerHTML = "✕";
+  } else {
+    const t = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(t);
+        closeBtn.disabled = false;
+        closeBtn.innerHTML = "✕";
+      } else {
+        cd.textContent = String(remaining);
+      }
+    }, 1000);
+  }
+  closeBtn.addEventListener("click", () => {
+    if (closeBtn.disabled) return;
+    overlay.remove();
+  });
+}
+
+function adPlaceholderHtml(label) {
+  return `<div style="height:100%;display:grid;place-items:center;color:#888;font:600 14px system-ui;">${label || "Anuncio"}</div>`;
+}
+
+/* ================================================================
+   ONBOARDING
+   ================================================================ */
+
+/* ---- Welcome ---- */
+/* SVG flags — funcionan igual en Windows, Mac, Linux y móviles (los emoji 🇪🇸 no se ven en Windows). */
+const FLAG_SVG = {
+  es: `<svg viewBox="0 0 6 4" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="6" height="4" fill="#c60b1e"/><rect y="1" width="6" height="2" fill="#ffc400"/></svg>`,
+  en: `<svg viewBox="0 0 60 30" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><clipPath id="uk-t"><path d="M30 15h30v15zv15H0zH0V0zV0h30z"/></clipPath><path d="M0 0v30h60V0z" fill="#012169"/><path d="M0 0l60 30m0-30L0 30" stroke="#fff" stroke-width="6"/><path d="M0 0l60 30m0-30L0 30" clip-path="url(#uk-t)" stroke="#C8102E" stroke-width="4"/><path d="M30 0v30M0 15h60" stroke="#fff" stroke-width="10"/><path d="M30 0v30M0 15h60" stroke="#C8102E" stroke-width="6"/></svg>`,
+  fr: `<svg viewBox="0 0 3 2" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="1" height="2" fill="#0055A4"/><rect x="1" width="1" height="2" fill="#fff"/><rect x="2" width="1" height="2" fill="#EF4135"/></svg>`,
+  de: `<svg viewBox="0 0 5 3" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="5" height="1" y="0" fill="#000"/><rect width="5" height="1" y="1" fill="#DD0000"/><rect width="5" height="1" y="2" fill="#FFCE00"/></svg>`,
+  it: `<svg viewBox="0 0 3 2" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="1" height="2" fill="#009246"/><rect x="1" width="1" height="2" fill="#fff"/><rect x="2" width="1" height="2" fill="#CE2B37"/></svg>`,
+  pt: `<svg viewBox="0 0 6 4" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><rect width="6" height="4" fill="#FF0000"/><rect width="2.4" height="4" fill="#006600"/><circle cx="2.4" cy="2" r="0.6" fill="#FFDF00" stroke="#000" stroke-width="0.05"/></svg>`,
+};
+const WELCOME_LANGS = [
+  { code: "es", label: "Español"   },
+  { code: "en", label: "English"   },
+  { code: "fr", label: "Français"  },
+  { code: "de", label: "Deutsch"   },
+  { code: "it", label: "Italiano"  },
+  { code: "pt", label: "Português" },
+];
+function buildWelcomeLangSelector() {
+  const wrap = el("div", { class: "welcome-lang" });
+  const current = WELCOME_LANGS.find(l => l.code === currentLang) || WELCOME_LANGS[0];
+  const btn = el("button", {
+    type: "button",
+    class: "welcome-lang-btn",
+    "aria-haspopup": "listbox",
+    "aria-label": "Cambiar idioma",
+  }, [
+    el("span", { class: "wl-flag", html: FLAG_SVG[current.code] || "" }),
+    el("span", { class: "wl-code" }, current.code.toUpperCase()),
+    el("span", { class: "wl-caret", html: `<svg viewBox="0 0 12 8" width="10" height="7"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>` }),
+  ]);
+  const menu = el("div", { class: "welcome-lang-menu", role: "listbox", hidden: true });
+  WELCOME_LANGS.forEach(l => {
+    const item = el("button", {
+      type: "button",
+      class: "wl-item" + (l.code === currentLang ? " current" : ""),
+      role: "option",
+      onclick: () => {
+        setLanguage(l.code);
+        closeMenu();
+      },
+    }, [
+      el("span", { class: "wl-flag", html: FLAG_SVG[l.code] || "" }),
+      el("span", { class: "wl-label" }, l.label),
+      el("span", { class: "wl-check" }, l.code === currentLang ? "✓" : ""),
+    ]);
+    menu.appendChild(item);
+  });
+  const closeMenu = () => { menu.hidden = true; document.removeEventListener("click", onDocClick, true); };
+  const onDocClick = (e) => { if (!wrap.contains(e.target)) closeMenu(); };
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const willOpen = menu.hidden;
+    menu.hidden = !willOpen;
+    if (willOpen) document.addEventListener("click", onDocClick, true);
+    else document.removeEventListener("click", onDocClick, true);
+  });
+  wrap.appendChild(btn);
+  wrap.appendChild(menu);
+  return wrap;
+}
+
+/* Popup informativo que se muestra en modo pruebas privadas cada vez que
+   se entra a la pantalla de bienvenida. Explica que los perfiles que verá
+   el tester son bots creados para la fase de pruebas, no personas reales. */
+function showBetaBotsNotice() {
+  // Evita duplicados si ya está montado en esta sesión de pantalla.
+  if (document.querySelector(".beta-bots-notice-overlay")) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "beta-bots-notice-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.style.cssText = [
+    "position:fixed", "inset:0", "z-index:99999",
+    "background:rgba(6,4,20,.72)", "backdrop-filter:blur(6px)",
+    "-webkit-backdrop-filter:blur(6px)",
+    "display:flex", "align-items:center", "justify-content:center",
+    "padding:20px", "animation:fadeIn .25s ease-out",
+  ].join(";");
+
+  const card = document.createElement("div");
+  card.style.cssText = [
+    "max-width:420px", "width:100%",
+    "background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%)",
+    "border:1px solid rgba(255,255,255,.14)",
+    "border-radius:20px", "padding:22px 22px 18px",
+    "box-shadow:0 30px 80px rgba(0,0,0,.6)",
+    "color:#fff", "text-align:center",
+    "animation:popIn .35s cubic-bezier(.2,.9,.2,1)",
+  ].join(";");
+
+  card.innerHTML = `
+    <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:16px;
+                background:linear-gradient(135deg,#ff3b6b,#ff8a3b,#a855f7);
+                display:grid;place-items:center;font-size:32px;
+                box-shadow:0 10px 30px rgba(168,85,247,.35)">🤖</div>
+    <div style="display:inline-block;padding:6px 14px;border-radius:999px;
+                background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
+                font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+                color:#f2e8ff;margin-bottom:10px">🧪 Modo pruebas</div>
+    <h3 style="margin:0 0 10px;font-size:20px;font-weight:800;line-height:1.2">
+      Aviso importante
+    </h3>
+    <p style="margin:0 0 8px;font-size:15px;line-height:1.45;color:#e6d9ff">
+      Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.
+    </p>
+    <p style="margin:0 0 18px;font-size:14px;line-height:1.45;color:#c9bce4">
+      Ninguno es una persona real todavía. Sirven para que puedas probar
+      todas las funciones (matches, chats, filtros, etc.) antes del lanzamiento público.
+    </p>
+    <button type="button" class="beta-bots-notice-ok"
+      style="width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;
+             background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);
+             color:#fff;font-weight:800;font-size:15px;letter-spacing:.3px;
+             box-shadow:0 10px 24px rgba(255,90,150,.35)">
+      Entendido
+    </button>
+  `;
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    try { overlay.remove(); } catch {}
+  };
+  card.querySelector(".beta-bots-notice-ok").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+}
+
+function screenWelcome(root) {
+  root.classList.add("screen-hero");
+  const _welcomeTestMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (_welcomeTestMode) root.classList.add("screen-hero-beta");
+
+  // En modo pruebas privadas mostramos un aviso emergente cada vez que se
+  // entra a la pantalla de bienvenida, aclarando que los perfiles visibles
+  // son bots para la fase de pruebas y no personas reales.
+  if (_welcomeTestMode) {
+    setTimeout(() => {
+      try { showBetaBotsNotice(); } catch {}
+    }, 350);
+  }
+
+  // Language flag selector (top-right of the welcome screen)
+  root.appendChild(buildWelcomeLangSelector());
+
+  const logoBg = T("content.design.logo_bg") || "gradient";
+  const heartCls = "welcome-heart" + (logoBg === "transparent" ? " logo-transparent" : "");
+  root.appendChild(el("div", { class: "welcome-logo" + (_welcomeTestMode ? " welcome-logo-compact" : "") }, [
+    el("div", { class: heartCls, html: buildLogoInnerHTML() })
+  ]));
+  root.appendChild(el("p", { class: "welcome-sub" }, T("content.welcome.subtitle")));
+
+  const cta = el("div", { class: "welcome-cta" });
+  const regOpen = publicConfig?.app?.registrations_open !== false;
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  // Cuando la app está en modo pruebas (access_locked / private_beta),
+  // ocultamos los botones normales y forzamos el flujo de invitación con
+  // código de tester, aunque `registrations_open` siga true.
+  if (regOpen && !testMode) {
+    cta.appendChild(el("button", { class: "btn btn-primary btn-block", onclick: () => render(screenRegisterEmail) }, T("content.welcome.cta_register")));
+    cta.appendChild(el("button", { class: "btn btn-ghost btn-block", onclick: () => render(screenLogin) }, T("content.welcome.cta_login")));
+  } else {
+    cta.appendChild(el("div", { class: "welcome-closed" }, [
+      el("strong", {}, testMode
+        ? T("content.welcome.invite_beta_title")
+        : T("content.welcome.invite_closed_title")),
+      el("p", { class: "small" }, testMode
+        ? T("content.welcome.invite_beta_desc")
+        : T("content.welcome.invite_closed_desc")),
+    ]));
+    const inv = el("input", {
+      class: "welcome-invite-input",
+      type: "text",
+      placeholder: T("content.welcome.invite_placeholder"),
+      autocomplete: "off",
+      style: "width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.28);color:#fff;font-size:14px;letter-spacing:1px;text-align:center;text-transform:uppercase;margin:8px 0",
+    });
+    inv.addEventListener("input", () => { inv.value = inv.value.toUpperCase(); });
+    cta.appendChild(inv);
+    cta.appendChild(el("button", {
+      class: "btn btn-primary btn-block",
+      onclick: async () => {
+        const code = (inv.value || "").trim();
+        if (!code) { toast(T("content.welcome.invite_empty")); return; }
+        try {
+          const r = await fetch("/api/invite/check", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok || !d.ok) {
+            const errMap = {
+              invite_not_found: T("content.welcome.invite_err_not_found"),
+              invite_revoked: T("content.welcome.invite_err_revoked"),
+              invite_expired: T("content.welcome.invite_err_expired"),
+              invite_used_up: T("content.welcome.invite_err_used_up"),
+              invite_email_mismatch: T("content.welcome.invite_err_email_mismatch"),
+            };
+            toast(errMap[d.error] || T("content.welcome.invite_err_generic"), 3500);
+            return;
+          }
+          state.registration = state.registration || {};
+          state.registration.invite_code = code;
+          if (d.tied_email) state.registration.email = d.tied_email;
+          toast(T("content.welcome.invite_ok"), 2400);
+          render(screenRegisterEmail);
+        } catch {
+          toast(T("content.welcome.invite_err_validate"));
+        }
+      },
+    }, T("content.welcome.invite_cta")));
+  }
+
+  // En modo pruebas ocultamos las opciones "o continúa con" (Google/Apple/
+  // Facebook) porque el acceso solo es válido con código de tester o
+  // desde la pantalla beta (waitlist / superadmin).
+  if (!testMode) {
+    const orSep = el("div", { class: "welcome-or" }, [
+      el("span", { class: "welcome-or-line" }),
+      el("span", { class: "welcome-or-text" }, "o continúa con"),
+      el("span", { class: "welcome-or-line" }),
+    ]);
+    cta.appendChild(orSep);
+
+    cta.appendChild(el("div", { class: "welcome-oauth" }, [
+      el("button", { class: "oauth-btn oauth-google", title: "Continuar con Google", onclick: () => quickLogin("Google") }, [
+        svgIcon(`<path fill="#EA4335" d="M12 10.4v3.4h4.7c-.2 1.2-1.5 3.6-4.7 3.6-2.8 0-5.1-2.3-5.1-5.2s2.3-5.2 5.1-5.2c1.6 0 2.7.7 3.3 1.3l2.3-2.2C16.1 4.7 14.3 4 12 4c-4.4 0-8 3.6-8 8s3.6 8 8 8c4.6 0 7.7-3.3 7.7-7.9 0-.5-.1-.9-.1-1.3H12z"/><path fill="#34A853" d="M3.5 7.6l2.8 2c.8-1.9 2.6-3.2 4.7-3.2 1.3 0 2.5.5 3.4 1.3l2.5-2.5C15.4 3.6 13.8 3 12 3 8.5 3 5.5 5 3.5 7.6z"/><path fill="#FBBC05" d="M12 21c2.3 0 4.3-.8 5.7-2.1l-2.6-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8l-2.8 2.2C5.4 19.1 8.4 21 12 21z"/><path fill="#4285F4" d="M20.7 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h4.9c-.2 1.1-.9 2.1-1.9 2.7l2.6 2.2c1.5-1.4 2.6-3.5 2.6-6.6z"/>`),
+        el("span", {}, "Google"),
+      ]),
+      el("button", { class: "oauth-btn oauth-apple", title: "Continuar con Apple", onclick: () => quickLogin("Apple") }, [
+        svgIcon(`<path fill="#fff" d="M16.4 12.7c0-2.5 2-3.7 2.1-3.7-1.1-1.7-2.9-2-3.5-2-1.5-.2-2.9.9-3.6.9-.7 0-1.9-.9-3.2-.9-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.1 1.2 9.5.8 1.1 1.7 2.4 3 2.3 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.1 3-2.2.9-1.3 1.3-2.5 1.3-2.6-.1-.1-2.8-1.1-2.8-4.7zM14.3 5.4c.7-.9 1.2-2.1 1-3.4-1.1.1-2.4.7-3.1 1.6-.6.8-1.2 2.1-1 3.3 1.2.1 2.4-.6 3.1-1.5z"/>`),
+        el("span", {}, "Apple"),
+      ]),
+      el("button", { class: "oauth-btn oauth-facebook", title: "Continuar con Facebook", onclick: () => quickLogin("Facebook") }, [
+        svgIcon(`<path fill="#fff" d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.3v7c4.7-.8 8.4-4.9 8.4-9.9z"/>`),
+        el("span", {}, "Facebook"),
+      ]),
+    ]));
+  } else {
+    // En modo pruebas, botón discreto de "¿Eres tester? Ver estado" que
+    // lleva a la pantalla beta con waitlist + acceso superadmin.
+    cta.appendChild(el("button", {
+      class: "btn btn-ghost btn-block",
+      style: "margin-top:8px;font-size:13px;opacity:.85",
+      onclick: () => { try { showPrivateBetaScreen({}); } catch {} }
+    }, "🧪 Ver estado de la beta / Soy superadmin"));
+  }
+  // Terms text with clickable links to the Terms and Privacy screens.
+  const termsText = T("content.welcome.terms") || "";
+  // Words to linkify per language. First entry = link to Terms, second = Privacy.
+  const LEGAL_LINK_WORDS = {
+    es: ["Términos", "Política de privacidad"],
+    en: ["Terms", "Privacy Policy"],
+    fr: ["Conditions", "Politique de confidentialité"],
+    de: ["Bedingungen", "Datenschutzerklärung"],
+    it: ["Termini", "Privacy Policy"],
+    pt: ["Termos", "Política de Privacidade"],
+  };
+  const linkWords = LEGAL_LINK_WORDS[currentLang] || LEGAL_LINK_WORDS.es;
+  const termsP = el("p", { class: "welcome-terms" });
+  // Split the text keeping the matches, then rebuild with anchors.
+  const escapeReg = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = [{ text: termsText, isLink: false }];
+  [
+    { word: linkWords[0], target: () => render(screenInfoTerms) },
+    { word: linkWords[1], target: () => render(screenInfoPrivacy) },
+  ].forEach(({ word, target }) => {
+    const next = [];
+    parts.forEach(part => {
+      if (part.isLink) { next.push(part); return; }
+      const re = new RegExp("(" + escapeReg(word) + ")", "i");
+      const bits = part.text.split(re);
+      bits.forEach((b, i) => {
+        if (!b) return;
+        if (i % 2 === 1) next.push({ text: b, isLink: true, target });
+        else next.push({ text: b, isLink: false });
+      });
+    });
+    parts.length = 0; parts.push(...next);
+  });
+  parts.forEach(p => {
+    if (p.isLink) {
+      termsP.appendChild(el("a", {
+        href: "#",
+        class: "welcome-terms-link",
+        onclick: (ev) => { ev.preventDefault(); p.target(); },
+      }, p.text));
+    } else {
+      termsP.appendChild(document.createTextNode(p.text));
+    }
+  });
+  // Añade un enlace inline a "Normas de la comunidad" al final del párrafo de
+  // términos, sin ocupar una línea extra que rompa el layout de escritorio.
+  termsP.appendChild(document.createTextNode(T("content.welcome.rules_prefix") || " Revisa también las "));
+  termsP.appendChild(el("a", {
+    href: "#",
+    class: "welcome-terms-link",
+    onclick: (ev) => { ev.preventDefault(); render(screenInfoRules); },
+  }, T("content.welcome.rules_link") || "normas de la comunidad"));
+  termsP.appendChild(document.createTextNode(T("content.welcome.rules_suffix") || "."));
+
+  cta.appendChild(termsP);
+
+  // ==== Bloque "welcome-below": stats, cómo funciona, testimonio, chips, footer ====
+  const below = el("div", { class: "welcome-below" });
+
+  // Steps title + steps
+  below.appendChild(el("div", { class: "welcome-steps-title" }, T("content.welcome.steps_title")));
+  const steps = el("div", { class: "welcome-steps" });
+  [1, 2].forEach((i) => {
+    steps.appendChild(el("div", { class: "welcome-step" }, [
+      el("div", { class: "welcome-step-ic" }, String(i)),
+      el("div", { class: "welcome-step-txt" }, [
+        el("div", { class: "welcome-step-h" }, T(`content.welcome.step${i}_h`)),
+        el("div", { class: "welcome-step-p" }, T(`content.welcome.step${i}_p`)),
+      ]),
+    ]));
+  });
+  below.appendChild(steps);
+
+  // Trust chips
+  const trust = el("div", { class: "welcome-trust" });
+  const trustIcons = [
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5 4 10 9 12 5-2 9-7 9-12V5l-9-4z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 6L9 17l-5-5 1.5-1.5L9 14l9.5-9.5L20 6z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C7 2 3 6 3 11c0 4 3 8 7 9v-3c-2-.5-4-3-4-6a6 6 0 0112 0c0 3-2 5.5-4 6v3c4-1 7-5 7-9 0-5-4-9-9-9z"/></svg>`,
+  ];
+  ["trust1", "trust2", "trust3", "trust4"].forEach((k, i) => {
+    const badge = el("span", { class: "welcome-badge" });
+    const ic = document.createElement("span");
+    ic.innerHTML = trustIcons[i];
+    badge.appendChild(ic.firstChild);
+    badge.appendChild(document.createTextNode(" " + T(`content.welcome.${k}`)));
+    trust.appendChild(badge);
+  });
+  below.appendChild(trust);
+
+  // Footer links
+  const foot = el("div", { class: "welcome-foot" });
+  const footMap = {
+    foot_help: () => render(screenInfoHelp),
+    foot_faq: () => render(screenInfoFaq),
+    foot_rules: () => render(screenInfoRules),
+    foot_terms: () => render(screenInfoTerms),
+    foot_privacy: () => render(screenInfoPrivacy),
+    foot_contact: () => render(screenInfoContact),
+  };
+  const footLabels = {
+    foot_help: T("content.welcome.foot_help"),
+    foot_faq: T("content.welcome.foot_faq"),
+    foot_rules: T("content.welcome.foot_rules") || "Normas de la comunidad",
+    foot_terms: T("content.welcome.foot_terms"),
+    foot_privacy: T("content.welcome.foot_privacy"),
+    foot_contact: T("content.welcome.foot_contact"),
+  };
+  ["foot_help", "foot_faq", "foot_rules", "foot_terms", "foot_privacy", "foot_contact"].forEach((k, i, arr) => {
+    foot.appendChild(el("a", {
+      href: "#",
+      onclick: (ev) => { ev.preventDefault(); (footMap[k] || (() => {}))(); }
+    }, footLabels[k]));
+    if (i < arr.length - 1) {
+      foot.appendChild(el("span", { class: "foot-sep", "aria-hidden": "true" }, "|"));
+    }
+  });
+  foot.appendChild(el("br"));
+  foot.appendChild(document.createTextNode(T("content.welcome.foot_copy")));
+  below.appendChild(foot);
+
+  cta.appendChild(below);
+
+  root.appendChild(cta);
+  hideApp();
+}
+function svgIcon(inner) {
+  const s = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">${inner}</svg>`;
+  const wrap = document.createElement("span");
+  wrap.innerHTML = s;
+  return wrap.firstChild;
+}
+async function quickLogin(provider) {
+  // NOTA: El toast "Autenticación demo con {provider}" se muestra sólo
+  // cuando el backend confirma que la cuenta puede entrar. Si la app está
+  // en modo pruebas privadas y la cuenta demo no es admin, se salta el
+  // toast y se muestra directamente la pantalla de beta.
+  // Preguntamos al backend qué cuenta debe usar el acceso social. Si el
+  // admin cambió el email de la cuenta demo original, este endpoint
+  // devuelve el email actualizado — así los botones Google/Apple/Facebook
+  // siguen entrando a la MISMA cuenta y respetan sus restricciones.
+  let email = "";
+  let socialName = "";
+  try {
+    const info = await fetch("/api/social/demo", { cache: "no-store" });
+    if (info.ok) {
+      const d = await info.json();
+      if (d && d.email) email = d.email;
+      if (d && d.name)  socialName = d.name;
+    }
+  } catch {}
+  // Fallback: si el backend no devuelve email para la cuenta social demo, usar
+  // la cuenta demo interna (no visible al usuario) para que los botones sociales
+  // sigan funcionando en previews/QA. En producción real cada proveedor devolverá
+  // el email verdadero del usuario.
+  if (!email) email = "sofia@aura.app";
+  if (!socialName) socialName = "Sofía";
+  // Consulta al servidor para respetar el estado (suspendido/baneado) — igual
+  // que un login real por email. Si el backend responde 403, no entra.
+  try {
+    const r = await fetch("/api/my/ensure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name: socialName, zone: "hetero" }),
+    });
+    if (r.status === 403) {
+      let msg = "Tu cuenta no puede iniciar sesión.";
+      let data = null;
+      try { data = await r.json(); if (data?.reason) msg = data.reason; } catch {}
+      // App en pruebas privadas o registro público deshabilitado: mostramos
+      // toast amable y volvemos al welcome, no la pantalla de "cuenta bloqueada".
+      if (data && data.error === "access_locked") {
+        // No pre-rellenamos con el email de la cuenta social demo: ese email
+        // no es del usuario real, así respetamos content.beta.form_default_email
+        // o el placeholder configurado por el admin.
+        try { showPrivateBetaScreen({ provider }); }
+        catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4500); try { render(screenWelcome); } catch {} }
+        return;
+      }
+      if (data && data.error === "not_registered") {
+        // Cuenta social sin usuario real en la BD. No es beta: solo no existe.
+        try { showNotRegisteredScreen({ email, provider }); }
+        catch { toast("Esta cuenta no está registrada. Regístrate primero.", 3800); try { render(screenWelcome); } catch {} }
+        return;
+      }
+      if (data && data.user_id) {
+        state.user = {
+          id: data.user_id,
+          name: data.user_name || socialName,
+          email: data.user_email || email,
+          photo: "",
+        };
+        try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      }
+      showBlockedAccount(msg, {
+        keepSession: !!(data && data.user_id),
+        kind: data?.status || (data?.error && data.error.startsWith("ip_") ? "ip" : null),
+        reason: data?.reason || msg,
+        email,
+        untilDate: data?.expires_at || null,
+      });
+      return;
+    }
+    if (!r.ok) { toast("No se pudo iniciar sesión ahora mismo"); return; }
+    const data = await r.json();
+    state.user = {
+      id: data?.user?.id || null,
+      name: data?.user?.name || socialName,
+      email: data?.user?.email || email,
+      photo: data?.user?.photo_url || "",
+    };
+    state.zone = data?.user?.zone || "hetero";
+    try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+    // Mostrar el toast de acceso demo SOLO cuando la autenticación tuvo éxito
+    // (admin autorizado con modo beta activo, o modo beta desactivado).
+    toast(`Autenticación demo con ${provider}`);
+    showApp();
+  } catch {
+    toast("No se pudo iniciar sesión ahora mismo");
+  }
+}
+function showBlockedAccount(message, opts) {
+  const keepSession = !!(opts && opts.keepSession);
+  const kind = (opts && opts.kind) || null; // "banned" | "suspended" | "ip" | null
+  const reason = (opts && opts.reason) || message || "";
+  const emailHint = (opts && opts.email) || (state.user && state.user.email) || (state.registration && state.registration.email) || "";
+  const untilTxt = (opts && opts.until) || "";
+  const untilDate = (opts && opts.untilDate) || null; // ISO string opcional para countdown
+  const SUPPORT = "soporte@citasaura.es";
+
+  // Formatea el tiempo restante hasta una fecha en texto legible (días, horas, minutos).
+  function fmtRemaining(iso) {
+    if (!iso) return "";
+    try {
+      const end = new Date(iso).getTime();
+      const now = Date.now();
+      let diff = Math.max(0, end - now);
+      const days = Math.floor(diff / 86400000); diff -= days * 86400000;
+      const hours = Math.floor(diff / 3600000); diff -= hours * 3600000;
+      const mins = Math.floor(diff / 60000);
+      if (days >= 1) return `${days} día${days!==1?"s":""} y ${hours} hora${hours!==1?"s":""}`;
+      if (hours >= 1) return `${hours} hora${hours!==1?"s":""} y ${mins} min`;
+      return `${mins} minuto${mins!==1?"s":""}`;
+    } catch { return ""; }
+  }
+
+  // Cerrar sesión local sólo si viene del login. Si el bloqueo llega durante
+  // el uso normal (polling de restricciones), conservamos la sesión para que
+  // al reactivarlo desde admin la app vuelva sola.
+  if (!keepSession) {
+    try { localStorage.removeItem("aura-session"); } catch {}
+    state.user = null;
+  } else {
+    // Mantenemos la sesión → asegúrate de que el heartbeat/SSE/polling de
+    // restricciones esté activo aunque la app "principal" esté oculta. Así,
+    // cuando el admin modifique la suspensión/baneo (motivo, duración,
+    // tipo) o levante la restricción, la pantalla se actualiza en tiempo
+    // real sin que el usuario tenga que recargar.
+    try { startHeartbeat(); } catch {}
+  }
+  const root = document.getElementById("viewport");
+  if (!root) { toast(message); return; }
+  hideApp();
+  root.innerHTML = "";
+
+  // Detección automática del tipo si no viene explícito
+  const low = String(message || reason || "").toLowerCase();
+  const inferred = kind || (low.includes("banead") ? "banned" : low.includes("suspend") ? "suspended" : low.includes("ip") ? "ip" : "restricted");
+
+  const titles = {
+    banned:    { icon: "🚫", label: "Cuenta baneada",     tone: "bad"  },
+    suspended: { icon: "⏸️", label: "Cuenta suspendida",  tone: "warn" },
+    ip:        { icon: "🌐", label: "Acceso bloqueado por IP", tone: "warn" },
+    restricted:{ icon: "⚠️", label: "Acceso restringido",  tone: "warn" },
+  };
+  const info = titles[inferred] || titles.restricted;
+
+  const wrap = el("div", { class: `blocked-screen blocked-${inferred}` });
+
+  // Hero
+  const hero = el("div", { class: "blk-hero" });
+  hero.appendChild(el("div", { class: `blk-badge blk-${info.tone}` }, info.icon));
+  hero.appendChild(el("h2", { class: "blk-title" }, info.label));
+  hero.appendChild(el("p", { class: "blk-sub" },
+    inferred === "banned"
+      ? "Tu cuenta ha sido baneada por el equipo de moderación. El caso continúa bajo estudio."
+      : inferred === "suspended"
+        ? "Tu cuenta está suspendida por el equipo de moderación mientras el caso permanece bajo estudio."
+        : inferred === "ip"
+          ? "Se ha detectado un bloqueo desde tu dirección de red."
+          : "El acceso a la cuenta está restringido."
+  ));
+  wrap.appendChild(hero);
+
+  // Tarjeta de detalle
+  const card = el("div", { class: "blk-card" });
+  if (reason) {
+    card.appendChild(el("div", { class: "blk-row" }, [
+      el("span", { class: "blk-k" }, "Motivo"),
+      el("span", { class: "blk-v" }, reason),
+    ]));
+  }
+  // Fila de duración: para suspensiones y baneos, tanto temporales como indefinidos.
+  if (inferred === "suspended" || inferred === "banned") {
+    const durationTxt = untilTxt
+      ? untilTxt
+      : (inferred === "banned"
+          ? "Indefinida — bajo estudio"
+          : "Indefinida — bajo estudio");
+    card.appendChild(el("div", { class: "blk-row" }, [
+      el("span", { class: "blk-k" }, "Duración"),
+      el("span", { class: "blk-v" }, durationTxt),
+    ]));
+  } else if (untilTxt) {
+    card.appendChild(el("div", { class: "blk-row" }, [
+      el("span", { class: "blk-k" }, "Duración"),
+      el("span", { class: "blk-v" }, untilTxt),
+    ]));
+  }
+  // Tiempo restante cuando hay fecha ISO (aplicable a suspensiones o baneos
+  // temporales). Si no hay fecha, no repetimos "Bajo estudio" porque ya se
+  // muestra en la fila "Duración" y ocupa espacio en móvil.
+  if ((inferred === "suspended" || inferred === "banned") && untilDate) {
+    const remainVal = el("span", { class: "blk-v blk-countdown" }, fmtRemaining(untilDate));
+    card.appendChild(el("div", { class: "blk-row" }, [
+      el("span", { class: "blk-k" }, "Tiempo restante"),
+      remainVal,
+    ]));
+    // Actualiza cada 30 s mientras la pantalla siga visible.
+    const iv = setInterval(() => {
+      if (!document.body.contains(remainVal)) { clearInterval(iv); return; }
+      remainVal.textContent = fmtRemaining(untilDate);
+    }, 30000);
+  }
+  if (emailHint) {
+    card.appendChild(el("div", { class: "blk-row" }, [
+      el("span", { class: "blk-k" }, "Cuenta"),
+      el("span", { class: "blk-v" }, emailHint),
+    ]));
+  }
+  card.appendChild(el("div", { class: "blk-row" }, [
+    el("span", { class: "blk-k" }, "Soporte"),
+    el("a", { class: "blk-v blk-link", href: `mailto:${SUPPORT}` }, SUPPORT),
+  ]));
+  wrap.appendChild(card);
+
+  // Aviso de consecuencias y plazo de apelación (72 h).
+  if (inferred === "suspended") {
+    const warnBox = el("div", { class: "blk-warn" }, [
+      el("div", { class: "blk-warn-title" }, [
+        el("span", { class: "blk-warn-ico" }, "⚠️"),
+        el("span", {}, "Importante"),
+      ]),
+      el("p", { class: "blk-warn-p" },
+        "Puede ampliarse o pasar a baneo definitivo si hay nuevos " +
+        "incumplimientos. Si apelas y no respondes en 72 h, será definitiva."
+      ),
+    ]);
+    wrap.appendChild(warnBox);
+  } else if (inferred === "banned") {
+    const warnBox = el("div", { class: "blk-warn blk-warn-bad" }, [
+      el("div", { class: "blk-warn-title" }, [
+        el("span", { class: "blk-warn-ico" }, "🚫"),
+        el("span", {}, "Cuenta cancelada"),
+      ]),
+      el("p", { class: "blk-warn-p" },
+        "El baneo puede quedar permanente si no apelas o la apelación no " +
+        "prospera. Sin respuesta en 72 h será irrevocable."
+      ),
+    ]);
+    wrap.appendChild(warnBox);
+  }
+
+  if (keepSession) {
+    wrap.appendChild(el("p", { class: "blk-note" }, "La app se reactivará automáticamente cuando el equipo levante la restricción."));
+  }
+
+  // Botones de acción
+  const actions = el("div", { class: "blk-actions" });
+  const appealBtn = el("button", { class: "btn btn-brand btn-block" }, "📝 Enviar apelación");
+  appealBtn.addEventListener("click", () => showAppealForm(emailHint, reason, inferred, {
+    keepSession, untilDate, until: untilTxt,
+  }));
+  actions.appendChild(appealBtn);
+
+  const mailBtn = el("a", {
+    class: "btn btn-ghost btn-block",
+    href: `mailto:${SUPPORT}?subject=${encodeURIComponent("[Aura] Consulta cuenta " + (emailHint||""))}&body=${encodeURIComponent("Hola equipo Aura,\n\nEscribo sobre mi cuenta " + (emailHint||"(indica tu email)") + ".\nEstado: " + info.label + "\nMotivo comunicado: " + (reason||"—") + "\n\n[Explica aquí tu caso]\n\nGracias.")}`
+  }, "✉️ Escribir a soporte");
+  actions.appendChild(mailBtn);
+
+  if (!keepSession) {
+    const back = el("button", { class: "btn btn-ghost btn-block" }, "← Volver al inicio");
+    back.addEventListener("click", () => render(screenWelcome));
+    actions.appendChild(back);
+  }
+  wrap.appendChild(actions);
+
+  // Footer de ayuda
+  wrap.appendChild(el("p", { class: "blk-foot" },
+    "Revisamos todas las apelaciones. Recibirás una respuesta al email indicado."
+  ));
+
+  root.appendChild(wrap);
+}
+
+// ============================================================
+// Pantalla "Aura está en pruebas privadas" — aviso visual e
+// interactivo que sustituye al toast simple. Aparece cuando el
+// backend responde con { error: "access_locked" }.
+// ============================================================
+function showPrivateBetaScreen(opts) {
+  const email = (opts && opts.email) || "";
+  const provider = (opts && opts.provider) || "";
+  // Limpia sesión local — la app está en beta, no debe recordar la cuenta.
+  try { localStorage.removeItem("aura-session"); } catch {}
+  state.user = null;
+
+  const root = document.getElementById("viewport");
+  if (!root) { toast("La app está en pruebas privadas 🔒", 4200); return; }
+  hideApp();
+  root.innerHTML = "";
+
+  const wrap = el("div", { class: "beta-screen" });
+
+  // Hero animado
+  const hero = el("div", { class: "beta-hero" });
+  const badge = el("div", { class: "beta-badge" });
+  badge.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+    </svg>`;
+  hero.appendChild(badge);
+  hero.appendChild(el("div", { class: "beta-pill" }, T("content.beta.pill") || "🧪 Beta privada"));
+  hero.appendChild(el("h2", { class: "beta-title" }, T("content.beta.title") || "Aura está en pruebas"));
+  hero.appendChild(el("p", { class: "beta-sub" },
+    T("content.beta.subtitle") || "Estamos afinando la app con un grupo cerrado de personas. Muy pronto abriremos el acceso para todos."
+  ));
+  wrap.appendChild(hero);
+
+  // Card informativa con puntos
+  const card = el("div", { class: "beta-card" });
+  const points = [
+    { ic: T("content.beta.point1_ic") || "✨", h: T("content.beta.point1_h") || "Experiencia cuidada", p: T("content.beta.point1_p") || "Estamos puliendo cada detalle para que tu primera cita empiece con buen pie." },
+    { ic: T("content.beta.point2_ic") || "🛡️", h: T("content.beta.point2_h") || "Seguridad primero", p: T("content.beta.point2_p") || "Verificación, moderación humana y anti-fraude ya activos antes de abrir a todos." },
+    { ic: T("content.beta.point3_ic") || "🚀", h: T("content.beta.point3_h") || "Lanzamiento cercano", p: T("content.beta.point3_p") || "Te avisaremos por email en cuanto se abra el registro público." },
+  ];
+  points.forEach(pt => {
+    const row = el("div", { class: "beta-point" });
+    row.appendChild(el("div", { class: "beta-point-ic" }, pt.ic));
+    const txt = el("div", { class: "beta-point-txt" });
+    txt.appendChild(el("div", { class: "beta-point-h" }, pt.h));
+    txt.appendChild(el("div", { class: "beta-point-p" }, pt.p));
+    row.appendChild(txt);
+    card.appendChild(row);
+  });
+  wrap.appendChild(card);
+
+  // Formulario "Avísame cuando abráis" (waitlist en localStorage — visual, no consume backend)
+  const form = el("div", { class: "beta-form" });
+  form.appendChild(el("label", { class: "beta-label", for: "betaEmail" },
+    T("content.beta.form_label") || "¿Quieres que te avisemos cuando abramos?"));
+  const inputRow = el("div", { class: "beta-input-row" });
+  // Valor por defecto del campo: si el usuario venía de intentar login, usamos
+  // ese email; si no, respetamos lo que el admin haya configurado en
+  // content.beta.form_default_email (vacío por defecto).
+  const defaultEmail = email || T("content.beta.form_default_email") || "";
+  const input = el("input", {
+    id: "betaEmail",
+    class: "beta-input",
+    type: "email",
+    placeholder: emailPlaceholder("content.beta.form_placeholder"),
+    autocomplete: "email",
+    value: defaultEmail,
+  });
+  const btn = el("button", { class: "btn btn-primary beta-cta" },
+    T("content.beta.form_cta") || "Avísame");
+  inputRow.appendChild(input);
+  inputRow.appendChild(btn);
+  form.appendChild(inputRow);
+
+  const feedback = el("div", { class: "beta-feedback", hidden: true }, "");
+  form.appendChild(feedback);
+
+  btn.addEventListener("click", async () => {
+    const val = (input.value || "").trim().toLowerCase();
+    const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRx.test(val)) {
+      feedback.hidden = false;
+      feedback.className = "beta-feedback beta-feedback-err";
+      feedback.textContent = T("content.beta.err_invalid") || "Introduce un email válido";
+      input.focus();
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = T("content.beta.sending") || "Enviando…";
+    try {
+      // Guardamos localmente como lista de espera visual.
+      let list = [];
+      try { list = JSON.parse(localStorage.getItem("aura-waitlist") || "[]"); } catch {}
+      if (!list.includes(val)) list.push(val);
+      try { localStorage.setItem("aura-waitlist", JSON.stringify(list)); } catch {}
+      // Best-effort al backend (endpoint opcional; si no existe no pasa nada).
+      try {
+        await fetch("/api/waitlist", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: val, source: provider || "welcome" }),
+        });
+      } catch {}
+      feedback.hidden = false;
+      feedback.className = "beta-feedback beta-feedback-ok";
+      feedback.textContent = T("content.beta.ok_saved") || "¡Listo! Te avisaremos en cuanto abramos ✨";
+      input.disabled = true;
+      btn.textContent = T("content.beta.ok_btn") || "En la lista ✓";
+      // Confetti visual sencillo
+      try { spawnBetaConfetti(wrap); } catch {}
+    } catch {
+      feedback.hidden = false;
+      feedback.className = "beta-feedback beta-feedback-err";
+      feedback.textContent = T("content.beta.err_save") || "No pudimos guardarte ahora. Inténtalo de nuevo.";
+      btn.disabled = false;
+      btn.textContent = T("content.beta.form_cta") || "Avísame";
+    }
+  });
+  wrap.appendChild(form);
+
+  // Acciones secundarias
+  const actions = el("div", { class: "beta-actions" });
+  const backBtn = el("button", { class: "btn btn-ghost btn-block" },
+    T("content.beta.back") || "← Volver al inicio");
+  backBtn.addEventListener("click", () => { try { render(screenWelcome); } catch {} });
+  actions.appendChild(backBtn);
+  wrap.appendChild(actions);
+
+  // Acceso reservado para superadmin — botón discreto que despliega un
+  // input para introducir el código y entrar aunque la app esté en pruebas
+  // privadas. Al cerrar sesión, la pantalla beta se vuelve a mostrar.
+  const adminBox = el("div", { class: "beta-admin" });
+  const adminToggle = el("button", {
+    class: "beta-admin-toggle", type: "button",
+    "aria-expanded": "false",
+  }, T("content.beta.admin_toggle") || "¿Eres administrador?");
+  const adminPanel = el("div", { class: "beta-admin-panel", hidden: true });
+  const adminInput = el("input", {
+    class: "beta-admin-input",
+    type: "text",
+    placeholder: T("content.beta.admin_placeholder") || "Código de acceso",
+    autocomplete: "off", spellcheck: "false",
+  });
+  const adminBtn = el("button", { class: "btn btn-primary beta-admin-cta", type: "button" },
+    T("content.beta.admin_cta") || "Entrar");
+  const adminFb = el("div", { class: "beta-admin-fb", hidden: true }, "");
+  adminPanel.appendChild(adminInput);
+  adminPanel.appendChild(adminBtn);
+  adminPanel.appendChild(adminFb);
+  adminToggle.addEventListener("click", () => {
+    const open = adminPanel.hidden;
+    adminPanel.hidden = !open;
+    adminToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) { try { adminInput.focus(); } catch {} }
+  });
+  adminBtn.addEventListener("click", async () => {
+    const code = (adminInput.value || "").trim();
+    if (!code) {
+      adminFb.hidden = false;
+      adminFb.className = "beta-admin-fb beta-feedback-err";
+      adminFb.textContent = T("content.beta.admin_err_empty") || "Introduce el código";
+      return;
+    }
+    adminBtn.disabled = true;
+    adminBtn.textContent = T("content.beta.sending") || "Enviando…";
+    try {
+      const r = await fetch("/api/access/superadmin", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        adminFb.hidden = false;
+        adminFb.className = "beta-admin-fb beta-feedback-err";
+        adminFb.textContent = (d && d.error === "invalid_code")
+          ? (T("content.beta.admin_err_invalid") || "Código no válido")
+          : (T("content.beta.admin_err_generic") || "No se pudo verificar el código");
+        adminBtn.disabled = false;
+        adminBtn.textContent = T("content.beta.admin_cta") || "Entrar";
+        return;
+      }
+      // Persistir sesión y abrir la app
+      state.user = {
+        id: d.user.id, name: d.user.name || "", email: d.user.email,
+        photo: d.user.photo_url || "", role: d.user.role || "superadmin",
+      };
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      adminFb.hidden = false;
+      adminFb.className = "beta-admin-fb beta-feedback-ok";
+      adminFb.textContent = T("content.beta.admin_ok") || "Acceso concedido ✓";
+      setTimeout(() => {
+        try { showApp(); } catch {}
+        try { render(screenDiscover); } catch { try { location.reload(); } catch {} }
+      }, 400);
+    } catch {
+      adminFb.hidden = false;
+      adminFb.className = "beta-admin-fb beta-feedback-err";
+      adminFb.textContent = T("content.beta.admin_err_generic") || "No se pudo verificar el código";
+      adminBtn.disabled = false;
+      adminBtn.textContent = T("content.beta.admin_cta") || "Entrar";
+    }
+  });
+  adminInput.addEventListener("keydown", (e) => { if (e.key === "Enter") adminBtn.click(); });
+  adminBox.appendChild(adminToggle);
+  adminBox.appendChild(adminPanel);
+  wrap.appendChild(adminBox);
+
+  // Nota de contacto
+  const footEmail = T("content.beta.foot_email") || "hola@citasaura.es";
+  const footText  = T("content.beta.foot_text")  || "¿Eres tester? Escríbenos a ";
+  wrap.appendChild(el("p", { class: "beta-foot" }, [
+    footText,
+    el("a", { href: "mailto:" + footEmail }, footEmail),
+  ]));
+
+  root.appendChild(wrap);
+  // Micro-animación de entrada
+  requestAnimationFrame(() => wrap.classList.add("beta-in"));
+}
+
+// Pantalla bonita "Esta cuenta no está registrada" cuando el usuario intenta
+// entrar por Google/Apple/Facebook con un email que no existe en la BD.
+// Reutiliza los estilos beta-* para mantener consistencia visual.
+function showNotRegisteredScreen(opts) {
+  const email = (opts && opts.email) || "";
+  const provider = (opts && opts.provider) || "";
+  try { localStorage.removeItem("aura-session"); } catch {}
+  state.user = null;
+
+  const root = document.getElementById("viewport");
+  if (!root) { toast("Esta cuenta no está registrada. Regístrate primero.", 4200); return; }
+  hideApp();
+  root.innerHTML = "";
+
+  const wrap = el("div", { class: "beta-screen" });
+
+  // Hero
+  const hero = el("div", { class: "beta-hero" });
+  const badge = el("div", { class: "beta-badge" });
+  badge.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>
+      <line x1="18" y1="4" x2="22" y2="8"/>
+      <line x1="22" y1="4" x2="18" y2="8"/>
+    </svg>`;
+  hero.appendChild(badge);
+  hero.appendChild(el("div", { class: "beta-pill" }, "👤 Cuenta no encontrada"));
+  hero.appendChild(el("h2", { class: "beta-title" }, "Aún no tienes cuenta en Aura"));
+  hero.appendChild(el("p", { class: "beta-sub" },
+    "El email de tu cuenta " + (provider ? provider.charAt(0).toUpperCase()+provider.slice(1) : "social") +
+    " no está registrado en Aura. Crea tu cuenta en unos pasos y podrás iniciar sesión."
+  ));
+  wrap.appendChild(hero);
+
+  // Card informativa
+  const card = el("div", { class: "beta-card" });
+  const points = [
+    { ic: "📝", h: "Registro rápido", p: "Solo necesitamos tu email, un código de verificación y tus datos básicos." },
+    { ic: "🛡️", h: "Verificación de identidad", p: "Un paso corto con tu DNI y un selfie para que la comunidad sea segura." },
+    { ic: "💖", h: "Empieza a conocer gente", p: "Configura tu perfil y descubre personas afines cerca de ti." },
+  ];
+  points.forEach(pt => {
+    const row = el("div", { class: "beta-point" });
+    row.appendChild(el("div", { class: "beta-point-ic" }, pt.ic));
+    const txt = el("div", { class: "beta-point-txt" });
+    txt.appendChild(el("div", { class: "beta-point-h" }, pt.h));
+    txt.appendChild(el("div", { class: "beta-point-p" }, pt.p));
+    row.appendChild(txt);
+    card.appendChild(row);
+  });
+  wrap.appendChild(card);
+
+  // Solo mostramos el email si es real (no email demo de @aura.app).
+  const _isDemoEmailBox = !email || /@aura\.app$/i.test(email) || /^sofia@/i.test(email);
+  if (email && !_isDemoEmailBox) {
+    const emailBox = el("div", { class: "beta-form" });
+    emailBox.appendChild(el("label", { class: "beta-label" }, "Cuenta social usada"));
+    emailBox.appendChild(el("div", { class: "beta-input", style: "opacity:.75; cursor:default;" }, email));
+    wrap.appendChild(emailBox);
+  }
+
+  // Acciones
+  const actions = el("div", { class: "beta-actions" });
+  const registerBtn = el("button", { class: "btn btn-primary btn-block beta-cta" }, "✨ Crear cuenta ahora");
+  registerBtn.addEventListener("click", () => {
+    // Pre-rellena el email si venía de una cuenta social, PERO ignoramos
+    // los emails demo de @aura.app (Google/Apple/Facebook devuelven emails
+    // demo en modo dev que no son del usuario real).
+    try {
+      const isDemoEmail = !email || /@aura\.app$/i.test(email) || /^sofia@/i.test(email);
+      if (email && !isDemoEmail) {
+        state.registration = state.registration || {};
+        state.registration.email = email;
+      } else {
+        // Limpiar el email pre-rellenado si hubiera basura de intentos previos
+        if (state.registration) state.registration.email = "";
+      }
+    } catch {}
+    try { render(screenRegisterEmail); } catch { try { render(screenWelcome); } catch {} }
+  });
+  actions.appendChild(registerBtn);
+
+  const backBtn = el("button", { class: "btn btn-ghost btn-block" }, "← Volver al inicio");
+  backBtn.addEventListener("click", () => { try { render(screenWelcome); } catch {} });
+  actions.appendChild(backBtn);
+  wrap.appendChild(actions);
+
+  // Footer
+  wrap.appendChild(el("p", { class: "beta-foot" }, [
+    "¿Problemas? Escribe a ",
+    el("a", { href: "mailto:soporte@citasaura.es" }, "soporte@citasaura.es"),
+  ]));
+
+  root.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add("beta-in"));
+}
+
+// Confetti visual muy simple para el momento de la suscripción a waitlist.
+function spawnBetaConfetti(container) {
+  if (!container) return;
+  const layer = document.createElement("div");
+  layer.className = "beta-confetti";
+  const colors = ["#ff3b6b", "#ff8a3b", "#ffd23b", "#4bd4ff", "#a06bff"];
+  for (let i = 0; i < 24; i++) {
+    const p = document.createElement("span");
+    p.style.background = colors[i % colors.length];
+    p.style.left = (Math.random() * 100) + "%";
+    p.style.animationDelay = (Math.random() * 0.4) + "s";
+    p.style.animationDuration = (0.9 + Math.random() * 0.8) + "s";
+    p.style.transform = `rotate(${Math.random() * 360}deg)`;
+    layer.appendChild(p);
+  }
+  container.appendChild(layer);
+  setTimeout(() => { try { layer.remove(); } catch {} }, 2400);
+}
+
+// Pantalla de apelación embebida dentro del viewport (marco móvil / escritorio).
+// Reutiliza el flujo de "showBlockedAccount" como origen para volver atrás.
+function showAppealForm(prefEmail, prefReason, kind, prefOpts) {
+  // Cierra un eventual modal antiguo si estaba abierto.
+  try {
+    const modal = document.getElementById("modal");
+    if (modal) modal.hidden = true;
+  } catch {}
+
+  const root = document.getElementById("viewport");
+  if (!root) return;
+
+  // Guarda el contexto para poder "volver" a la pantalla de bloqueo.
+  const back = () => {
+    try {
+      showBlockedAccount(prefReason || "Se ha comunicado una restricción sobre tu cuenta.", {
+        kind: kind || "restricted",
+        reason: prefReason || "",
+        email: prefEmail || "",
+        keepSession: !!(prefOpts && prefOpts.keepSession),
+        untilDate: prefOpts && prefOpts.untilDate,
+        until: prefOpts && prefOpts.until,
+      });
+    } catch { try { render(screenWelcome); } catch {} }
+  };
+
+  root.innerHTML = "";
+  hideApp();
+
+  const wrap = el("div", { class: "appeal-screen" });
+
+  // Barra superior con botón "Volver"
+  const topbar = el("div", { class: "appeal-topbar" });
+  const backBtn = el("button", { class: "appeal-back", "aria-label": "Volver" }, "← Volver");
+  backBtn.addEventListener("click", back);
+  topbar.appendChild(backBtn);
+  topbar.appendChild(el("div", { class: "appeal-topbar-title" }, "Apelación"));
+  topbar.appendChild(el("span", { class: "appeal-back", style: "visibility:hidden" }, "← Volver"));
+  wrap.appendChild(topbar);
+
+  // Contenido scrollable
+  const body = el("div", { class: "appeal-body" });
+
+  body.appendChild(el("div", { class: "appeal-hero" }, [
+    el("div", { class: "appeal-hero-ico" }, "📝"),
+    el("h2", { class: "appeal-title" }, "Enviar apelación"),
+    el("p", { class: "appeal-sub" }, "Cuéntanos qué ha pasado. Revisaremos tu caso y te responderemos por email lo antes posible."),
+  ]));
+
+  const form = el("form", { class: "appeal-form" });
+
+  form.appendChild(el("label", { class: "appeal-label" }, "Email de la cuenta"));
+  const emailField = el("input", {
+    type: "email", required: true, class: "appeal-input",
+    placeholder: "Tu email de la cuenta", value: prefEmail || "",
+  });
+  form.appendChild(emailField);
+
+  form.appendChild(el("label", { class: "appeal-label" }, "Contacto adicional (opcional)"));
+  const contactField = el("input", {
+    type: "text", class: "appeal-input",
+    placeholder: "Ej.: teléfono, email alternativo (opcional)",
+  });
+  form.appendChild(contactField);
+
+  form.appendChild(el("label", { class: "appeal-label" }, "Tu mensaje"));
+  const msgField = el("textarea", {
+    required: true, class: "appeal-textarea", rows: 6, maxlength: 3000,
+    placeholder: "Describe tu caso con el mayor detalle posible…",
+  });
+  form.appendChild(msgField);
+  form.appendChild(el("div", { class: "appeal-helper" }, "Mínimo 10 caracteres. Máx. 3000."));
+
+  const actions = el("div", { class: "appeal-actions" });
+  const cancel = el("button", { type: "button", class: "btn btn-ghost btn-block" }, "Cancelar");
+  cancel.addEventListener("click", back);
+  const submit = el("button", { type: "submit", class: "btn btn-brand btn-block" }, "Enviar apelación");
+  actions.appendChild(submit);
+  actions.appendChild(cancel);
+  form.appendChild(actions);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = emailField.value.trim().toLowerCase();
+    const message = msgField.value.trim();
+    if (!email.includes("@")) { toast("Introduce un email válido"); return; }
+    if (message.length < 10) { toast("Escribe un mensaje más detallado (mín. 10 caracteres)"); return; }
+    submit.disabled = true;
+    submit.textContent = "Enviando…";
+    try {
+      const r = await fetch("/api/appeal", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, message, contact: contactField.value.trim() }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 429) {
+        toast("Has enviado demasiadas apelaciones. Inténtalo más tarde.", 4000);
+        submit.disabled = false; submit.textContent = "Enviar apelación";
+        return;
+      }
+      if (!r.ok) {
+        toast("No se pudo enviar la apelación. Inténtalo más tarde.", 4000);
+        submit.disabled = false; submit.textContent = "Enviar apelación";
+        return;
+      }
+      // Reemplaza el contenido con confirmación embebida
+      wrap.innerHTML = "";
+      const okBar = el("div", { class: "appeal-topbar" });
+      okBar.appendChild(el("span", { class: "appeal-back", style: "visibility:hidden" }, "← Volver"));
+      okBar.appendChild(el("div", { class: "appeal-topbar-title" }, "Apelación"));
+      okBar.appendChild(el("span", { class: "appeal-back", style: "visibility:hidden" }, "← Volver"));
+      wrap.appendChild(okBar);
+      wrap.appendChild(el("div", { class: "appeal-ok" }, [
+        el("div", { class: "appeal-ok-icon" }, "✅"),
+        el("h3", {}, "Apelación enviada"),
+        el("p", { class: "small muted" }, `Nº de referencia: #${data.id || "—"}. Nuestro equipo revisará tu caso y te responderá por email a ${email}.`),
+        (function(){
+          const b = el("button", { class: "btn btn-brand btn-block" }, "Cerrar");
+          b.addEventListener("click", back);
+          return b;
+        })(),
+      ]));
+    } catch {
+      toast("Error de red. Inténtalo más tarde.", 4000);
+      submit.disabled = false; submit.textContent = "Enviar apelación";
+    }
+  });
+
+  body.appendChild(form);
+  wrap.appendChild(body);
+  root.appendChild(wrap);
+}
+
+/* ---- Register: email ---- */
+function screenRegisterEmail(root) {
+  // En modo pruebas privadas exigimos que exista un `invite_code` validado
+  // (setteado por el flujo del welcome cuando el tester introduce su código).
+  // Sin código, no permitimos entrar al registro y devolvemos a la beta screen.
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  const hasInvite = !!(state.registration && state.registration.invite_code);
+  if (testMode && !hasInvite) {
+    try { showPrivateBetaScreen({}); return; } catch {}
+  }
+  root.classList.add("screen-register-email");
+  root.appendChild(topbar(T("content.register.email.topbar_title") || "Crear cuenta", () => render(screenWelcome)));
+  root.appendChild(stepper(1, 6));
+
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, T("content.register.email.title")),
+    el("p", {}, T("content.register.email.subtitle")),
+  ]));
+
+  // Aviso previo de verificación de identidad (KYC) — se muestra ANTES de
+  // pedir el email para que la persona sepa a qué se compromete antes de
+  // invertir tiempo introduciendo datos. Cumple el principio de información
+  // previa del RGPD y evita sorpresas.
+  const kycNotice = el("div", { class: "kyc-notice" }, [
+    el("div", { class: "kyc-notice-ic", html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 4 5v6c0 5 3.5 9.5 8 11 4.5-1.5 8-6 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>` }),
+    el("div", { class: "kyc-notice-h", html: "Verificaremos tu identidad <span class='kyc-notice-pill'>Obligatorio</span>" }),
+    el("div", { class: "kyc-notice-sub", html: "Al final del registro haremos un chequeo de <b>edad e identidad</b> con Didit. Menos de 2 min." }),
+    el("div", { class: "kyc-notice-steps" }, [
+      el("span", { class: "kyc-notice-step" }, [ el("span", { class: "kyc-notice-step-n" }, "1"), el("span", {}, "Documento") ]),
+      el("span", { class: "kyc-notice-sep" }, "•"),
+      el("span", { class: "kyc-notice-step" }, [ el("span", { class: "kyc-notice-step-n" }, "2"), el("span", {}, "Selfie") ]),
+      el("span", { class: "kyc-notice-sep" }, "•"),
+      el("span", { class: "kyc-notice-step" }, [ el("span", { class: "kyc-notice-step-n" }, "3"), el("span", {}, "Vídeo") ]),
+    ]),
+    el("div", { class: "kyc-notice-docs" }, "Vale DNI, pasaporte, permiso de residencia o carné de conducir."),
+    el("button", { type: "button", class: "kyc-notice-more legal-link", "data-goto": "kyc" }, "Más información"),
+  ]);
+  form.appendChild(kycNotice);
+
+  // Valor por defecto del input: si el usuario ya introdujo su email antes,
+  // ese tiene prioridad; si no, el que el admin haya configurado.
+  const defaultRegEmail = state.registration.email || T("content.register.email.default_email") || "";
+  const emailInput = el("input", { type: "email", placeholder: emailPlaceholder("content.register.email.placeholder"), required: true, autocomplete: "email", value: defaultRegEmail });
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.register.email.input_label") || "Email"), emailInput ]));
+
+  // ---- Consentimientos RGPD (obligatorios antes de continuar) ----
+  const consAge     = el("input", { type: "checkbox", required: true });
+  const consTerms   = el("input", { type: "checkbox", required: true });
+  const consPrivacy = el("input", { type: "checkbox", required: true });
+  const consBio     = el("input", { type: "checkbox", required: true });
+  const consMkt     = el("input", { type: "checkbox" }); // opcional
+  const legalRow = (input, html) =>
+    el("label", { class: "legal-check" }, [ input, el("span", { html }) ]);
+
+  // Consentimientos RGPD completos (edad, términos, privacidad, biométrico +
+  // marketing opcional), en versión compacta para caber sin scroll en 900px.
+  form.appendChild(el("div", { class: "legal-block legal-block-compact" }, [
+    legalRow(consAge,
+      "Tengo <b>18 años o más</b>."),
+    legalRow(consTerms,
+      `Acepto los <a href="#" class="legal-link" data-goto="terms">Términos y Condiciones</a>.`),
+    legalRow(consPrivacy,
+      `Acepto la <a href="#" class="legal-link" data-goto="privacy">Política de Privacidad</a> (RGPD).`),
+    legalRow(consBio,
+      `Consiento el tratamiento de mis <b>datos biométricos</b> para verificar mi edad e identidad (<a href="#" class="legal-link" data-goto="kyc">art. 9.2.a RGPD</a>).`),
+    legalRow(consMkt,
+      "Quiero recibir novedades por email <span class='muted'>(opcional)</span>."),
+  ]));
+
+  // Delegar apertura de las pantallas legales sin dejar el formulario.
+  // Guardamos la pantalla de origen para que el botón atrás vuelva aquí en
+  // lugar de a la pantalla de bienvenida (comportamiento por defecto de infoPage).
+  form.addEventListener("click", (ev) => {
+    const a = ev.target.closest("a.legal-link");
+    if (!a) return;
+    ev.preventDefault();
+    const target = a.dataset.goto;
+    window.__infoBackTo = screenRegisterEmail;
+    if (target === "terms")   render(screenInfoTerms);
+    if (target === "privacy") render(screenInfoPrivacy);
+    if (target === "kyc")     render(screenInfoKycPolicy);
+  });
+
+  form.appendChild(el("button", { class: "btn btn-brand btn-block btn-register-submit", type: "submit" }, T("content.register.email.button")));
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!emailInput.value.includes("@")) { toast("Introduce un correo válido"); return; }
+    if (!consAge.checked)     { toast("Debes confirmar que tienes 18 años o más"); return; }
+    if (!consTerms.checked)   { toast("Debes aceptar los Términos y Condiciones"); return; }
+    if (!consPrivacy.checked) { toast("Debes aceptar la Política de Privacidad"); return; }
+    if (!consBio.checked)     { toast("Debes autorizar el tratamiento biométrico para verificar tu edad"); return; }
+    // Registrar consentimientos con marca temporal (auditoría RGPD)
+    state.registration.consents = {
+      age: true, terms: true, privacy: true, biometric: true,
+      marketing: consMkt.checked,
+      accepted_at: new Date().toISOString(),
+      terms_version:   "2026-08-03",
+      privacy_version: "2026-08-03",
+      kyc_version:     "2026-08-03",
+    };
+    state.registration.email = emailInput.value.trim().toLowerCase();
+    // Huella de dispositivo para el sistema anti-duplicados
+    let _regFp = null;
+    try { _regFp = await computeDeviceFingerprint(); state.registration.fingerprint = _regFp; } catch {}
+    try {
+      const r = await fetch("/api/verify/send", {
+        method: "POST", headers: { "Content-Type": "application/json", ...(_regFp ? { "X-Fingerprint": _regFp } : {}) },
+        body: JSON.stringify({
+          email: state.registration.email,
+          invite_code: state.registration.invite_code || null,
+          lang: currentLang,
+          fingerprint: _regFp,
+        }),
+      });
+      const data = await r.json();
+      if (r.status === 403 && (data?.status === "suspended" || data?.status === "banned" || data?.status === "restricted")) {
+        showBlockedAccount(data.reason || "El acceso está bloqueado.", {
+          kind: data.status,
+          reason: data.reason || "",
+          email: state.registration && state.registration.email,
+          untilDate: data.expires_at || null,
+          until: data.expires_at ? ("Hasta el " + new Date(data.expires_at).toLocaleString()) : "",
+        });
+        return;
+      }
+      if (!r.ok) {
+        if (data.error === "registrations_closed") {
+          toast("Registros cerrados por el administrador", 3500);
+          render(screenWelcome);
+          return;
+        }
+        if (data.error === "access_locked") {
+          try { showPrivateBetaScreen({ email: state.registration && state.registration.email }); }
+          catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4200); render(screenWelcome); }
+          return;
+        }
+        throw new Error(data.error || "send_error");
+      }
+      // If email verification is not required, skip OTP and go to KYC
+      if (data.skipped || publicConfig?.app?.email_verification_required === false) {
+        state.registration.otpVerified = true;
+        render(screenVerifyIdentityIntro);
+        return;
+      }
+      if (data.sent) {
+        toast("Código enviado a tu email ✉️", 3200);
+      } else {
+        // Demo fallback: SMTP not configured
+        state.registration.demoCode = data.demoCode;
+        toast(`Modo demo — código: ${data.demoCode}`, 5000);
+      }
+      // Guardar la fecha de expiración del código para pintar la cuenta atrás
+      // en la pantalla OTP (10 min desde el envío).
+      state.registration.otpExpiresAt = data.expires_at
+        || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+      render(screenRegisterOTP);
+    } catch (err) {
+      toast("Error enviando el código");
+    }
+  });
+  root.appendChild(form);
+  hideApp();
+}
+
+/* ---- Register: OTP ---- */
+function screenRegisterOTP(root) {
+  root.appendChild(topbar("Verifica tu email", () => render(screenRegisterEmail)));
+  root.appendChild(stepper(2, 6));
+
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, T("content.register.otp.title")),
+    el("p", { html: `Enviado a <b>${state.registration.email}</b>` }),
+  ]));
+
+  // Badge de cuenta atrás. El código dura 10 min desde que se envió.
+  // Formato: "⏱ Expira en 09:42". En los últimos 60s se vuelve rojo. Al llegar
+  // a 00:00 se convierte en aviso y desactiva los inputs hasta que el usuario
+  // pida un código nuevo.
+  const countdownBadge = el("div", {
+    class: "otp-countdown",
+    style: "display:flex;align-items:center;justify-content:center;gap:8px;margin:10px auto 6px;padding:8px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);font-size:14px;font-weight:600;max-width:max-content;transition:all .2s ease;",
+  }, [
+    el("span", { class: "otp-cd-ico", style: "font-size:16px;" }, "⏱"),
+    el("span", { class: "otp-cd-txt" }, "Calculando…"),
+  ]);
+  form.appendChild(countdownBadge);
+
+  const otpWrap = el("div", { class: "otp" });
+  const inputs = [];
+  for (let i = 0; i < 6; i++) {
+    const inp = el("input", { type: "text", inputmode: "numeric", maxlength: 1, "aria-label": `Dígito ${i+1}` });
+    inp.addEventListener("input", (e) => {
+      e.target.value = e.target.value.replace(/\D/g, "");
+      if (e.target.value && i < 5) inputs[i+1].focus();
+      checkOtp();
+    });
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Backspace" && !inp.value && i > 0) inputs[i-1].focus();
+    });
+    inputs.push(inp);
+    otpWrap.appendChild(inp);
+  }
+  form.appendChild(otpWrap);
+
+  const hint = el("p", { class: "otp-hint" }, [
+    "¿No lo recibiste? ",
+    el("button", { class: "link-btn", type: "button", onclick: (e) => resend(e.currentTarget) }, "Reenviar"),
+  ]);
+  form.appendChild(hint);
+
+  // If SMTP isn't configured on the server, the code is generated but not
+  // emailed. Show a hint so the user knows to ask the admin (who can see it
+  // in the panel), and — if we have it — offer a one-tap fill button.
+  if (state.registration.demoCode) {
+    const demoBox = el("div", { class: "otp-demo-box" }, [
+      el("div", { class: "otp-demo-label" }, "Envío por email no disponible"),
+      el("p", { class: "otp-demo-hint" }, "Contacta al administrador para obtener tu código de verificación."),
+      el("div", { class: "otp-demo-code" }, state.registration.demoCode),
+      el("button", {
+        class: "btn btn-outline btn-sm",
+        type: "button",
+        onclick: () => {
+          const code = state.registration.demoCode;
+          for (let i = 0; i < 6 && i < code.length; i++) inputs[i].value = code[i];
+          checkOtp();
+          inputs[5].focus();
+        },
+      }, "Rellenar automáticamente"),
+    ]);
+    form.appendChild(demoBox);
+  }
+
+  const btn = el("button", { class: "btn btn-brand btn-block", type: "submit", disabled: true }, T("content.register.otp.button"));
+  form.appendChild(btn);
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = inputs.map(i => i.value).join("");
+    try {
+      const r = await fetch("/api/verify/check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: state.registration.email, code }),
+      });
+      const data = await r.json();
+      if (r.status === 403 && (data?.status === "suspended" || data?.status === "banned" || data?.status === "restricted")) {
+        showBlockedAccount(data.reason || "El acceso está bloqueado.", {
+          kind: data.status,
+          reason: data.reason || "",
+          email: state.registration && state.registration.email,
+          untilDate: data.expires_at || null,
+          until: data.expires_at ? ("Hasta el " + new Date(data.expires_at).toLocaleString()) : "",
+        });
+        return;
+      }
+      if (r.ok && data.ok) {
+        toast("Email verificado ✓");
+        render(screenVerifyIdentityIntro);
+      } else {
+        toast("Código incorrecto o expirado");
+        inputs.forEach(i => i.value = "");
+        inputs[0].focus();
+      }
+    } catch (err) { toast("Error verificando"); }
+  });
+
+  function checkOtp() {
+    btn.disabled = inputs.some(i => !i.value);
+  }
+  let cooldown = 0;
+  async function resend(btnEl) {
+    if (cooldown > 0) return;
+    try {
+      const r = await fetch("/api/verify/send", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: state.registration.email, lang: currentLang }),
+      });
+      const data = await r.json();
+      if (data.sent) toast("Nuevo código enviado ✉️");
+      else { state.registration.demoCode = data.demoCode; toast(`Modo demo — código: ${data.demoCode}`, 5000); }
+      // Nuevo código = nueva expiración. Actualizamos y reiniciamos la cuenta atrás.
+      state.registration.otpExpiresAt = data.expires_at
+        || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+      if (typeof restartOtpCountdown === "function") restartOtpCountdown();
+    } catch (e) { toast("Error al reenviar"); return; }
+    cooldown = 30;
+    btnEl.disabled = true;
+    const timer = setInterval(() => {
+      cooldown--;
+      btnEl.textContent = `Reenviar (${cooldown}s)`;
+      if (cooldown <= 0) { clearInterval(timer); btnEl.disabled = false; btnEl.textContent = "Reenviar"; }
+    }, 1000);
+  }
+
+  root.appendChild(form);
+  setTimeout(() => inputs[0].focus(), 100);
+
+  // ==== Cuenta atrás de expiración del OTP (10 min por defecto) ============
+  // Se actualiza cada segundo. Si no tenemos otpExpiresAt (p. ej. porque el
+  // usuario aterrizó aquí sin pasar por el flujo normal), asumimos 10 min a
+  // partir del render actual.
+  let _cdTimer = null;
+  const cdTxt = countdownBadge.querySelector(".otp-cd-txt");
+  const cdIco = countdownBadge.querySelector(".otp-cd-ico");
+  function mmss(s) {
+    const m = Math.floor(s / 60), r = s % 60;
+    return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
+  }
+  function setExpiredUI() {
+    inputs.forEach(i => { i.disabled = true; });
+    btn.disabled = true;
+    countdownBadge.style.background = "rgba(255,68,68,0.12)";
+    countdownBadge.style.borderColor = "rgba(255,68,68,0.4)";
+    countdownBadge.style.color = "#ff9a9a";
+    cdIco.textContent = "⌛";
+    cdTxt.textContent = "Este código ha expirado";
+    // Si no existe ya el aviso, lo añadimos: botón grande para pedir uno nuevo.
+    if (!form.querySelector(".otp-expired-box")) {
+      const box = el("div", {
+        class: "otp-expired-box",
+        style: "margin-top:12px;padding:14px;border:1px solid rgba(255,68,68,0.35);border-radius:12px;background:rgba(255,68,68,0.06);text-align:center;",
+      }, [
+        el("p", { style: "margin:0 0 10px;color:#ffb4b4;font-size:14px;" },
+          "El código dejó de ser válido. Solicita uno nuevo para continuar."),
+        el("button", {
+          class: "btn btn-brand btn-sm",
+          type: "button",
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            b.textContent = "Enviando…";
+            try {
+              const r = await fetch("/api/verify/send", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: state.registration.email, lang: currentLang }),
+              });
+              const data = await r.json();
+              if (data.sent) toast("Nuevo código enviado ✉️");
+              else if (data.demoCode) {
+                state.registration.demoCode = data.demoCode;
+                toast(`Modo demo — código: ${data.demoCode}`, 5000);
+              }
+              state.registration.otpExpiresAt = data.expires_at
+                || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+              // Reiniciar UI: rehabilitamos inputs, quitamos el aviso, reinicia el tick.
+              inputs.forEach(i => { i.disabled = false; i.value = ""; });
+              box.remove();
+              countdownBadge.style.background = "rgba(255,255,255,0.04)";
+              countdownBadge.style.borderColor = "rgba(255,255,255,0.14)";
+              countdownBadge.style.color = "";
+              cdIco.textContent = "⏱";
+              inputs[0].focus();
+              restartOtpCountdown();
+            } catch {
+              toast("Error al pedir un nuevo código");
+              b.disabled = false;
+              b.textContent = "Solicitar nuevo código";
+            }
+          },
+        }, "Solicitar nuevo código"),
+      ]);
+      form.appendChild(box);
+    }
+  }
+  function tick() {
+    if (!state.registration.otpExpiresAt) {
+      state.registration.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    }
+    const left = Math.max(0, Math.round((new Date(state.registration.otpExpiresAt).getTime() - Date.now()) / 1000));
+    if (left <= 0) {
+      if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+      setExpiredUI();
+      return;
+    }
+    cdTxt.textContent = `Expira en ${mmss(left)}`;
+    // Últimos 60 s en rojo, 60–180 s en ámbar.
+    if (left < 60) {
+      countdownBadge.style.borderColor = "rgba(255,68,68,0.45)";
+      countdownBadge.style.background = "rgba(255,68,68,0.10)";
+      countdownBadge.style.color = "#ffb4b4";
+    } else if (left < 180) {
+      countdownBadge.style.borderColor = "rgba(255,180,60,0.45)";
+      countdownBadge.style.background = "rgba(255,180,60,0.10)";
+      countdownBadge.style.color = "#ffd899";
+    } else {
+      countdownBadge.style.borderColor = "rgba(255,255,255,0.14)";
+      countdownBadge.style.background = "rgba(255,255,255,0.04)";
+      countdownBadge.style.color = "";
+    }
+  }
+  // Expuesta a nivel de función para que `resend()` pueda reiniciarla.
+  function restartOtpCountdown() {
+    if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+    tick();
+    _cdTimer = setInterval(tick, 1000);
+  }
+  // Cerrar el intervalo si la pantalla se desmonta (evita fugas).
+  const _cleanupObs = new MutationObserver(() => {
+    if (!document.body.contains(form)) {
+      if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+      _cleanupObs.disconnect();
+    }
+  });
+  _cleanupObs.observe(document.body, { childList: true, subtree: true });
+  restartOtpCountdown();
+  // Guardamos la referencia para que `resend()` (definido fuera) pueda llamar
+  // a restart. Al estar en la misma closure ya la usa; nada más que hacer.
+
+  hideApp();
+}
+
+/* ================================================================
+   Verificación de identidad / edad (KYC)
+   3 pasos obligatorios ANTES de crear la cuenta:
+     1) Documento    2) Selfie con reconocimiento facial    3) Video
+   Si falla → 2 intentos de revisión manual → suspensión.
+================================================================ */
+/* Huella de dispositivo enriquecida usada para el sistema anti-duplicados.
+   Combina múltiples señales del dispositivo para producir un hash estable
+   por dispositivo/navegador. Se envía al backend en registro + KYC + login
+   para que server.js pueda comparar contra otras cuentas y detectar
+   duplicados con el sistema de scoring. */
+async function computeDeviceFingerprint() {
+  const parts = [];
+  try { parts.push("ua:" + navigator.userAgent); } catch {}
+  try { parts.push("lang:" + (navigator.language || "")); } catch {}
+  try { parts.push("langs:" + ((navigator.languages || []).join(","))); } catch {}
+  try { parts.push("res:" + screen.width + "x" + screen.height + "x" + (screen.colorDepth || 0)); } catch {}
+  try { parts.push("avail:" + (screen.availWidth||0) + "x" + (screen.availHeight||0)); } catch {}
+  try { parts.push("dpr:" + (window.devicePixelRatio || 1)); } catch {}
+  try { parts.push("tz:" + new Date().getTimezoneOffset()); } catch {}
+  try { parts.push("tzname:" + (Intl.DateTimeFormat().resolvedOptions().timeZone || "")); } catch {}
+  try { parts.push("cores:" + (navigator.hardwareConcurrency || 0)); } catch {}
+  try { parts.push("mem:" + (navigator.deviceMemory || 0)); } catch {}
+  try { parts.push("touch:" + (navigator.maxTouchPoints || 0)); } catch {}
+  try { parts.push("plat:" + (navigator.platform || "")); } catch {}
+  // Canvas fingerprint
+  try {
+    const c = document.createElement("canvas");
+    c.width = 240; c.height = 60;
+    const ctx = c.getContext("2d");
+    ctx.textBaseline = "top";
+    ctx.font = "14px 'Arial'";
+    ctx.fillStyle = "#f60"; ctx.fillRect(0, 0, 100, 40);
+    ctx.fillStyle = "#069"; ctx.fillText("aura-fp-🔒", 2, 15);
+    ctx.strokeStyle = "rgba(102,204,0,.7)"; ctx.beginPath();
+    ctx.arc(50, 30, 20, 0, Math.PI * 2); ctx.stroke();
+    parts.push("canvas:" + c.toDataURL().slice(-100));
+  } catch {}
+  // WebGL fingerprint (vendor+renderer del GPU)
+  try {
+    const c = document.createElement("canvas");
+    const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    if (gl) {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      if (dbg) {
+        parts.push("gpu:" + gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + "|" + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+      }
+      parts.push("glver:" + gl.getParameter(gl.VERSION));
+    }
+  } catch {}
+  const seed = parts.join("‖");
+  try {
+    const buf = new TextEncoder().encode(seed);
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    let h = 0; for (let i = 0; i < seed.length; i++) { h = ((h<<5)-h) + seed.charCodeAt(i); h |= 0; }
+    return "fp_" + Math.abs(h).toString(36);
+  }
+}
+
+async function kycFingerprint() {
+  try {
+    if (state.kyc && state.kyc.fingerprint) return state.kyc.fingerprint;
+    const hex = await computeDeviceFingerprint();
+    state.kyc = state.kyc || {};
+    state.kyc.fingerprint = hex;
+    return hex;
+  } catch { return "fp_" + Date.now().toString(36); }
+}
+try { window.computeDeviceFingerprint = computeDeviceFingerprint; } catch {}
+
+async function kycFetch(path, body) {
+  const fp = await kycFingerprint();
+  const opts = {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Fingerprint": fp },
+    body: JSON.stringify({ ...(body || {}), fingerprint: fp }),
+  };
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  return { r, data };
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = reject;
+    fr.readAsDataURL(file);
+  });
+}
+
+function screenVerifyIdentityIntro(root) {
+  root.appendChild(topbar("Verificación de edad", () => render(screenRegisterOTP)));
+  root.appendChild(stepper(3, 6));
+  const card = el("div", { class: "form" }, [
+    el("div", { class: "form-hero" }, [
+      el("h2", {}, "Confirmamos que eres tú"),
+      el("p", {}, "Para proteger la comunidad y cumplir la ley, necesitamos verificar tu edad y que la persona detrás del móvil eres tú."),
+    ]),
+    el("div", { class: "kyc-steps" }, [
+      el("div", { class: "kyc-step" }, [
+        el("div", { class: "kyc-step-emoji" }, "🪪"),
+        el("div", {}, [
+          el("h4", {}, "1. Escanea tu documento"),
+          el("p", {}, "Necesitas tu DNI, pasaporte, NIE (permiso de residencia) o carné de conducir en vigor. Debe estar bien iluminado, sin reflejos ni recortes; la IA leerá los datos y tu fecha de nacimiento para confirmar que tienes 18 años o más."),
+        ]),
+      ]),
+      el("div", { class: "kyc-step" }, [
+        el("div", { class: "kyc-step-emoji" }, "🤳"),
+        el("div", {}, [
+          el("h4", {}, "2. Hazte una selfie"),
+          el("p", {}, "Una foto rápida con la cámara frontal, sin gafas de sol ni gorro y con buena luz. Comparamos tu cara con la del documento para asegurar que eres tú."),
+        ]),
+      ]),
+      el("div", { class: "kyc-step" }, [
+        el("div", { class: "kyc-step-emoji" }, "🎥"),
+        el("div", {}, [
+          el("h4", {}, "3. Videoidentificación"),
+          el("p", {}, "Un vídeo muy breve siguiendo las instrucciones en pantalla (gira suavemente la cabeza o parpadea). Sirve para asegurar que hay una persona real detrás del móvil y no una foto, un vídeo grabado o una máscara."),
+        ]),
+      ]),
+    ]),
+    el("p", { class: "kyc-legal" },
+      "Sólo debes tener 18 años o más. Las imágenes se guardan cifradas 30 días como máximo y se usan únicamente para verificar tu edad e identidad."),
+    (function() {
+      const box = el("div", { class: "legal-block legal-block-compact" });
+      const cb = el("input", { type: "checkbox", id: "kycBioConsent" });
+      // Si el usuario ya lo marcó en el registro, dejarlo marcado por defecto.
+      if (state.registration && state.registration.consents && state.registration.consents.biometric) {
+        cb.checked = true;
+      }
+      box.appendChild(el("label", { class: "legal-check" }, [
+        cb,
+        el("span", { html:
+          "Confirmo mi consentimiento explícito al tratamiento de mis <b>datos biométricos</b> (documento, selfie y vídeo) con la finalidad exclusiva de verificar mi edad y mi identidad, conforme al art. 9.2.a del RGPD y a la <a href='#' class='legal-link' data-kyc-link='1'>Política de Verificación de Identidad</a>." }),
+      ]));
+      // Enlace a la política KYC
+      box.addEventListener("click", (ev) => {
+        const a = ev.target.closest("a[data-kyc-link]");
+        if (!a) return;
+        ev.preventDefault();
+        render(screenInfoKycPolicy);
+      });
+      // Referencia global para la validación posterior
+      box.dataset.role = "kyc-consent";
+      window.__kycConsentCheckbox = cb;
+      return box;
+    })(),
+    el("button", { class: "btn btn-brand btn-block", onclick: async () => {
+      const cb = window.__kycConsentCheckbox;
+      if (cb && !cb.checked) { toast("Debes autorizar el tratamiento biométrico para continuar"); return; }
+      try {
+        const { r, data } = await kycFetch("/api/verify/id/start", {
+          email: state.registration.email,
+          consents: state.registration && state.registration.consents ? state.registration.consents : null,
+        });
+        if (r.status === 403 && data.error === "device_blocked") {
+          showBlockedAccount("Este dispositivo no puede registrarse", {
+            kind: "banned", reason: data.reason || "kyc_blocked", email: state.registration.email,
+          });
+          return;
+        }
+        if (!r.ok) throw new Error(data.error || "start_error");
+        state.kyc = state.kyc || {};
+        state.kyc.sessionToken = data.session_token;
+        state.kyc.provider     = data.provider || "local";
+
+        // Proveedor externo (Didit): guardamos el token en localStorage
+        // para poder retomar la sesión al volver del provider y redirigimos.
+        if (data.provider === "didit" && data.redirect_url) {
+          try {
+            localStorage.setItem("aura.kyc.token", data.session_token);
+            localStorage.setItem("aura.kyc.regemail", state.registration.email || "");
+          } catch {}
+          render(screenVerifyDiditRedirecting);
+          setTimeout(() => { window.location.href = data.redirect_url; }, 400);
+          return;
+        }
+
+        // Fallback local (motor mock)
+        render(screenVerifyDoc);
+      } catch (e) { toast("No se pudo iniciar la verificación"); }
+    } }, "Empezar verificación"),
+  ]);
+  root.appendChild(card);
+  hideApp();
+}
+
+/* ---------------------------------------------------------------
+   Pantallas para el proveedor Didit
+   -------------------------------------------------------------
+   Redirect (antes de saltar a business.didit.me) y Return (al
+   volver de Didit — hace polling hasta que el webhook actualiza
+   el estado o hasta timeout).
+--------------------------------------------------------------- */
+function screenVerifyDiditRedirecting(root) {
+  root.appendChild(topbar("Verificación de identidad", () => render(screenVerifyIdentityIntro)));
+  root.appendChild(stepper(3, 6));
+  root.appendChild(el("div", { class: "form" }, [
+    el("div", { class: "form-hero" }, [
+      el("h2", {}, "Te llevamos al verificador"),
+      el("p", {}, "En unos segundos abriremos la ventana de nuestro proveedor de verificación (Didit)."),
+    ]),
+    el("div", { class: "kyc-preview", style: "font-size:56px" }, "🔒"),
+    el("p", { class: "kyc-status" }, "Sigue las instrucciones en pantalla: foto del documento, selfie y una videoidentificación corta."),
+  ]));
+  hideApp();
+}
+
+function screenVerifyDiditReturn(root) {
+  root.appendChild(topbar("Comprobando verificación", () => render(screenLoginEmail)));
+  root.appendChild(stepper(3, 6));
+  const statusEl = el("p", { class: "kyc-status" }, "Estamos comprobando el resultado…");
+  const spinner  = el("div", { class: "kyc-preview", style: "font-size:56px" }, "⏳");
+  root.appendChild(el("div", { class: "form" }, [
+    el("div", { class: "form-hero" }, [
+      el("h2", {}, "Un momento"),
+      el("p", {}, "Recibiendo el resultado de la verificación."),
+    ]),
+    spinner, statusEl,
+  ]));
+  hideApp();
+
+  const token = state.kyc && state.kyc.sessionToken;
+  if (!token) { toast("No hay verificación activa"); render(screenLoginEmail); return; }
+
+  let tries = 0;
+  const poll = async () => {
+    tries++;
+    try {
+      const r = await fetch("/api/verify/id/status?session_token=" + encodeURIComponent(token));
+      const data = await r.json();
+      if (data.status === "verified") {
+        try { localStorage.removeItem("aura.kyc.token"); localStorage.removeItem("aura.kyc.regemail"); } catch {}
+        render(screenVerifyOk); return;
+      }
+      if (data.status === "rejected") {
+        try { localStorage.removeItem("aura.kyc.token"); localStorage.removeItem("aura.kyc.regemail"); } catch {}
+        render(screenVerifyRejected); return;
+      }
+      if (data.status === "suspended") { render(screenVerifySuspended); return; }
+      if (data.status === "manual_review") { render(screenVerifyManual); return; }
+      statusEl.textContent = "Aún estamos procesando… (" + tries + ")";
+    } catch { statusEl.textContent = "Reintentando…"; }
+    if (tries < 30) setTimeout(poll, 2000);
+    else statusEl.textContent = "Está tardando más de lo normal. Vuelve más tarde para ver el resultado.";
+  };
+  setTimeout(poll, 1000);
+}
+
+function screenVerifyDoc(root) {
+  root.appendChild(topbar("Paso 1 · Documento", () => render(screenVerifyIdentityIntro)));
+  root.appendChild(stepper(3, 6));
+  let dataUrl = null;
+  const preview = el("div", { class: "kyc-preview" }, "🪪");
+  const input = el("input", { type: "file", accept: "image/*", capture: "environment", style: "display:none" });
+  const status = el("p", { class: "kyc-status" }, "Elige o haz una foto de tu documento por la parte de la foto.");
+  input.addEventListener("change", async () => {
+    const f = input.files && input.files[0]; if (!f) return;
+    dataUrl = await fileToDataUrl(f);
+    preview.innerHTML = "";
+    preview.appendChild(el("img", { src: dataUrl, alt: "documento" }));
+    status.textContent = "Foto lista. Pulsa continuar para analizarla.";
+    submitBtn.disabled = false;
+  });
+  const chooseBtn = el("button", { class: "btn btn-outline btn-block", type: "button",
+    onclick: () => input.click() }, "Elegir foto del documento");
+  const submitBtn = el("button", { class: "btn btn-brand btn-block", type: "button", disabled: true }, "Continuar");
+  submitBtn.addEventListener("click", async () => {
+    if (!dataUrl) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Analizando…";
+    try {
+      const { r, data } = await kycFetch("/api/verify/id/document", {
+        session_token: state.kyc.sessionToken, doc_type: "dni", image: dataUrl,
+      });
+      if (r.status === 403 && data.error === "underage") {
+        showBlockedAccount("Debes tener al menos " + (data.min_age || 18) + " años.", {
+          kind: "banned", reason: "underage", email: state.registration.email,
+        });
+        return;
+      }
+      if (r.status === 403 && data.error === "document_blocked") {
+        showBlockedAccount("Este documento no puede registrarse.", {
+          kind: "banned", reason: data.reason || "document_blocked", email: state.registration.email,
+        });
+        return;
+      }
+      if (!r.ok || !data.ok) {
+        toast("Documento no reconocido, prueba con otra foto");
+        submitBtn.textContent = "Continuar";
+        submitBtn.disabled = false;
+        return;
+      }
+      render(screenVerifySelfie);
+    } catch (e) {
+      toast("Error subiendo el documento");
+      submitBtn.textContent = "Continuar";
+      submitBtn.disabled = false;
+    }
+  });
+  const form = el("div", { class: "form" }, [
+    el("div", { class: "form-hero" }, [
+      el("h2", {}, "Sube una foto de tu documento"),
+      el("p", {}, "Debe verse la foto, tu nombre y la fecha de nacimiento."),
+    ]),
+    preview, input, status, chooseBtn, submitBtn,
+  ]);
+  root.appendChild(form);
+  hideApp();
+}
+
+function screenVerifySelfie(root) {
+  root.appendChild(topbar("Paso 2 · Selfie", () => render(screenVerifyDoc)));
+  root.appendChild(stepper(3, 6));
+  let dataUrl = null;
+  const preview = el("div", { class: "kyc-preview kyc-preview-round" }, "🤳");
+  const input = el("input", { type: "file", accept: "image/*", capture: "user", style: "display:none" });
+  const status = el("p", { class: "kyc-status" }, "Necesitamos una selfie clara, sin gafas de sol.");
+  input.addEventListener("change", async () => {
+    const f = input.files && input.files[0]; if (!f) return;
+    dataUrl = await fileToDataUrl(f);
+    preview.innerHTML = "";
+    preview.appendChild(el("img", { src: dataUrl, alt: "selfie" }));
+    status.textContent = "¡Perfecto! La comparamos con tu documento.";
+    submitBtn.disabled = false;
+  });
+  const chooseBtn = el("button", { class: "btn btn-outline btn-block", type: "button",
+    onclick: () => input.click() }, "Hacer una selfie");
+  const submitBtn = el("button", { class: "btn btn-brand btn-block", type: "button", disabled: true }, "Continuar");
+  submitBtn.addEventListener("click", async () => {
+    if (!dataUrl) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Comparando caras…";
+    try {
+      const { r, data } = await kycFetch("/api/verify/id/selfie", {
+        session_token: state.kyc.sessionToken, image: dataUrl,
+      });
+      if (!r.ok) throw new Error(data.error || "err");
+      if (!data.ok) {
+        toast("No coincide bien con el documento. Prueba otra selfie");
+        submitBtn.textContent = "Continuar";
+        submitBtn.disabled = false;
+        return;
+      }
+      render(screenVerifyVideo);
+    } catch (e) {
+      toast("Error enviando la selfie");
+      submitBtn.textContent = "Continuar";
+      submitBtn.disabled = false;
+    }
+  });
+  const form = el("div", { class: "form" }, [
+    el("div", { class: "form-hero" }, [
+      el("h2", {}, "Haz una selfie"),
+      el("p", {}, "Cara centrada, buena luz y sin filtros."),
+    ]),
+    preview, input, status, chooseBtn, submitBtn,
+  ]);
+  root.appendChild(form);
+  hideApp();
+}
+
+function screenVerifyVideo(root) {
+  root.appendChild(topbar("Paso 3 · Video", () => render(screenVerifySelfie)));
+  root.appendChild(stepper(3, 6));
+  let dataUrl = null;
+  const preview = el("div", { class: "kyc-preview" }, "🎥");
+  const input = el("input", { type: "file", accept: "video/*", capture: "user", style: "display:none" });
+  const status = el("p", { class: "kyc-status" }, "Graba 3–5 segundos girando suavemente la cabeza.");
+  input.addEventListener("change", async () => {
+    const f = input.files && input.files[0]; if (!f) return;
+    dataUrl = await fileToDataUrl(f);
+    preview.innerHTML = "";
+    const v = el("video", { src: dataUrl, controls: true, playsinline: true });
+    preview.appendChild(v);
+    status.textContent = "Video listo. Envíalo para analizarlo.";
+    submitBtn.disabled = false;
+  });
+  const chooseBtn = el("button", { class: "btn btn-outline btn-block", type: "button",
+    onclick: () => input.click() }, "Grabar video corto");
+  const submitBtn = el("button", { class: "btn btn-brand btn-block", type: "button", disabled: true }, "Finalizar verificación");
+  submitBtn.addEventListener("click", async () => {
+    if (!dataUrl) return;
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Analizando video…";
+    try {
+      const { r, data } = await kycFetch("/api/verify/id/video", {
+        session_token: state.kyc.sessionToken, video: dataUrl,
+      });
+      if (!r.ok) throw new Error(data.error || "err");
+      state.kyc.lastResult = data;
+      if (data.decision === "verified") { render(screenVerifyOk); return; }
+      if (data.decision === "manual_review") { render(screenVerifyManual); return; }
+      render(screenVerifyRejected);
+    } catch (e) {
+      toast("Error analizando el video");
+      submitBtn.textContent = "Finalizar verificación";
+      submitBtn.disabled = false;
+    }
+  });
+  const form = el("div", { class: "form" }, [
+    el("div", { class: "form-hero" }, [
+      el("h2", {}, "Videoidentificación"),
+      el("p", {}, "Confirma que hay una persona real detrás de la pantalla."),
+    ]),
+    preview, input, status, chooseBtn, submitBtn,
+  ]);
+  root.appendChild(form);
+  hideApp();
+}
+
+function screenVerifyOk(root) {
+  root.appendChild(topbar("Verificado", () => {}));
+  root.appendChild(el("div", { class: "form kyc-final" }, [
+    el("div", { class: "kyc-final-emoji" }, "✅"),
+    el("h2", {}, "¡Todo listo!"),
+    el("p", {}, "Hemos confirmado tu edad. Continuemos con tu perfil."),
+    el("button", { class: "btn btn-brand btn-block",
+      onclick: () => render(screenZoneSelect) }, "Continuar"),
+  ]));
+  hideApp();
+}
+
+function screenVerifyManual(root) {
+  root.appendChild(topbar("Revisión manual", () => {}));
+  const remaining = (state.kyc && state.kyc.lastResult && state.kyc.lastResult.remaining_manual_attempts) || 0;
+  const canRetry = remaining > 0;
+  root.appendChild(el("div", { class: "form kyc-final" }, [
+    el("div", { class: "kyc-final-emoji" }, "🕵️"),
+    el("h2", {}, "Necesitamos revisar tu verificación"),
+    el("p", {}, canRetry
+      ? "Puedes solicitar hasta " + remaining + " revisiones manuales más, o volver a intentarlo con mejores fotos."
+      : "Se agotaron los intentos automáticos. Un miembro del equipo revisará tu caso."),
+    el("button", { class: "btn btn-brand btn-block",
+      onclick: async () => {
+        try {
+          const { r, data } = await kycFetch("/api/verify/id/manual-review", {
+            session_token: state.kyc.sessionToken,
+          });
+          if (r.status === 429) { render(screenVerifySuspended); return; }
+          if (!r.ok) throw new Error(data.error || "err");
+          toast("Solicitud enviada. Te avisaremos por email.");
+          render(screenWelcome);
+        } catch (e) { toast("No se pudo enviar la solicitud"); }
+      } }, "Solicitar revisión manual"),
+    canRetry ? el("button", { class: "btn btn-outline btn-block",
+      onclick: () => render(screenVerifyDoc) }, "Volver a intentarlo") : null,
+  ]));
+  hideApp();
+}
+
+function screenVerifyRejected(root) {
+  root.appendChild(topbar("No verificado", () => {}));
+  root.appendChild(el("div", { class: "form kyc-final" }, [
+    el("div", { class: "kyc-final-emoji" }, "🚫"),
+    el("h2", {}, "No podemos verificar tu identidad"),
+    el("p", {}, "El acceso desde este dispositivo queda bloqueado. Si crees que es un error, escríbenos a seguridad@citasaura.es."),
+    el("button", { class: "btn btn-brand btn-block",
+      onclick: () => render(screenWelcome) }, "Volver al inicio"),
+  ]));
+  hideApp();
+}
+
+function screenVerifySuspended(root) {
+  root.appendChild(topbar("Cuenta suspendida", () => {}));
+  root.appendChild(el("div", { class: "form kyc-final" }, [
+    el("div", { class: "kyc-final-emoji" }, "⏸"),
+    el("h2", {}, "Pendiente de revisión"),
+    el("p", {}, "Se agotaron las revisiones automáticas. Un miembro del equipo revisará tu caso manualmente y recibirás una notificación por email."),
+    el("button", { class: "btn btn-brand btn-block",
+      onclick: () => render(screenWelcome) }, "Volver al inicio"),
+  ]));
+  hideApp();
+}
+
+/* ---- Zone select ---- */
+function screenZoneSelect(root) {
+  root.appendChild(topbar("Elige tu zona", () => render(screenVerifyIdentityIntro)));
+  root.appendChild(stepper(3, 6));
+
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, T("content.register.zone.title")),
+    el("p", {}, T("content.register.zone.subtitle")),
+  ]));
+
+  const opts = el("div", { class: "zone-options" });
+  const zones = [
+    { id: "hetero", emoji: T("content.zone.hetero.emoji"), title: T("content.zone.hetero.title"), desc: T("content.zone.hetero.desc") },
+    { id: "lgtb", emoji: T("content.zone.lgtb.emoji"), title: T("content.zone.lgtb.title"), desc: T("content.zone.lgtb.desc") },
+  ];
+  let selected = state.registration.zone;
+  zones.forEach(z => {
+    const card = el("div", { class: "zone-card zone-" + z.id + (selected === z.id ? " selected" : "") }, [
+      el("div", { class: "zone-emoji" }, z.emoji),
+      el("div", {}, [ el("h4", {}, z.title), el("p", {}, z.desc) ]),
+      el("div", { class: "radio" }),
+    ]);
+    card.addEventListener("click", () => {
+      $$(".zone-card", opts).forEach(c => c.classList.remove("selected"));
+      card.classList.add("selected");
+      selected = z.id;
+    });
+    opts.appendChild(card);
+  });
+  form.appendChild(opts);
+
+  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Continuar"));
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!selected) return toast("Selecciona una zona");
+    state.registration.zone = selected;
+    state.zone = selected;
+    render(screenRegisterProfile);
+  });
+  root.appendChild(form);
+  hideApp();
+}
+
+/* ---- Register: profile info ---- */
+function screenRegisterProfile(root) {
+  root.appendChild(topbar("Sobre ti", () => render(screenZoneSelect)));
+  root.appendChild(stepper(4, 6));
+
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, "Cuéntanos algo de ti"),
+    el("p", {}, "Estos datos aparecerán en tu perfil."),
+  ]));
+  const fName = el("input", { type: "text", required: true, placeholder: "Tu nombre", value: state.registration.name });
+  const fBirth = el("input", { type: "date", required: true, value: state.registration.birthDate });
+  const fGender = el("select", { required: true },
+    (state.zone === "lgtb"
+      ? ["Mujer","Hombre","No binario","Trans mujer","Trans hombre","Género fluido","Prefiero no decirlo"]
+      : ["Mujer","Hombre"]).map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
+  const fOrient = el("select", { required: true },
+    (state.zone === "lgtb"
+      ? ["Lesbiana","Gay","Bisexual","Pansexual","Asexual","Demisexual","Queer","Prefiero no decirlo"]
+      : ["Heterosexual"]).map(o => el("option", { value: o, selected: o === state.registration.orientation || undefined }, o)));
+
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Nombre"), fName ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Fecha de nacimiento"), fBirth ]));
+  form.appendChild(el("div", { class: "field-row" }, [
+    el("div", { class: "field" }, [ el("label", {}, "Género"), fGender ]),
+    el("div", { class: "field" }, [ el("label", {}, "Orientación"), fOrient ]),
+  ]));
+
+  const fCity = el("input", { type: "text", value: state.registration.city });
+  const fProv = el("input", { type: "text", value: state.registration.province });
+  const fCountry = el("input", { type: "text", value: state.registration.country });
+  form.appendChild(el("div", { class: "field-row" }, [
+    el("div", { class: "field" }, [ el("label", {}, "Ciudad"), fCity ]),
+    el("div", { class: "field" }, [ el("label", {}, "Provincia"), fProv ]),
+  ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "País"), fCountry ]));
+
+  const fHeight = el("input", { type: "number", min: 140, max: 210, value: state.registration.height });
+  const fWeight = el("input", { type: "number", min: 40, max: 180, value: state.registration.weight });
+  form.appendChild(el("div", { class: "field-row" }, [
+    el("div", { class: "field" }, [ el("label", {}, "Altura (cm)"), fHeight ]),
+    el("div", { class: "field" }, [ el("label", {}, "Peso (kg)"), fWeight ]),
+  ]));
+  const fEth = el("select", {},
+    ["Prefiero no decirlo","Latina/o","Caucásica/o","Asiática/o","Afrodescendiente","Árabe","Mixta/o"]
+    .map(v => el("option", { value: v }, v)));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Etnia"), fEth ]));
+
+  const fDesc = el("textarea", { placeholder: "Descripción corta (máx 300)", maxlength: 300 });
+  fDesc.value = state.registration.description;
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Descripción"), fDesc ]));
+
+  const fPhone = el("input", { type: "tel", placeholder: "Opcional", value: state.registration.phone });
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Teléfono"), fPhone, el("small", { class: "hint" }, "Opcional — no se mostrará en tu perfil.") ]));
+
+  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Continuar"));
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    Object.assign(state.registration, {
+      name: fName.value, birthDate: fBirth.value,
+      gender: fGender.value, orientation: fOrient.value,
+      city: fCity.value, province: fProv.value, country: fCountry.value,
+      height: +fHeight.value, weight: +fWeight.value, ethnicity: fEth.value,
+      description: fDesc.value, phone: fPhone.value,
+    });
+    render(screenRegisterPhotos);
+  });
+  root.appendChild(form);
+  hideApp();
+}
+
+/* ---- Register: photos ---- */
+function screenRegisterPhotos(root) {
+  root.appendChild(topbar("Añade fotos", () => render(screenRegisterProfile)));
+  root.appendChild(stepper(5, 6));
+
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, "Tus mejores fotos"),
+    el("p", {}, "Añade al menos 2. La primera será tu foto principal."),
+  ]));
+
+  const grid = el("div", { class: "photos-grid" });
+  const photos = state.registration.photos.slice();
+  const seeds = ["pop","cat","beach","city","park","bike"];
+  for (let i = 0; i < 6; i++) {
+    const slot = el("div", { class: "photo-slot" + (photos[i] ? " filled" : ""),
+      style: photos[i] ? `background-image:url('${photos[i]}')` : "",
+    });
+    if (!photos[i]) slot.innerHTML = `<div style="text-align:center"><div style="font-size:24px">＋</div><div style="font-size:11px;margin-top:4px">Añadir</div></div>`;
+    else {
+      if (i === 0) slot.appendChild(el("span", { class: "badge" }, "Principal"));
+      const del = el("button", { type: "button", class: "del", onclick: (e) => {
+        e.stopPropagation(); photos[i] = null;
+        state.registration.photos = photos.filter(Boolean);
+        render(screenRegisterPhotos);
+      }}, "×");
+      slot.appendChild(del);
+    }
+    slot.addEventListener("click", () => {
+      if (photos[i]) return;
+      photos[i] = `https://picsum.photos/seed/${seeds[i]}${Date.now()}/600/800`;
+      state.registration.photos = photos.filter(Boolean);
+      render(screenRegisterPhotos);
+    });
+    grid.appendChild(slot);
+  }
+  form.appendChild(grid);
+  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Finalizar registro"));
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (state.registration.photos.length < 1) return toast("Añade al menos 1 foto");
+    state.user = { name: state.registration.name || "Tú", email: state.registration.email, ...state.registration };
+    toast("¡Bienvenido a Aura! 🎉");
+    setTimeout(() => showApp(), 400);
+  });
+  root.appendChild(form);
+  hideApp();
+}
+
+/* ---- Login ---- */
+function screenLogin(root) {
+  // Si la app está en modo pruebas (access_locked / private_beta) y el
+  // usuario intenta abrir la pantalla de login "a pelo", enseñamos la
+  // pantalla beta con waitlist + acceso superadmin. El login normal
+  // solo está disponible para testers autorizados con código o para
+  // cuentas verificadas por el backend.
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (testMode) {
+    try { showPrivateBetaScreen({}); return; } catch {}
+  }
+  root.appendChild(topbar("Iniciar sesión", () => render(screenWelcome)));
+
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, T("content.login.title")),
+    el("p", {}, T("content.login.subtitle")),
+  ]));
+  const fEmail = el("input", { type: "email", autocomplete: "email", placeholder: "Introduce tu correo electrónico" });
+  const fPass = el("input", { type: "password", autocomplete: "current-password", placeholder: "Contraseña" });
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Email"), fEmail ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Contraseña"), fPass ]));
+
+  const rememberRow = el("div", { class: "row-between", style: "margin-top:4px" }, [
+    el("label", { style: "display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-soft)" }, [
+      el("input", { type: "checkbox", checked: true }), "Recordarme"
+    ]),
+    el("button", { type: "button", class: "link-btn", onclick: () => render(screenForgot) }, T("content.login.forgot")),
+  ]);
+  form.appendChild(rememberRow);
+  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit", style: "margin-top:8px" }, T("content.login.button")));
+  form.appendChild(el("p", { class: "center small", html: `¿No tienes cuenta? <button type="button" class="link-btn" id="toReg">Regístrate</button>` }));
+  form.addEventListener("click", (e) => {
+    if (e.target.id === "toReg") {
+      // Respeta el modo "registros cerrados": si el admin ha desactivado los
+      // registros públicos, en vez de llevar al formulario mostramos la
+      // pantalla de beta privada / waitlist.
+      const regOpen = publicConfig?.app?.registrations_open !== false;
+      if (regOpen) {
+        render(screenRegisterEmail);
+      } else {
+        showPrivateBetaScreen({ email: (fEmail && fEmail.value) || "" });
+      }
+    }
+  });
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const email = fEmail.value.trim().toLowerCase();
+    if (!email.includes("@")) return toast("Introduce un email válido");
+    try {
+      const r = await fetch("/api/login", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 403 && (data?.status === "suspended" || data?.status === "banned" || data?.status === "restricted")) {
+        // Establece state.user con el ID real del backend para que el polling
+        // de restricciones (cada 5s) pueda actualizar la pantalla de bloqueo
+        // en tiempo real cuando el admin modifique el motivo/duración.
+        if (data.user_id) {
+          state.user = {
+            id: data.user_id,
+            name: data.user_name || (data.user_email || email).split("@")[0],
+            email: data.user_email || email,
+            photo: "",
+          };
+          try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+        }
+        showBlockedAccount(data.reason || "Tu cuenta no puede iniciar sesión.", {
+          keepSession: !!data.user_id,
+          kind: data.status,
+          reason: data.reason || "",
+          email,
+          untilDate: data.expires_at || null,
+          until: data.expires_at ? ("Hasta el " + new Date(data.expires_at).toLocaleString()) : "",
+        });
+        return;
+      }
+      // El backend nos indica que este usuario tiene 2FA activo: no
+      // completamos el login aún, abrimos el modal pidiendo el código TOTP
+      // (o un código de recuperación).
+      if (r.ok && data && data.needs_2fa) {
+        openTwoFactorLoginPrompt(data.email || email);
+        return;
+      }
+      if (!r.ok || !data.ok) {
+        toast(r.status === 404 ? "Cuenta no encontrada. Regístrate primero." : "Error al iniciar sesión");
+        return;
+      }
+      state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
+      state.zone = data.user.zone || state.zone || "hetero";
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      toast(`Bienvenido, ${data.user.name.split(" ")[0]}`);
+      setTimeout(() => showApp(), 400);
+    } catch (err) {
+      toast("No se pudo conectar con el servidor");
+    }
+  });
+  root.appendChild(form);
+  hideApp();
+}
+
+/* Modal que aparece durante el login cuando el usuario tiene 2FA activo.
+   Acepta un código TOTP de 6 dígitos o un código de recuperación (con guión). */
+function openTwoFactorLoginPrompt(email) {
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <div style="text-align:center;font-size:36px;margin-bottom:6px">🔐</div>
+    <h3 style="margin:0 0 6px;font-size:19px;font-weight:800;text-align:center">Verificación en 2 pasos</h3>
+    <p style="margin:0 0 14px;font-size:14px;color:#e6d9ff;text-align:center;line-height:1.4">
+      Introduce el código de 6 dígitos de tu app autenticadora.<br>
+      <small style="color:#c9bce4">También puedes usar un código de recuperación.</small>
+    </p>
+    <input class="twofa-token" type="text" inputmode="numeric" maxlength="12" placeholder="123456"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:22px;text-align:center;font-family:monospace;letter-spacing:4px">
+    <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none;text-align:center"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="twofa-cancel" type="button" style="flex:0 0 auto;height:46px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="twofa-ok" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Verificar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const tokenI = card.querySelector(".twofa-token");
+  const errEl  = card.querySelector(".twofa-err");
+  const okBtn  = card.querySelector(".twofa-ok");
+  setTimeout(() => { try { tokenI.focus(); } catch {} }, 100);
+  const close = () => { try { overlay.remove(); } catch {} };
+  card.querySelector(".twofa-cancel").addEventListener("click", close);
+  tokenI.addEventListener("keydown", (e) => { if (e.key === "Enter") okBtn.click(); });
+
+  async function submit() {
+    const token = tokenI.value.trim();
+    if (!token) { errEl.textContent = "Introduce el código"; errEl.style.display = "block"; return; }
+    okBtn.disabled = true; okBtn.textContent = "Verificando…";
+    try {
+      const r = await fetch("/api/2fa/login-verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, token }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) {
+        errEl.textContent = data.error === "invalid_code" ? "Código incorrecto" : "No se pudo verificar";
+        errEl.style.display = "block";
+        okBtn.disabled = false; okBtn.textContent = "Verificar";
+        return;
+      }
+      state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
+      state.zone = data.user.zone || state.zone || "hetero";
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      close();
+      toast(data.used_recovery ? "Has iniciado sesión con un código de recuperación" : `Bienvenido, ${data.user.name.split(" ")[0]}`);
+      setTimeout(() => showApp(), 400);
+    } catch {
+      errEl.textContent = "Error de red";
+      errEl.style.display = "block";
+      okBtn.disabled = false; okBtn.textContent = "Verificar";
+    }
+  }
+  okBtn.addEventListener("click", submit);
+}
+
+/* ---- Forgot ---- */
+function screenForgot(root) {
+  root.appendChild(topbar("Recuperar contraseña", () => render(screenLogin)));
+  const form = el("form", { class: "form" });
+  form.appendChild(el("div", { class: "form-hero" }, [
+    el("h2", {}, "Recupera tu acceso"),
+    el("p", {}, "Enviaremos un código a tu correo para restablecer la contraseña."),
+  ]));
+  const inp = el("input", { type: "email", placeholder: emailPlaceholder("content.forgot.email_placeholder") });
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Email"), inp ]));
+  form.appendChild(el("button", { class: "btn btn-brand btn-block" }, "Enviar código"));
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!inp.value.includes("@")) return toast("Introduce un email válido");
+    state.registration.email = inp.value;
+    state.registration.code = String(rand(100000, 999999));
+    toast(`Código enviado (demo: ${state.registration.code})`);
+    render(screenRegisterOTP);
+  });
+  root.appendChild(form);
+  hideApp();
+}
+
+/* ================================================================
+   MAIN APP SCREENS
+   ================================================================ */
+
+/* ---- Discover (swipe cards) ---- */
+function screenDiscover(root) {
+  root.appendChild(el("div", { class: "discover" }, [
+    el("div", { class: "discover-topbar" }, [
+      el("span", {
+        class: "brand-logo-mini brand-logo-crop",
+        "aria-label": "Aura",
+        html: `<img src="assets/aura-logo.png?v=3" alt="Aura" />`,
+      }),
+      el("button", { class: "chip", onclick: openFilters }, [
+        el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
+        state.zone === "lgtb" ? "Zona LGTB+" : "Zona Hetero",
+      ]),
+      el("span", { class: "brand-topbar-spacer", "aria-hidden": "true" }),
+    ]),
+    buildSwipeStack(),
+    el("div", { class: "action-row" }, [
+      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho")),
+      actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left")),
+      actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up")),
+      actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right")),
+      actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => toast("¡Boost activado por 30 min!")),
+    ]),
+  ]));
+  // Ad slot (visible only to Free plan)
+  const adTop = buildAdSlot("discover");
+  if (adTop) root.appendChild(adTop);
+  const adBottom = buildAdSlot("discover-bottom");
+  if (adBottom) root.appendChild(adBottom);
+}
+
+/* ---- Cerca de ti (pestaña propia del tabbar) ---- */
+function screenNearby(root) {
+  root.appendChild(topbar("Cerca de ti", null, null));
+  // V442: aviso visible cuando el GPS no está activo — sin él, "Cerca" no
+  //       puede filtrar por distancia real ni mostrar personas realmente
+  //       cercanas al usuario.
+  const gpsNotice = el("div", { class: "nearby-gps-notice", style: "display:none" });
+  gpsNotice.innerHTML = `
+    <div class="nearby-gps-notice-ic">📍</div>
+    <div class="nearby-gps-notice-body">
+      <div class="nearby-gps-notice-title">${T("content.gps.nearby_off_title")}</div>
+      <div class="nearby-gps-notice-lead">${T("content.gps.nearby_off_lead")}</div>
+    </div>
+    <button type="button" class="btn btn-primary nearby-gps-notice-cta">${T("content.gps.nearby_off_cta")}</button>
+  `;
+  root.appendChild(gpsNotice);
+  (async () => {
+    try {
+      const st = await GPS.fetchState();
+      const bp = await GPS.browserPermissionState();
+      const active = !!(st && st.consent_given) && bp === "granted";
+      if (!active) gpsNotice.style.display = "";
+    } catch {}
+  })();
+  gpsNotice.querySelector(".nearby-gps-notice-cta").onclick = () => {
+    try { localStorage.removeItem(GPS._prefKey()); } catch {}
+    GPS.showPrompt(true);
+  };
+  const adTop = buildAdSlot("nearby-top");
+  if (adTop) root.appendChild(adTop);
+  root.appendChild(buildNearbySection());
+  const adBot = buildAdSlot("nearby-bottom");
+  if (adBot) root.appendChild(adBot);
+}
+
+/* ---- Ad slot (only rendered on Free plan) ---------------------------
+   Real integration:
+     - Reads publicConfig.ads (populated from server-side settings, editable
+       from the admin panel → "Anuncios").
+     - Supports Google AdSense (`adsense`), Google Ad Manager (`gam`),
+       and a `demo` fallback that renders in-house creatives.
+     - Google AdMob is native only (Android/iOS SDK), so on web builds we
+       fall back to AdSense with the same publisher_id.
+     - When `only_free_plan` is on (default), Premium+ users never see ads.
+-------------------------------------------------------------------- */
+const DEMO_ADS = [
+  { title: "Aliados de Aura", body: "Descuentos exclusivos para miembros — sponsored.", cta: "Ver oferta", icon: "🛍️", brand: "Fashion Co." },
+  { title: "Cenas para dos", body: "Reserva restaurantes con 20% de descuento para tu próxima cita.", cta: "Reservar", icon: "🍷", brand: "DineWith" },
+  { title: "Escapada de fin de semana", body: "Escápate cerca de casa con hoteles seleccionados por Aura.", cta: "Ver planes", icon: "🌴", brand: "Traveler" },
+  { title: "Look para tu cita", body: "Cosmética y perfumes recomendados por creadores.", cta: "Ir a la tienda", icon: "💄", brand: "GlowShop" },
+];
+
+function adConfig() {
+  return (publicConfig && publicConfig.ads) || {};
+}
+function shouldShowAds() {
+  const cfg = adConfig();
+  if (!cfg.enabled) return false;
+  if (cfg.only_free_plan !== false && getUserPlan() !== "free") return false;
+  return true;
+}
+
+// Lazy-inject the AdSense loader script once per session
+let __adsenseLoading = null;
+function ensureAdSenseLoader(publisherId) {
+  if (!publisherId || document.querySelector('script[data-adsense="1"]')) return __adsenseLoading;
+  __adsenseLoading = new Promise((resolve) => {
+    const s = document.createElement("script");
+    s.async = true;
+    s.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=" + encodeURIComponent(publisherId);
+    s.crossOrigin = "anonymous";
+    s.dataset.adsense = "1";
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.head.appendChild(s);
+  });
+  return __adsenseLoading;
+}
+
+function slotIdFor(placement, cfg) {
+  const map = {
+    "discover":        cfg.slot_discover_top,
+    "discover-top":    cfg.slot_discover_top,
+    "discover-bottom": cfg.slot_discover_bottom,
+    "messages":        cfg.slot_messages,
+  };
+  return map[placement] || cfg.slot_discover_top || "";
+}
+
+function renderDemoAdInto(container) {
+  const ad = DEMO_ADS[Math.floor(Math.random() * DEMO_ADS.length)];
+  container.innerHTML = "";
+  container.appendChild(el("div", { class: "ad-body" }, [
+    el("div", { class: "ad-thumb" }, ad.icon),
+    el("div", { class: "ad-info" }, [
+      el("strong", {}, ad.title),
+      el("small", {}, ad.body),
+      el("span", { class: "ad-brand" }, ad.brand),
+    ]),
+    el("button", { class: "ad-cta", type: "button",
+      onclick: () => toast("Anuncio de demostración — abriría el enlace del anunciante") }, ad.cta),
+  ]));
+}
+
+function buildAdSlot(placement) {
+  if (!shouldShowAds()) return null;
+  const cfg = adConfig();
+  const network = (cfg.network || "demo").toLowerCase();
+  const slot = el("div", { class: "ad-slot", "data-placement": placement || "generic", "data-network": network }, [
+    el("div", { class: "ad-tag" }, [
+      el("span", {}, "Anuncio"),
+      el("button", { class: "ad-remove", type: "button", title: "Quitar anuncios con Premium",
+        onclick: () => render(screenSubscriptions) }, "Quitar"),
+    ]),
+  ]);
+  const body = el("div", { class: "ad-network-body" });
+  slot.appendChild(body);
+
+  const pubId = cfg.publisher_id || "";
+  const slotId = slotIdFor(placement, cfg);
+
+  if ((network === "adsense" || network === "admob") && pubId && slotId) {
+    // AdMob on web is served through AdSense — same integration
+    const ins = document.createElement("ins");
+    ins.className = "adsbygoogle";
+    ins.style.display = "block";
+    ins.setAttribute("data-ad-client", pubId);
+    ins.setAttribute("data-ad-slot", slotId);
+    ins.setAttribute("data-ad-format", "auto");
+    ins.setAttribute("data-full-width-responsive", "true");
+    if (cfg.test_mode) ins.setAttribute("data-adtest", "on");
+    body.appendChild(ins);
+    ensureAdSenseLoader(pubId).then((ok) => {
+      if (!ok) { renderDemoAdInto(body); return; }
+      try { (window.adsbygoogle = window.adsbygoogle || []).push({}); }
+      catch { renderDemoAdInto(body); }
+    });
+  } else if (network === "gam" && slotId) {
+    // Google Ad Manager (GPT) — expects slotId like /XXXXXXX/aura_slot
+    const holder = el("div", { id: "gpt-" + Math.random().toString(36).slice(2, 9), class: "gam-holder" });
+    body.appendChild(holder);
+    // GPT loader (once)
+    if (!window.googletag) {
+      const s = document.createElement("script");
+      s.async = true;
+      s.src = "https://securepubads.g.doubleclick.net/tag/js/gpt.js";
+      document.head.appendChild(s);
+      window.googletag = window.googletag || { cmd: [] };
+    }
+    window.googletag.cmd.push(function() {
+      try {
+        const size = [[300,250],[336,280],[320,100]];
+        const s = window.googletag.defineSlot(slotId, size, holder.id).addService(window.googletag.pubads());
+        window.googletag.pubads().enableSingleRequest();
+        window.googletag.enableServices();
+        window.googletag.display(holder.id);
+      } catch { renderDemoAdInto(body); }
+    });
+  } else {
+    // No publisher configured yet → in-house / demo creative
+    renderDemoAdInto(body);
+  }
+  return slot;
+}
+
+/* ---- Nearby section (reused across screens) ---- */
+function buildNearbySection() {
+  const wrap = el("div", { class: "nearby-section" });
+  const nearbyPool = generateUsers(24, { zone: state.zone });
+  state.nearbyFilters = state.nearbyFilters || {
+    ageMin: 18, ageMax: 60,
+    distance: 50,
+    onlyOnline: false,
+    zone: "all",
+    interests: [],
+    looking_for: "any",
+    relationship: "any",
+  };
+
+  const nearbyGrid = el("div", { class: "nearby-grid" });
+  const nearbyHead = el("div", { class: "nearby-head" }, [
+    el("h5", {}, "Cerca de ti"),
+    el("span", { class: "nearby-count", id: "nearbyCount" }, ""),
+  ]);
+
+  const chipsRow = el("div", { class: "nearby-chips-row" });
+  const chipBtn = (label, onClick, active) => {
+    const b = el("button", { class: "chip-filter" + (active ? " active" : ""), type: "button" }, label);
+    b.addEventListener("click", (e) => { e.stopPropagation(); onClick(b); });
+    return b;
+  };
+
+  function activeFilterCount() {
+    const f = state.nearbyFilters;
+    let n = 0;
+    if (f.ageMin !== 18 || f.ageMax !== 60) n++;
+    if (f.distance !== 50) n++;
+    if (f.onlyOnline) n++;
+    if (f.zone !== "all") n++;
+    if (f.interests.length) n++;
+    if (f.looking_for !== "any") n++;
+    if (f.relationship !== "any") n++;
+    return n;
+  }
+
+  function applyNearbyFilters(pool) {
+    const f = state.nearbyFilters;
+    return pool.filter(u => {
+      if (u.age < f.ageMin || u.age > f.ageMax) return false;
+      if ((u.distance ?? 999) > f.distance) return false;
+      if (f.onlyOnline && !u.online) return false;
+      if (f.looking_for !== "any" && u.looking_for !== f.looking_for) return false;
+      if (f.relationship !== "any" && u.relationship !== f.relationship) return false;
+      if (f.interests.length) {
+        const has = f.interests.some(i => (u.interests || []).includes(i));
+        if (!has) return false;
+      }
+      return true;
+    });
+  }
+
+  function paintNearby() {
+    const list = applyNearbyFilters(nearbyPool);
+    const limit = getProfilesLimit();          // per-plan cap
+    const visible = limit === Infinity ? list : list.slice(0, limit);
+    const hidden = list.length - visible.length;
+    nearbyGrid.innerHTML = "";
+    if (!list.length) {
+      nearbyGrid.appendChild(el("div", { class: "nearby-empty" }, [
+        el("strong", {}, "Sin resultados"),
+        el("small", {}, "Prueba a ampliar tus filtros."),
+      ]));
+    } else {
+      visible.forEach(u => {
+        const dist = (typeof u.distance === "number") ? u.distance : Math.floor(Math.random()*15)+1;
+        const looking = LOOKING_FOR_OPTIONS.find(l => l.id === u.looking_for);
+        const card = el("div", { class: "nearby-card", style: `background-image:url('${u.photo}')` }, [
+          el("div", { class: "nearby-status " + (u.online ? "on" : "off") }, [
+            el("span", { class: "nearby-dot" }),
+            el("span", {}, u.online ? "En línea" : "Desconectado"),
+          ]),
+          looking ? el("div", { class: "nearby-badge" }, `${looking.emoji} ${looking.label}`) : null,
+          el("div", { class: "nearby-info" }, [
+            el("strong", {}, `${u.name}, ${u.age}`),
+            el("small", {}, `${u.city} · ${dist} km`),
+          ]),
+        ]);
+        card.addEventListener("click", () => openProfileDetail(u));
+        nearbyGrid.appendChild(card);
+      });
+      if (hidden > 0) {
+        // Locked "peek" cards + upgrade CTA
+        const nextPreview = list.slice(visible.length, visible.length + Math.min(4, hidden));
+        nextPreview.forEach(u => {
+          const card = el("div", { class: "nearby-card locked", style: `background-image:url('${u.photo}')` }, [
+            el("div", { class: "nearby-lock" }, [
+              el("span", { html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="white"><path d="M12 2a5 5 0 015 5v3h1a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2v-9a2 2 0 012-2h1V7a5 5 0 015-5zm-3 8h6V7a3 3 0 10-6 0z"/></svg>` }),
+            ]),
+          ]);
+          card.addEventListener("click", () => openPlanLimitModal(hidden));
+          nearbyGrid.appendChild(card);
+        });
+        nearbyGrid.appendChild(el("button", {
+          class: "nearby-upgrade", type: "button",
+          onclick: () => openPlanLimitModal(hidden),
+        }, [
+          el("strong", {}, `+${hidden} perfiles bloqueados`),
+          el("small", {}, `Mejora tu plan para ver todos los perfiles cercanos.`),
+        ]));
+      }
+    }
+    const onlineNow = visible.filter(u => u.online).length;
+    const countEl = wrap.querySelector("#nearbyCount");
+    if (countEl) {
+      const suffix = (limit === Infinity)
+        ? `${list.length} personas`
+        : `${visible.length}/${list.length} · plan ${planLabel(getUserPlan())}`;
+      countEl.textContent = `${onlineNow} en línea · ${suffix}`;
+    }
+  }
+
+  const filtersBtn = el("button", { class: "chip-filter primary", type: "button" }, [
+    el("span", { html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/></svg>` }),
+    el("span", {}, "Filtros"),
+    el("span", { class: "chip-count", id: "nearbyFilterCount", hidden: activeFilterCount() === 0 }, String(activeFilterCount())),
+  ]);
+  filtersBtn.addEventListener("click", () => openNearbyFilters(() => {
+    paintNearby();
+    const cc = wrap.querySelector("#nearbyFilterCount");
+    if (cc) {
+      const n = activeFilterCount();
+      cc.textContent = String(n);
+      cc.hidden = n === 0;
+    }
+    onlineChip.classList.toggle("active", !!state.nearbyFilters.onlyOnline);
+  }));
+
+  const onlineChip = chipBtn(
+    [ el("span", { class: "chip-dot on" }), el("span", {}, "Solo en línea") ],
+    (btn) => { state.nearbyFilters.onlyOnline = !state.nearbyFilters.onlyOnline; btn.classList.toggle("active", state.nearbyFilters.onlyOnline); paintNearby(); },
+    state.nearbyFilters.onlyOnline
+  );
+
+  chipsRow.appendChild(filtersBtn);
+  chipsRow.appendChild(onlineChip);
+
+  wrap.appendChild(nearbyHead);
+  wrap.appendChild(chipsRow);
+  wrap.appendChild(nearbyGrid);
+  paintNearby();
+  return wrap;
+}
+
+/* ---- Plan-based profile limit ---- */
+const PLAN_PROFILE_LIMITS = {
+  free:     10,
+  premium:  30,
+  gold:     80,
+  platinum: Infinity, // most expensive plan unlocks everything
+};
+function getUserPlan() {
+  const p = (state.user && (state.user.plan || state.user.plan_key)) || "free";
+  return String(p).toLowerCase();
+}
+function planLabel(key) {
+  const map = { free: "Free", premium: "Premium", gold: "Gold", platinum: "Platinum" };
+  return map[key] || "Free";
+}
+function getProfilesLimit() {
+  const plan = getUserPlan();
+  const lim = PLAN_PROFILE_LIMITS[plan];
+  return (typeof lim === "number" || lim === Infinity) ? lim : PLAN_PROFILE_LIMITS.free;
+}
+function openPlanLimitModal(hiddenCount) {
+  const plan = getUserPlan();
+  const sheet = el("div", { class: "premium-lock-sheet" });
+  sheet.appendChild(el("div", { class: "plm-hero" }, [
+    el("div", { class: "plm-hero-ic", html: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
+    el("h3", { class: "plm-h" }, "Has alcanzado el límite de perfiles"),
+    el("p", { class: "plm-p" }, `Tu plan ${planLabel(plan)} permite ver hasta ${getProfilesLimit() === Infinity ? "∞" : getProfilesLimit()} perfiles. Hay ${hiddenCount} más cerca de ti esperando.`),
+  ]));
+  const tiers = [
+    { key: "premium",  label: "Premium",  limit: PLAN_PROFILE_LIMITS.premium,  price: "9,99 €/mes" },
+    { key: "gold",     label: "Gold",     limit: PLAN_PROFILE_LIMITS.gold,     price: "19,99 €/mes" },
+    { key: "platinum", label: "Platinum", limit: "Ilimitados",                 price: "29,99 €/mes", best: true },
+  ];
+  const grid = el("div", { class: "plan-limit-grid" });
+  tiers.forEach(t => {
+    grid.appendChild(el("div", { class: "plan-limit-card" + (t.best ? " best" : "") }, [
+      t.best ? el("span", { class: "plm-badge" }, "Desbloquea todo") : null,
+      el("h4", {}, t.label),
+      el("div", { class: "plm-num" }, typeof t.limit === "number" ? `${t.limit} perfiles` : t.limit),
+      el("small", {}, t.price),
+    ]));
+  });
+  sheet.appendChild(grid);
+  sheet.appendChild(el("button", {
+    class: "btn btn-brand btn-block",
+    onclick: () => { modal.close(); render(screenSubscriptions); },
+  }, "Ver planes"));
+  sheet.appendChild(el("button", {
+    class: "btn btn-ghost btn-block",
+    onclick: () => modal.close(),
+  }, "Ahora no"));
+  modal.open(sheet);
+}
+
+function buildSwipeStack() {
+  const stack = el("div", { class: "discover-stack", id: "swipeStack" });
+  const users = generateUsers(6, { zone: state.zone });
+  stack._users = users;
+  stack._index = 0;
+  renderStack(stack);
+  return stack;
+}
+
+function renderStack(stack) {
+  stack.innerHTML = "";
+  const users = stack._users;
+  const start = stack._index;
+  if (start >= users.length) {
+    stack.appendChild(el("div", { class: "swipe-card-stack-hint", html: `
+      <div style="text-align:center;padding:30px">
+        <div style="font-size:44px">✨</div>
+        <b style="font-size:16px">Ya has visto todo por ahora</b>
+        <p style="margin:6px 0 14px;color:var(--text-muted);font-size:13px">Vuelve pronto o amplía tu radio de búsqueda.</p>
+      </div>
+    `}));
+    const btn = el("button", { class: "btn btn-outline btn-sm", style: "position:absolute;bottom:24px;left:50%;transform:translateX(-50%)",
+      onclick: () => { stack._users = generateUsers(6, { zone: state.zone }); stack._index = 0; renderStack(stack); }}, "Cargar más");
+    stack.appendChild(btn);
+    return;
+  }
+  for (let i = Math.min(users.length - 1, start + 2); i >= start; i--) {
+    const u = users[i];
+    const depth = i - start;
+    const card = buildSwipeCard(u, depth);
+    stack.appendChild(card);
+  }
+  const top = stack.lastChild;
+  bindSwipe(top, stack);
+}
+
+function buildSwipeCard(u, depth = 0) {
+  const scale = 1 - depth * 0.04;
+  const y = depth * 10;
+  const card = el("div", { class: "swipe-card", style: `background-image:url('${u.photo}');transform:translateY(${y}px) scale(${scale});z-index:${10 - depth};opacity:${depth > 1 ? 0 : 1}` });
+  const indicators = el("div", { class: "indicators" });
+  for (let i = 0; i < u.photos.length; i++) {
+    indicators.appendChild(el("span", { class: i === 0 ? "active" : "" }));
+  }
+  card.appendChild(indicators);
+  card.appendChild(el("div", { class: "stamp like" }, "LIKE"));
+  card.appendChild(el("div", { class: "stamp nope" }, "NOPE"));
+  card.appendChild(el("div", { class: "swipe-card-body" }, [
+    el("h3", {}, [
+      `${u.name}, ${u.age}`,
+      u.verified ? el("span", { class: "verified", title: "Verificado" }, "✓") : null,
+    ]),
+    el("div", { class: "meta" }, [
+      el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/>`), ` ${u.city} · ${u.distance} km` ]),
+      el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 3l2.9 6.1L21 10l-4.7 4.4L17.8 21 12 17.8 6.2 21l1.5-6.6L3 10l6.1-.9z"/>`), u.job ]),
+    ]),
+    el("div", { class: "tags" }, u.interests.slice(0,3).map(t => el("span", { class: "tag" }, t))),
+  ]));
+  // Info button — opens the full profile detail
+  const infoBtn = el("button", {
+    class: "swipe-info-btn",
+    type: "button",
+    "aria-label": "Ver detalles del perfil",
+    onclick: (ev) => { ev.stopPropagation(); openProfileDetail(u); },
+    html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg>`
+  });
+  card.appendChild(infoBtn);
+  card.addEventListener("click", (e) => {
+    // tapping images cycles photos
+    const rect = card.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    if (Math.abs(card._dx || 0) < 5) {
+      const cur = card._pi || 0;
+      const next = x > rect.width / 2 ? Math.min(u.photos.length - 1, cur + 1) : Math.max(0, cur - 1);
+      card._pi = next;
+      card.style.backgroundImage = `url('${u.photos[next]}')`;
+      $$(".indicators span", card).forEach((s,i) => s.classList.toggle("active", i === next));
+    }
+  });
+  return card;
+}
+
+function bindSwipe(card, stack) {
+  let sx = 0, sy = 0, dx = 0, dy = 0, dragging = false;
+  const start = (e) => {
+    dragging = true;
+    const p = e.touches ? e.touches[0] : e;
+    sx = p.clientX; sy = p.clientY;
+    card.style.transition = "";
+  };
+  const move = (e) => {
+    if (!dragging) return;
+    const p = e.touches ? e.touches[0] : e;
+    dx = p.clientX - sx; dy = p.clientY - sy;
+    card._dx = dx;
+    const rot = dx * 0.06;
+    card.style.transform = `translate(${dx}px, ${dy}px) rotate(${rot}deg)`;
+    const likeStamp = card.querySelector(".stamp.like");
+    const nopeStamp = card.querySelector(".stamp.nope");
+    likeStamp.style.opacity = Math.min(1, Math.max(0, dx / 100));
+    nopeStamp.style.opacity = Math.min(1, Math.max(0, -dx / 100));
+  };
+  const end = () => {
+    if (!dragging) return;
+    dragging = false;
+    card.style.transition = "transform .3s cubic-bezier(.2,.9,.2,1)";
+    if (Math.abs(dx) > 100) {
+      fly(card, dx > 0 ? "right" : "left", stack);
+    } else if (dy < -120) {
+      fly(card, "up", stack);
+    } else {
+      card.style.transform = "";
+      const l = card.querySelector(".stamp.like"); const n = card.querySelector(".stamp.nope");
+      if (l) l.style.opacity = 0;
+      if (n) n.style.opacity = 0;
+    }
+    dx = 0; dy = 0;
+  };
+  card.addEventListener("mousedown", start);
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", end);
+  card.addEventListener("touchstart", start, { passive: true });
+  card.addEventListener("touchmove", move, { passive: true });
+  card.addEventListener("touchend", end);
+  card._swipeCleanup = () => {
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", end);
+  };
+}
+
+function fly(card, dir, stack) {
+  const off = window.innerWidth;
+  const map = { left: [-off, 0, -30], right: [off, 0, 30], up: [0, -off, 0] };
+  const [x, y, rot] = map[dir];
+  card.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
+  card.style.opacity = "0";
+  const currentUser = stack._users[stack._index];
+  setTimeout(() => {
+    card.remove();
+    stack._index++;
+    renderStack(stack);
+    if (dir === "right" && Math.random() > 0.55) triggerMatch(currentUser);
+    else if (dir === "up") toast(`✦ Super Like enviado a ${currentUser.name}`);
+  }, 320);
+}
+
+function swipeCurrent(dir) {
+  const stack = $("#swipeStack");
+  if (!stack) return;
+  const card = stack.querySelector(".swipe-card:last-child");
+  if (!card) return;
+  fly(card, dir, stack);
+}
+
+function triggerMatch(user) {
+  const match = el("div", { class: "match-screen" });
+  match.appendChild(el("p", { style: "font-size:16px;font-weight:700;letter-spacing:.05em;opacity:.9" }, "ES UN MATCH"));
+  match.appendChild(el("h2", {}, `${user.name} y tú`));
+  match.appendChild(el("p", {}, "Ya podéis chatear."));
+  match.appendChild(el("div", { class: "match-avatars" }, [
+    el("div", { class: "a", style: `background-image:url('https://i.pravatar.cc/300?img=32')` }),
+    el("div", { class: "a", style: `background-image:url('${user.photo}')` }),
+  ]));
+  match.appendChild(el("div", { class: "match-actions" }, [
+    el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true); } }, "Enviar mensaje"),
+    el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, "Seguir descubriendo"),
+  ]));
+  viewport.appendChild(match);
+}
+
+function actionBtn(cls, path, onclick) {
+  const btn = el("button", { class: "action-btn " + cls, onclick });
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg>`;
+  return btn;
+}
+
+/* ---- Search ---- */
+function screenSearch(root) {
+  root.appendChild(el("div", { class: "search-bar" }, [
+    el("input", { class: "search-input", placeholder: T("content.search.placeholder"), oninput: (e) => filterSearch(e.target.value) }),
+    el("button", { class: "chip", onclick: openFilters }, [
+      el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
+      "Filtros"
+    ]),
+  ]));
+  const grid = el("div", { class: "results-grid", id: "resultsGrid" });
+  root.appendChild(grid);
+  populateResults(grid);
+}
+function populateResults(grid, filter = "") {
+  grid.innerHTML = "";
+  const users = generateUsers(14, { zone: state.zone });
+  const filtered = filter
+    ? users.filter(u => u.name.toLowerCase().includes(filter.toLowerCase()) || u.city.toLowerCase().includes(filter.toLowerCase()) || u.job.toLowerCase().includes(filter.toLowerCase()))
+    : users;
+  if (filtered.length === 0) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Prueba a ampliar los filtros o cambiar el término.</p></div>`;
+    return;
+  }
+  filtered.forEach(u => {
+    const isFav = state.favorites.has(u.id);
+    const card = el("div", { class: "result-card", style: `background-image:url('${u.photo}')` }, [
+      u.online ? el("div", { class: "online" }) : null,
+      el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
+        el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` })
+      ]),
+      el("div", { class: "info" }, [
+        el("strong", {}, `${u.name}, ${u.age}`),
+        el("small", {}, `${u.city} · ${u.distance} km`),
+      ]),
+    ]);
+    card.addEventListener("click", () => openProfile(u));
+    grid.appendChild(card);
+  });
+}
+function filterSearch(v) { populateResults($("#resultsGrid"), v); }
+function toggleFav(u, btn) {
+  if (state.favorites.has(u.id)) { state.favorites.delete(u.id); btn.classList.remove("on"); toast("Eliminado de favoritos"); }
+  else { state.favorites.add(u.id); btn.classList.add("on"); toast("Añadido a favoritos ♥"); }
+}
+
+/* ---- Filters modal ---- */
+function openFilters() {
+  const wrap = el("div", { class: "filters-body" });
+  wrap.appendChild(el("div", { class: "sheet-titlebar" }, [
+    el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros"),
+    el("button", {
+      class: "sheet-close",
+      type: "button",
+      "aria-label": "Cerrar filtros",
+      onclick: () => modal.close(),
+      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
+    }),
+  ]));
+
+  const zone = state.zone === "lgtb" ? "lgtb" : "hetero";
+
+  const grpGender = el("div", { class: "filter-group" }, [
+    el("h5", {}, zone === "lgtb" ? "Género e identidad" : "Género"),
+    el("div", { class: "chip-row" },
+      (zone === "lgtb"
+        ? ["Todos","Mujer","Hombre","No binario","Trans","Género fluido"]
+        : ["Todos","Mujer","Hombre"]).map(g => {
+        const c = el("button", { class: "chip selectable" + (state.filters.genders.includes(g) ? " active" : "") }, g);
+        c.addEventListener("click", () => c.classList.toggle("active"));
+        return c;
+      })),
+  ]);
+  wrap.appendChild(grpGender);
+
+  const ageLbl = el("span", { class: "val" }, `${state.filters.ageMin} - ${state.filters.ageMax}`);
+  const ageMin = el("input", { type: "range", min: 18, max: 65, value: state.filters.ageMin });
+  const ageMax = el("input", { type: "range", min: 18, max: 65, value: state.filters.ageMax });
+  const upd = () => ageLbl.textContent = `${ageMin.value} - ${ageMax.value}`;
+  ageMin.addEventListener("input", upd); ageMax.addEventListener("input", upd);
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Edad"),
+    el("div", { class: "slider-row" }, [ ageMin, ageLbl ]),
+    el("div", { class: "slider-row", style: "margin-top:6px" }, [ ageMax, el("span", { class: "val", style: "opacity:0" }, "") ]),
+  ]));
+
+  const distLbl = el("span", { class: "val" }, `${state.filters.distance} km`);
+  const dist = el("input", { type: "range", min: 1, max: 200, value: state.filters.distance });
+  dist.addEventListener("input", () => distLbl.textContent = `${dist.value} km`);
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Distancia máxima"),
+    el("div", { class: "slider-row" }, [ dist, distLbl ]),
+  ]));
+
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Ubicación"),
+    el("div", { class: "chip-row" }, CITIES.slice(0, 6).map(c => {
+      const chip = el("button", { class: "chip selectable" }, c);
+      chip.addEventListener("click", () => chip.classList.toggle("active"));
+      return chip;
+    })),
+  ]));
+
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Etnia"),
+    el("div", { class: "chip-row" }, ["Cualquiera","Latina/o","Caucásica/o","Asiática/o","Afrodescendiente","Árabe"].map(e => {
+      const chip = el("button", { class: "chip selectable" }, e);
+      chip.addEventListener("click", () => chip.classList.toggle("active"));
+      return chip;
+    })),
+  ]));
+
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Otros"),
+    switchRow("Solo verificados", state.filters.onlyVerified, v => state.filters.onlyVerified = v),
+    switchRow("Solo online", state.filters.onlyOnline, v => state.filters.onlyOnline = v),
+    switchRow("Nuevos usuarios", false, () => {}),
+  ]));
+
+  wrap.appendChild(el("div", { class: "sheet-actions" }, [
+    el("button", { class: "btn btn-brand btn-block", onclick: () => {
+      state.filters.ageMin = +ageMin.value;
+      state.filters.ageMax = +ageMax.value;
+      state.filters.distance = +dist.value;
+      modal.close(); toast("Filtros aplicados");
+      if (state.currentTab === "search") populateResults($("#resultsGrid"));
+    }}, "Aplicar filtros"),
+    el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
+  ]));
+  modal.open(wrap);
+}
+function switchRow(label, checked, onChange) {
+  const inp = el("input", { type: "checkbox", checked: checked || undefined });
+  inp.addEventListener("change", () => onChange(inp.checked));
+  return el("div", { class: "switch-row" }, [
+    el("span", { style: "font-size:14px" }, label),
+    el("label", { class: "switch" }, [ inp, el("span") ]),
+  ]);
+}
+
+/* ---- Likes ---- */
+function screenLikes(root) {
+  root.appendChild(topbar("Te gustan", null, null));
+  const tabs = el("div", { class: "likes-tabs" }, [
+    el("button", { class: "likes-tab active" }, "Te dieron like"),
+    el("button", { class: "likes-tab" }, "Favoritos"),
+  ]);
+  root.appendChild(tabs);
+  const grid = el("div", { class: "likes-grid" });
+  const users = generateUsers(8, { zone: state.zone });
+  users.forEach((u, i) => {
+    const blurred = i >= 2; // Premium tease
+    const card = el("div", { class: "like-card" + (blurred ? " blurred" : ""), style: `background-image:url('${u.photo}')` });
+    let wrap;
+    if (blurred) {
+      // Perfil aún bloqueado — solo puede abrir el modal de Premium
+      wrap = el("div", { style: "position:relative", class: "like-locked-wrap" }, [
+        card,
+        el("button", {
+          class: "like-upgrade",
+          type: "button",
+          "aria-label": "Perfil bloqueado — actualiza a Premium",
+          onclick: () => openPremiumLockModal(),
+        }, [
+          el("div", { class: "lock", html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M12 2a5 5 0 015 5v3h1a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2v-9a2 2 0 012-2h1V7a5 5 0 015-5zm-3 8h6V7a3 3 0 10-6 0z"/></svg>` }),
+        ]),
+      ]);
+    } else {
+      // Perfil desbloqueado — clic abre el perfil completo para decidir like/pass
+      wrap = el("button", {
+        class: "like-unlocked-wrap",
+        type: "button",
+        "aria-label": `Ver perfil de ${u.name}`,
+        onclick: () => openProfileDetail(u, { backTo: "likes" }),
+      }, [
+        card,
+        el("div", { class: "info" }, [
+          el("strong", { style: "color:white;position:absolute;left:10px;bottom:36px;z-index:2" }, `${u.name}, ${u.age}`),
+          el("small", { style: "color:rgba(255,255,255,.9);position:absolute;left:10px;bottom:18px;z-index:2;font-size:11px" }, "Toca para ver perfil"),
+          // Mini acciones rápidas superpuestas
+          el("div", { class: "like-quick-actions" }, [
+            el("button", {
+              class: "lqa lqa-pass",
+              type: "button",
+              "aria-label": "Descartar",
+              onclick: (ev) => {
+                ev.stopPropagation();
+                toast(`Descartaste a ${u.name}`);
+                wrap.style.transition = "transform .2s, opacity .2s";
+                wrap.style.transform = "scale(.9)";
+                wrap.style.opacity = "0";
+                setTimeout(() => wrap.remove(), 200);
+              },
+              html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`,
+            }),
+            el("button", {
+              class: "lqa lqa-like",
+              type: "button",
+              "aria-label": "Me gusta",
+              onclick: (ev) => {
+                ev.stopPropagation();
+                toast(`¡Match con ${u.name}! Ya podéis chatear`);
+                wrap.style.transition = "transform .2s, opacity .2s";
+                wrap.style.transform = "scale(.9)";
+                wrap.style.opacity = "0";
+                setTimeout(() => { wrap.remove(); openChat(u, true); }, 260);
+              },
+              html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`,
+            }),
+          ]),
+        ]),
+      ]);
+    }
+    grid.appendChild(wrap);
+  });
+  root.appendChild(grid);
+
+  root.appendChild(el("div", { class: "pad" }, [
+    el("button", { class: "btn btn-brand btn-block", onclick: () => render(screenSubscriptions) }, "Actualiza a Premium para ver todos"),
+  ]));
+
+  tabs.addEventListener("click", (e) => {
+    if (!e.target.classList.contains("likes-tab")) return;
+    $$(".likes-tab", tabs).forEach(t => t.classList.remove("active"));
+    e.target.classList.add("active");
+    if (e.target.textContent === "Favoritos") {
+      grid.innerHTML = "";
+      if (state.favorites.size === 0) {
+        root.querySelector(".likes-grid").innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
+        return;
+      }
+      const favUsers = generateUsers(state.favorites.size);
+      favUsers.forEach(u => {
+        const c = el("div", { class: "like-card", style: `background-image:url('${u.photo}')` });
+        grid.appendChild(el("div", { style: "position:relative" }, [ c,
+          el("strong", { style: "color:white;position:absolute;left:10px;bottom:10px;z-index:2" }, `${u.name}, ${u.age}`) ]));
+      });
+    } else {
+      // rerender first tab
+      routeTab("likes");
+    }
+  });
+}
+
+/* ---- Premium lock modal (shown when tapping a blurred like) ---- */
+function openPremiumLockModal() {
+  const sheet = el("div", { class: "premium-lock-sheet" });
+
+  // Hero
+  sheet.appendChild(el("div", { class: "plm-hero" }, [
+    el("div", { class: "plm-hero-ic", html: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
+    el("h3", { class: "plm-h" }, "Perfil bloqueado"),
+    el("p", { class: "plm-p" }, "Este perfil ya te ha dado like, pero solo los usuarios Premium pueden ver quién es antes de decidir."),
+  ]));
+
+  // Reason list
+  sheet.appendChild(el("div", { class: "plm-reasons" }, [
+    el("div", { class: "plm-reason" }, [
+      el("span", { class: "plm-r-ic" }, "👀"),
+      el("div", {}, [
+        el("b", {}, "Descubre quién te quiere conocer"),
+        el("div", { class: "plm-r-p" }, "Ve todos los likes que has recibido, sin límites ni ocultar caras."),
+      ]),
+    ]),
+    el("div", { class: "plm-reason" }, [
+      el("span", { class: "plm-r-ic" }, "✨"),
+      el("div", {}, [
+        el("b", {}, "Ahorra tiempo"),
+        el("div", { class: "plm-r-p" }, "Empieza a chatear directamente con las personas a las que también les gustas."),
+      ]),
+    ]),
+    el("div", { class: "plm-reason" }, [
+      el("span", { class: "plm-r-ic" }, "🛡️"),
+      el("div", {}, [
+        el("b", {}, "Experiencia sin anuncios"),
+        el("div", { class: "plm-r-p" }, "Aura Premium elimina la publicidad y añade filtros avanzados."),
+      ]),
+    ]),
+    el("div", { class: "plm-reason" }, [
+      el("span", { class: "plm-r-ic" }, "🚀"),
+      el("div", {}, [
+        el("b", {}, "Likes y matches ilimitados"),
+        el("div", { class: "plm-r-p" }, "Sin cupo diario y con boost mensual gratuito para destacar tu perfil."),
+      ]),
+    ]),
+  ]));
+
+  // Why blocked note
+  sheet.appendChild(el("div", { class: "plm-note" }, [
+    el("b", {}, "¿Por qué no puedo verlo?"),
+    el("p", {}, "Aura muestra las 2 primeras personas que te han dado like de forma gratuita para que veas cómo funciona. El resto queda difuminado y solo se desbloquea con Aura Premium, así podemos mantener el servicio y proteger la privacidad de quienes eligen ser vistos únicamente por suscriptores."),
+  ]));
+
+  // Actions
+  sheet.appendChild(el("div", { class: "plm-actions" }, [
+    el("button", {
+      class: "btn btn-brand btn-block",
+      type: "button",
+      onclick: () => { modal.close(); render(screenSubscriptions); }
+    }, "Ver planes Premium"),
+    el("button", {
+      class: "btn btn-ghost btn-block",
+      type: "button",
+      "data-close": true,
+    }, "Ahora no"),
+  ]));
+
+  modal.open(sheet);
+}
+
+/* ---- Read receipts paywall ----------------------------------------------
+   Modal rediseñado v2:
+   - Layout compacto pensado para caber sin scroll en móvil normal.
+   - Header con gradiente, icono y estado (chips) todo en una fila.
+   - Packs en fila horizontal (grid auto-fit) con destacado del pack "popular".
+   - Cupón y CTA Premium en la misma sección de acciones, no ocupan alto extra.
+   - Cierre visible con "X" arriba a la derecha.
+--------------------------------------------------------------------------- */
+async function openReadsPaywall(prefStatus) {
+  // Estilos inline por si el CSS no incluye .reads-paywall-v2. Usamos
+  // variables de tema si existen; si no, colores por defecto.
+  const styleTag = document.getElementById("readsPaywallV2Style") || (() => {
+    const s = document.createElement("style");
+    s.id = "readsPaywallV2Style";
+    s.textContent = `
+      .reads-paywall-v2 { position:relative; padding:0; overflow:hidden; border-radius:20px; max-width:560px; }
+      .rp2-close { position:absolute; top:10px; right:10px; z-index:3; width:34px; height:34px; border-radius:50%; border:none; background:rgba(0,0,0,0.45); color:#fff; font-size:20px; cursor:pointer; display:grid; place-items:center; }
+      .rp2-hero { padding:18px 20px 14px; background:linear-gradient(135deg,#ff3b6b 0%,#ff8a3b 100%); color:#fff; text-align:center; }
+      .rp2-hero-ic { font-size:32px; margin-bottom:4px; filter:drop-shadow(0 2px 8px rgba(0,0,0,0.25)); }
+      .rp2-hero h3 { margin:0; font-size:19px; font-weight:800; letter-spacing:-.01em; }
+      .rp2-hero p  { margin:4px 0 0; font-size:12.5px; opacity:.94; line-height:1.35; }
+      .rp2-chips { display:flex; gap:6px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
+      .rp2-chip { background:rgba(255,255,255,0.18); border-radius:999px; padding:4px 10px; font-size:11.5px; font-weight:600; backdrop-filter:blur(6px); }
+      .rp2-chip b { font-weight:800; }
+      .rp2-body { padding:14px 16px 16px; background:var(--bg,#0f1116); color:var(--text,#e6e6ea); }
+      .rp2-camp { display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:10px; border-radius:10px; background:rgba(255,60,110,0.10); border:1px solid rgba(255,60,110,0.28); font-size:12px; }
+      .rp2-camp b { color:#ffb4b4; }
+      .rp2-camp .rp2-camp-chip { margin-left:auto; padding:4px 10px; border-radius:999px; background:#ff3b6b; color:#fff; border:none; font-size:11px; font-weight:700; cursor:pointer; }
+      .rp2-packs { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+      .rp2-pack { position:relative; padding:14px 10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:14px; background:rgba(255,255,255,0.04); text-align:center; transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+      .rp2-pack:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,0.28); border-color:rgba(255,60,110,0.5); }
+      .rp2-pack.is-popular { border-color:#ff3b6b; background:linear-gradient(180deg,rgba(255,60,110,0.14),rgba(255,60,110,0.03)); }
+      .rp2-pack.is-popular::before { content:"⭐ Más elegido"; position:absolute; top:-10px; left:50%; transform:translateX(-50%); background:#ff3b6b; color:#fff; padding:3px 9px; font-size:10.5px; font-weight:800; border-radius:999px; white-space:nowrap; box-shadow:0 4px 10px rgba(255,60,110,0.4); }
+      .rp2-pack-credits { font-size:22px; font-weight:800; color:#fff; line-height:1; }
+      .rp2-pack-credits small { display:block; font-size:11px; font-weight:600; opacity:.7; margin-top:3px; letter-spacing:.02em; text-transform:uppercase; }
+      .rp2-pack-price { margin:8px 0 10px; font-size:15px; font-weight:700; color:#ffd899; }
+      .rp2-pack-price s { color:rgba(255,255,255,0.5); font-weight:500; font-size:12px; margin-right:4px; }
+      .rp2-pack-save { display:inline-block; margin-top:2px; padding:2px 8px; border-radius:999px; background:rgba(46,204,113,0.15); color:#7ee0a3; font-size:10.5px; font-weight:700; }
+      .rp2-pack-btn { width:100%; padding:9px; border-radius:10px; border:none; background:linear-gradient(135deg,#ff3b6b,#ff8a3b); color:#fff; font-weight:700; font-size:13px; cursor:pointer; transition:opacity .15s; }
+      .rp2-pack-btn:hover { opacity:.92; }
+      .rp2-pack-btn:disabled { opacity:.5; cursor:not-allowed; }
+      .rp2-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+      .rp2-promo { display:flex; gap:6px; margin-top:10px; }
+      .rp2-promo input { flex:1; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:inherit; font-size:12.5px; }
+      .rp2-promo button { padding:8px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.06); color:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+      .rp2-promo-msg { font-size:11.5px; margin-top:4px; min-height:14px; }
+      .rp2-promo-msg.is-ok { color:#7ee0a3; }
+      .rp2-promo-msg.is-err { color:#ffb4b4; }
+      .rp2-cta-premium { padding:10px; border-radius:10px; border:none; background:linear-gradient(135deg,#6a2eff,#3b0f99); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      .rp2-cta-close   { padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:transparent; color:inherit; font-size:13px; cursor:pointer; }
+      @media (max-width:400px) {
+        .rp2-hero h3 { font-size:17px; }
+        .rp2-packs { grid-template-columns:repeat(3,1fr); gap:8px; }
+        .rp2-pack { padding:12px 6px 10px; }
+        .rp2-pack-credits { font-size:19px; }
+        .rp2-pack-price { font-size:13px; }
+        .rp2-pack-btn { font-size:12px; padding:8px 4px; }
+      }
+    `;
+    document.head.appendChild(s);
+    return s;
+  })();
+  void styleTag;
+
+  const sheet = el("div", { class: "reads-paywall-v2" });
+
+  // Botón X flotante para cerrar sin depender del botón inferior.
+  sheet.appendChild(el("button", {
+    class: "rp2-close",
+    type: "button",
+    title: "Cerrar",
+    "aria-label": "Cerrar",
+    "data-close": true,
+  }, "×"));
+
+  // Hero con gradiente y chips de estado. Los chips leerán datos reales
+  // cuando refreshStatus() se ejecute.
+  sheet.appendChild(el("div", { class: "rp2-hero" }, [
+    el("div", { class: "rp2-hero-ic" }, "💬✨"),
+    el("h3", {}, "Amplía tus lecturas de chat"),
+    el("p", {}, "Ve cuándo se leen tus mensajes. Elige un pack o pasa a Premium para tenerlas ilimitadas."),
+    el("div", { class: "rp2-chips" }, [
+      el("span", { class: "rp2-chip" }, [ "Gratis: ", el("b", { id: "rpFree" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ "Créditos: ", el("b", { id: "rpCredits" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ "Plan: ", el("b", { id: "rpPlan" }, "…") ]),
+    ]),
+  ]));
+
+  const body = el("div", { class: "rp2-body" });
+  sheet.appendChild(body);
+
+  // Banner compacto de campaña activa (una sola tira, no ocupa mucho).
+  const campaignsBanner = el("div", { class: "rp2-camp", id: "rpCampaigns", style: "display:none;" });
+  body.appendChild(campaignsBanner);
+  (async () => {
+    try {
+      const r = await fetch("/api/promotions/public", { cache: "no-store" });
+      const data = r.ok ? await r.json() : [];
+      const active = data.filter(x => x.is_active_now);
+      if (!active.length) return;
+      const top = active[0];
+      campaignsBanner.style.display = "flex";
+      campaignsBanner.innerHTML = "";
+      campaignsBanner.appendChild(el("span", {}, [ "🎉 Campaña activa · ", el("b", {}, `-${top.discount_percent}% con ${top.code}`) ]));
+      campaignsBanner.appendChild(el("button", {
+        class: "rp2-camp-chip",
+        type: "button",
+        onclick: () => {
+          const inp = document.getElementById("rpPromoInput");
+          const btn2 = document.getElementById("rpPromoBtn");
+          if (inp) inp.value = top.code;
+          if (btn2) btn2.click();
+        },
+      }, "Aplicar"));
+    } catch {}
+  })();
+
+  // Grid de packs — auto-fit para que quepan en fila sin scroll.
+  const packsRow = el("div", { class: "rp2-packs", id: "rpPacksRow" }, [
+    el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Cargando packs…"),
+  ]);
+  body.appendChild(packsRow);
+
+  // Promo (una sola línea).
+  const promoBox = el("div", { class: "rp2-promo" }, [
+    el("input", {
+      id: "rpPromoInput",
+      type: "text",
+      placeholder: "Código promocional (opcional)",
+      autocomplete: "off",
+      spellcheck: false,
+    }),
+    el("button", {
+      id: "rpPromoBtn",
+      type: "button",
+      onclick: async () => {
+        const inp = document.getElementById("rpPromoInput");
+        const msg = document.getElementById("rpPromoMsg");
+        const val = (inp?.value || "").trim();
+        if (!val) { window.__auraPromo = null; refreshPackPrices(); if (msg) { msg.textContent = ""; msg.className = "rp2-promo-msg"; } return; }
+        try {
+          const r = await fetch("/api/promotions/validate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: val }),
+          });
+          const data = await r.json();
+          if (!r.ok) {
+            window.__auraPromo = null;
+            if (msg) { msg.textContent = "✕ " + (data.reason || "Cupón no válido"); msg.className = "rp2-promo-msg is-err"; }
+            refreshPackPrices();
+            return;
+          }
+          window.__auraPromo = { code: data.code, discount: data.discount_percent };
+          if (msg) { msg.textContent = `✓ Cupón aplicado · -${data.discount_percent}%`; msg.className = "rp2-promo-msg is-ok"; }
+          refreshPackPrices();
+        } catch {
+          if (msg) { msg.textContent = "Error validando el cupón"; msg.className = "rp2-promo-msg is-err"; }
+        }
+      },
+    }, "Aplicar"),
+  ]);
+  body.appendChild(promoBox);
+  body.appendChild(el("div", { id: "rpPromoMsg", class: "rp2-promo-msg" }));
+
+  // Acciones inferiores en dos columnas: Premium (destacado) + Cerrar.
+  body.appendChild(el("div", { class: "rp2-actions" }, [
+    el("button", {
+      class: "rp2-cta-premium",
+      type: "button",
+      onclick: () => { modal.close(); render(screenSubscriptions); },
+    }, "👑 Pasar a Premium"),
+    el("button", {
+      class: "rp2-cta-close",
+      type: "button",
+      "data-close": true,
+    }, "Cerrar"),
+  ]));
+
+  // Símbolo de moneda: EUR→€, USD→$, GBP→£, etc. Cualquier otro se muestra tal cual.
+  function currencySymbol(cur) {
+    const c = String(cur || "EUR").toUpperCase();
+    return c === "EUR" ? "€"
+         : c === "USD" ? "$"
+         : c === "GBP" ? "£"
+         : c === "JPY" ? "¥"
+         : c;
+  }
+  function fmtPrice(amount, cur) {
+    const n = Number(amount);
+    if (!Number.isFinite(n)) return "-";
+    return n.toFixed(2).replace(/\.00$/, "") + " " + currencySymbol(cur);
+  }
+  // Re-renders the pack prices whenever a promo is applied/cleared.
+  function refreshPackPrices() {
+    const promo = window.__auraPromo;
+    document.querySelectorAll(".rp2-pack").forEach(card => {
+      const orig = Number(card.dataset.origPrice);
+      const cur  = card.dataset.currency || "EUR";
+      const priceEl = card.querySelector(".rp2-pack-price");
+      if (!priceEl || !Number.isFinite(orig)) return;
+      if (promo && promo.discount) {
+        const disc = Math.max(0, Number((orig * (1 - promo.discount/100)).toFixed(2)));
+        priceEl.innerHTML = `<s>${fmtPrice(orig, cur)}</s> <b>${fmtPrice(disc, cur)}</b>`;
+      } else {
+        priceEl.textContent = fmtPrice(orig, cur);
+      }
+    });
+  }
+
+  modal.open(sheet);
+
+  const refreshStatus = (status) => {
+    const s = status || {};
+    const $f = document.getElementById("rpFree");
+    const $c = document.getElementById("rpCredits");
+    const $p = document.getElementById("rpPlan");
+    if ($f) $f.textContent = (s.free_remaining ?? 0) + " / " + (s.free_monthly ?? 0);
+    if ($c) $c.textContent = String(s.credits ?? 0);
+    if ($p) $p.textContent = s.unlimited ? "Premium · Ilimitado" : (s.plan || "Free");
+  };
+
+  if (prefStatus) refreshStatus(prefStatus);
+  else {
+    try {
+      const r = await fetch("/api/my/reads/status", { headers: chatApi.headers(), cache: "no-store" });
+      if (r.ok) refreshStatus(await r.json());
+    } catch {}
+  }
+
+  try {
+    const r = await fetch("/api/my/reads/packs", { headers: chatApi.headers(), cache: "no-store" });
+    const data = r.ok ? await r.json() : { packs: [] };
+    const row = document.getElementById("rpPacksRow");
+    if (!row) return;
+    row.innerHTML = "";
+    const packs = data.packs || [];
+    // Determinar el pack "popular": el central si hay 3, o el de mejor
+    // ratio créditos/precio para orientar al usuario.
+    let popularIdx = -1;
+    if (packs.length === 3) popularIdx = 1;
+    else if (packs.length >= 2) {
+      let best = -Infinity, bi = 0;
+      packs.forEach((p, i) => {
+        const ratio = (Number(p.credits) || 0) / Math.max(0.01, Number(p.price) || 0.01);
+        if (ratio > best) { best = ratio; bi = i; }
+      });
+      popularIdx = bi;
+    }
+    // Calcular el precio por lectura del pack más pequeño para pintar ahorros.
+    const basePricePerRead = packs.length ? (Number(packs[0].price) || 0) / Math.max(1, Number(packs[0].credits) || 1) : 0;
+
+    packs.forEach((p, i) => {
+      const isPopular = i === popularIdx && packs.length >= 2;
+      const perRead = (Number(p.price) || 0) / Math.max(1, Number(p.credits) || 1);
+      const savePct = basePricePerRead > 0 ? Math.round((1 - perRead / basePricePerRead) * 100) : 0;
+      const card = el("div", {
+        class: "rp2-pack" + (isPopular ? " is-popular" : ""),
+        "data-orig-price": String(p.price ?? 0),
+        "data-currency": p.currency || "EUR",
+      }, [
+        el("div", { class: "rp2-pack-credits" }, [
+          String(p.credits || 0),
+          el("small", {}, "lecturas"),
+        ]),
+        el("div", { class: "rp2-pack-price" }, fmtPrice(p.price, p.currency)),
+        savePct > 0 ? el("div", { class: "rp2-pack-save" }, `Ahorra ${savePct}%`) : el("span", {}),
+        el("button", {
+          class: "rp2-pack-btn",
+          type: "button",
+          onclick: async () => {
+            const btn = card.querySelector(".rp2-pack-btn");
+            if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
+            try {
+              const promo = window.__auraPromo;
+              const resp = await fetch("/api/my/reads/purchase", {
+                method: "POST", headers: chatApi.headers(),
+                body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
+              });
+              if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                toast(err.reason || "No se pudo completar la compra");
+                if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
+                return;
+              }
+              const done = await resp.json();
+              refreshStatus(done.status);
+              const priceTxt = done.discount_percent
+                ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
+                : "";
+              toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
+              if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
+            } catch { toast("Error en la compra"); if (btn) { btn.disabled = false; btn.textContent = "Comprar"; } }
+          },
+        }, "Comprar"),
+      ]);
+      row.appendChild(card);
+    });
+    if (window.__auraPromo) refreshPackPrices();
+    if (!packs.length) {
+      row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "No hay packs disponibles en este momento."));
+    }
+  } catch {
+    const row = document.getElementById("rpPacksRow");
+    if (row) { row.innerHTML = ""; row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Error cargando packs.")); }
+  }
+}
+
+/* ---- Chats ---- */
+function fmtChatTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const diff = (now - d) / 86400000;
+  if (diff < 2) return "Ayer";
+  if (diff < 7) return ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"][d.getDay()];
+  return d.toLocaleDateString();
+}
+
+function screenChats(root) {
+  const readsBtn = el("button", {
+    class: "icon-btn topbar-reads-btn",
+    title: "Comprar lecturas de chat",
+    "aria-label": "Comprar lecturas de chat",
+    onclick: () => openReadsPaywall(),
+    html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 5C6 5 2 12 2 12s4 7 10 7 10-7 10-7-4-7-10-7zm0 11a4 4 0 110-8 4 4 0 010 8z"/><circle cx="12" cy="12" r="2" fill="#fff"/></svg>`,
+  });
+  root.appendChild(topbar("Mensajes", null, readsBtn));
+
+  // Banner con estado actual de lecturas y CTA de compra
+  const readsBanner = el("button", {
+    class: "reads-banner",
+    type: "button",
+    onclick: () => openReadsPaywall(),
+  }, [
+    el("div", { class: "rb-ic" }, "👁"),
+    el("div", { class: "rb-body" }, [
+      el("strong", { id: "rbTitle" }, "Lecturas de chat"),
+      el("small", { id: "rbSub" }, "Cargando…"),
+    ]),
+    el("span", { class: "rb-cta" }, "Comprar"),
+  ]);
+  root.appendChild(readsBanner);
+  // Ad slot for free users, right below the reads banner
+  const adChat = buildAdSlot("messages");
+  if (adChat) root.appendChild(adChat);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/reads/status", { headers: chatApi.headers(), cache: "no-store" });
+      if (!r.ok) throw new Error("no");
+      const s = await r.json();
+      const t = document.getElementById("rbTitle");
+      const sb = document.getElementById("rbSub");
+      if (t) t.textContent = s.unlimited ? "Lecturas ilimitadas" : "Lecturas de chat";
+      if (sb) {
+        if (s.unlimited) sb.textContent = "Incluidas con tu plan " + (s.plan || "Premium");
+        else sb.textContent = `Te quedan ${s.free_remaining ?? 0}/${s.free_monthly ?? 0} gratis · ${s.credits ?? 0} créditos`;
+      }
+    } catch {
+      const sb = document.getElementById("rbSub");
+      if (sb) sb.textContent = "Compra packs o mejora tu plan";
+    }
+  })();
+
+  // Sección superior: potenciales matches (para iniciar nuevos chats reales)
+  const matches = generateUsers(6, { zone: state.zone });
+  const mrow = el("div", { class: "matches-row" });
+  matches.forEach(u => {
+    const it = el("div", { class: "match-avatar" }, [
+      el("div", { class: "img", style: `background-image:url('${u.photo}')` }, u.online ? el("span", { class: "new" }) : null),
+      el("div", { class: "name" }, u.name),
+    ]);
+    it.addEventListener("click", () => openChat(u, true));
+    mrow.appendChild(it);
+  });
+  root.appendChild(el("div", { style: "border-bottom:1px solid var(--border); padding-bottom:8px" }, [
+    el("h5", { style: "margin:8px 20px 0;color:var(--text-soft);font-size:12px;text-transform:uppercase;letter-spacing:.04em" }, `Nuevos matches (${matches.length})`),
+    mrow,
+  ]));
+
+  const list = el("div", { class: "chat-list" });
+  root.appendChild(list);
+
+  const empty = el("div", { style: "padding:24px;text-align:center;color:var(--text-muted)" }, "No tienes conversaciones todavía. Toca un match para empezar a chatear.");
+
+  (async () => {
+    const convos = await chatApi.listConversations();
+    if (!convos || !convos.length) {
+      list.appendChild(empty);
+      return;
+    }
+    convos.forEach(c => {
+      const item = el("div", { class: "chat-item" }, [
+        el("div", { class: "avatar", style: `background-image:url('${c.peer_photo || "https://i.pravatar.cc/80?u="+c.peer_id}')` }, c.peer_online ? el("div", { class: "online-dot" }) : null),
+        el("div", { class: "txt" }, [ el("strong", {}, c.peer_name || "Usuario"), el("small", {}, c.last_body || "Sin mensajes aún") ]),
+        el("div", { class: "meta" }, [
+          el("time", {}, fmtChatTime(c.last_time || c.last_message_at)),
+          c.unread ? el("span", { class: "unread" }, String(c.unread)) : null,
+        ]),
+      ]);
+      item.addEventListener("click", () => openChat({
+        id: c.peer_id, name: c.peer_name, photo: c.peer_photo, online: !!c.peer_online,
+      }, false, { conversationId: c.id }));
+      list.appendChild(item);
+    });
+  })();
+}
+
+/* ---- Nearby filters modal (Chats screen) ---- */
+function openNearbyFilters(onApply) {
+  const f = state.nearbyFilters;
+  const sheet = el("div", { class: "nearby-filters-sheet" });
+  sheet.appendChild(el("div", { class: "sheet-titlebar" }, [
+    el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros de personas cerca"),
+    el("button", {
+      class: "sheet-close",
+      type: "button",
+      "aria-label": "Cerrar filtros",
+      onclick: () => modal.close(),
+      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
+    }),
+  ]));
+
+  // Age range
+  const ageLbl = el("span", { class: "val" }, `${f.ageMin} - ${f.ageMax} años`);
+  const ageMin = el("input", { type: "range", min: 18, max: 65, value: f.ageMin });
+  const ageMax = el("input", { type: "range", min: 18, max: 65, value: f.ageMax });
+  const updAge = () => {
+    let lo = +ageMin.value, hi = +ageMax.value;
+    if (hi < lo) { hi = lo; ageMax.value = lo; }
+    ageLbl.textContent = `${lo} - ${hi} años`;
+  };
+  ageMin.addEventListener("input", updAge);
+  ageMax.addEventListener("input", updAge);
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Edad"),
+    el("div", { class: "slider-row" }, [ ageMin, ageLbl ]),
+    el("div", { class: "slider-row", style: "margin-top:6px" }, [ ageMax, el("span", { class: "val", style: "opacity:0" }, "") ]),
+  ]));
+
+  // Distance
+  const distLbl = el("span", { class: "val" }, `${f.distance} km`);
+  const dist = el("input", { type: "range", min: 1, max: 200, value: f.distance });
+  dist.addEventListener("input", () => distLbl.textContent = `${dist.value} km`);
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Distancia máxima"),
+    el("div", { class: "slider-row" }, [ dist, distLbl ]),
+  ]));
+
+  // What they're looking for
+  const lookingSelectedRef = { id: f.looking_for };
+  const lookingChips = el("div", { class: "chip-row" });
+  const lookingOptions = [{ id: "any", label: "Cualquiera", emoji: "🎯" }, ...LOOKING_FOR_OPTIONS];
+  lookingOptions.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (lookingSelectedRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      lookingSelectedRef.id = o.id;
+      lookingChips.querySelectorAll(".chip").forEach(ch => ch.classList.remove("active"));
+      c.classList.add("active");
+    });
+    lookingChips.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Qué está buscando"),
+    lookingChips,
+  ]));
+
+  // Relationship type
+  const relSelectedRef = { id: f.relationship };
+  const relChips = el("div", { class: "chip-row" });
+  const relOptions = [{ id: "any", label: "Cualquiera", emoji: "🎯" }, ...RELATIONSHIP_TYPES];
+  relOptions.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (relSelectedRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      relSelectedRef.id = o.id;
+      relChips.querySelectorAll(".chip").forEach(ch => ch.classList.remove("active"));
+      c.classList.add("active");
+    });
+    relChips.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Tipo de relación"),
+    relChips,
+  ]));
+
+  // Interests (multi-select)
+  const selectedInterests = new Set(f.interests || []);
+  const intChips = el("div", { class: "chip-row" });
+  INTERESTS.forEach(i => {
+    const c = el("button", { class: "chip selectable" + (selectedInterests.has(i) ? " active" : ""), type: "button" }, i);
+    c.addEventListener("click", () => {
+      if (selectedInterests.has(i)) { selectedInterests.delete(i); c.classList.remove("active"); }
+      else { selectedInterests.add(i); c.classList.add("active"); }
+    });
+    intChips.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Intereses (uno o más)"),
+    intChips,
+  ]));
+
+  // Toggles
+  const onlineToggle = el("input", { type: "checkbox", checked: !!f.onlyOnline });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Otros"),
+    el("div", { class: "switch-row" }, [
+      el("span", { style: "font-size:14px" }, "Solo en línea"),
+      el("label", { class: "switch" }, [ onlineToggle, el("span") ]),
+    ]),
+  ]));
+
+  // Actions
+  sheet.appendChild(el("div", { class: "sheet-actions" }, [
+    el("button", { class: "btn btn-brand btn-block", type: "button", onclick: () => {
+      state.nearbyFilters = {
+        ageMin: +ageMin.value,
+        ageMax: Math.max(+ageMax.value, +ageMin.value),
+        distance: +dist.value,
+        onlyOnline: onlineToggle.checked,
+        zone: state.nearbyFilters.zone || "all",
+        interests: Array.from(selectedInterests),
+        looking_for: lookingSelectedRef.id,
+        relationship: relSelectedRef.id,
+      };
+      modal.close();
+      onApply && onApply();
+      toast("Filtros aplicados");
+    } }, "Aplicar filtros"),
+    el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
+      state.nearbyFilters = { ageMin: 18, ageMax: 60, distance: 50, onlyOnline: false, zone: "all", interests: [], looking_for: "any", relationship: "any" };
+      modal.close();
+      onApply && onApply();
+      toast("Filtros restablecidos");
+    } }, "Restablecer"),
+    el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cancelar"),
+  ]));
+
+  modal.open(sheet);
+}
+
+/* ---- Profile detail (from discover card) ---- */
+function openProfileDetail(u, opts = {}) {
+  document.body.classList.add("profile-open");
+  render((root) => screenProfileDetail(root, u, opts));
+}
+function screenProfileDetail(root, u, opts = {}) {
+  root.classList.add("screen-profile-detail");
+  document.body.classList.add("profile-open");
+  const backTo = opts && opts.backTo; // "chat" | "likes" | undefined
+  const backLabel = backTo === "chat" ? "Volver al chat"
+                  : backTo === "likes" ? "Volver a likes"
+                  : "Volver a descubrir";
+  const backHandler = () => {
+    document.body.classList.remove("profile-open");
+    if (backTo === "chat") {
+      openChat(u);
+    } else if (backTo === "likes") {
+      showApp();
+      routeTab("likes");
+    } else {
+      showApp();
+      routeTab("discover");
+    }
+  };
+  // Header (back + title)
+  root.appendChild(el("div", { class: "pd-topbar" }, [
+    el("button", {
+      class: "pd-back",
+      type: "button",
+      "aria-label": backLabel,
+      onclick: backHandler,
+      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>`
+    }),
+    el("div", { class: "pd-title" }, "Perfil"),
+    el("span"),
+  ]));
+
+  const wrap = el("div", { class: "pd-wrap" });
+
+  // Photo carousel
+  const gallery = el("div", { class: "pd-gallery" });
+  let curPhoto = 0;
+  const photoEl = el("div", { class: "pd-photo", style: `background-image:url('${u.photos[0]}')` });
+  const dots = el("div", { class: "pd-dots" });
+  u.photos.forEach((_, i) => {
+    dots.appendChild(el("span", { class: "pd-dot" + (i === 0 ? " active" : "") }));
+  });
+  gallery.appendChild(photoEl);
+  gallery.appendChild(dots);
+  // Tap left/right to change photo
+  photoEl.addEventListener("click", (e) => {
+    const rect = photoEl.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const next = x > rect.width / 2
+      ? Math.min(u.photos.length - 1, curPhoto + 1)
+      : Math.max(0, curPhoto - 1);
+    curPhoto = next;
+    photoEl.style.backgroundImage = `url('${u.photos[curPhoto]}')`;
+    $$(".pd-dot", dots).forEach((d, i) => d.classList.toggle("active", i === curPhoto));
+  });
+  wrap.appendChild(gallery);
+
+  // Name + basic info
+  wrap.appendChild(el("div", { class: "pd-name" }, [
+    el("h2", {}, [
+      `${u.name}, ${u.age}`,
+      u.verified ? el("span", { class: "pd-verified", title: "Perfil verificado" }, "✓") : null,
+    ]),
+    el("div", { class: "pd-status" }, [
+      el("span", { class: "pd-dot-online" + (u.online ? " on" : "") }),
+      u.online ? "Activa ahora" : "Última vez hace unos minutos",
+    ]),
+  ]));
+
+  // Quick meta chips
+  wrap.appendChild(el("div", { class: "pd-meta" }, [
+    el("div", { class: "pd-meta-item" }, [
+      el("span", { class: "pd-meta-ic", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>` }),
+      el("span", {}, `${u.city} · ${u.distance} km`),
+    ]),
+    el("div", { class: "pd-meta-item" }, [
+      el("span", { class: "pd-meta-ic", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>` }),
+      el("span", {}, u.job),
+    ]),
+  ]));
+
+  // Bio
+  wrap.appendChild(el("h3", { class: "pd-section" }, "Sobre mí"));
+  wrap.appendChild(el("div", { class: "pd-card" }, [
+    el("p", { class: "pd-bio" }, u.bio),
+  ]));
+
+  // Interests
+  wrap.appendChild(el("h3", { class: "pd-section" }, "Intereses"));
+  const tags = el("div", { class: "pd-tags" });
+  u.interests.forEach((t) => tags.appendChild(el("span", { class: "pd-tag" }, t)));
+  wrap.appendChild(tags);
+
+  // Extra details
+  wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
+  wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
+    el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, u.gender === "F" ? "Mujer" : u.gender === "M" ? "Hombre" : "No binario") ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", {}, `${u.distance} km`) ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, "Verificación"), el("b", {}, u.verified ? "Verificado ✓" : "Sin verificar") ]),
+  ]));
+
+  // Actions
+  const returnTab = backTo === "likes" ? "likes" : "discover";
+  wrap.appendChild(el("div", { class: "pd-actions" }, [
+    el("button", {
+      class: "pd-act pd-act-pass",
+      type: "button",
+      "aria-label": "Descartar",
+      onclick: () => { toast(`Descartaste a ${u.name}`); document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab); },
+      html: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`
+    }),
+    el("button", {
+      class: "pd-act pd-act-super",
+      type: "button",
+      "aria-label": "Super Like",
+      onclick: () => { toast(`✦ Super Like enviado a ${u.name}`); document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab); },
+      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z"/></svg>`
+    }),
+    el("button", {
+      class: "pd-act pd-act-like",
+      type: "button",
+      "aria-label": "Me gusta",
+      onclick: () => {
+        document.body.classList.remove("profile-open");
+        showApp();
+        if (backTo === "likes") {
+          // Al venir desde "Te dieron like", darle like = match seguro
+          toast(`¡Match con ${u.name}!`);
+          openChat(u, true);
+          return;
+        }
+        if (Math.random() > 0.55) { routeTab("discover"); triggerMatch(u); }
+        else { toast(`Le diste like a ${u.name}`); routeTab("discover"); }
+      },
+      html: `<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`
+    }),
+  ]));
+
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* ---- Chat window ---- */
+let _chatPollTimer = null;
+function stopChatPolling() { if (_chatPollTimer) { clearInterval(_chatPollTimer); _chatPollTimer = null; } }
+
+function openChat(u, isNew = false, opts = {}) {
+  render((root) => screenChat(root, u, isNew, opts));
+}
+function screenChat(root, u, isNew, opts = {}) {
+  stopChatPolling();
+  document.body.classList.add("chat-open");
+  const openProfileFromChat = () => { document.body.classList.remove("chat-open"); openProfileDetail(u, { backTo: "chat" }); };
+  root.appendChild(el("div", { class: "chat-header" }, [
+    el("button", { class: "icon-btn", onclick: () => { stopChatPolling(); document.body.classList.remove("chat-open"); routeTab("chats"); }, html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }),
+    el("div", { class: "avatar clickable", style: `background-image:url('${u.photo || ("https://i.pravatar.cc/80?u="+(u.id||u.name))}')`, role: "button", tabindex: "0", title: "Ver perfil", "aria-label": "Ver perfil", onclick: openProfileFromChat }),
+    el("div", { class: "name clickable", role: "button", tabindex: "0", title: "Ver perfil", "aria-label": "Ver perfil", onclick: openProfileFromChat }, [ el("strong", {}, u.name), el("small", { class: u.online ? "status-online" : "status-offline" }, u.online ? "Online" : "Última vez hace 12min") ]),
+    el("button", { class: "icon-btn", title: "Videollamada", onclick: () => toast("Videollamada disponible próximamente"), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/></svg>` }),
+    el("button", { class: "icon-btn", title: "Más", onclick: () => openChatMenu(u), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>` }),
+  ]));
+
+  const msgs = el("div", { class: "messages", id: "msgs" });
+  msgs.appendChild(el("div", { class: "message-day" }, isNew ? "Hoy · Ahora sois match ✨" : "Hoy"));
+  root.appendChild(msgs);
+
+  const composer = el("div", { class: "composer" }, [
+    el("button", { class: "icon-btn", title: "Adjuntar", onclick: () => sendPhoto(), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>` }),
+    el("input", {
+      placeholder: "Escribe un mensaje…",
+      id: "chatInput",
+      disabled: true,
+      readonly: true,
+      autocomplete: "off",
+      autocorrect: "on",
+      onkeydown: (e) => { if (e.key === "Enter") sendMsg(); },
+      // Only enable keyboard input on explicit tap on the composer input
+      onclick: (e) => {
+        const inp = e.currentTarget;
+        if (inp.hasAttribute("readonly")) {
+          inp.removeAttribute("readonly");
+          try { inp.focus(); } catch {}
+        }
+      },
+    }),
+    el("button", { class: "icon-btn", title: "Enviar", id: "chatSendBtn", onclick: () => sendMsg(), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>` }),
+  ]);
+  root.appendChild(composer);
+  hideApp();
+
+  let convId = opts && opts.conversationId ? opts.conversationId : null;
+  let lastId = 0;
+  const state_ = { convId };
+
+  const sendMsg = async () => {
+    const inp = $("#chatInput");
+    const v = (inp.value || "").trim();
+    if (!v || !state_.convId) return;
+    inp.value = "";
+    const optimistic = bubble("out", v, new Date().toISOString());
+    optimistic.dataset.pending = "1";
+    msgs.appendChild(optimistic);
+    msgs.scrollTop = msgs.scrollHeight;
+    const r = await chatApi.sendMessage(state_.convId, v);
+    if (!r) {
+      optimistic.style.opacity = ".5";
+      toast("No se pudo enviar. Reintenta.");
+      return;
+    }
+    if (r.id > lastId) lastId = r.id;
+    optimistic.dataset.msgId = String(r.id);
+    optimistic.removeAttribute("data-pending");
+  };
+  const sendPhoto = async () => {
+    if (!state_.convId) return;
+    const url = `https://picsum.photos/seed/${Date.now()}/300/400`;
+    msgs.appendChild(photoBubble("out", url));
+    msgs.scrollTop = msgs.scrollHeight;
+    await chatApi.sendMessage(state_.convId, null, "photo", url);
+  };
+  window.__chatSend = sendMsg;
+  window.__chatSendPhoto = sendPhoto;
+
+  const attachReceipt = (bubbleEl, m) => {
+    if (!bubbleEl || !m || !(state.user && m.sender_id === state.user.id)) return;
+    // Remove existing receipt if re-attaching
+    const prev = bubbleEl.querySelector(".msg-receipt");
+    if (prev) prev.remove();
+    const receipt = el("span", { class: "msg-receipt" });
+    if (m.read_at) {
+      receipt.appendChild(el("span", { class: "receipt-check double" }, "✓✓"));
+      receipt.appendChild(el("small", {}, "Leído · " + new Date(m.read_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })));
+    } else if (m.read_locked) {
+      // Message was read but hidden until user unlocks (free/credit).
+      const btn = el("button", {
+        class: "receipt-unlock",
+        type: "button",
+        title: "Ver cuándo lo leyó",
+        onclick: async (e) => { e.stopPropagation(); await tryReveal(m.id, bubbleEl); },
+      }, "🔒 Ver lectura");
+      receipt.appendChild(btn);
+    } else {
+      receipt.appendChild(el("span", { class: "receipt-check single" }, "✓"));
+    }
+    bubbleEl.appendChild(receipt);
+  };
+
+  const tryReveal = async (messageId, bubbleEl) => {
+    try {
+      const r = await fetch("/api/my/reads/reveal", {
+        method: "POST",
+        headers: chatApi.headers(),
+        body: JSON.stringify({ message_id: messageId }),
+      });
+      if (r.status === 402) {
+        const data = await r.json().catch(() => ({}));
+        openReadsPaywall(data && data.status);
+        return;
+      }
+      if (!r.ok) { toast("No se pudo revelar la lectura"); return; }
+      const data = await r.json();
+      if (data.revealed && data.read_at) {
+        // Locally update the bubble with the revealed timestamp
+        attachReceipt(bubbleEl, { sender_id: state.user.id, read_at: data.read_at });
+        const src = data.source === "credit" ? "1 crédito consumido" : (data.source === "free" ? "usada 1 lectura gratis" : "lectura ilimitada");
+        toast("Lectura revelada · " + src);
+      }
+    } catch { toast("Error revelando lectura"); }
+  };
+
+  const renderMessages = (list) => {
+    list.forEach(m => {
+      if (m.id <= lastId) return;
+      lastId = m.id;
+      const mine = state.user && m.sender_id === state.user.id;
+      const t = mine ? "out" : "in";
+      // Skip if this is our own pending message we already appended optimistically
+      if (mine) {
+        const pending = msgs.querySelector('[data-pending="1"]');
+        if (pending && (pending.textContent || "").trim() === (m.body || "").trim()) {
+          pending.dataset.msgId = String(m.id);
+          pending.removeAttribute("data-pending");
+          attachReceipt(pending, m);
+          return;
+        }
+      }
+      let node;
+      if (m.media_type === "photo" && m.media_url) {
+        node = photoBubble(t, m.media_url, m.created_at);
+      } else if (m.media_type === "audio") {
+        node = audioBubble(t, 12);
+      } else if (m.body) {
+        node = bubble(t, m.body, m.created_at);
+      }
+      if (node) {
+        node.dataset.msgId = String(m.id);
+        if (mine) attachReceipt(node, m);
+        msgs.appendChild(node);
+      }
+    });
+    msgs.scrollTop = msgs.scrollHeight;
+  };
+
+  const applyReceiptUpdates = (list) => {
+    // For every outgoing message we already have on screen, update its receipt.
+    list.forEach(m => {
+      if (!(state.user && m.sender_id === state.user.id)) return;
+      const node = msgs.querySelector(`[data-msg-id="${m.id}"]`);
+      if (node) attachReceipt(node, m);
+    });
+  };
+
+  // Full re-fetch of the conversation state (used when the receipt of an older
+  // message changes — e.g. peer just read it).
+  const fullRefresh = async () => {
+    if (!state_.convId) return;
+    try {
+      const r = await fetch(`/api/my/messages?conversation_id=${state_.convId}&after_id=0`, { headers: chatApi.headers(), cache: "no-store" });
+      if (!r.ok) return;
+      const data = await r.json();
+      // Only update receipts of existing messages; do not re-render duplicates.
+      applyReceiptUpdates(data.messages || []);
+    } catch {}
+  };
+
+  const poll = async () => {
+    if (!state_.convId) return;
+    const data = await chatApi.fetchMessages(state_.convId, lastId);
+    if (data && data.messages && data.messages.length) renderMessages(data.messages);
+    // Also refresh read state periodically for older messages
+    if (Math.random() < 0.5) fullRefresh();
+  };
+
+  (async () => {
+    await chatApi.ensure();
+    if (!state_.convId) {
+      const c = await chatApi.openConversation({
+        id: (typeof u.id === "number" && Number.isFinite(u.id)) ? u.id : null,
+        name: u.name, photo: u.photo,
+      });
+      if (!c) { toast("No se pudo abrir el chat"); return; }
+      state_.convId = c.id;
+    }
+    const inp = $("#chatInput");
+    if (inp) {
+      inp.disabled = false;
+      // Do NOT auto-focus: keyboard should only open when the user taps the composer.
+    }
+    await poll();
+    _chatPollTimer = setInterval(poll, 3500);
+  })();
+}
+function bubble(t, m, iso) {
+  const time = iso ? new Date(iso) : new Date();
+  const hhmm = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return el("div", { class: `msg ${t}` }, [ document.createTextNode(m), el("time", {}, hhmm) ]);
+}
+function photoBubble(t, url, iso) {
+  const time = iso ? new Date(iso) : new Date();
+  const hhmm = time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return el("div", { class: `msg ${t} msg-photo` }, [
+    el("img", { src: url }),
+    el("time", {}, hhmm),
+  ]);
+}
+function audioBubble(t, seconds) {
+  const wave = el("div", { class: "wave" });
+  for (let i = 0; i < 22; i++) wave.appendChild(el("span", { style: `height:${rand(4,20)}px` }));
+  return el("div", { class: `msg ${t} msg-audio` }, [
+    el("button", { class: "play", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 4l14 8-14 8z"/></svg>` }),
+    wave,
+    el("small", { style: "opacity:.75" }, `0:${String(seconds).padStart(2,'0')}`),
+  ]);
+}
+function sendMsg() { if (window.__chatSend) window.__chatSend(); }
+function sendPhoto() { if (window.__chatSendPhoto) window.__chatSendPhoto(); }
+function sendAudio() { toast("Audios reales próximamente"); }
+function openChatMenu(u) {
+  const sheet = el("div", {}, [
+    el("div", { class: "sheet-title" }, u.name),
+    el("div", { class: "sheet-actions" }, [
+      el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); openProfile(u); } }, "Ver perfil"),
+      el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); toast("Silenciado"); } }, "Silenciar notificaciones"),
+      el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); openReport(u); } }, "Denunciar"),
+      el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); toast("Usuario bloqueado"); routeTab("chats"); } }, "Bloquear"),
+      el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
+    ]),
+  ]);
+  modal.open(sheet);
+}
+function openReport(u) {
+  const reasons = ["Perfil falso","Contenido inapropiado","Menor de edad","Spam / publicidad","Acoso","Comportamiento ofensivo","Estafa","Otro"];
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title" }, "Denunciar a " + u.name),
+    el("div", { class: "sheet-body" }, "Cuéntanos qué está pasando. Toda la información es confidencial."),
+    el("div", { class: "reason-list" }, reasons.map(r => {
+      const b = el("button", { class: "reason-item", onclick: () => { modal.close(); toast("Denuncia enviada. Gracias."); } }, r);
+      return b;
+    })),
+  ]);
+  modal.open(wrap);
+}
+
+/* ---- Profile (view of another user) ---- */
+function openProfile(u) {
+  render((root) => {
+    root.appendChild(el("div", { class: "profile-hero", style: `background-image:url('${u.photo}')` }, [
+      el("div", { class: "profile-topbar" }, [
+        el("button", { class: "icon-btn", onclick: () => routeTab("search"), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }),
+        el("button", { class: "icon-btn", onclick: () => openChatMenu(u), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>` }),
+      ]),
+    ]));
+    root.appendChild(el("div", { class: "profile-body" }, [
+      el("div", { class: "profile-name-row" }, [
+        el("h2", {}, u.name),
+        el("span", { class: "age" }, `, ${u.age}`),
+        u.verified ? el("span", { style: "background:#3b82f6;color:white;border-radius:50%;width:22px;height:22px;display:inline-grid;place-items:center;margin-left:6px;font-size:13px" }, "✓") : null,
+      ]),
+      el("div", { class: "profile-meta" }, [
+        u.job, el("span", { class: "dot" }, "·"),
+        `${u.city}`, el("span", { class: "dot" }, "·"), `${u.distance} km`,
+      ]),
+      el("div", { class: "section" }, [ el("h4", {}, "Sobre mí"), el("p", {}, u.bio) ]),
+      el("div", { class: "section" }, [
+        el("h4", {}, "Intereses"),
+        el("div", { class: "badges" }, u.interests.map(t => el("span", { class: "badge" }, t))),
+      ]),
+      el("div", { class: "section" }, [
+        el("h4", {}, "Fotos"),
+        el("div", { class: "profile-photos" }, u.photos.map(p => el("div", { class: "profile-photo", style: `background-image:url('${p}')` }))),
+      ]),
+      el("div", { class: "section" }, [
+        el("h4", {}, "Info"),
+        el("div", { class: "badges" }, [
+          el("span", { class: "badge" }, `📏 ${rand(160, 190)} cm`),
+          el("span", { class: "badge" }, `♎ Libra`),
+          el("span", { class: "badge" }, `🎓 Universidad`),
+          el("span", { class: "badge" }, `🗣️ Español · Inglés`),
+        ]),
+      ]),
+      el("div", { class: "profile-actions" }, [
+        el("button", { class: "btn btn-outline", onclick: () => routeTab("search") }, "✕ Pasar"),
+        el("button", { class: "btn btn-brand", onclick: () => triggerMatch(u) }, "♥ Me gusta"),
+      ]),
+    ]));
+    hideApp();
+  });
+}
+
+/* ---- Me / Settings ---- */
+function screenMe(root) {
+  root.classList.add("screen-me");
+  const meAvatar = T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
+  const meName = state.user?.name || T("content.me.default_name") || "";
+  const meMail = state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico";
+  const meTier = T("content.me.tier_label") || "★ Premium";
+  root.appendChild(el("div", { class: "me-hero" }, [
+    el("div", { class: "me-avatar", style: `background-image:url('${meAvatar}')` }),
+    el("div", {}, [
+      el("h3", { class: "me-name" }, meName),
+      el("div", { class: "me-mail" }, meMail),
+      el("span", { class: "me-tier" }, meTier),
+    ]),
+    el("button", { class: "me-edit", onclick: () => render(screenEditProfile) }, T("content.me.edit_button") || "Editar"),
+  ]));
+
+  // Banner "Mi cuenta y estado" — solo se muestra si hay algo activo
+  // (KYC pendiente, apelaciones abiertas, infracciones sin resolver).
+  const statusBanner = el("div", { id: "meStatusBanner" });
+  root.appendChild(statusBanner);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/account-status", {
+        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const flags = [];
+      if (d.kyc_status && d.kyc_status !== "verified" && d.kyc_status !== "none")
+        flags.push({ tone: "warn", icon: "🛡️", text: "Verificación de edad " + d.kyc_status });
+      if ((d.appeals_open || 0) > 0)
+        flags.push({ tone: "info", icon: "📮", text: `${d.appeals_open} apelación(es) pendiente(s)` });
+      if ((d.infractions_open || 0) > 0)
+        flags.push({ tone: "no", icon: "⚠️", text: `${d.infractions_open} infracción(es) sin resolver` });
+      if (!flags.length) return;
+      statusBanner.innerHTML = "";
+      const box = el("div", {
+        class: "me-status-banner",
+        style: "margin:10px 12px;padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;display:flex;align-items:center;gap:10px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.08);",
+        onclick: () => render(screenAccountStatus),
+      }, [
+        el("div", { style: "font-size:22px;" }, flags[0].icon),
+        el("div", { style: "flex:1;" }, [
+          el("strong", { style: "display:block;font-size:14px;" }, "Tu cuenta necesita atención"),
+          el("small", { style: "display:block;font-size:12px;opacity:.85;" }, flags.map(f => f.text).join(" · ")),
+        ]),
+        el("span", { style: "font-size:18px;opacity:.7;" }, "›"),
+      ]);
+      statusBanner.appendChild(box);
+    } catch {}
+  })();
+
+  const list = el("div", { class: "settings-list" });
+  const zoneSub = state.zone === "lgtb"
+    ? (T("content.zone.lgtb.title") || "Zona LGTB+")
+    : (T("content.zone.hetero.title") || "Zona Hetero");
+  const themeSub = state.theme === "dark"
+    ? (T("content.me.theme_dark") || "Oscuro")
+    : (T("content.me.theme_light") || "Claro");
+
+  const groups = [
+    { title: T("content.me.group_account") || "Cuenta", items: [
+      { icon: "👤", title: T("content.me.item_edit_profile") || "Editar perfil", onClick: () => render(screenEditProfile) },
+      { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
+      { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
+      { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
+      { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: T("content.me.item_subs_sub") || "Premium · renueva 12 dic", onClick: () => render(screenSubscriptions) },
+      { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
+      { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
+    ]},
+    { title: T("content.me.group_prefs") || "Preferencias", items: [
+      { icon: "🎛️", title: T("content.me.item_filters") || "Filtros de descubrimiento", onClick: openFilters },
+      { icon: "🌈", title: T("content.me.item_zone") || "Cambiar zona", sub: zoneSub, onClick: openZoneSwitch },
+      { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", sub: "Push, email y qué tipos recibes", onClick: () => render(screenNotificationSettings) },
+      { icon: "🌙", title: T("content.me.item_theme") || "Tema", sub: themeSub, onClick: () => { $("#themeToggle").click(); render(screenMe); } },
+      { icon: "🌍", title: T("content.me.item_lang") || "Idioma", sub: ({ es: "Español", en: "English", fr: "Français", de: "Deutsch", it: "Italiano", pt: "Português" }[currentLang] || "Español"), onClick: () => openLanguageSheet() },
+      // Instalar Aura como PWA. Aparece SIEMPRE salvo que ya esté instalada.
+      // Si tenemos prompt nativo (Android/Chrome/Edge) lo usamos; si no,
+      // mostramos instrucciones específicas para el navegador del usuario.
+      ...(function(){
+        try {
+          const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+          if (standalone) return [];
+          const ua = navigator.userAgent || "";
+          const isIOS = /iPhone|iPad|iPod/i.test(ua) && !window.MSStream;
+          const isAndroid = /Android/i.test(ua);
+          const isFirefox = /Firefox/i.test(ua);
+          const isSamsung = /SamsungBrowser/i.test(ua);
+          const isEdge = /Edg\//i.test(ua);
+          const isChrome = /Chrome/i.test(ua) && !isEdge && !isSamsung;
+          const isSafariDesktop = /Safari/i.test(ua) && !/Chrome|Chromium|Edg/i.test(ua) && !isIOS;
+          const hasPrompt = !!window.__auraDeferredInstall;
+          let sub = "Añadir a la pantalla de inicio";
+          if (isIOS) sub = "Toca Compartir → Añadir a pantalla de inicio";
+          else if (!hasPrompt && isFirefox) sub = "Menú ⋮ → Instalar";
+          else if (!hasPrompt && isSafariDesktop) sub = "Archivo → Añadir al Dock";
+          return [{
+            icon: "📲",
+            title: "Instalar Aura como app",
+            sub,
+            onClick: async () => {
+              // 1) Prompt nativo si está disponible
+              if (window.__auraDeferredInstall) {
+                try {
+                  window.__auraDeferredInstall.prompt();
+                  const { outcome } = await window.__auraDeferredInstall.userChoice;
+                  if (outcome === "accepted") {
+                    window.__auraDeferredInstall = null;
+                    toast("Aura instalada");
+                    render(screenMe);
+                  }
+                } catch(e) { toast("No se pudo instalar"); }
+                return;
+              }
+              // 2) Instrucciones por navegador
+              let msg;
+              if (isIOS) {
+                msg = "Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.";
+              } else if (isAndroid && isFirefox) {
+                msg = "En Firefox Android:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar' o 'Añadir a pantalla de inicio'.";
+              } else if (isAndroid && isSamsung) {
+                msg = "En Samsung Internet:\n\n1) Menú ☰ (abajo).\n2) 'Añadir página a' → 'Pantalla de inicio'.";
+              } else if (isAndroid) {
+                msg = "En Chrome Android:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar aplicación' o 'Añadir a pantalla de inicio'.\n\nSi no aparece, actualiza Chrome o reinicia la página.";
+              } else if (isFirefox) {
+                msg = "En Firefox de escritorio:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar' (icono +).";
+              } else if (isSafariDesktop) {
+                msg = "En Safari Mac:\n\n1) Menú 'Archivo'.\n2) 'Añadir al Dock…'.";
+              } else if (isEdge) {
+                msg = "En Edge:\n\n1) Menú ⋯ (arriba derecha).\n2) 'Aplicaciones' → 'Instalar este sitio como aplicación'.";
+              } else if (isChrome) {
+                msg = "En Chrome:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar Aura…' o 'Enviar, guardar y compartir' → 'Instalar página como aplicación'.";
+              } else {
+                msg = "Busca en el menú de tu navegador la opción 'Instalar aplicación' o 'Añadir a pantalla de inicio'.";
+              }
+              alert(msg);
+            }
+          }];
+        } catch { return []; }
+      })(),
+    ]},
+    { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
+      { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: T("content.me.item_invisible_sub") || "Solo Premium", onClick: () => render(screenInvisibleMode) },
+      { icon: "🛡", title: "Dispositivo perdido o robado", sub: "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
+      { icon: "🔒", title: T("content.me.item_security") || "Contraseña y 2FA", onClick: () => render(screenSecurity) },
+      { icon: "🚫", title: T("content.me.item_blocked") || "Usuarios bloqueados", onClick: () => render(screenBlockedUsers) },
+      { icon: "📱", title: T("content.me.item_devices") || "Dispositivos activos", onClick: () => openDevicesSheet() },
+      {
+        icon: "📍",
+        title: T("content.me.item_gps") || "Ubicación (GPS)",
+        sub: (state.gpsConsent === true)
+          ? (T("content.me.item_gps_on") || "Permiso activo · pulsa para revocar")
+          : (T("content.me.item_gps_off") || "Permiso no otorgado"),
+        onClick: () => openGpsPrivacySheet(),
+      },
+      { icon: "📥", title: T("content.me.item_data") || "Descargar mis datos", sub: T("content.me.item_data_sub") || "Exporta un ZIP con toda tu información", onClick: () => render(screenDataExport) },
+    ]},
+    { title: T("content.me.group_support") || "Soporte", items: [
+      { icon: "🎫", title: "Abrir un ticket", sub: "Soporte personalizado en <24 h", onClick: () => render(screenSupportTicket) },
+      { icon: "❓", title: T("content.me.item_help") || "Centro de ayuda", onClick: () => render(screenInfoHelp) },
+      { icon: "💬", title: T("content.me.item_faq") || "Preguntas frecuentes", onClick: () => render(screenInfoFaq) },
+      { icon: "✉️", title: T("content.me.item_contact") || "Contacto", onClick: () => render(screenInfoContact) },
+      { icon: "⭐", title: T("content.me.item_rules") || "Normas de la comunidad", onClick: () => render(screenInfoRules) },
+      { icon: "📜", title: T("content.me.item_terms") || "Términos y privacidad", onClick: () => render(screenInfoTerms) },
+      { icon: "ℹ️", title: T("content.me.item_about") || "Acerca de Aura", sub: T("content.me.version") || "Versión 1.0.0", onClick: () => render(screenAbout) },
+    ]},
+    { title: T("content.me.group_danger") || "Cuenta", items: [
+      { icon: "⏻", title: T("content.me.item_logout") || "Cerrar sesión", onClick: () => {
+          state.user = null;
+          try { localStorage.removeItem("aura-session"); } catch {}
+          // Si la app está en pruebas privadas, vuelve a la pantalla beta con
+          // el bloque de acceso por código para el superadmin.
+          const beta = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+          if (beta) { try { showPrivateBetaScreen({}); return; } catch {} }
+          render(screenWelcome);
+      } },
+      { icon: "🗑️", title: T("content.me.item_delete") || "Eliminar cuenta", danger: true, sub: T("content.me.item_delete_sub") || "Acción irreversible", onClick: () => openDeleteAccountSheet() },
+    ]},
+  ];
+  groups.forEach(g => {
+    if (g.title) list.appendChild(el("div", { class: "settings-section" }, g.title));
+    g.items.forEach(it => {
+      const row = el("div", { class: "settings-item" + (it.danger ? " danger" : ""), onclick: it.onClick }, [
+        el("div", { class: "ico" }, it.icon),
+        el("div", {}, [ el("strong", {}, it.title), it.sub ? el("small", {}, it.sub) : null ]),
+        el("span", { class: "chev", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>` }),
+      ]);
+      list.appendChild(row);
+    });
+  });
+  root.appendChild(list);
+}
+
+/* ======================= "Yo" — Sub-pantallas ======================= */
+function meSubHeader(root, title) {
+  root.classList.add("screen-me-sub");
+  root.appendChild(topbar(title, () => routeTab("me")));
+}
+
+/* — Mi cuenta y estado —
+   Muestra al usuario el estado actual de:
+     · Verificación de edad (KYC)
+     · Apelaciones enviadas + estado
+     · Infracciones registradas en la cuenta
+   Todo se pinta desde el endpoint /api/my/account-status. */
+function screenAccountStatus(root) {
+  meSubHeader(root, "Mi cuenta y estado");
+  const wrap = el("div", { class: "info-wrap", style: "padding:14px;" });
+  wrap.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 14px;" },
+    "Aquí puedes ver el estado de tu verificación, apelaciones enviadas y cualquier infracción registrada en tu cuenta."));
+
+  const boxKyc      = el("div", { class: "acc-status-box" });
+  const boxAppeals  = el("div", { class: "acc-status-box" });
+  const boxInfract  = el("div", { class: "acc-status-box" });
+  wrap.appendChild(boxKyc);
+  wrap.appendChild(boxAppeals);
+  wrap.appendChild(boxInfract);
+  root.appendChild(wrap);
+
+  // CSS inline (idempotente).
+  if (!document.getElementById("accStatusStyle")) {
+    const st = document.createElement("style");
+    st.id = "accStatusStyle";
+    st.textContent = `
+      .acc-status-box{background:var(--card,#fff);color:var(--text,#111);
+        border:1px solid var(--border,rgba(0,0,0,.06));border-radius:14px;
+        padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);}
+      .acc-status-title{display:flex;align-items:center;gap:8px;
+        font-size:15px;font-weight:600;margin:0 0 8px;color:var(--text,#111);}
+      .acc-status-item{padding:8px 0;border-top:1px solid var(--border,rgba(0,0,0,.06));
+        font-size:13.5px;display:flex;justify-content:space-between;align-items:center;gap:8px;
+        color:var(--text,#111);}
+      .acc-status-item:first-child{border-top:none;}
+      .acc-status-item small{color:var(--text-soft,#666) !important;}
+      .acc-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
+      .acc-badge.ok{background:#dcfce7;color:#166534;}
+      .acc-badge.warn{background:#fef3c7;color:#92400e;}
+      .acc-badge.no{background:#fee2e2;color:#991b1b;}
+      .acc-badge.info{background:#dbeafe;color:#1e40af;}
+      .acc-badge.muted{background:#f3f4f6;color:#4b5563;}
+      /* Dark mode: usar tarjeta oscura si el tema define --card, si no forzar */
+      @media (prefers-color-scheme: dark){
+        .acc-status-box{background:var(--card,#1a1d2b);color:var(--text,#e6e9f2);
+          border-color:var(--border,#2a2f45);}
+        .acc-status-item{border-top-color:var(--border,#2a2f45);color:var(--text,#e6e9f2);}
+        .acc-status-item small{color:var(--text-soft,#9aa4bf) !important;}
+        .acc-badge.ok{background:#064e3b;color:#a7f3d0;}
+        .acc-badge.warn{background:#78350f;color:#fde68a;}
+        .acc-badge.no{background:#7f1d1d;color:#fecaca;}
+        .acc-badge.info{background:#1e3a8a;color:#bfdbfe;}
+        .acc-badge.muted{background:#2a2f45;color:#c1c7d8;}
+      }
+      /* Soporte de tema por clase (algunos temas alternan .theme-dark) */
+      body.theme-dark .acc-status-box,body.dark .acc-status-box,html.dark .acc-status-box{
+        background:var(--card,#1a1d2b);color:var(--text,#e6e9f2);
+        border-color:var(--border,#2a2f45);}
+      body.theme-dark .acc-status-item,body.dark .acc-status-item,html.dark .acc-status-item{
+        border-top-color:var(--border,#2a2f45);color:var(--text,#e6e9f2);}
+      body.theme-dark .acc-status-item small,body.dark .acc-status-item small,html.dark .acc-status-item small{
+        color:var(--text-soft,#9aa4bf) !important;}
+    `;
+    document.head.appendChild(st);
+  }
+
+  function badge(tone, text) {
+    return `<span class="acc-badge ${tone}">${text}</span>`;
+  }
+
+  (async () => {
+    boxKyc.innerHTML     = "<div class='muted' style='padding:8px;'>Cargando…</div>";
+    boxAppeals.innerHTML = "";
+    boxInfract.innerHTML = "";
+    try {
+      const r = await fetch("/api/my/account-status", {
+        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+      });
+      const d = await r.json();
+
+      // KYC
+      const kycMap = {
+        verified:      { t: "ok",   l: "Verificado" },
+        manual_review: { t: "warn", l: "En revisión manual" },
+        pending:       { t: "muted",l: "Pendiente" },
+        rejected:      { t: "no",   l: "Rechazado" },
+        suspended:     { t: "no",   l: "Suspendido" },
+        none:          { t: "muted",l: "No iniciado" },
+      };
+      const kb = kycMap[d.kyc_status] || kycMap.none;
+      boxKyc.innerHTML = `
+        <div class="acc-status-title">🛡️ Verificación de edad</div>
+        <div class="acc-status-item">
+          <span>Estado actual</span>${badge(kb.t, kb.l)}
+        </div>
+        ${d.kyc_reason ? `<div class="acc-status-item"><span>Motivo</span><span style="text-align:right;font-size:12.5px;">${d.kyc_reason}</span></div>` : ""}
+        ${d.kyc_updated_at ? `<div class="acc-status-item"><span>Última actualización</span><span style="font-size:12.5px;">${new Date(d.kyc_updated_at).toLocaleString()}</span></div>` : ""}
+      `;
+
+      // Apelaciones
+      const appeals = d.appeals || [];
+      boxAppeals.innerHTML = `<div class="acc-status-title">📮 Mis apelaciones</div>`;
+      if (!appeals.length) {
+        boxAppeals.appendChild(el("div", { class: "acc-status-item" }, [
+          el("span", { class: "muted" }, "No has enviado apelaciones."),
+        ]));
+      } else {
+        appeals.forEach(a => {
+          const stMap = {
+            open:      { t: "warn", l: "En revisión" },
+            reviewed:  { t: "info", l: "Revisada" },
+            accepted:  { t: "ok",   l: "Aceptada" },
+            rejected:  { t: "no",   l: "Rechazada" },
+          };
+          const sb = stMap[a.status] || { t: "muted", l: a.status };
+          const row = document.createElement("div");
+          row.className = "acc-status-item";
+          row.innerHTML = `
+            <div>
+              <div style="font-weight:600;">${a.subject || "Apelación #" + a.id}</div>
+              <small>${a.created_at ? new Date(a.created_at).toLocaleString() : ""}</small>
+            </div>
+            ${badge(sb.t, sb.l)}`;
+          boxAppeals.appendChild(row);
+        });
+      }
+
+      // Infracciones
+      const infr = d.infractions || [];
+      boxInfract.innerHTML = `<div class="acc-status-title">⚠️ Infracciones y avisos</div>`;
+      if (!infr.length) {
+        boxInfract.appendChild(el("div", { class: "acc-status-item" }, [
+          el("span", { class: "muted" }, "Tu cuenta no tiene infracciones. ¡Bien hecho!"),
+        ]));
+      } else {
+        infr.forEach(i => {
+          const sev = i.severity === "high" ? "no" : (i.severity === "medium" ? "warn" : "muted");
+          const row = document.createElement("div");
+          row.className = "acc-status-item";
+          row.innerHTML = `
+            <div>
+              <div style="font-weight:600;">${i.title || i.type || "Infracción"}</div>
+              <small>${i.detail || ""}</small>
+              <small style="display:block;opacity:.75;">${i.created_at ? new Date(i.created_at).toLocaleString() : ""}</small>
+            </div>
+            ${badge(sev, i.status === "resolved" ? "Resuelta" : (i.severity || "aviso"))}`;
+          boxInfract.appendChild(row);
+        });
+      }
+
+      // Acción rápida
+      if (d.kyc_status === "rejected" || d.kyc_status === "suspended" || infr.length) {
+        wrap.appendChild(el("button", {
+          class: "btn primary block",
+          style: "margin-top:8px;width:100%;",
+          onclick: () => render(screenSupportTicket),
+        }, "Abrir un ticket de soporte"));
+      }
+    } catch (e) {
+      boxKyc.innerHTML = "<div class='muted' style='padding:8px;'>No se pudo cargar el estado.</div>";
+    }
+  })();
+}
+
+/* — Editar perfil — */
+function screenEditProfile(root) {
+  meSubHeader(root, T("content.me.item_edit_profile") || "Editar perfil");
+  const wrap = el("div", { class: "info-wrap" });
+  const u = state.user || {};
+  wrap.appendChild(el("div", { class: "edit-avatar" }, [
+    el("div", { class: "me-avatar", style: `background-image:url('${T("content.me.avatar") || "https://i.pravatar.cc/300?img=32"}')` }),
+    el("button", { class: "btn btn-outline btn-sm", type: "button", onclick: () => render(screenMyPhotos) }, T("content.me.change_photo") || "Cambiar foto"),
+  ]));
+
+  // Persist profile prefs on state
+  state.myProfile = Object.assign({
+    looking_for: "serious",
+    relationship: "mono",
+    interests: [],
+  }, state.myProfile || {});
+
+  const form = el("form", { class: "contact-form", onsubmit: (e) => {
+    e.preventDefault();
+    state.myProfile.looking_for = lookingRef.id;
+    state.myProfile.relationship = relRef.id;
+    state.myProfile.interests = Array.from(selectedInterests);
+    try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
+    toast(T("content.me.saved") || "Cambios guardados");
+    render(screenMe);
+  } });
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_name") || "Nombre"), el("input", { type: "text", value: u.name || T("content.me.default_name") || "", placeholder: "Tu nombre" }) ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_bio") || "Sobre mí"), el("textarea", { rows: 4 }, T("content.me.default_bio") || "Amante del café, las conversaciones largas y los planes espontáneos.") ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_city") || "Ciudad"), el("input", { type: "text", value: T("content.me.default_city") || "Madrid" }) ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_job") || "Profesión"), el("input", { type: "text", value: T("content.me.default_job") || "Diseñadora UX" }) ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_height") || "Altura (cm)"), el("input", { type: "number", value: 172 }) ]));
+
+  // Qué estoy buscando
+  const lookingRef = { id: state.myProfile.looking_for || "serious" };
+  const lookingWrap = el("div", { class: "chip-row" });
+  LOOKING_FOR_OPTIONS.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (lookingRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      lookingRef.id = o.id;
+      lookingWrap.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+      c.classList.add("active");
+    });
+    lookingWrap.appendChild(c);
+  });
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, T("content.me.field_looking_for") || "¿Qué estás buscando?"),
+    lookingWrap,
+  ]));
+
+  // Tipo de relación
+  const relRef = { id: state.myProfile.relationship || "mono" };
+  const relWrap = el("div", { class: "chip-row" });
+  RELATIONSHIP_TYPES.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (relRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      relRef.id = o.id;
+      relWrap.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+      c.classList.add("active");
+    });
+    relWrap.appendChild(c);
+  });
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, T("content.me.field_relationship") || "Tipo de relación"),
+    relWrap,
+  ]));
+
+  // Intereses (multi-select con chips)
+  const selectedInterests = new Set(state.myProfile.interests || []);
+  const intWrap = el("div", { class: "chip-row" });
+  INTERESTS.forEach(i => {
+    const c = el("button", { class: "chip selectable" + (selectedInterests.has(i) ? " active" : ""), type: "button" }, i);
+    c.addEventListener("click", () => {
+      if (selectedInterests.has(i)) { selectedInterests.delete(i); c.classList.remove("active"); }
+      else { selectedInterests.add(i); c.classList.add("active"); }
+    });
+    intWrap.appendChild(c);
+  });
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, T("content.me.field_interests") || "Intereses (elige varios)"),
+    intWrap,
+  ]));
+
+  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, T("content.me.save_button") || "Guardar cambios"));
+  wrap.appendChild(form);
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Mis fotos — */
+function screenMyPhotos(root) {
+  meSubHeader(root, T("content.me.item_photos") || "Mis fotos");
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(el("p", { class: "info-hero-sub" }, T("content.me.photos_hint") || "Añade hasta 6 fotos. La primera será tu foto principal."));
+
+  // Persist across renders via state
+  if (!state.myPhotos) {
+    state.myPhotos = [
+      "https://i.pravatar.cc/400?img=32",
+      "https://picsum.photos/seed/me1/400/500",
+      "https://picsum.photos/seed/me2/400/500",
+    ];
+  }
+
+  const grid = el("div", { class: "photos-grid" });
+  wrap.appendChild(grid);
+
+  // Hidden file input for the add flow
+  const fileInput = el("input", { type: "file", accept: "image/*", style: "display:none" });
+  fileInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (state.myPhotos.length >= 6) { toast(T("content.me.photos_full") || "Máximo 6 fotos"); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      state.myPhotos.push(ev.target.result);
+      renderGrid();
+      toast(T("content.me.photo_added") || "Foto añadida");
+    };
+    reader.readAsDataURL(file);
+    fileInput.value = "";
+  });
+  wrap.appendChild(fileInput);
+
+  function renderGrid() {
+    grid.innerHTML = "";
+    for (let i = 0; i < 6; i++) {
+      const has = state.myPhotos[i];
+      const cell = el("div", {
+        class: "photo-cell" + (has ? " has" : ""),
+        style: has ? `background-image:url('${has}')` : "",
+      });
+      if (has) {
+        cell.appendChild(el("button", {
+          class: "photo-del",
+          type: "button",
+          onclick: (ev) => {
+            ev.stopPropagation();
+            state.myPhotos.splice(i, 1);
+            renderGrid();
+            toast(T("content.me.photo_removed") || "Foto eliminada");
+          },
+          html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`
+        }));
+        if (i === 0) cell.appendChild(el("span", { class: "photo-main" }, T("content.me.photo_main") || "Principal"));
+      } else {
+        cell.appendChild(el("span", { class: "photo-add", html: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>` }));
+        cell.addEventListener("click", () => fileInput.click());
+      }
+      grid.appendChild(cell);
+    }
+  }
+  renderGrid();
+
+  // Big add button for clarity
+  wrap.appendChild(el("button", {
+    class: "btn btn-brand btn-block",
+    type: "button",
+    style: "margin-top:14px",
+    onclick: () => {
+      if (state.myPhotos.length >= 6) { toast(T("content.me.photos_full") || "Máximo 6 fotos"); return; }
+      fileInput.click();
+    }
+  }, T("content.me.photo_add_button") || "+ Añadir foto"));
+
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Verificación — */
+function screenVerifyAccount(root) {
+  meSubHeader(root, T("content.me.item_verify") || "Verificar cuenta");
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/><path d="M9 12l2 2 4-4"/></svg>`,
+    T("content.me.verify_hero_title") || "Consigue el badge azul",
+    T("content.me.verify_hero_sub") || "Verifica que eres tú con una foto rápida y añade seguridad a tu perfil."
+  ));
+  const steps = [
+    { ic: "1", h: T("content.me.verify_s1_h") || "Toma un selfie", p: T("content.me.verify_s1_p") || "Haremos una comparación rápida con tu foto de perfil." },
+    { ic: "2", h: T("content.me.verify_s2_h") || "Revisión manual", p: T("content.me.verify_s2_p") || "Nuestro equipo lo comprueba en menos de 24h." },
+    { ic: "3", h: T("content.me.verify_s3_h") || "¡Verificado!", p: T("content.me.verify_s3_p") || "Aparecerá el distintivo azul junto a tu nombre." },
+  ];
+  const stepsWrap = el("div", { class: "welcome-steps", style: "display:grid;grid-template-columns:1fr;gap:8px;margin:12px 0" });
+  steps.forEach(s => stepsWrap.appendChild(el("div", { class: "welcome-step" }, [
+    el("div", { class: "welcome-step-ic" }, s.ic),
+    el("div", { class: "welcome-step-txt" }, [ el("div", { class: "welcome-step-h" }, s.h), el("div", { class: "welcome-step-p" }, s.p) ]),
+  ])));
+  wrap.appendChild(stepsWrap);
+
+  // Preview of the uploaded selfie
+  const previewWrap = el("div", { class: "verify-preview" });
+  const previewImg = el("div", { class: "verify-preview-img" });
+  const previewLabel = el("div", { class: "verify-preview-label" }, T("content.me.verify_preview_empty") || "Aún no has subido ningún selfie");
+  previewWrap.appendChild(previewImg);
+  previewWrap.appendChild(previewLabel);
+  wrap.appendChild(previewWrap);
+
+  // Hidden file input (camera on mobile)
+  const fileInput = el("input", { type: "file", accept: "image/*", capture: "user", style: "display:none" });
+  const startBtn = el("button", {
+    class: "btn btn-brand btn-block",
+    type: "button",
+    onclick: () => fileInput.click(),
+  }, T("content.me.verify_button") || "Verificar ahora");
+
+  const secondaryBtn = el("button", {
+    class: "btn btn-outline btn-block",
+    type: "button",
+    style: "margin-top:8px",
+    onclick: () => fileInput.click(),
+  }, T("content.me.verify_choose") || "Elegir desde la galería");
+
+  fileInput.addEventListener("change", (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      previewImg.style.backgroundImage = `url('${ev.target.result}')`;
+      previewImg.classList.add("has");
+      previewLabel.textContent = T("content.me.verify_preview_ready") || "Selfie listo · revisando…";
+      startBtn.disabled = true;
+      startBtn.textContent = T("content.me.verify_progress") || "Enviando para revisión…";
+      startBtn.style.opacity = "0.7";
+      setTimeout(() => {
+        startBtn.disabled = false;
+        startBtn.style.opacity = "1";
+        startBtn.textContent = T("content.me.verify_button") || "Verificar ahora";
+        previewLabel.textContent = T("content.me.verify_sent") || "¡Recibido! Te avisaremos en menos de 24 h.";
+        toast(T("content.me.verify_started") || "Verificación iniciada");
+      }, 1600);
+    };
+    reader.readAsDataURL(file);
+    fileInput.value = "";
+  });
+
+  wrap.appendChild(el("div", { class: "info-cta" }, [
+    el("div", { class: "info-cta-h" }, T("content.me.verify_cta_h") || "Empieza la verificación"),
+    el("div", { class: "info-cta-p" }, T("content.me.verify_cta_p") || "Solo te llevará un minuto."),
+    startBtn,
+    secondaryBtn,
+    fileInput,
+  ]));
+
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Modo invisible — */
+function screenInvisibleMode(root) {
+  meSubHeader(root, T("content.me.item_invisible") || "Modo invisible");
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10 10 0 0112 20c-7 0-11-8-11-8a19.8 19.8 0 015.06-5.94M9.9 4.24A10 10 0 0112 4c7 0 11 8 11 8a19.8 19.8 0 01-3.16 4.19M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`,
+    T("content.me.invisible_h") || "Navega sin ser visto",
+    T("content.me.invisible_p") || "Aparece solo para quienes tú elijas y explora perfiles sin dejar rastro."
+  ));
+  const opts = [
+    { title: T("content.me.invisible_opt1") || "Activar modo invisible", sub: T("content.me.invisible_opt1_sub") || "Tu perfil no aparecerá en la lista de descubrir", val: false },
+    { title: T("content.me.invisible_opt2") || "Ocultar mi edad", val: false },
+    { title: T("content.me.invisible_opt3") || "Ocultar mi distancia", val: false },
+    { title: T("content.me.invisible_opt4") || "Ocultar mi actividad online", val: true },
+  ];
+  const card = el("div", { class: "info-card" });
+  opts.forEach(o => card.appendChild(switchRow(o.title, o.val, () => toast(T("content.me.saved_short") || "Guardado"))));
+  wrap.appendChild(card);
+  wrap.appendChild(el("p", { class: "info-hero-sub", style: "margin-top:12px" }, T("content.me.invisible_note") || "Nota: Modo invisible solo está disponible con suscripción Premium."));
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Seguridad — */
+function screenSecurity(root) {
+  meSubHeader(root, T("content.me.item_security") || "Contraseña y 2FA");
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(el("h3", { class: "info-section" }, T("content.me.sec_pass") || "Contraseña"));
+  const form = el("form", { class: "contact-form", onsubmit: (e) => { e.preventDefault(); toast(T("content.me.pass_saved") || "Contraseña actualizada"); } });
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.sec_current") || "Contraseña actual"), el("input", { type: "password" }) ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.sec_new") || "Nueva contraseña"), el("input", { type: "password" }) ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.sec_repeat") || "Repite la nueva contraseña"), el("input", { type: "password" }) ]));
+  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, T("content.me.sec_update") || "Actualizar contraseña"));
+  wrap.appendChild(form);
+
+  wrap.appendChild(el("h3", { class: "info-section" }, T("content.me.sec_2fa") || "Verificación en 2 pasos"));
+  const c2 = el("div", { class: "info-card" });
+
+  // Fila real de App autenticadora — se conecta con /api/2fa/*
+  const authRow = el("div", { class: "switch-row" });
+  const authLabel = el("div", { style: "display:flex;flex-direction:column;gap:2px;flex:1;min-width:0" }, [
+    el("span", { style: "font-size:14px;font-weight:600" }, T("content.me.sec_2fa_app") || "App autenticadora"),
+    el("small", { class: "sec-2fa-status", style: "font-size:12px;color:var(--text-muted,#8f95a3)" }, "Comprobando…"),
+  ]);
+  const authInp = el("input", { type: "checkbox" });
+  const authSwitch = el("label", { class: "switch" }, [authInp, el("span")]);
+  authRow.appendChild(authLabel);
+  authRow.appendChild(authSwitch);
+  c2.appendChild(authRow);
+
+  // Los otros dos métodos siguen siendo visuales (no implementados aún).
+  const smsRow = switchRow(T("content.me.sec_2fa_sms") || "SMS al móvil (próximamente)", false, (v) => {
+    if (v) { toast("SMS aún no disponible. Usa App autenticadora."); setTimeout(() => location.reload(), 800); }
+  });
+  const emailRow = switchRow(T("content.me.sec_2fa_email") || "Código por email (próximamente)", false, (v) => {
+    if (v) { toast("Email 2FA aún no disponible. Usa App autenticadora."); setTimeout(() => location.reload(), 800); }
+  });
+  c2.appendChild(smsRow);
+  c2.appendChild(emailRow);
+  wrap.appendChild(c2);
+
+  // Estado inicial + conexión con endpoints.
+  const statusEl = authLabel.querySelector(".sec-2fa-status");
+  async function refresh2FAStatus() {
+    try {
+      const r = await fetch("/api/2fa/status", {
+        headers: { "X-User-Id": String(state.user?.id || "") },
+        cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d && d.ok) {
+        authInp.checked = !!d.enabled;
+        statusEl.textContent = d.enabled
+          ? `Activada · ${d.recovery_remaining} códigos de recuperación disponibles`
+          : "Recomendado. Añade una capa extra de seguridad a tu cuenta.";
+      } else {
+        statusEl.textContent = "No se pudo cargar el estado.";
+      }
+    } catch { statusEl.textContent = "No se pudo cargar el estado."; }
+  }
+  refresh2FAStatus();
+
+  authInp.addEventListener("change", () => {
+    if (authInp.checked) {
+      authInp.checked = false; // se marcará al confirmar el setup
+      openTwoFactorSetup(refresh2FAStatus);
+    } else {
+      openTwoFactorDisable(refresh2FAStatus);
+    }
+  });
+
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* ------------------------------------------------------------
+   Flujo de alta 2FA (TOTP) — modal profesional
+   1. GET secret + otpauth desde /api/2fa/setup
+   2. Muestra QR + código manual
+   3. Pide primer código de 6 dígitos → /api/2fa/verify
+   4. Muestra los 8 códigos de recuperación en claro
+   ------------------------------------------------------------ */
+function openTwoFactorSetup(onDone) {
+  const uid = state.user?.id;
+  if (!uid) { toast("Inicia sesión primero"); return; }
+  const overlay = el("div", { class: "twofa-overlay", style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto"
+  });
+  const card = el("div", { style:
+    "max-width:460px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px 22px 18px;color:#fff;" +
+    "box-shadow:0 30px 80px rgba(0,0,0,.6);max-height:calc(100vh - 32px);overflow-y:auto"
+  });
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0;font-size:19px;font-weight:800">🔐 Activar verificación en 2 pasos</h3>
+      <button class="twofa-close" type="button" aria-label="Cerrar"
+        style="background:rgba(255,255,255,.08);border:0;color:#fff;width:32px;height:32px;border-radius:10px;cursor:pointer;font-size:16px">✕</button>
+    </div>
+    <div class="twofa-step-1">
+      <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
+        Instala una app autenticadora (<strong>Google Authenticator</strong>, <strong>Authy</strong>, <strong>Aegis</strong>…) y escanea el código QR.
+      </p>
+      <div class="twofa-qr" style="background:#fff;padding:14px;border-radius:14px;display:grid;place-items:center;min-height:220px"></div>
+      <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px">
+        <small style="display:block;color:#c9bce4;margin-bottom:6px">¿No puedes escanear? Introduce esta clave manualmente:</small>
+        <code class="twofa-secret" style="display:block;font-family:monospace;font-size:14px;letter-spacing:1.5px;word-break:break-all;color:#ffb37a"></code>
+      </div>
+      <label style="display:block;margin:16px 0 6px;font-size:13px;font-weight:700">Introduce el código de 6 dígitos:</label>
+      <input class="twofa-token" type="text" inputmode="numeric" maxlength="6" placeholder="123 456"
+        style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:20px;letter-spacing:6px;text-align:center;font-family:monospace">
+      <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none"></div>
+      <button class="twofa-verify" type="button" style="margin-top:14px;width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;font-size:15px">
+        Verificar y activar
+      </button>
+    </div>
+    <div class="twofa-step-2" style="display:none">
+      <div style="text-align:center;font-size:34px;margin-bottom:6px">✅</div>
+      <h4 style="margin:0 0 8px;font-size:17px;text-align:center">¡2FA activado!</h4>
+      <p style="margin:0 0 12px;font-size:13.5px;color:#e6d9ff;line-height:1.4">
+        Guarda estos <strong>8 códigos de recuperación</strong> en un sitio seguro. Cada uno se puede usar una sola vez si pierdes acceso a tu app autenticadora.
+      </p>
+      <pre class="twofa-recovery" style="background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:14px;font-family:monospace;font-size:15px;letter-spacing:1.5px;line-height:1.7;color:#ffb37a;white-space:pre-wrap;text-align:center"></pre>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="twofa-copy" type="button" style="flex:1;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">📋 Copiar códigos</button>
+        <button class="twofa-download" type="button" style="flex:1;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">💾 Descargar .txt</button>
+      </div>
+      <button class="twofa-done" type="button" style="margin-top:14px;width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;font-size:15px">
+        Los he guardado, terminar
+      </button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => { try { overlay.remove(); } catch {}; if (typeof onDone === "function") onDone(); };
+  card.querySelector(".twofa-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+  // 1. Setup
+  fetch("/api/2fa/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+    body: "{}",
+  }).then(r => r.json()).then(d => {
+    if (!d || !d.ok) { toast("No se pudo iniciar el 2FA"); close(); return; }
+    card.querySelector(".twofa-secret").textContent = d.secret;
+    // QR con librería externa cargada bajo demanda.
+    renderTwoFactorQR(card.querySelector(".twofa-qr"), d.otpauth);
+  }).catch(() => { toast("Error de red"); close(); });
+
+  // 2. Verify
+  const tokenI = card.querySelector(".twofa-token");
+  const errEl = card.querySelector(".twofa-err");
+  tokenI.addEventListener("input", () => {
+    tokenI.value = tokenI.value.replace(/\D/g, "").slice(0, 6);
+    errEl.style.display = "none";
+  });
+  card.querySelector(".twofa-verify").addEventListener("click", async () => {
+    const token = tokenI.value.trim();
+    if (token.length !== 6) { errEl.textContent = "Introduce los 6 dígitos"; errEl.style.display = "block"; return; }
+    try {
+      const r = await fetch("/api/2fa/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        body: JSON.stringify({ token }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        errEl.textContent = d.error === "invalid_code" ? "Código incorrecto. Prueba de nuevo." : "No se pudo verificar";
+        errEl.style.display = "block";
+        return;
+      }
+      // Mostrar códigos de recuperación
+      const codes = d.recovery_codes || [];
+      card.querySelector(".twofa-step-1").style.display = "none";
+      card.querySelector(".twofa-step-2").style.display = "block";
+      card.querySelector(".twofa-recovery").textContent = codes.join("\n");
+      card.querySelector(".twofa-copy").addEventListener("click", () => {
+        try { navigator.clipboard.writeText(codes.join("\n")); toast("Códigos copiados"); } catch { toast("No se pudo copiar"); }
+      });
+      card.querySelector(".twofa-download").addEventListener("click", () => {
+        try {
+          const blob = new Blob([`Aura · Códigos de recuperación 2FA\nGuárdalos en un sitio seguro.\n\n${codes.join("\n")}\n`], { type: "text/plain" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = "aura-2fa-recovery.txt";
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch { toast("No se pudo descargar"); }
+      });
+      card.querySelector(".twofa-done").addEventListener("click", close);
+    } catch { errEl.textContent = "Error de red"; errEl.style.display = "block"; }
+  });
+}
+
+/* Modal para desactivar 2FA. Requiere un código TOTP válido. */
+function openTwoFactorDisable(onDone) {
+  const uid = state.user?.id;
+  if (!uid) return;
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <h3 style="margin:0 0 8px;font-size:18px;font-weight:800">Desactivar 2FA</h3>
+    <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
+      Introduce un código de tu app autenticadora (o uno de recuperación) para confirmar.
+    </p>
+    <input class="twofa-token" type="text" inputmode="numeric" maxlength="12" placeholder="123456 o CÓDIGO-RECUP"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:18px;text-align:center;font-family:monospace;letter-spacing:2px">
+    <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="twofa-cancel" type="button" style="flex:1;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="twofa-off" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Desactivar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch {}; if (typeof onDone === "function") onDone(); };
+  card.querySelector(".twofa-cancel").addEventListener("click", close);
+  card.querySelector(".twofa-off").addEventListener("click", async () => {
+    const token = card.querySelector(".twofa-token").value.trim();
+    const errEl = card.querySelector(".twofa-err");
+    if (!token) { errEl.textContent = "Introduce un código"; errEl.style.display = "block"; return; }
+    try {
+      const r = await fetch("/api/2fa/disable", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        body: JSON.stringify({ token }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        errEl.textContent = d.error === "invalid_code" ? "Código incorrecto" : "No se pudo desactivar";
+        errEl.style.display = "block"; return;
+      }
+      toast("Verificación en 2 pasos desactivada");
+      close();
+    } catch { errEl.textContent = "Error de red"; errEl.style.display = "block"; }
+  });
+}
+
+/* Renderiza el QR usando qrcode.js cargado bajo demanda (CDN).
+   Si no hay red muestra el fallback manual (código base32). */
+function renderTwoFactorQR(container, otpauth) {
+  container.innerHTML = "";
+  const doRender = () => {
+    try {
+      const size = 220;
+      const cnv = document.createElement("canvas");
+      cnv.width = size; cnv.height = size;
+      container.appendChild(cnv);
+      // eslint-disable-next-line no-undef
+      QRCode.toCanvas(cnv, otpauth, { width: size, margin: 1 }, (err) => {
+        if (err) container.textContent = "No se pudo generar el QR";
+      });
+    } catch {
+      container.textContent = "QR no disponible";
+    }
+  };
+  if (typeof window.QRCode !== "undefined") { doRender(); return; }
+  const s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js";
+  s.onload = doRender;
+  s.onerror = () => { container.textContent = "QR no disponible"; };
+  document.head.appendChild(s);
+}
+
+/* — Usuarios bloqueados — */
+function screenBlockedUsers(root) {
+  meSubHeader(root, T("content.me.item_blocked") || "Usuarios bloqueados");
+  const wrap = el("div", { class: "info-wrap" });
+  const blocked = [
+    { name: "Álex", when: T("content.me.blocked_when") || "Bloqueado hace 3 días" },
+    { name: "Carla", when: T("content.me.blocked_when2") || "Bloqueada hace 1 semana" },
+  ];
+  if (!blocked.length) {
+    wrap.appendChild(el("div", { class: "empty" }, [
+      el("h3", {}, T("content.me.blocked_empty_h") || "Sin usuarios bloqueados"),
+      el("p", {}, T("content.me.blocked_empty_p") || "Cuando bloquees a alguien aparecerá aquí."),
+    ]));
+  } else {
+    blocked.forEach((b, i) => {
+      wrap.appendChild(el("div", { class: "chat-item", style: "background:var(--surface);border:1px solid var(--card-border);border-radius:12px;padding:10px;margin-bottom:8px" }, [
+        el("div", { class: "avatar", style: `background:var(--surface-2);display:grid;place-items:center;font-size:22px` }, "🚫"),
+        el("div", { class: "txt" }, [ el("strong", {}, b.name), el("small", {}, b.when) ]),
+        el("button", { class: "btn btn-sm btn-outline", type: "button", onclick: () => toast(T("content.me.blocked_unblock_toast") || `${b.name} desbloqueado`) }, T("content.me.blocked_unblock") || "Desbloquear"),
+      ]));
+    });
+  }
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Exportar datos — */
+function screenDataExport(root) {
+  meSubHeader(root, T("content.me.item_data") || "Descargar mis datos");
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`,
+    T("content.me.data_h") || "Tus datos, en tus manos",
+    T("content.me.data_p") || "Descarga un archivo ZIP con toda la información asociada a tu cuenta."
+  ));
+  wrap.appendChild(infoCard(infoList([
+    T("content.me.data_i1") || "Perfil y biografía",
+    T("content.me.data_i2") || "Fotos originales",
+    T("content.me.data_i3") || "Historial de matches y likes",
+    T("content.me.data_i4") || "Mensajes de chats",
+    T("content.me.data_i5") || "Metadatos técnicos (dispositivo, IP anonimizada)",
+  ])));
+  wrap.appendChild(el("div", { class: "info-cta" }, [
+    el("div", { class: "info-cta-h" }, T("content.me.data_cta_h") || "Solicitar exportación"),
+    el("div", { class: "info-cta-p" }, T("content.me.data_cta_p") || "Te enviaremos el enlace de descarga en menos de 24 h."),
+    el("button", { class: "btn btn-brand", type: "button", onclick: () => toast(T("content.me.data_requested") || "Solicitud enviada. Revisa tu correo.") }, T("content.me.data_button") || "Solicitar mis datos"),
+  ]));
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Acerca de — */
+function screenAbout(root) {
+  meSubHeader(root, T("content.me.item_about") || "Acerca de Aura");
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(infoHero(
+    `<svg viewBox="0 0 100 100" width="34" height="34"><defs><linearGradient id="al" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff"/></linearGradient></defs><path fill="url(#al)" d="M50 88 C20 68 8 48 8 30 A22 22 0 0 1 50 22 A22 22 0 0 1 92 30 C92 48 80 68 50 88Z"/></svg>`,
+    "Aura",
+    T("content.me.about_p") || "Conexiones reales, momentos únicos."
+  ));
+  wrap.appendChild(infoCard([
+    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_version") || "Versión"), el("b", {}, T("content.me.version") || "1.0.0") ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_build") || "Build"), el("b", {}, "2026.07.31") ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_company") || "Empresa"), el("b", {}, "Aura S.L.") ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_country") || "País"), el("b", {}, "España") ]),
+  ]));
+  wrap.appendChild(el("div", { style: "text-align:center;padding:16px 0;color:var(--text-muted);font-size:12px" }, T("content.welcome.foot_copy") || "© 2026 Aura · Hecho con ❤ en España"));
+  root.appendChild(wrap);
+  hideApp();
+}
+
+/* — Ofertas y promociones (campañas activas / próximas) — */
+async function screenOffers(root) {
+  meSubHeader(root, "🎁 Ofertas y promociones");
+  const wrap = el("div", { class: "offers-wrap" });
+
+  wrap.appendChild(el("div", { class: "offers-hero" }, [
+    el("div", { class: "offers-hero-emoji" }, "🎉"),
+    el("h2", { class: "offers-hero-h" }, "Campañas y cupones"),
+    el("p", { class: "offers-hero-p" }, "Aprovecha las promociones activas y descubre las próximas. Copia el código y aplícalo al comprar."),
+  ]));
+
+  const listWrap = el("div", { class: "offers-list" }, [
+    el("div", { class: "offers-loading" }, "Cargando ofertas…"),
+  ]);
+  wrap.appendChild(listWrap);
+  root.appendChild(wrap);
+  hideApp();
+
+  try {
+    const r = await fetch("/api/promotions/public", { cache: "no-store" });
+    const data = r.ok ? await r.json() : [];
+    listWrap.innerHTML = "";
+    const active = data.filter(x => x.is_active_now);
+    const upcoming = data.filter(x => !x.is_active_now);
+
+    if (!data.length) {
+      listWrap.appendChild(el("div", { class: "offers-empty" }, [
+        el("div", { class: "offers-empty-emoji" }, "🎁"),
+        el("h3", {}, "No hay ofertas ahora mismo"),
+        el("p", {}, "Vuelve pronto — ¡anunciaremos nuevas campañas!"),
+      ]));
+      return;
+    }
+
+    if (active.length) {
+      listWrap.appendChild(el("h3", { class: "offers-section-h" }, `✅ Activas ahora (${active.length})`));
+      active.forEach(p => listWrap.appendChild(offerCard(p, true)));
+    }
+    if (upcoming.length) {
+      listWrap.appendChild(el("h3", { class: "offers-section-h" }, `🗓️ Próximamente (${upcoming.length})`));
+      upcoming.forEach(p => listWrap.appendChild(offerCard(p, false)));
+    }
+  } catch {
+    listWrap.innerHTML = "";
+    listWrap.appendChild(el("div", { class: "offers-empty" }, [
+      el("h3", {}, "No se pudieron cargar las ofertas"),
+      el("p", {}, "Comprueba tu conexión e inténtalo de nuevo."),
+    ]));
+  }
+
+  function offerCard(p, isActive) {
+    const fmtDate = (d) => {
+      if (!d) return null;
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return null;
+      return dt.toLocaleDateString("es-ES", { day: "2-digit", month: "short" });
+    };
+    const daysUntil = (d) => {
+      if (!d) return null;
+      const dt = new Date(d); dt.setHours(0,0,0,0);
+      const t = new Date(); t.setHours(0,0,0,0);
+      return Math.max(0, Math.round((dt - t) / 86400000));
+    };
+    const sd = fmtDate(p.starts_at), ed = fmtDate(p.ends_at);
+    const daysToStart = daysUntil(p.starts_at);
+    const daysToEnd = daysUntil(p.ends_at);
+
+    let subLine;
+    if (isActive) {
+      if (daysToEnd == null) subLine = "Sin fecha límite";
+      else if (daysToEnd === 0) subLine = "⏰ Termina hoy";
+      else if (daysToEnd === 1) subLine = "⏰ Termina mañana";
+      else subLine = `⏰ Termina en ${daysToEnd} días · hasta ${ed}`;
+    } else {
+      if (daysToStart === 0) subLine = "Empieza hoy";
+      else if (daysToStart === 1) subLine = "Empieza mañana";
+      else subLine = `Empieza en ${daysToStart} días · ${sd}`;
+    }
+
+    const card = el("div", { class: "offer-card" + (isActive ? " is-active" : " is-upcoming") });
+    card.appendChild(el("div", { class: "offer-top" }, [
+      el("div", { class: "offer-disc" }, `-${p.discount_percent}%`),
+      el("div", { class: "offer-code-wrap" }, [
+        el("div", { class: "offer-code" }, p.code),
+        el("button", {
+          class: "offer-copy-btn",
+          type: "button",
+          onclick: async (e) => {
+            e.stopPropagation();
+            try {
+              await navigator.clipboard.writeText(p.code);
+              toast("¡Código copiado!");
+              e.currentTarget.textContent = "✓";
+              setTimeout(() => { if (e.currentTarget) e.currentTarget.innerHTML = "📋"; }, 1200);
+            } catch { toast("No se pudo copiar"); }
+          },
+          html: "📋",
+          title: "Copiar código",
+        }),
+      ]),
+    ]));
+    if (p.description) card.appendChild(el("div", { class: "offer-desc" }, p.description));
+    card.appendChild(el("div", { class: "offer-sub" }, subLine));
+    if (isActive) {
+      card.appendChild(el("button", {
+        class: "btn btn-brand btn-sm offer-cta",
+        onclick: () => {
+          window.__auraPromo = { code: p.code, discount: p.discount_percent };
+          openReadsPaywall();
+          // Pre-fill the input in the paywall after it renders.
+          setTimeout(() => {
+            const inp = document.getElementById("rpPromoInput");
+            const msg = document.getElementById("rpPromoMsg");
+            if (inp) inp.value = p.code;
+            if (msg) { msg.textContent = `✓ Cupón aplicado · -${p.discount_percent}%`; msg.className = "rp-promo-msg is-ok"; }
+          }, 60);
+        },
+      }, "Usar cupón →"));
+    }
+    return card;
+  }
+}
+
+/* — Idioma — */
+function openLanguageSheet() {
+  const langs = [
+    { code: "es", label: "Español" },
+    { code: "en", label: "English" },
+    { code: "fr", label: "Français" },
+    { code: "de", label: "Deutsch" },
+    { code: "it", label: "Italiano" },
+    { code: "pt", label: "Português" },
+  ];
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title" }, T("content.me.item_lang") || "Idioma"),
+    el("div", { class: "filters-body" }, [
+      el("div", { class: "reason-list" }, langs.map(l => {
+        const isCurrent = (l.code === currentLang);
+        return el("button", {
+          class: "reason-item" + (isCurrent ? " current" : ""),
+          type: "button",
+          onclick: () => {
+            modal.close();
+            setLanguage(l.code);
+            toast(T("content.me.lang_saved") || "Idioma actualizado");
+          }
+        }, l.label + (isCurrent ? "  ✓" : ""));
+      })),
+      el("div", { class: "sheet-actions" }, [
+        el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.close") || "Cerrar"),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+}
+
+/* — Eliminar cuenta — */
+function openDeleteAccountSheet() {
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title", style: "color:#e53935" }, T("content.me.delete_h") || "⚠️ Eliminar cuenta"),
+    el("div", { class: "form", style: "padding-top:0" }, [
+      el("p", {}, T("content.me.delete_p") || "Esta acción es irreversible. Perderás tu perfil, fotos, matches y todo el historial de mensajes."),
+      el("p", { class: "small" }, T("content.me.delete_note") || "Al confirmar, tus datos personales se eliminarán en un plazo máximo de 30 días conforme al RGPD."),
+      el("div", { class: "sheet-actions", style: "display:grid;gap:8px;margin-top:14px" }, [
+        el("button", { class: "btn btn-danger btn-block", type: "button", onclick: () => { modal.close(); state.user = null; toast(T("content.me.deleted") || "Cuenta eliminada"); render(screenWelcome); } }, T("content.me.delete_confirm") || "Sí, eliminar mi cuenta"),
+        el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.cancel") || "Cancelar"),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+}
+/* Yo → Privacidad → Ubicación (GPS)
+   - Si hay consentimiento: botón "Revocar" (con confirmación).
+   - Si no lo hay: botón "Activar ubicación" que abre el modal de consentimiento RGPD. */
+function openGpsPrivacySheet() {
+  const consent = state.gpsConsent === true;
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title" }, "📍 " + (T("content.me.item_gps") || "Ubicación (GPS)")),
+    el("div", { class: "form", style: "padding-top:0" }, [
+      el("p", {}, consent
+        ? (T("content.me.item_gps_on") || "Permiso activo · pulsa para revocar")
+        : (T("content.me.item_gps_off") || "Permiso no otorgado")),
+      el("p", { class: "small" }, T("content.gps.legal_body") || ""),
+      el("div", { class: "sheet-actions", style: "display:grid;gap:8px;margin-top:14px" }, [
+        consent
+          ? el("button", {
+              class: "btn btn-danger btn-block", type: "button",
+              onclick: () => { modal.close(); confirmRevoke(); },
+            }, T("content.gps.revoke_yes") || "Revocar")
+          : el("button", {
+              class: "btn btn-primary btn-block", type: "button",
+              onclick: () => { modal.close(); try { GPS.showPrompt(); } catch {} },
+            }, T("content.gps.reprompt") || "Activar ubicación"),
+        el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.close") || "Cerrar"),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+
+  function confirmRevoke() {
+    const w2 = el("div", {}, [
+      el("div", { class: "sheet-title", style: "color:#e53935" }, "⚠️ " + (T("content.gps.revoke_confirm_title") || "Revocar permiso de ubicación")),
+      el("div", { class: "form", style: "padding-top:0" }, [
+        el("p", {}, T("content.gps.revoke_confirm_body") || ""),
+        el("div", { class: "sheet-actions", style: "display:grid;gap:8px;margin-top:14px" }, [
+          el("button", {
+            class: "btn btn-danger btn-block", type: "button",
+            onclick: () => { modal.close(); warnBeforeRevoke(); },
+          }, T("content.gps.revoke_yes") || "Revocar"),
+          el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.gps.revoke_no") || "Cancelar"),
+        ]),
+      ]),
+    ]);
+    modal.open(w2);
+  }
+
+  function warnBeforeRevoke() {
+    const w3 = el("div", {}, [
+      el("div", { class: "sheet-title", style: "color:#e53935" }, "⚠️ " + (T("content.gps.revoke_warn_title") || "Antes de revocar, ten en cuenta")),
+      el("div", { class: "form", style: "padding-top:0" }, [
+        el("p", { html: T("content.gps.revoke_warn_body") || "" }),
+        el("div", { class: "sheet-actions", style: "display:grid;gap:8px;margin-top:14px" }, [
+          el("button", {
+            class: "btn btn-danger btn-block", type: "button",
+            onclick: async () => {
+              const ok = await GPS.revoke();
+              modal.close();
+              if (ok) { toast(T("content.gps.revoked_ok") || "Permiso de ubicación revocado", 3000); }
+              else    { toast(T("content.gps.revoked_err") || "No se pudo revocar el permiso", 3500); }
+              try { render(screenMe); } catch {}
+            },
+          }, T("content.gps.revoke_warn_continue") || "Sí, continuar y revocar"),
+          el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.gps.revoke_no") || "Cancelar"),
+        ]),
+      ]),
+    ]);
+    modal.open(w3);
+  }
+}
+
+function openZoneSwitch() {
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title" }, "Cambiar zona"),
+    el("div", { class: "form", style: "padding-top:0" }, [
+      el("div", { class: "zone-options" }, [
+        zoneOption("hetero", T("content.zone.hetero.emoji"), T("content.zone.hetero.title")),
+        zoneOption("lgtb", T("content.zone.lgtb.emoji"), T("content.zone.lgtb.title")),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+  function zoneOption(id, emoji, name) {
+    const card = el("div", { class: "zone-card zone-" + id + (state.zone === id ? " selected" : "") }, [
+      el("div", { class: "zone-emoji" }, emoji),
+      el("div", {}, [ el("h4", {}, name), el("p", {}, "Cambia cuando quieras.") ]),
+      el("div", { class: "radio" }),
+    ]);
+    card.addEventListener("click", () => {
+      if (state.zone === id) { modal.close(); return; }
+      openZoneChangeWarning(id, name);
+    });
+    return card;
+  }
+}
+
+/* Zone change flow:
+   Changing zone requires deleting the current account (a user profile is bound
+   to a zone). Show a full-screen warning listing the consequences and a data
+   protection notice, and require an explicit confirmation checkbox before the
+   destructive action. */
+function openZoneChangeWarning(targetZoneId, targetZoneName) {
+  const lostFeatures = [
+    "Tu perfil, fotos y biografía",
+    "Todos tus matches y conversaciones",
+    "Los likes que has dado y recibido",
+    "Tu historial de mensajes y notificaciones",
+    "Tus filtros de descubrimiento guardados",
+    "Tu plan y beneficios de suscripción activos",
+    "Estadísticas del perfil e insignias obtenidas",
+    "Preferencias personalizadas y ajustes",
+  ];
+  const currentName = state.zone === "lgtb"
+    ? T("content.zone.lgtb.title") || "Zona LGTB+"
+    : T("content.zone.hetero.title") || "Zona Hetero";
+
+  const chk = el("input", { type: "checkbox", id: "zoneAckChk", style: "width:18px;height:18px" });
+  const confirmBtn = el("button", {
+    class: "btn btn-danger btn-block",
+    disabled: true,
+    style: "opacity:.5; pointer-events:none",
+  }, "Eliminar cuenta y cambiar de zona");
+  chk.addEventListener("change", () => {
+    if (chk.checked) {
+      confirmBtn.removeAttribute("disabled");
+      confirmBtn.style.opacity = "1";
+      confirmBtn.style.pointerEvents = "auto";
+    } else {
+      confirmBtn.setAttribute("disabled", "true");
+      confirmBtn.style.opacity = ".5";
+      confirmBtn.style.pointerEvents = "none";
+    }
+  });
+  confirmBtn.addEventListener("click", async () => {
+    confirmBtn.setAttribute("disabled", "true");
+    confirmBtn.textContent = "Eliminando cuenta…";
+    try {
+      if (state.user?.id) {
+        await fetch("/api/users/" + encodeURIComponent(state.user.id), { method: "DELETE" });
+      }
+    } catch {}
+    try { localStorage.removeItem("aura-session"); } catch {}
+    state.user = null;
+    state.zone = targetZoneId;
+    modal.close();
+    toast("Cuenta eliminada. Regístrate en " + targetZoneName + ".");
+    render(screenWelcome);
+  });
+
+  const wrap = el("div", { class: "zone-warning" }, [
+    el("div", { class: "sheet-title", style: "color:#e53935" }, "⚠️ Cambio de zona"),
+    el("div", { class: "form", style: "padding-top:0" }, [
+      el("p", { style: "margin:0 0 10px; font-weight:600" },
+        `Estás en ${currentName} y quieres cambiarte a ${targetZoneName}.`),
+      el("p", { class: "small", style: "margin:0 0 14px; opacity:.85" },
+        "Cada zona es una comunidad independiente con perfiles distintos. Por eso, cambiar de zona requiere eliminar tu cuenta actual y registrarte de nuevo en la otra zona."),
+
+      el("div", { class: "zone-lose-title", style: "font-weight:700; margin:12px 0 6px" },
+        "Perderás de forma permanente:"),
+      el("ul", { class: "zone-lose-list", style: "margin:0 0 14px; padding-left:20px; font-size:13px; line-height:1.6" },
+        lostFeatures.map(f => el("li", {}, f))),
+
+      el("div", { class: "zone-privacy", style: "background:var(--surface-2,#f6f6fa); border:1px solid var(--border,#e5e7eb); border-radius:12px; padding:12px; margin-bottom:14px; font-size:12px; line-height:1.55" }, [
+        el("div", { style: "font-weight:700; margin-bottom:4px" }, "Protección de datos (RGPD)"),
+        el("p", { style: "margin:0 0 6px" },
+          "Al confirmar, eliminaremos tus datos personales, tu perfil, tus fotos y todas las conversaciones asociadas de forma irreversible, cumpliendo con el derecho al olvido (art. 17 RGPD)."),
+        el("p", { style: "margin:0 0 6px" },
+          "Podríamos conservar datos anonimizados agregados con fines estadísticos y datos legalmente obligatorios (facturación, prevención de fraude, denuncias) durante los plazos exigidos por la ley."),
+        el("p", { style: "margin:0" },
+          "Este proceso no se puede deshacer. Una vez completado, tendrás que registrarte de nuevo con un email en la nueva zona."),
+      ]),
+
+      el("label", { style: "display:flex; align-items:flex-start; gap:10px; margin-bottom:14px; font-size:13px; cursor:pointer" }, [
+        chk,
+        el("span", {}, "He leído y acepto que al continuar mi cuenta actual será eliminada de forma permanente y que perderé todos los datos indicados. Autorizo el tratamiento conforme al RGPD."),
+      ]),
+
+      el("div", { class: "sheet-actions", style: "display:grid; gap:8px" }, [
+        confirmBtn,
+        el("button", { class: "btn btn-outline btn-block", "data-close": true, onclick: () => modal.close() }, "Cancelar"),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+}
+function openNotifSheet() {
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title" }, "Notificaciones"),
+    el("div", { class: "filters-body" }, [
+      el("div", { class: "filter-group" }, [
+        switchRow("Nuevos matches", true, () => {}),
+        switchRow("Nuevos mensajes", true, () => {}),
+        switchRow("Nuevos likes", true, () => {}),
+        switchRow("Sugerencias diarias", false, () => {}),
+        switchRow("Renovación de suscripción", true, () => {}),
+        switchRow("Novedades y promos", false, () => {}),
+      ]),
+      el("div", { class: "sheet-actions" }, [
+        el("button", { class: "btn btn-brand btn-block", "data-close": true }, "Guardar"),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+}
+function openDevicesSheet() {
+  const devices = [
+    { name: "iPhone 15 · Safari", loc: "Madrid · Ahora", current: true },
+    { name: "MacBook Pro · Chrome", loc: "Madrid · hace 2h" },
+    { name: "iPad · Safari", loc: "Barcelona · hace 3d" },
+  ];
+  const wrap = el("div", {}, [
+    el("div", { class: "sheet-title" }, "Dispositivos activos"),
+    el("div", { class: "filters-body" }, [
+      ...devices.map(d => el("div", { class: "chat-item" }, [
+        el("div", { class: "avatar", style: `background:var(--surface-2);display:grid;place-items:center;font-size:24px` }, "📱"),
+        el("div", { class: "txt" }, [ el("strong", {}, d.name + (d.current ? " (actual)" : "")), el("small", {}, d.loc) ]),
+        !d.current ? el("button", { class: "btn btn-sm btn-outline" }, "Cerrar") : null,
+      ])),
+      el("div", { class: "sheet-actions" }, [
+        el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); toast("Sesión cerrada en todos los dispositivos"); }}, "Cerrar sesión en todos"),
+        el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cerrar"),
+      ]),
+    ]),
+  ]);
+  modal.open(wrap);
+}
+
+/* ---- Subscriptions ---- */
+function screenSubscriptions(root) {
+  // Plans with both monthly and annual prices (annual = 40% off, billed once/year)
+  const plans = [
+    {
+      tier: "Free", cls: "free",
+      monthly: 0,
+      annual: 0,
+      annualPerMonth: 0,
+      free_chats: "5 chats nuevos / mes",
+      free_reads: "10 lecturas de chat / mes",
+      profiles: "Hasta 10 perfiles cercanos",
+      features: [
+        "5 chats nuevos al mes",
+        "10 lecturas de estado de chat / mes",
+        "Hasta 10 perfiles en Cerca de ti",
+        "Likes limitados",
+        "Con publicidad",
+      ],
+    },
+    {
+      tier: "Premium", cls: "",
+      monthly: 9.99,
+      annual: 71.88,      // ~ 5.99 €/mes billed annually
+      annualPerMonth: 5.99,
+      free_chats: "50 chats nuevos / mes",
+      free_reads: "100 lecturas de chat / mes",
+      profiles: "Hasta 30 perfiles cercanos",
+      features: [
+        "50 chats nuevos al mes",
+        "100 lecturas de estado de chat / mes",
+        "Hasta 30 perfiles cercanos",
+        "Likes ilimitados","Sin publicidad","Ver quién te dio like",
+        "Filtros avanzados","Modo invisible","Mayor visibilidad"
+      ],
+    },
+    {
+      tier: "Gold", cls: "gold",
+      monthly: 19.99,
+      annual: 143.88,     // ~ 11.99 €/mes
+      annualPerMonth: 11.99,
+      free_chats: "Chats nuevos ilimitados",
+      free_reads: "500 lecturas de chat / mes",
+      profiles: "Hasta 80 perfiles cercanos",
+      features: [
+        "Chats nuevos ilimitados",
+        "500 lecturas de estado de chat / mes",
+        "Hasta 80 perfiles cercanos",
+        "Todo lo de Premium","5 Boost al mes","Mensajes prioritarios",
+        "Distintivo Gold","Estadísticas del perfil"
+      ],
+    },
+    {
+      tier: "Platinum", cls: "platinum",
+      monthly: 29.99,
+      annual: 215.88,     // ~ 17.99 €/mes
+      annualPerMonth: 17.99,
+      free_chats: "Chats nuevos ilimitados",
+      free_reads: "Lecturas de chat ilimitadas",
+      profiles: "Perfiles cercanos ilimitados",
+      features: [
+        "Chats nuevos ilimitados",
+        "Lecturas de estado de chat ilimitadas",
+        "Perfiles cercanos ilimitados",
+        "Todo lo de Gold","Boost ilimitado","Prioridad máxima en discover",
+        "Soporte prioritario","Funciones exclusivas"
+      ],
+    },
+  ];
+
+  let billing = "monthly"; // "monthly" | "annual"
+
+  const btnMonthly = el("button", { class: "on", type: "button" }, "Mensual");
+  const btnAnnual = el("button", { type: "button" }, "Anual (–40%)");
+
+  root.appendChild(el("div", { class: "subs-hero" }, [
+    el("button", { class: "icon-btn", onclick: () => routeTab("me"), style: "position:absolute;left:10px;top:10px;color:white",
+      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }),
+    el("h2", {}, "Encuentra tu match ✨"),
+    el("p", {}, "Desbloquea todo lo que Aura puede ofrecerte."),
+    el("div", { class: "subs-toggle" }, [ btnMonthly, btnAnnual ]),
+  ]));
+
+  const fmt = (n) => `€${n.toFixed(2).replace(".", ",")}`;
+
+  const list = el("div", { class: "plans" });
+  root.appendChild(list);
+
+  function renderPlans() {
+    list.innerHTML = "";
+    plans.forEach(p => {
+      const isFree = p.tier === "Free";
+      const priceHtml = isFree
+        ? `<span>Gratis</span>`
+        : (billing === "annual"
+            ? `${fmt(p.annualPerMonth)}<small>/mes</small><div class="plan-sub">Facturado como ${fmt(p.annual)}/año</div>`
+            : `${fmt(p.monthly)}<small>/mes</small>`);
+      const badge = (!isFree && billing === "annual")
+        ? el("span", { class: "plan-badge" }, "Ahorra 40%")
+        : null;
+      // Quota summary badges (chats + reads + profiles + ads status)
+      const adsInfo = isFree
+        ? { emoji: "📢", label: "Con anuncios", cls: "ads-on" }
+        : { emoji: "🚫", label: "Sin anuncios", cls: "ads-off" };
+      const quota = el("div", { class: "plan-quota" }, [
+        el("div", { class: "pq-item" }, [ el("span", {}, "💬"), el("small", {}, p.free_chats || "—") ]),
+        el("div", { class: "pq-item" }, [ el("span", {}, "👁"), el("small", {}, p.free_reads || "—") ]),
+        el("div", { class: "pq-item" }, [ el("span", {}, "📍"), el("small", {}, p.profiles || "—") ]),
+        el("div", { class: "pq-item " + adsInfo.cls }, [ el("span", {}, adsInfo.emoji), el("small", {}, adsInfo.label) ]),
+      ]);
+      const cta = isFree
+        ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan actual (Free)")
+        : el("button", { class: "btn btn-brand btn-block",
+            onclick: () => toast(`Suscripción ${p.tier} ${billing === "annual" ? "anual" : "mensual"} en curso (demo)`)
+          }, `Elegir ${p.tier}`);
+      // Preview of how ads look for the Free plan (upgrade to remove them)
+      const adPreview = isFree ? el("div", { class: "plan-ad-preview" }, [
+        el("span", { class: "pap-tag" }, "Anuncio patrocinado"),
+        el("div", { class: "pap-body" }, [
+          el("div", { class: "pap-thumb" }, "🛒"),
+          el("div", {}, [
+            el("strong", {}, "Ejemplo — Marca aliada"),
+            el("small", {}, "Los usuarios Free ven banners y anuncios nativos entre perfiles y en el chat."),
+          ]),
+        ]),
+      ]) : null;
+      list.appendChild(el("div", { class: "plan " + p.cls }, [
+        el("div", { class: "row" }, [
+          el("div", { class: "tier" }, [ p.tier, badge ].filter(Boolean)),
+          el("div", { class: "price", html: priceHtml }),
+        ]),
+        quota,
+        adPreview,
+        el("ul", {}, p.features.map(f => el("li", {}, f))),
+        cta,
+      ]));
+    });
+  }
+
+  function setBilling(mode) {
+    billing = mode;
+    btnMonthly.classList.toggle("on", mode === "monthly");
+    btnAnnual.classList.toggle("on", mode === "annual");
+    renderPlans();
+  }
+  btnMonthly.addEventListener("click", () => setBilling("monthly"));
+  btnAnnual.addEventListener("click", () => setBilling("annual"));
+
+  renderPlans();
+
+  // Payment methods enabled from admin
+  const pay = publicConfig.payments || {};
+  const methods = [
+    { key: "stripe", label: "Tarjeta", icon: "💳" },
+    { key: "paypal", label: "PayPal", icon: "🅿" },
+    { key: "apple_pay", label: "Apple Pay", icon: "" },
+    { key: "google_pay", label: "Google Pay", icon: "G Pay" },
+    { key: "bizum", label: "Bizum", icon: "B" },
+  ].filter(m => pay[m.key]);
+  if (methods.length) {
+    root.appendChild(el("div", { class: "pay-methods" }, [
+      el("div", { class: "pay-methods-title" }, "Métodos de pago disponibles"),
+      el("div", { class: "pay-methods-row" }, methods.map(m => el("div", { class: "pay-method" }, `${m.icon} ${m.label}`))),
+    ]));
+  }
+
+  root.appendChild(el("p", { class: "center small pad" }, "Se renueva automáticamente. Cancela cuando quieras."));
+  hideApp();
+}
+
+/* ---- Common: topbar, stepper ---- */
+/* ---------- Info screens (footer links) ---------- */
+function infoPage(root, title, content) {
+  root.classList.add("screen-info");
+  document.body.classList.add("info-open");
+  // Si venimos de una pantalla concreta guardada en window.__infoBackTo,
+  // volvemos a ella al pulsar atrás. Si no, vamos a Welcome.
+  const backFn = () => {
+    document.body.classList.remove("info-open");
+    const prev = window.__infoBackTo;
+    window.__infoBackTo = null;
+    if (typeof prev === "function") { render(prev); }
+    else { render(screenWelcome); }
+  };
+  root.appendChild(topbar(title, backFn));
+  const wrap = el("div", { class: "info-wrap" });
+  wrap.appendChild(content);
+  root.appendChild(wrap);
+  hideApp();
+}
+
+function infoHero(icon, title, subtitle) {
+  return el("div", { class: "info-hero" }, [
+    el("div", { class: "info-hero-ic", html: icon }),
+    el("h2", { class: "info-hero-title" }, title),
+    subtitle ? el("p", { class: "info-hero-sub" }, subtitle) : null,
+  ].filter(Boolean));
+}
+
+function infoSection(title) {
+  return el("h3", { class: "info-section" }, title);
+}
+
+function infoCard(children) {
+  return el("div", { class: "info-card" }, children);
+}
+
+function infoList(items) {
+  const ul = el("ul", { class: "info-list" });
+  items.forEach((t) => ul.appendChild(el("li", {}, t)));
+  return ul;
+}
+
+function screenInfoHelp(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
+    T("content.info.help.hero_title"),
+    T("content.info.help.hero_sub")
+  ));
+
+  const topics = [
+    { ic: "🔐", h: "Cuenta y acceso", p: "Registro, verificación, cambio de contraseña y cierre de sesión.", action: () => render(screenInfoFaq) },
+    { ic: "💬", h: "Chats y matches", p: "Cómo funcionan los likes, matches, mensajería y notificaciones." },
+    { ic: "🛡️", h: "Seguridad y privacidad", p: "Bloqueos, reportes, verificación y control de datos.", action: () => render(screenInfoPrivacy) },
+    { ic: "💳", h: "Suscripción y pagos", p: "Planes, renovación, cancelación y facturas." },
+    { ic: "📸", h: "Perfil y fotos", p: "Requisitos, verificación de fotos y ajustes visuales." },
+    { ic: "✉️", h: "Contactar soporte", p: "¿No encuentras lo que buscas? Escríbenos.", action: () => render(screenInfoContact) },
+  ];
+  const grid = el("div", { class: "help-grid" });
+  topics.forEach(t => {
+    const card = el("button", {
+      class: "help-card",
+      type: "button",
+      onclick: () => { if (t.action) t.action(); else toast("Próximamente"); }
+    }, [
+      el("span", { class: "help-ic" }, t.ic),
+      el("div", { class: "help-body" }, [
+        el("div", { class: "help-h" }, t.h),
+        el("div", { class: "help-p" }, t.p),
+      ]),
+      el("span", { class: "help-arrow", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg>` }),
+    ]);
+    grid.appendChild(card);
+  });
+  c.appendChild(grid);
+
+  c.appendChild(el("div", { class: "info-cta" }, [
+    el("div", { class: "info-cta-h" }, "¿Sigues necesitando ayuda?"),
+    el("div", { class: "info-cta-p" }, "Nuestro equipo responde en menos de 24 h laborables."),
+    el("button", { class: "btn btn-brand", type: "button", onclick: () => render(screenInfoContact) }, "Contactar con soporte"),
+  ]));
+
+  infoPage(root, T("content.info.help.title"), c);
+}
+
+function screenInfoFaq(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>`,
+    T("content.info.faq.hero_title"),
+    T("content.info.faq.hero_sub")
+  ));
+
+  // Search bar
+  const search = el("input", {
+    type: "search",
+    class: "faq-search",
+    placeholder: "Buscar en las preguntas...",
+    oninput: (e) => filterFaq(e.target.value)
+  });
+  c.appendChild(search);
+
+  // Categories with pills
+  const categories = [
+    { key: "all", label: "Todas", ic: "✨" },
+    { key: "account", label: "Cuenta", ic: "🔐" },
+    { key: "matches", label: "Matches", ic: "💫" },
+    { key: "chat", label: "Chats", ic: "💬" },
+    { key: "safety", label: "Seguridad", ic: "🛡️" },
+    { key: "billing", label: "Pagos", ic: "💳" },
+  ];
+  const pills = el("div", { class: "faq-pills" });
+  categories.forEach((cat, idx) => {
+    pills.appendChild(el("button", {
+      class: "faq-pill" + (idx === 0 ? " active" : ""),
+      type: "button",
+      "data-cat": cat.key,
+      onclick: (e) => selectFaqCategory(e.currentTarget, cat.key),
+    }, [
+      el("span", {}, cat.ic + " " + cat.label),
+    ]));
+  });
+  c.appendChild(pills);
+
+  // FAQ data
+  const faqData = [
+    { cat: "account", q: "¿Cómo creo una cuenta en Aura?", a: "Introduce tu correo, verifica con el código de 6 dígitos que te enviamos, y completa tu perfil con foto y datos básicos. Todo el proceso lleva menos de 2 minutos." },
+    { cat: "account", q: "Olvidé mi contraseña, ¿cómo la recupero?", a: "En la pantalla de acceso pulsa \"¿Has olvidado tu contraseña?\", introduce tu correo y recibirás un enlace para restablecerla." },
+    { cat: "account", q: "¿Puedo cambiar mi correo electrónico?", a: "Sí. Ve a Ajustes → Cuenta → Cambiar correo. Se te pedirá verificar el correo nuevo antes de activarlo." },
+    { cat: "account", q: "¿Cómo elimino mi cuenta?", a: "Desde Ajustes → Cuenta → Eliminar cuenta. Tus datos se borran de forma permanente en un plazo máximo de 30 días." },
+
+    { cat: "matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan \"like\" mutuamente. A partir de ese momento podéis chatear libremente." },
+    { cat: "matches", q: "¿Cómo mejora Aura mis matches?", a: "Nuestro algoritmo analiza tus preferencias, intereses y actividad para mostrarte perfiles más afines. Cuanto más interactúas, mejor aprende." },
+    { cat: "matches", q: "¿Puedo deshacer un \"no me gusta\"?", a: "Sí, con la suscripción Premium puedes deshacer la última acción y volver a valorar ese perfil." },
+    { cat: "matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con Premium los likes son ilimitados." },
+
+    { cat: "chat", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. Todas pasan un filtro automático y respetamos la privacidad de ambos lados." },
+    { cat: "chat", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona os desmatcháis, la conversación desaparece." },
+    { cat: "chat", q: "¿Cómo activo notificaciones?", a: "En Ajustes → Notificaciones puedes personalizar avisos de matches, mensajes y likes recibidos." },
+
+    { cat: "safety", q: "¿Aura verifica los perfiles?", a: "Sí. Ofrecemos verificación por selfie y por documento. Los perfiles verificados llevan un distintivo azul." },
+    { cat: "safety", q: "¿Cómo reporto o bloqueo a alguien?", a: "Desde el perfil o el chat, pulsa el icono de menú y elige \"Reportar\" o \"Bloquear\". Revisamos cada reporte en menos de 24 h." },
+    { cat: "safety", q: "¿Qué hago si detecto un bot o estafa?", a: "Repórtalo inmediatamente. Nuestro equipo antifraude actúa de forma proactiva y elimina cuentas sospechosas." },
+    { cat: "safety", q: "¿Comparte Aura mis datos?", a: "Nunca vendemos tus datos. Solo compartimos lo mínimo necesario con proveedores certificados para hacer funcionar el servicio. Consulta la Política de privacidad." },
+
+    { cat: "billing", q: "¿Cuánto cuesta Aura Premium?", a: "Ofrecemos planes mensuales, trimestrales y anuales. Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
+    { cat: "billing", q: "¿Cómo cancelo mi suscripción?", a: "Desde Ajustes → Suscripción → Cancelar. También puedes cancelar desde la tienda de tu dispositivo (App Store / Google Play)." },
+    { cat: "billing", q: "¿Ofrecéis reembolsos?", a: "Los reembolsos se gestionan según la política de la tienda desde la que compraste. Escríbenos si tienes un caso especial." },
+    { cat: "billing", q: "¿Hay periodo de prueba?", a: "Ocasionalmente ofrecemos periodos de prueba gratuitos. Se anuncian dentro de la app cuando están disponibles." },
+  ];
+
+  const list = el("div", { class: "faq-list", id: "faqList" });
+  faqData.forEach((item, idx) => {
+    const details = el("details", { class: "faq-item", "data-cat": item.cat, "data-q": item.q.toLowerCase(), "data-a": item.a.toLowerCase() });
+    const summary = el("summary", { class: "faq-q" }, [
+      el("span", { class: "faq-q-txt" }, item.q),
+      el("span", { class: "faq-q-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>` }),
+    ]);
+    details.appendChild(summary);
+    details.appendChild(el("div", { class: "faq-a" }, item.a));
+    list.appendChild(details);
+  });
+  c.appendChild(list);
+
+  c.appendChild(el("div", { class: "info-cta" }, [
+    el("div", { class: "info-cta-h" }, "¿No encuentras tu pregunta?"),
+    el("div", { class: "info-cta-p" }, "Escríbenos y te ayudamos personalmente."),
+    el("button", { class: "btn btn-brand", type: "button", onclick: () => render(screenInfoContact) }, "Contactar"),
+  ]));
+
+  infoPage(root, T("content.info.faq.title"), c);
+}
+
+function selectFaqCategory(btn, cat) {
+  document.querySelectorAll(".faq-pill").forEach(p => p.classList.remove("active"));
+  btn.classList.add("active");
+  document.querySelectorAll(".faq-item").forEach(item => {
+    const show = cat === "all" || item.dataset.cat === cat;
+    item.style.display = show ? "" : "none";
+    if (!show) item.open = false;
+  });
+}
+
+function filterFaq(query) {
+  const q = (query || "").toLowerCase().trim();
+  const activePill = document.querySelector(".faq-pill.active");
+  const cat = activePill ? activePill.dataset.cat : "all";
+  document.querySelectorAll(".faq-item").forEach(item => {
+    const matchCat = cat === "all" || item.dataset.cat === cat;
+    const matchQ = !q || (item.dataset.q.includes(q) || item.dataset.a.includes(q));
+    item.style.display = matchCat && matchQ ? "" : "none";
+    if (item.style.display === "none") item.open = false;
+  });
+}
+
+function screenInfoTerms(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>`,
+    T("content.info.terms.hero_title"),
+    T("content.info.terms.hero_sub")
+  ));
+
+  const sections = [
+    { h: "1. Titularidad y datos identificativos del prestador (LSSI-CE art. 10)",
+      p: "El servicio Aura (en adelante, «Aura» o «el Servicio»), accesible en <b>citasaura.es</b>, es operado por <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Bulevar Clara Campoamor 9</b>, España, e email de contacto <b>hola@citasaura.es</b>. Estos datos identifican al prestador del servicio de la sociedad de la información conforme al artículo 10 de la Ley 34/2002, de Servicios de la Sociedad de la Información y del Comercio Electrónico (LSSI-CE)." },
+    { h: "2. Objeto y aceptación de los términos",
+      p: "Estos Términos regulan el acceso y uso de Aura, un servicio digital de encuentros personales. Al pulsar «Acepto» durante el registro, o al utilizar cualquier funcionalidad del Servicio, declaras haber leído, entendido y aceptado íntegramente estas condiciones. Si no estás conforme con alguna cláusula, no continúes con el registro y no uses la aplicación." },
+    { h: "3. Requisitos para registrarte",
+      p: "Sólo puedes crear una cuenta si: (a) tienes <b>18 años cumplidos o más</b>; (b) dispones de plena capacidad jurídica para obligarte contractualmente en tu país de residencia; (c) no has sido previamente suspendido o expulsado del Servicio; y (d) aceptas someterte al proceso de verificación de identidad y edad descrito en la <a href='#' class='legal-link' data-goto='kyc'>Política de Verificación de Identidad</a>. Está expresamente prohibido el uso por menores." },
+    { h: "4. Registro, cuenta y credenciales",
+      p: "Para usar Aura debes crear una cuenta con datos veraces, exactos y actualizados. Eres responsable de mantener la confidencialidad de tu contraseña y de cualquier actividad realizada desde tu cuenta. Debes notificarnos inmediatamente cualquier acceso no autorizado escribiendo a <b>seguridad@citasaura.es</b>. Aura podrá suspender la cuenta si detecta indicios de fraude, suplantación o uso indebido." },
+    { h: "5. Verificación de edad e identidad (KYC)",
+      p: "Antes de completar el registro deberás superar tres pasos de verificación: escaneo de un documento oficial (DNI, NIE o pasaporte), selfie con comparación facial y videoidentificación. Estos pasos incluyen el tratamiento de <b>datos biométricos</b>, cuyo régimen específico se describe en la Política de Verificación de Identidad y para el que se requiere tu consentimiento explícito (art. 9.2.a RGPD). En caso de fracaso automatizado tendrás hasta dos revisiones manuales; agotadas éstas o si se detecta suplantación, la cuenta será rechazada y el dispositivo bloqueado." },
+    { h: "6. Conducta aceptable y usos prohibidos",
+      p: "Como usuario te comprometes a: (a) no publicar contenido sexual explícito, violento, ilegal, discriminatorio ni denigrante; (b) no acosar, amenazar, extorsionar ni suplantar la identidad de terceros; (c) no crear perfiles falsos, duplicados ni ejecutar bots o scripts automatizados; (d) no difundir información personal ajena (doxxing) ni imágenes de terceros sin consentimiento; (e) no utilizar el Servicio con fines comerciales, publicitarios o de captación de fondos; (f) no realizar ingeniería inversa, extraer datos masivamente ni comprometer la seguridad técnica del Servicio. El incumplimiento podrá dar lugar a la restricción, suspensión o baneo permanente de la cuenta, con posible bloqueo por IP y huella de dispositivo." },
+    { h: "7. Contenido generado por usuarios y licencia",
+      p: "Conservas la titularidad de las fotos, mensajes, biografías y demás contenido que publiques. Al subirlos, concedes a Aura una licencia <b>no exclusiva, mundial, gratuita y limitada</b> para alojarlos, mostrarlos y procesarlos únicamente en la medida necesaria para prestar el Servicio (mostrar tu perfil, entregar mensajes, moderación automatizada). Esta licencia termina automáticamente cuando eliminas el contenido o cierras tu cuenta, salvo obligación legal de conservación." },
+    { h: "8. Moderación, algoritmos y decisiones automatizadas",
+      p: "Aura aplica sistemas automatizados de análisis de imágenes, textos, comportamiento y verificación biométrica para prevenir fraude, contenido ilegal y proteger a la comunidad. Estas decisiones pueden implicar restricciones o suspensión de cuenta. Tienes derecho a solicitar revisión humana escribiendo a <b>seguridad@citasaura.es</b> (art. 22 RGPD)." },
+    { h: "9. Suscripciones, precios y renovación automática",
+      p: "Los planes Premium/Gold/Platinum se cobran por adelantado y se renuevan automáticamente al final de cada periodo (mensual o anual) por el precio vigente. Puedes cancelar en cualquier momento desde «Yo → Suscripción»; conservarás el acceso hasta el final del periodo ya pagado. Los precios incluyen los impuestos aplicables (IVA)." },
+    { h: "10. Derecho de desistimiento",
+      p: "Como servicio digital de ejecución inmediata que comienza con tu consentimiento expreso, <b>renuncias al derecho de desistimiento</b> una vez comenzada la prestación conforme al art. 103.m del Real Decreto Legislativo 1/2007 (TRLGDCU). En cualquier caso, dispones de 14 días naturales desde la compra si aún no has iniciado el uso del contenido premium." },
+    { h: "11. Reembolsos",
+      p: "Las compras realizadas a través de tiendas de aplicaciones (App Store, Google Play) se rigen por la política de reembolso de la propia tienda. Para compras realizadas directamente en la web escríbenos a <b>suscripciones@citasaura.es</b>." },
+    { h: "12. Propiedad intelectual e industrial",
+      p: "El código fuente, el diseño, la marca «Aura», los logotipos, los textos, imágenes de la interfaz y demás elementos del Servicio son propiedad del titular o de sus licenciantes y están protegidos por la normativa española y europea de propiedad intelectual e industrial (Real Decreto Legislativo 1/1996 y Ley 17/2001). Queda prohibida su reproducción, distribución, comunicación pública o transformación sin autorización expresa." },
+    { h: "13. Limitación de responsabilidad",
+      p: "Aura pone los medios técnicos razonables para prestar el Servicio de forma continuada y segura. No garantizamos la disponibilidad ininterrumpida, la ausencia total de errores ni el resultado o intenciones de otras personas usuarias. En la máxima medida permitida por la ley, no respondemos por daños indirectos, lucro cesante o pérdida de oportunidad, ni por eventos ajenos a nuestro control razonable (fuerza mayor, caídas de proveedores, ciberataques). Nada en este apartado limita las responsabilidades irrenunciables frente a consumidores." },
+    { h: "14. Modificación de los términos",
+      p: "Podremos modificar estos Términos por razones legales, técnicas o de servicio. Comunicaremos los cambios sustanciales con al menos <b>30 días de antelación</b> por email y con un aviso destacado en la aplicación. Si continúas usando el Servicio tras la entrada en vigor, se entenderá que aceptas los nuevos términos. Si no estás de acuerdo, podrás dar de baja tu cuenta." },
+    { h: "15. Suspensión, baja y bloqueo permanente",
+      p: "Podemos suspender o cerrar tu cuenta si incumples estos Términos, la Política de Privacidad o las Normas de la comunidad. Del mismo modo, tú puedes dar de baja tu cuenta en cualquier momento desde «Yo → Cuenta → Eliminar cuenta», con borrado irreversible en un plazo máximo de 30 días, salvo obligación legal de conservación." },
+    { h: "16. Legislación aplicable y jurisdicción",
+      p: "Estos Términos se rigen por la <b>legislación española y europea</b>. Las controversias que puedan surgir se someterán a los Juzgados y Tribunales del domicilio del consumidor, si eres persona consumidora. En caso contrario, a los Juzgados y Tribunales de la ciudad donde tenga su domicilio social el titular del Servicio, con renuncia expresa a cualquier otro fuero." },
+    { h: "17. Resolución alternativa de litigios",
+      p: "Si eres consumidor residente en la Unión Europea, puedes acudir a la <b>plataforma europea de resolución de litigios en línea</b>: <a href='https://ec.europa.eu/consumers/odr' target='_blank' rel='noopener'>ec.europa.eu/consumers/odr</a>." },
+    { h: "18. Contacto legal y notificaciones",
+      p: "Cualquier comunicación relativa a estos Términos se dirigirá a <b>seguridad@citasaura.es</b>. Aura te notificará mediante email a la dirección asociada a tu cuenta y, cuando proceda, mediante avisos dentro de la aplicación." },
+  ];
+
+  const list = el("div", { class: "legal-list" });
+  sections.forEach(s => {
+    list.appendChild(el("div", { class: "legal-item" }, [
+      el("h4", { class: "legal-h" }, s.h),
+      el("p", { class: "legal-p", html: s.p }),
+    ]));
+  });
+  // V439: Añadimos el delegador de clicks DIRECTAMENTE sobre `list`, sin
+  // envolverlo en otro div (envolverlo movía el nodo fuera de `c` y por eso
+  // la pantalla aparecía vacía por debajo del hero).
+  list.addEventListener("click", (ev) => {
+    const a = ev.target.closest("a.legal-link");
+    if (!a) return;
+    ev.preventDefault();
+    const target = a.dataset.goto;
+    if (target === "kyc")     render(screenInfoKycPolicy);
+    if (target === "privacy") render(screenInfoPrivacy);
+  });
+  c.appendChild(list);
+
+  infoPage(root, T("content.info.terms.title"), c);
+}
+
+function screenInfoPreferences(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.6 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09A1.65 1.65 0 0015 4.6a1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>`,
+    "Preferencias de correo",
+    "Elige qué notificaciones quieres recibir de Aura."
+  ));
+
+  c.appendChild(infoSection("Tipos de correo"));
+  c.appendChild(infoCard(infoList([
+    "Novedades y consejos: sugerencias para mejorar tu perfil y aumentar matches.",
+    "Actividad: nuevos likes, matches, mensajes y visitas.",
+    "Recordatorios: te avisamos si tienes conversaciones sin responder.",
+    "Cuenta y seguridad: cambios importantes en tu cuenta (obligatorios).",
+    "Facturación y suscripción: recibos y avisos de renovación (obligatorios).",
+  ])));
+
+  c.appendChild(infoSection("Ajustar mis preferencias"));
+  c.appendChild(infoCard([
+    el("p", { class: "info-para" }, "Puedes activar o desactivar cada tipo de correo desde tu perfil dentro de la app."),
+    el("p", { class: "info-para" }, "Inicia sesión y ve a Yo → Notificaciones para gestionar todos los canales (email, push, in-app)."),
+  ]));
+
+  c.appendChild(infoSection("Darse de baja"));
+  c.appendChild(infoCard([
+    el("p", { class: "info-para" }, "Si deseas dejar de recibir correos comerciales, puedes pulsar «Cancelar suscripción» al final de cualquier email o escribirnos a soporte@citasaura.es."),
+    el("p", { class: "info-para" }, "Los correos obligatorios (seguridad, cambios de cuenta, recibos) se seguirán enviando conforme a la ley."),
+  ]));
+
+  const cta = el("div", { class: "info-cta-row" }, [
+    el("button", { class: "btn btn-brand", type: "button", onclick: () => render(screenWelcome) }, "Iniciar sesión"),
+    el("button", { class: "btn btn-ghost", type: "button", onclick: () => render(screenInfoPrivacy) }, "Ver privacidad"),
+  ]);
+  c.appendChild(cta);
+
+  infoPage(root, "Preferencias", c);
+}
+
+function screenInfoRules(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 6 6 .9-4.5 4.3 1 6.3L12 16.8 6.5 19.5l1-6.3L3 8.9 9 8z"/></svg>`,
+    T("content.info.rules.hero_title"),
+    T("content.info.rules.hero_sub")
+  ));
+
+  const pillars = [
+    { ic: "🤝", h: "Respeto ante todo", p: "Trata a las demás personas como te gustaría que te tratasen a ti. Sin insultos, amenazas ni acoso." },
+    { ic: "🪞", h: "Sé auténtico", p: "Usa tus fotos reales y una descripción honesta. Prohibido suplantar identidades o crear perfiles falsos." },
+    { ic: "🔒", h: "Consentimiento", p: "Nunca compartas contenido íntimo sin permiso ni presiones a nadie para hacerlo." },
+    { ic: "🛡️", h: "Protege la privacidad", p: "No difundas datos personales de otras personas (dirección, teléfono, fotos privadas)." },
+  ];
+  const grid = el("div", { class: "privacy-grid" });
+  pillars.forEach(h => {
+    grid.appendChild(el("div", { class: "privacy-card" }, [
+      el("div", { class: "privacy-ic" }, h.ic),
+      el("div", { class: "privacy-h" }, h.h),
+      el("div", { class: "privacy-p" }, h.p),
+    ]));
+  });
+  c.appendChild(grid);
+
+  c.appendChild(infoSection("Qué NO está permitido"));
+  c.appendChild(infoCard(infoList([
+    "Perfiles falsos, bots, cuentas duplicadas o suplantación de identidad.",
+    "Menores de edad. Debes tener 18 años o más para usar Aura.",
+    "Fotos de terceras personas sin su consentimiento, imágenes de menores o desnudos explícitos en el perfil público.",
+    "Acoso, amenazas, discurso de odio, racismo, xenofobia, homofobia o cualquier forma de discriminación.",
+    "Difundir información personal ajena (doxxing) o compartir capturas de chats privados.",
+    "Publicidad, spam, links a webs externas, servicios de pago, escorts o contenido comercial no autorizado.",
+    "Peticiones o envíos de dinero, criptomonedas, regalos o cualquier tipo de estafa romántica.",
+    "Contenido violento, ilegal, relacionado con drogas o autolesiones.",
+    "Uso de la app para fines distintos al de conocer personas de forma respetuosa.",
+  ])));
+
+  c.appendChild(infoSection("Buenas prácticas"));
+  c.appendChild(infoCard(infoList([
+    "Sube al menos 3 fotos claras donde se vea tu cara.",
+    "Escribe una bio honesta y original: cuenta a qué te dedicas, tus aficiones y qué buscas.",
+    "Verifica tu cuenta para conseguir el badge azul y más matches.",
+    "Reporta cualquier perfil o mensaje que incumpla estas normas usando el botón «Reportar».",
+    "Bloquea a quien te haga sentir incómodo o incómoda; no permitirá volver a contactarte.",
+  ])));
+
+  c.appendChild(infoSection("Qué pasa si no se cumplen"));
+  c.appendChild(infoCard(infoList([
+    "Aviso: recibirás un correo con la conducta detectada y 48 h para corregirla.",
+    "Restricción parcial: podemos limitar funciones como chat, subida de fotos o descubrimiento.",
+    "Suspensión temporal: la cuenta queda bloqueada durante un periodo determinado.",
+    "Baneo permanente: en casos graves o reincidencia, la cuenta se elimina para siempre.",
+    "Baneo por IP y dispositivo: para evitar que se creen nuevas cuentas eludiendo la sanción.",
+  ])));
+
+  c.appendChild(infoSection("¿Crees que se ha cometido un error?"));
+  c.appendChild(infoCard([
+    el("p", { class: "info-para" }, "Puedes presentar una apelación desde el email de notificación o escribiendo a soporte. Revisaremos tu caso y te responderemos lo antes posible al correo asociado a tu cuenta."),
+  ]));
+
+  c.appendChild(infoSection("Contacto"));
+  c.appendChild(infoCard([
+    el("p", { class: "info-para" }, "Escríbenos a soporte@citasaura.es o abre un ticket desde tu perfil. Estamos para ayudarte."),
+  ]));
+
+  infoPage(root, T("content.info.rules.title"), c);
+}
+
+function screenInfoPrivacy(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/><path d="M9 12l2 2 4-4"/></svg>`,
+    T("content.info.privacy.hero_title"),
+    T("content.info.privacy.hero_sub")
+  ));
+
+  const highlights = [
+    { ic: "🔒", h: "Datos cifrados",          p: "Contraseñas y datos sensibles se almacenan cifrados." },
+    { ic: "🚫", h: "No vendemos tus datos",    p: "Nunca comercializamos tu información personal." },
+    { ic: "📍", h: "Ubicación aproximada",     p: "Sólo tu ciudad o zona, nunca la ubicación exacta." },
+    { ic: "⚖️", h: "RGPD y LOPD-GDD",          p: "Cumplimos con la normativa europea y española." },
+  ];
+  const grid = el("div", { class: "privacy-grid" });
+  highlights.forEach(h => {
+    grid.appendChild(el("div", { class: "privacy-card" }, [
+      el("div", { class: "privacy-ic" }, h.ic),
+      el("div", { class: "privacy-h" }, h.h),
+      el("div", { class: "privacy-p" }, h.p),
+    ]));
+  });
+  c.appendChild(grid);
+
+  const secs = [
+    { h: "1. Responsable del tratamiento",
+      p: "El responsable del tratamiento de tus datos personales es <b>[Nombre o razón social del titular]</b>, con NIF <b>[NIF]</b>, domicilio en <b>[dirección postal completa]</b>, España. Correo de contacto: <b>seguridad@citasaura.es</b>. Datos del Delegado de Protección de Datos (DPO), si aplica: <b>dpo@citasaura.es</b>. Los campos entre corchetes se completan con los datos definitivos antes del lanzamiento comercial." },
+    { h: "2. Categorías de datos que tratamos",
+      p: "(a) <b>Datos identificativos y de contacto</b>: nombre, email, teléfono (opcional), fecha de nacimiento.<br>(b) <b>Datos del perfil</b>: fotos, biografía, género, orientación, altura, peso, etnia (opcional), ciudad, provincia, país, preferencias.<br>(c) <b>Datos biométricos</b> (categoría especial, art. 9 RGPD): imagen del documento de identidad, selfie y vídeo corto durante la verificación KYC.<br>(d) <b>Datos de uso</b>: matches, likes, mensajes, tiempo de uso, historial de suscripción.<br>(e) <b>Datos técnicos</b>: dirección IP, huella de dispositivo (fingerprint), sistema operativo, navegador, identificadores de sesión y cookies técnicas.<br>(f) <b>Datos de facturación</b>: producto contratado, importe, IVA. No almacenamos tarjetas: los pagos los procesa el proveedor autorizado (Stripe/App Store/Google Play)." },
+    { h: "3. Finalidades y bases jurídicas del tratamiento",
+      p: "<b>Prestación del Servicio</b> (art. 6.1.b — ejecución del contrato): crear tu cuenta, mostrar tu perfil, entregar mensajes y matches, gestionar tu suscripción.<br><b>Verificación de edad e identidad</b> (art. 6.1.c — obligación legal de proteger a menores + art. 9.2.a — consentimiento explícito para datos biométricos): tratamos las imágenes del documento, selfie y vídeo únicamente para confirmar tu edad y que eres la persona del documento.<br><b>Seguridad y prevención del fraude</b> (art. 6.1.f — interés legítimo): bloqueo por IP y huella de dispositivo, detección de bots, moderación automatizada.<br><b>Comunicaciones comerciales</b> (art. 6.1.a — consentimiento): sólo si marcas expresamente la casilla correspondiente durante el registro.<br><b>Cumplimiento de obligaciones legales</b> (art. 6.1.c): facturación, atención a requerimientos judiciales o de autoridades competentes." },
+    { h: "4. Plazos de conservación",
+      p: "<b>Datos de cuenta y perfil</b>: mientras la cuenta esté activa; tras la baja se borran en un plazo máximo de <b>30 días</b>.<br><b>Datos biométricos (KYC)</b>: se conservan un máximo de <b>30 días</b> desde la superación (o fracaso) del proceso y después se eliminan automáticamente. Sólo se conserva un hash del documento y de la huella del dispositivo si se activa un bloqueo antifraude, con plazo indefinido salvo revisión.<br><b>Datos de facturación</b>: 6 años (art. 30 Código de Comercio) y 4 años a efectos fiscales (LGT).<br><b>Logs de seguridad</b>: 12 meses.<br><b>Comunicaciones comerciales</b>: hasta que retires el consentimiento." },
+    { h: "5. Destinatarios y encargados del tratamiento",
+      p: "Tus datos podrán ser tratados por los siguientes encargados o proveedores, con contratos de encargo firmados y garantías adecuadas:<br>· <b>Hosting e infraestructura</b>: proveedor cloud radicado en la Unión Europea.<br>· <b>Envío de correo transaccional</b>: proveedor SMTP europeo.<br>· <b>Verificación de identidad</b>: proveedor KYC especializado (ver la <a href='#' class='legal-link' data-goto='kyc'>Política de Verificación de Identidad</a> para el detalle).<br>· <b>Pasarela de pago</b>: Stripe, App Store o Google Play, según el canal de compra.<br>· <b>Analítica agregada y prevención de fraude</b>: proveedores europeos, sin cesión con fines publicitarios.<br>No cedemos datos a terceros con fines comerciales ni los vendemos." },
+    { h: "6. Transferencias internacionales",
+      p: "Los datos permanecen alojados en la Unión Europea siempre que sea posible. Si alguno de nuestros encargados requiere transferir datos fuera del EEE, lo haremos exclusivamente sobre la base de una <b>decisión de adecuación</b> de la Comisión Europea o mediante <b>Cláusulas Contractuales Tipo</b> (SCC 2021/914) con medidas suplementarias, informándote previamente y con posibilidad de oponerte." },
+    { h: "7. Decisiones automatizadas",
+      p: "Algunas decisiones que afectan a tu cuenta se toman de forma total o parcialmente automatizada: (i) verificación biométrica del documento y la selfie durante el KYC; (ii) detección automatizada de bots, suplantación o contenido prohibido. En todos los casos tienes derecho a solicitar <b>revisión humana</b>, a expresar tu punto de vista y a impugnar la decisión escribiendo a <b>seguridad@citasaura.es</b> (art. 22 RGPD). En el KYC dispones automáticamente de hasta dos revisiones manuales." },
+    { h: "8. Tus derechos (RGPD art. 15-22 y LOPD-GDD art. 12-18)",
+      p: "Puedes ejercer en cualquier momento y de forma gratuita los derechos de:<br>· <b>Acceso</b>: obtener copia de los datos que tratamos sobre ti.<br>· <b>Rectificación</b>: corregir datos inexactos o incompletos.<br>· <b>Supresión («derecho al olvido»)</b>: eliminar tu cuenta y datos asociados.<br>· <b>Limitación</b>: pedir que se paralice el tratamiento en determinados supuestos.<br>· <b>Portabilidad</b>: recibir tus datos en un formato estructurado y legible.<br>· <b>Oposición</b>: oponerte al tratamiento con base en interés legítimo.<br>· <b>Revocar consentimientos</b> otorgados (biométrico, marketing, etc.).<br>· <b>No ser objeto de decisiones automatizadas</b> con efectos jurídicos.<br>Escribe a <b>seguridad@citasaura.es</b> aportando prueba de identidad. Responderemos en un plazo máximo de <b>un mes</b>, ampliable a dos por complejidad." },
+    { h: "9. Reclamaciones ante la autoridad de control",
+      p: "Si consideras que tratamos tus datos incorrectamente, puedes presentar una reclamación ante la <b>Agencia Española de Protección de Datos</b> (AEPD): C/ Jorge Juan, 6, 28001 Madrid · <a href='https://www.aepd.es' target='_blank' rel='noopener'>www.aepd.es</a>. En cualquier caso, te agradeceremos que nos contactes primero para intentar resolver la incidencia directamente." },
+    { h: "10. Menores de edad",
+      p: "El Servicio está prohibido para menores de 18 años. La verificación KYC lo impide técnicamente. Si detectamos una cuenta creada por un menor, la eliminaremos de inmediato y borraremos todos sus datos. Cualquier persona puede notificar la existencia de un menor escribiendo a <b>seguridad@citasaura.es</b>." },
+    { h: "11. Cookies y tecnologías similares",
+      p: "Usamos únicamente cookies estrictamente necesarias para el funcionamiento del Servicio (sesión, seguridad, idioma). No usamos cookies publicitarias de terceros sin tu consentimiento previo. Puedes consultar el detalle en «Yo → Privacidad → Cookies» dentro de la app." },
+    { h: "12. Medidas de seguridad",
+      p: "Aplicamos medidas técnicas y organizativas adecuadas al riesgo del tratamiento: transporte cifrado TLS 1.2+, cifrado en reposo de datos sensibles, control de acceso por roles, seudonimización, hashing de identificadores biométricos, registro de accesos y auditorías periódicas conforme al art. 32 RGPD y al Esquema Nacional de Seguridad cuando aplique." },
+    { h: "13. Actualizaciones de esta política",
+      p: "Podremos modificar esta Política. Los cambios sustanciales se anunciarán con al menos 30 días de antelación por email y aviso en la aplicación. La versión vigente será siempre la publicada dentro de la aplicación." },
+  ];
+
+  const list = el("div", { class: "legal-list" });
+  secs.forEach(s => {
+    list.appendChild(el("div", { class: "legal-item" }, [
+      el("h4", { class: "legal-h" }, s.h),
+      el("p", { class: "legal-p", html: s.p }),
+    ]));
+  });
+  c.appendChild(list);
+
+  list.addEventListener("click", (ev) => {
+    const a = ev.target.closest("a.legal-link");
+    if (!a) return;
+    ev.preventDefault();
+    const target = a.dataset.goto;
+    if (target === "kyc")   render(screenInfoKycPolicy);
+    if (target === "terms") render(screenInfoTerms);
+  });
+
+  infoPage(root, T("content.info.privacy.title"), c);
+}
+
+/* =====================================================================
+   Política de verificación de identidad (KYC)
+   Documento separado por tratar categoría especial (biometría)
+   ===================================================================== */
+function screenInfoKycPolicy(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v10H3z"/><circle cx="8" cy="12" r="2"/><path d="M14 10h4M14 14h4"/></svg>`,
+    "Política de verificación de identidad (KYC)",
+    "Última actualización: 3 de agosto de 2026 · Versión 2026-08-03"
+  ));
+
+  const introEls = [
+    el("p", { class: "info-para", html:
+      "Aura sólo puede ser utilizada por personas mayores de 18 años. Para garantizarlo, y para prevenir la creación de perfiles falsos o la suplantación de identidad, aplicamos un proceso de <b>verificación de identidad</b> (KYC, del inglés <i>Know Your Customer</i>) que se completa <b>antes</b> de crear tu cuenta. Este documento explica en detalle por qué lo hacemos, cómo funciona y qué derechos tienes." }),
+  ];
+  const introBox = el("div", { class: "info-card" }, introEls);
+  c.appendChild(introBox);
+
+  const secs = [
+    { h: "1. Datos biométricos que tratamos",
+      p: "Durante el KYC te pediremos:<br>· <b>Foto del documento oficial</b> (DNI, NIE o pasaporte español o europeo).<br>· <b>Selfie</b> tomada en tiempo real desde tu dispositivo.<br>· <b>Videoidentificación</b> (3–5 segundos) en la que giras suavemente la cabeza.<br>Los datos biométricos derivados (características faciales, hash del documento) son <b>categoría especial de datos personales</b> (art. 9 RGPD) y reciben una protección reforzada." },
+    { h: "2. Finalidades exclusivas",
+      p: "Utilizamos los datos biométricos <b>únicamente</b> para:<br>· Verificar que tienes 18 años o más.<br>· Comprobar que la persona detrás del móvil coincide con la del documento.<br>· Detectar suplantaciones, deepfakes o intentos de crear varias cuentas por la misma persona.<br>No los usamos para publicidad, análisis de rasgos, reconocimiento en fotos del perfil, entrenamiento de IA general ni ninguna otra finalidad." },
+    { h: "3. Base jurídica: consentimiento explícito",
+      p: "El tratamiento se basa en el <b>consentimiento explícito</b> que otorgas al marcar la casilla correspondiente en el registro (art. 9.2.a RGPD), <b>complementado</b> con el interés legítimo de proteger a menores y la comunidad (art. 6.1.f RGPD y art. 9.2.g RGPD por razones de interés público esencial). Puedes retirar el consentimiento en cualquier momento, pero eso implica la eliminación de tu cuenta, ya que la verificación es imprescindible para poder usar el Servicio." },
+    { h: "4. Proveedor tecnológico (motor de verificación)",
+      p: "Actualmente el motor de verificación es un <b>sistema interno</b> ejecutado en nuestra infraestructura. Cuando pasemos a producción con un proveedor externo especializado (por ejemplo, Veriff, Sumsub, Onfido u otro proveedor europeo equivalente), lo notificaremos con al menos 30 días de antelación y actualizaremos esta política indicando el proveedor concreto, su domicilio y el enlace a su propia política de privacidad. En todo caso, exigiremos contrato de encargo del tratamiento conforme al art. 28 RGPD y garantías equivalentes." },
+    { h: "5. Plazo de conservación",
+      p: "Las <b>fotos del documento, la selfie y el vídeo</b> se conservan un máximo de <b>30 días</b> desde que finalizas la verificación (con éxito o fracaso). Un proceso automático los borra de forma irreversible al vencer ese plazo. Si tu cuenta queda pendiente de revisión manual, el plazo se prorroga hasta que un miembro del equipo resuelva el caso, y como máximo 90 días.<br>Únicamente conservamos, con plazo indefinido, los <b>hashes técnicos</b> (huellas criptográficas irreversibles) del documento y del dispositivo cuando se activa un bloqueo antifraude. Estos hashes no permiten reconstruir la imagen ni identificar a la persona por sí solos." },
+    { h: "6. Almacenamiento y seguridad",
+      p: "Las imágenes y vídeos se almacenan cifrados en reposo con AES-256, en servidores dentro de la Unión Europea, con acceso restringido a personal expresamente autorizado y con doble factor. Todas las transmisiones se realizan sobre TLS 1.2 o superior. Los accesos quedan registrados en auditoría durante 12 meses." },
+    { h: "7. Consecuencias del proceso",
+      p: "· <b>Verificación superada</b>: puedes completar el registro y usar el Servicio.<br>· <b>Revisión manual</b>: si los sistemas automatizados dudan, un equipo humano revisará tu caso. Dispones de hasta <b>dos intentos</b> de revisión manual.<br>· <b>Rechazo</b>: si se supera el número de revisiones o se detecta suplantación o menor edad, la cuenta será rechazada y el dispositivo (dirección IP, huella y hash del documento) quedará <b>bloqueado</b>. La misma persona no podrá volver a registrarse desde ese dispositivo o con ese documento.<br>· <b>Menor de edad</b>: bloqueo permanente sin posibilidad de segunda oportunidad." },
+    { h: "8. Decisión automatizada y revisión humana",
+      p: "La decisión inicial es automatizada. Tienes derecho a solicitar revisión humana, expresar tu punto de vista e impugnar la decisión (art. 22 RGPD). Basta con escribir a <b>seguridad@citasaura.es</b> desde el mismo email que usaste para intentar registrarte." },
+    { h: "9. Tus derechos específicos sobre el KYC",
+      p: "· <b>Acceso</b>: puedes solicitar copia de las imágenes y del informe de la verificación mientras estén almacenadas.<br>· <b>Supresión anticipada</b>: puedes pedir el borrado de las imágenes antes de los 30 días una vez completado el proceso.<br>· <b>Rectificación</b>: si la fecha de nacimiento extraída del documento es incorrecta, puedes pedir revisión manual con nueva foto.<br>· <b>Retirada del consentimiento</b>: implica eliminación de la cuenta y borrado de todos los datos KYC asociados." },
+    { h: "10. Menores",
+      p: "Si el sistema detecta que el documento pertenece a una persona menor de 18 años, se rechaza automáticamente y todos los datos se borran <b>en un plazo máximo de 24 horas</b>. Adicionalmente se activa un bloqueo permanente del dispositivo para impedir nuevos intentos." },
+    { h: "11. No cesión con fines publicitarios",
+      p: "Los datos biométricos <b>no se ceden</b>, agregan, anonimizan para venta ni utilizan para entrenar modelos de IA generalistas. Su tratamiento se limita estrictamente al proveedor de verificación y a nuestro equipo de seguridad." },
+    { h: "12. Preguntas y contacto",
+      p: "Cualquier consulta sobre este proceso puedes dirigirla a <b>seguridad@citasaura.es</b> o, si aplica, al Delegado de Protección de Datos en <b>dpo@citasaura.es</b>. Tu reclamación ante la <b>AEPD</b> (<a href='https://www.aepd.es' target='_blank' rel='noopener'>www.aepd.es</a>) siempre es un derecho." },
+  ];
+
+  const list = el("div", { class: "legal-list" });
+  secs.forEach(s => {
+    list.appendChild(el("div", { class: "legal-item" }, [
+      el("h4", { class: "legal-h" }, s.h),
+      el("p", { class: "legal-p", html: s.p }),
+    ]));
+  });
+  c.appendChild(list);
+
+  c.appendChild(el("div", { class: "info-cta" }, [
+    el("div", { class: "info-cta-h" }, "¿Aún tienes dudas sobre la verificación?"),
+    el("div", { class: "info-cta-p" }, "Escríbenos y te explicamos paso a paso."),
+    el("button", { class: "btn btn-brand", type: "button", onclick: () => render(screenInfoContact) }, "Contactar con seguridad"),
+  ]));
+
+  infoPage(root, "Política de verificación", c);
+}
+
+function screenInfoContact(root) {
+  const c = document.createDocumentFragment();
+  c.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
+    T("content.info.contact.hero_title"),
+    T("content.info.contact.hero_sub")
+  ));
+
+  const channels = [
+    { ic: "✉️", h: "Correo general",     p: "hola@citasaura.es",          href: "mailto:hola@citasaura.es" },
+    { ic: "🛠️", h: "Soporte técnico",   p: "soporte@citasaura.es",       href: "mailto:soporte@citasaura.es" },
+    { ic: "🔒", h: "Seguridad y RGPD",   p: "seguridad@citasaura.es",     href: "mailto:seguridad@citasaura.es" },
+    { ic: "💳", h: "Suscripciones",      p: "suscripciones@citasaura.es", href: "mailto:suscripciones@citasaura.es" },
+  ];
+  const grid = el("div", { class: "contact-grid" });
+  channels.forEach(ch => {
+    grid.appendChild(el("a", { class: "contact-card", href: ch.href }, [
+      el("span", { class: "contact-ic" }, ch.ic),
+      el("div", { class: "contact-body" }, [
+        el("div", { class: "contact-h" }, ch.h),
+        el("div", { class: "contact-p" }, ch.p),
+      ]),
+    ]));
+  });
+  c.appendChild(grid);
+
+  c.appendChild(infoSection("Escríbenos"));
+  const nameInput    = el("input",    { type: "text",  required: true, placeholder: "Nombre y apellidos" });
+  const emailInput   = el("input",    { type: "email", required: true, placeholder: emailPlaceholder("content.contact.email_placeholder") });
+  const subjectSel   = el("select",   { required: true }, [
+    el("option", { value: "" }, "Elige un tema..."),
+    el("option", { value: "soporte" }, "Soporte técnico"),
+    el("option", { value: "cuenta" }, "Problemas con mi cuenta"),
+    el("option", { value: "pagos" }, "Suscripción / pagos"),
+    el("option", { value: "denuncia" }, "Denuncia o abuso"),
+    el("option", { value: "otro" }, "Otro"),
+  ]);
+  const messageArea  = el("textarea", { rows: 5, required: true, placeholder: "Cuéntanos qué te ocurre..." });
+  // Honeypot antibots (oculto visualmente)
+  const hpInput      = el("input",    { type: "text", name: "website", tabindex: "-1", autocomplete: "off", style: "position:absolute;left:-9999px;top:-9999px;opacity:0;height:0;width:0;" });
+  const submitBtn    = el("button",   { class: "btn btn-brand btn-block", type: "submit" }, "Enviar mensaje");
+
+  const form = el("form", { class: "contact-form", novalidate: false, onsubmit: async (e) => {
+    e.preventDefault();
+    const payload = {
+      name:    (nameInput.value    || "").trim(),
+      email:   (emailInput.value   || "").trim(),
+      subject: (subjectSel.value   || "").trim(),
+      message: (messageArea.value  || "").trim(),
+      website: (hpInput.value      || ""),
+      source:  "web",
+    };
+    submitBtn.disabled = true;
+    const originalLabel = submitBtn.textContent;
+    submitBtn.textContent = "Enviando...";
+    try {
+      const r = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const errMap = {
+          invalid_name:    "Escribe tu nombre.",
+          invalid_email:   "Correo no válido.",
+          invalid_message: "Cuéntanos un poco más (mínimo 10 caracteres).",
+          rate_limited:    "Has enviado demasiados mensajes. Prueba dentro de una hora.",
+        };
+        toast(errMap[j.error] || "No se pudo enviar. Inténtalo de nuevo.");
+        return;
+      }
+      toast(j.ref ? `Mensaje enviado ✅ Ref: ${j.ref}` : "Mensaje enviado. Te responderemos pronto.");
+      form.reset();
+    } catch (err) {
+      toast("Error de conexión. Revisa tu Internet e inténtalo de nuevo.");
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalLabel;
+    }
+  }});
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Tu nombre"), nameInput ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Correo"),    emailInput ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Asunto"),    subjectSel ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Mensaje"),   messageArea ]));
+  form.appendChild(hpInput);
+  form.appendChild(submitBtn);
+  c.appendChild(form);
+
+
+  infoPage(root, T("content.info.contact.title"), c);
+}
+
+/* =====================================================================
+   Support tickets — visual area with categories, self-help & form
+   ===================================================================== */
+const TICKET_STATE = {
+  category: null,
+  query: "",
+  attachments: [],
+};
+
+const TICKET_CATEGORIES = [
+  { id: "account",  ic: "🔐", h: "Cuenta y acceso",          p: "Login, contraseña, verificación",     color: "cat-blue" },
+  { id: "profile",  ic: "👤", h: "Perfil y fotos",           p: "Datos, biografía, imágenes",           color: "cat-pink" },
+  { id: "matches",  ic: "💫", h: "Matches y likes",          p: "Descubrir, filtros, límites",          color: "cat-purple" },
+  { id: "chats",    ic: "💬", h: "Chats y mensajes",         p: "Envíos, notificaciones, adjuntos",     color: "cat-green" },
+  { id: "billing",  ic: "💳", h: "Suscripción y pagos",      p: "Premium, facturas, reembolsos",        color: "cat-gold" },
+  { id: "safety",   ic: "🛡️", h: "Seguridad y privacidad",   p: "Bloqueos, reportes, datos",           color: "cat-red" },
+  { id: "bug",      ic: "🐞", h: "Error o fallo técnico",    p: "Bugs, caídas, rendimiento",            color: "cat-teal" },
+  { id: "feedback", ic: "💡", h: "Sugerencia o idea",        p: "Ayúdanos a mejorar Aura",              color: "cat-orange" },
+  { id: "other",    ic: "✨", h: "Otro asunto",              p: "Cualquier otra consulta",              color: "cat-slate" },
+];
+
+const TICKET_KB = [
+  // account
+  { cat: "account", q: "No puedo iniciar sesión",                       a: "Comprueba tu correo y contraseña. Si sigue sin funcionar, pulsa \"¿Olvidaste tu contraseña?\" en la pantalla de acceso para recibir un enlace de restablecimiento. Asegúrate también de tener buena conexión y de que tu app está actualizada." },
+  { cat: "account", q: "No me llega el código de verificación",         a: "Revisa la carpeta de spam o promociones. Espera 60 s y vuelve a solicitar el código. Si tu operador filtra los correos, prueba con otra dirección o contáctanos indicando el email." },
+  { cat: "account", q: "Cambiar mi correo electrónico",                 a: "Ve a Yo → Cuenta → Editar perfil. Introduce el nuevo correo y confirma con el enlace que enviamos a ambas direcciones." },
+  { cat: "account", q: "Cerrar sesión en todos los dispositivos",       a: "En Yo → Privacidad y seguridad → Dispositivos activos puedes ver y cerrar sesión de forma remota en cualquier dispositivo." },
+  // profile
+  { cat: "profile", q: "Mi foto no se sube o se ve mal",                a: "Comprueba que la imagen sea JPG o PNG y menor de 8 MB. Si aparece rotada, guárdala desde tu galería antes de subirla. Puedes reintentar desde Yo → Mis fotos." },
+  { cat: "profile", q: "Cómo verificar mi perfil",                      a: "Ve a Yo → Verificar cuenta y sigue los pasos: selfie en directo + documento. La verificación suele tardar unas horas y muestra un tick azul en tu perfil." },
+  { cat: "profile", q: "Cambiar mi biografía o intereses",              a: "Yo → Editar perfil. Puedes actualizar tu bio, altura, profesión e intereses en cualquier momento." },
+  // matches
+  { cat: "matches", q: "Ya no veo nuevos perfiles",                     a: "Puede que hayas alcanzado tu límite diario de likes o que los filtros sean muy estrictos. Amplía tu rango de edad y distancia en Yo → Filtros. Con Premium los likes son ilimitados." },
+  { cat: "matches", q: "Deshacer un descarte por accidente",            a: "Con Premium activo tienes la acción \"Deshacer\" para revertir el último like o descarte. Está disponible durante 5 minutos tras la acción." },
+  { cat: "matches", q: "Cómo funciona el algoritmo",                    a: "Nuestro sistema prioriza afinidad, cercanía y actividad reciente. Cuanto más interactúas y más completo está tu perfil, mejores recomendaciones recibes." },
+  // chats
+  { cat: "chats",   q: "No me llegan notificaciones de mensajes",       a: "Revisa que las notificaciones estén activas en Yo → Notificaciones y también en los ajustes del sistema para Aura. En modo No molestar sólo llegan resúmenes." },
+  { cat: "chats",   q: "Enviar imágenes o audios",                      a: "Los usuarios verificados pueden enviar imágenes y audios cortos. Toca el icono \"+\" dentro del chat. Las imágenes pasan un filtro automático de seguridad." },
+  { cat: "chats",   q: "Un chat ha desaparecido",                       a: "Si el chat se ha perdido, es posible que la otra persona te haya desmatcheado, o que su cuenta esté suspendida. Los chats también se pueden archivar accidentalmente." },
+  // billing
+  { cat: "billing", q: "Cancelar mi suscripción Premium",               a: "Ve a Yo → Suscripción → Cancelar. Podrás usar Premium hasta el final del periodo pagado. Si compraste desde App Store o Google Play, cancela también desde la tienda." },
+  { cat: "billing", q: "No he recibido mi factura",                     a: "Las facturas se envían automáticamente al correo asociado a tu cuenta. Revisa spam. Si necesitas una copia, escríbenos con la fecha aproximada de la compra." },
+  { cat: "billing", q: "Solicitar un reembolso",                        a: "Los reembolsos se tramitan según la política de la tienda desde la que compraste (App Store, Google Play o web). Escríbenos si crees que tienes un caso especial." },
+  { cat: "billing", q: "Se ha cobrado dos veces",                       a: "Puede tratarse de una autorización temporal que se libera en 3–5 días. Si sigue duplicado después, envíanos capturas del cargo y el importe exacto." },
+  // safety
+  { cat: "safety",  q: "Cómo reportar a un usuario",                    a: "Abre el perfil o el chat, pulsa el menú (⋯) y elige \"Reportar\". Selecciona el motivo y añade contexto. Nuestro equipo revisa reportes en menos de 24 h." },
+  { cat: "safety",  q: "He recibido un mensaje inapropiado",            a: "Repórtalo desde el chat con el motivo \"contenido inapropiado\". Puedes bloquear inmediatamente al usuario desde la misma pantalla." },
+  { cat: "safety",  q: "Descargar todos mis datos",                     a: "Yo → Privacidad y seguridad → Descargar mis datos. Recibirás un ZIP en tu correo con toda tu información en un plazo máximo de 30 días." },
+  { cat: "safety",  q: "Sospecho de un perfil falso o bot",             a: "Repórtalo con el motivo \"perfil falso\" o \"bot/estafa\". Nuestro sistema antifraude actuará y te mantendremos informado si es necesario." },
+  // bug
+  { cat: "bug",     q: "La app se cierra sola",                         a: "Actualiza la app a la última versión, reinicia el dispositivo y libera memoria cerrando otras apps. Si persiste, envíanos el modelo del dispositivo y sistema operativo." },
+  { cat: "bug",     q: "Un botón o pantalla no responde",               a: "Cierra la app y vuelve a abrirla. Si el problema sigue, indícanos el paso exacto en el que ocurre y adjunta una captura si puedes." },
+  { cat: "bug",     q: "La app va lenta",                               a: "Verifica tu conexión (WiFi vs datos), libera espacio en el dispositivo y actualiza la app. La primera carga tras una actualización puede ser más lenta." },
+  // feedback
+  { cat: "feedback",q: "Sugerencia de nueva función",                   a: "¡Nos encanta escucharte! Escríbenos tu idea con el máximo detalle. Revisamos todas las sugerencias y priorizamos las más votadas por la comunidad." },
+  { cat: "feedback",q: "Mejora del diseño o experiencia",               a: "Cuéntanos qué cambiarías y por qué. Adjunta capturas si puedes; nos ayuda mucho a entender tu propuesta." },
+];
+
+function screenSupportTicket(root) {
+  // Reset state for a fresh visit
+  TICKET_STATE.category = null;
+  TICKET_STATE.query = "";
+  TICKET_STATE.attachments = [];
+
+  root.classList.add("screen-info", "screen-tickets");
+  document.body.classList.add("info-open");
+  root.appendChild(topbar("Soporte · Ticket", () => {
+    document.body.classList.remove("info-open");
+    render(screenMe);
+  }));
+  hideApp();
+
+  const wrap = el("div", { class: "info-wrap ticket-wrap" });
+
+  // Hero
+  wrap.appendChild(el("div", { class: "ticket-hero" }, [
+    el("div", { class: "ticket-hero-badge" }, "🎫 Centro de tickets"),
+    el("h2", { class: "ticket-hero-title" }, "¿En qué podemos ayudarte?"),
+    el("p", { class: "ticket-hero-sub" }, "Elige una categoría o busca en nuestra base de conocimiento. La mayoría de dudas se resuelven en segundos."),
+    el("div", { class: "ticket-hero-stats" }, [
+      el("div", { class: "ticket-stat" }, [ el("strong", {}, "< 24 h"), el("span", {}, "Respuesta media") ]),
+      el("div", { class: "ticket-stat" }, [ el("strong", {}, "98%"), el("span", {}, "Casos resueltos") ]),
+      el("div", { class: "ticket-stat" }, [ el("strong", {}, "24/7"), el("span", {}, "Autoayuda") ]),
+    ]),
+  ]));
+
+  // Category grid
+  wrap.appendChild(el("h3", { class: "ticket-section-title" }, "1 · Elige una categoría"));
+  const grid = el("div", { class: "ticket-cat-grid" });
+  TICKET_CATEGORIES.forEach(cat => {
+    const card = el("button", {
+      class: "ticket-cat-card " + cat.color,
+      type: "button",
+      "data-cat": cat.id,
+      onclick: () => selectTicketCategory(cat.id),
+    }, [
+      el("span", { class: "ticket-cat-ic" }, cat.ic),
+      el("span", { class: "ticket-cat-h" }, cat.h),
+      el("span", { class: "ticket-cat-p" }, cat.p),
+    ]);
+    grid.appendChild(card);
+  });
+  wrap.appendChild(grid);
+
+  // Self-help section (hidden until category selected)
+  const selfHelp = el("div", { class: "ticket-selfhelp", id: "ticketSelfHelp", hidden: true });
+  selfHelp.appendChild(el("h3", { class: "ticket-section-title" }, "2 · Busca antes de escribir"));
+  selfHelp.appendChild(el("p", { class: "ticket-hint" }, "Escribe una palabra clave. Filtramos respuestas rápidas que pueden solucionar tu problema sin abrir ticket."));
+  const searchBox = el("div", { class: "ticket-search-wrap" }, [
+    el("span", { class: "ticket-search-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>` }),
+    el("input", {
+      type: "search",
+      class: "ticket-search",
+      id: "ticketSearch",
+      placeholder: "Ej: no me llega el código, cancelar Premium…",
+      oninput: (e) => renderTicketMatches(e.target.value),
+    }),
+  ]);
+  selfHelp.appendChild(searchBox);
+  selfHelp.appendChild(el("div", { class: "ticket-matches", id: "ticketMatches" }));
+  wrap.appendChild(selfHelp);
+
+  // Ticket form section (hidden until user says "still need help")
+  const formBox = el("div", { class: "ticket-form-box", id: "ticketFormBox", hidden: true });
+  formBox.appendChild(el("h3", { class: "ticket-section-title" }, "3 · Abrir un ticket"));
+  formBox.appendChild(el("p", { class: "ticket-hint" }, "Cuanta más información nos des, más rápido resolvemos tu caso. Todos los tickets son privados."));
+
+  const form = el("form", {
+    class: "ticket-form",
+    onsubmit: (e) => submitTicket(e),
+  });
+
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Tu nombre"),
+    el("input", { type: "text", name: "name", required: true, placeholder: "Nombre y apellidos", value: state.user?.name || "" }),
+  ]));
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Correo de contacto"),
+    el("input", { type: "email", name: "email", required: true, placeholder: emailPlaceholder("content.support.email_placeholder"), value: state.user?.email || "" }),
+  ]));
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Asunto"),
+    el("input", { type: "text", name: "subject", required: true, placeholder: "Resumen breve del problema" }),
+  ]));
+
+  // Priority
+  form.appendChild(el("label", { class: "ticket-label" }, "Prioridad"));
+  const priorities = [
+    { id: "low",    ic: "🟢", h: "Baja",   p: "Consulta general" },
+    { id: "med",    ic: "🟡", h: "Media",  p: "Afecta a mi uso" },
+    { id: "high",   ic: "🔴", h: "Alta",   p: "No puedo usar la app" },
+  ];
+  const priWrap = el("div", { class: "ticket-priority" });
+  priorities.forEach((p, i) => {
+    const b = el("label", { class: "ticket-pri" + (i === 0 ? " active" : "") }, [
+      el("input", { type: "radio", name: "priority", value: p.id, checked: i === 0 ? "checked" : undefined }),
+      el("span", { class: "ticket-pri-ic" }, p.ic),
+      el("span", { class: "ticket-pri-h" }, p.h),
+      el("span", { class: "ticket-pri-p" }, p.p),
+    ]);
+    b.addEventListener("click", () => {
+      priWrap.querySelectorAll(".ticket-pri").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+    });
+    priWrap.appendChild(b);
+  });
+  form.appendChild(priWrap);
+
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Descripción detallada"),
+    el("textarea", { name: "message", rows: 6, required: true, placeholder: "Describe qué pasa, cuándo empezó, qué has intentado…" }),
+  ]));
+
+  // Attachments
+  form.appendChild(el("label", { class: "ticket-label" }, "Adjuntos (opcional)"));
+  const attachRow = el("div", { class: "ticket-attach-row" });
+  const attachInput = el("input", { type: "file", accept: "image/*", multiple: true, id: "ticketAttachInput", style: "display:none", onchange: (e) => addTicketAttachments(e.target.files) });
+  const attachBtn = el("button", {
+    type: "button",
+    class: "ticket-attach-btn",
+    onclick: () => attachInput.click(),
+  }, [
+    el("span", { html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2v-7"/><path d="M16 6l-4-4-4 4"/><path d="M12 2v14"/></svg>` }),
+    "Añadir imagen",
+  ]);
+  attachRow.appendChild(attachBtn);
+  attachRow.appendChild(attachInput);
+  form.appendChild(attachRow);
+  form.appendChild(el("div", { class: "ticket-attach-list", id: "ticketAttachList" }));
+
+  // Consent
+  form.appendChild(el("label", { class: "ticket-consent" }, [
+    el("input", { type: "checkbox", required: true }),
+    el("span", {}, "He leído la Política de privacidad y acepto que Aura procese este mensaje para atender mi consulta."),
+  ]));
+
+  form.appendChild(el("button", {
+    class: "btn btn-brand btn-block ticket-submit",
+    type: "submit",
+  }, "Enviar ticket"));
+
+  formBox.appendChild(form);
+  wrap.appendChild(formBox);
+
+  root.appendChild(wrap);
+}
+
+function selectTicketCategory(catId) {
+  TICKET_STATE.category = catId;
+  document.querySelectorAll(".ticket-cat-card").forEach(c => {
+    c.classList.toggle("active", c.dataset.cat === catId);
+  });
+  const sh = document.getElementById("ticketSelfHelp");
+  if (sh) {
+    sh.hidden = false;
+    sh.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  renderTicketMatches("");
+}
+
+function renderTicketMatches(query) {
+  TICKET_STATE.query = query || "";
+  const box = document.getElementById("ticketMatches");
+  if (!box) return;
+  box.innerHTML = "";
+  const cat = TICKET_STATE.category;
+  const q = (query || "").toLowerCase().trim();
+  let matches = TICKET_KB.filter(k => !cat || k.cat === cat);
+  if (q) {
+    matches = matches.filter(k =>
+      k.q.toLowerCase().includes(q) || k.a.toLowerCase().includes(q)
+    );
+  }
+
+  if (matches.length === 0) {
+    box.appendChild(el("div", { class: "ticket-no-match" }, [
+      el("div", { class: "ticket-no-match-ic" }, "🔎"),
+      el("div", { class: "ticket-no-match-h" }, "Sin coincidencias"),
+      el("div", { class: "ticket-no-match-p" }, "No hemos encontrado respuestas para tu búsqueda. Puedes abrir un ticket a continuación."),
+    ]));
+  } else {
+    matches.forEach(m => {
+      const item = el("details", { class: "ticket-match" }, [
+        el("summary", { class: "ticket-match-q" }, [
+          el("span", { class: "ticket-match-ic" }, "💡"),
+          el("span", { class: "ticket-match-txt" }, m.q),
+          el("span", { class: "ticket-match-caret", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>` }),
+        ]),
+        el("div", { class: "ticket-match-a" }, [
+          el("p", {}, m.a),
+          el("div", { class: "ticket-match-feedback" }, [
+            el("span", { class: "ticket-match-fq" }, "¿Te ha ayudado?"),
+            el("button", {
+              type: "button",
+              class: "ticket-match-fb yes",
+              onclick: () => { toast("¡Genial! Nos alegra haberte ayudado."); },
+            }, "👍 Sí"),
+            el("button", {
+              type: "button",
+              class: "ticket-match-fb no",
+              onclick: () => openTicketForm(),
+            }, "👎 No"),
+          ]),
+        ]),
+      ]);
+      box.appendChild(item);
+    });
+  }
+
+  // "Still need help" CTA below matches
+  const cta = el("div", { class: "ticket-still" }, [
+    el("div", { class: "ticket-still-h" }, "¿Sigues necesitando ayuda?"),
+    el("div", { class: "ticket-still-p" }, "Nuestro equipo humano te atenderá en menos de 24 h."),
+    el("button", {
+      type: "button",
+      class: "btn btn-brand ticket-still-btn",
+      onclick: () => openTicketForm(),
+    }, "Abrir un ticket"),
+  ]);
+  box.appendChild(cta);
+}
+
+function openTicketForm() {
+  const box = document.getElementById("ticketFormBox");
+  if (!box) return;
+  box.hidden = false;
+  // Prefill subject with query if any
+  const q = TICKET_STATE.query || "";
+  const catObj = TICKET_CATEGORIES.find(c => c.id === TICKET_STATE.category);
+  const subjInput = box.querySelector('input[name="subject"]');
+  const msgArea = box.querySelector('textarea[name="message"]');
+  if (subjInput && !subjInput.value) {
+    subjInput.value = (catObj ? "[" + catObj.h + "] " : "") + (q || "");
+  }
+  if (msgArea && !msgArea.value && q) {
+    msgArea.value = "Consulta: " + q + "\n\n";
+  }
+  box.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function addTicketAttachments(files) {
+  if (!files || !files.length) return;
+  const list = document.getElementById("ticketAttachList");
+  Array.from(files).forEach(f => {
+    if (TICKET_STATE.attachments.length >= 5) { toast("Máximo 5 adjuntos."); return; }
+    if (f.size > 8 * 1024 * 1024) { toast(`${f.name} supera 8 MB.`); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const url = ev.target.result;
+      TICKET_STATE.attachments.push({ name: f.name, size: f.size, url });
+      const chip = el("div", { class: "ticket-attach-chip" }, [
+        el("span", { class: "ticket-attach-thumb", style: `background-image:url('${url}')` }),
+        el("span", { class: "ticket-attach-name" }, f.name),
+        el("button", {
+          type: "button",
+          class: "ticket-attach-x",
+          onclick: () => {
+            TICKET_STATE.attachments = TICKET_STATE.attachments.filter(a => a.name !== f.name);
+            chip.remove();
+          },
+          html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+        }),
+      ]);
+      list.appendChild(chip);
+    };
+    reader.readAsDataURL(f);
+  });
+}
+
+async function submitTicket(e) {
+  e.preventDefault();
+  const form = e.target;
+  const priorityInput = form.querySelector('input[name="priority"]:checked');
+  const payload = {
+    category: TICKET_STATE.category || "other",
+    name: form.name.value.trim(),
+    email: form.email.value.trim(),
+    subject: form.subject.value.trim(),
+    priority: priorityInput ? priorityInput.value : "low",
+    message: form.message.value.trim(),
+    attachments: TICKET_STATE.attachments.length,
+    user_id: state.user?.id || null,
+  };
+  const submitBtn = form.querySelector(".ticket-submit");
+  if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = "Enviando…"; }
+  try {
+    const r = await fetch("/api/tickets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok || !data.ok) throw new Error(data.error || "network");
+    try { localStorage.setItem("aura-last-ticket", JSON.stringify({ ...payload, id: data.ref })); } catch {}
+    showTicketSuccess({ ...payload, id: data.ref });
+  } catch (err) {
+    toast("Error al enviar el ticket. Inténtalo de nuevo.");
+    if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = "Enviar ticket"; }
+  }
+}
+
+function showTicketSuccess(data) {
+  const root = document.querySelector(".screen-tickets");
+  if (!root) { toast("Ticket enviado. Te contestaremos pronto."); return; }
+  root.innerHTML = "";
+  root.appendChild(topbar("Ticket enviado", () => {
+    document.body.classList.remove("info-open");
+    render(screenMe);
+  }));
+  const wrap = el("div", { class: "info-wrap ticket-wrap" });
+  wrap.appendChild(el("div", { class: "ticket-success" }, [
+    el("div", { class: "ticket-success-ic" }, "✅"),
+    el("h2", { class: "ticket-success-title" }, "¡Ticket enviado!"),
+    el("p", { class: "ticket-success-sub" }, "Hemos recibido tu mensaje. Nuestro equipo te responderá en menos de 24 h laborables al correo indicado."),
+    el("div", { class: "ticket-success-card" }, [
+      el("div", { class: "ticket-success-row" }, [ el("span", {}, "Referencia"), el("strong", {}, "#" + data.id) ]),
+      el("div", { class: "ticket-success-row" }, [ el("span", {}, "Asunto"), el("strong", {}, data.subject) ]),
+      el("div", { class: "ticket-success-row" }, [ el("span", {}, "Prioridad"), el("strong", {}, ({ low: "🟢 Baja", med: "🟡 Media", high: "🔴 Alta" })[data.priority] || "Baja") ]),
+      el("div", { class: "ticket-success-row" }, [ el("span", {}, "Correo"), el("strong", {}, data.email) ]),
+    ]),
+    el("button", { class: "btn btn-brand btn-block", type: "button", onclick: () => render(screenMe) }, "Volver a mi perfil"),
+    el("button", { class: "btn btn-ghost btn-block", type: "button", onclick: () => render(screenSupportTicket) }, "Abrir otro ticket"),
+  ]));
+  root.appendChild(wrap);
+}
+
+function topbar(title, backFn, rightNode) {
+  return el("div", { class: "topbar" }, [
+    backFn ? el("button", { class: "icon-btn", onclick: backFn, html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }) : el("span"),
+    el("div", { class: "topbar-title" }, title),
+    rightNode || el("span"),
+  ]);
+}
+function stepper(step, total) {
+  const st = el("div", { class: "stepper" });
+  for (let i = 1; i <= total; i++) st.appendChild(el("div", { class: "step" + (i <= step ? " done" : "") }));
+  return st;
+}
+
+/* ---------- Boot ---------- */
+async function boot() {
+  // ================================================================
+  // Modo PREVIEW (usado por el panel de admin > Diseño). Cuando la
+  // URL contiene ?preview=welcome|beta y opcionalmente &theme=dark|light,
+  // renderizamos SÓLO la pantalla pedida, sin navegación, sin polling,
+  // sin splash, sin deep-links ni apelaciones. Esto permite embeber la
+  // app real dentro de un iframe del admin para que la vista previa
+  // sea 100% fiel a lo que ve el usuario final.
+  // ================================================================
+  const previewParams = new URLSearchParams(location.search || "");
+  const previewScreen = previewParams.get("preview");
+  const isPreview = !!previewScreen;
+  if (isPreview) {
+    // Aplicar tema preferido antes de pintar nada
+    const t = previewParams.get("theme");
+    if (t === "dark" || t === "light") {
+      state.theme = t;
+      document.documentElement.dataset.theme = t;
+      try { localStorage.setItem("aura-theme", t); } catch {}
+    }
+    // Escuchar cambios de tema desde el admin (postMessage)
+    try {
+      window.addEventListener("message", (ev) => {
+        const data = ev && ev.data;
+        if (!data || data.__auraPreview !== true) return;
+        if (data.theme === "dark" || data.theme === "light") {
+          state.theme = data.theme;
+          document.documentElement.dataset.theme = data.theme;
+          try { paintThemeBackground(); } catch {}
+          try { applyDesign(); } catch {}
+          try {
+            const heart = document.querySelector(".welcome-heart");
+            if (heart && typeof buildLogoInnerHTML === "function") heart.innerHTML = buildLogoInnerHTML();
+            if (typeof applyContent === "function") applyContent();
+          } catch {}
+        }
+        if (typeof data.screen === "string") {
+          try { renderPreviewScreen(data.screen); } catch {}
+        }
+      });
+    } catch {}
+    // Cargar contenido y renderizar la pantalla pedida
+    await loadContent();
+    try { document.documentElement.classList.remove("js-loading"); } catch {}
+    try { const sp = document.getElementById("auraSplash"); if (sp) sp.remove(); } catch {}
+    // Renderizador central para vistas previas del admin.
+    // Acepta nombres de sección tanto de Diseño como de Textos.
+    function renderPreviewScreen(name) {
+      const n = String(name || "").toLowerCase();
+      // Preset básico para que las pantallas de registro no aparezcan vacías
+      try {
+        state.registration = state.registration || {};
+        state.registration.email = state.registration.email || "";
+      } catch {}
+      if (n === "beta") {
+        // En modo vista previa NO pasamos email demo: así el input muestra
+        // exactamente lo que el admin haya configurado en
+        // content.beta.form_default_email (o el placeholder si está vacío).
+        try { showPrivateBetaScreen({}); return; }
+        catch { try { render(screenWelcome); return; } catch {} }
+      }
+      if (n === "register-email" && typeof screenRegisterEmail === "function") {
+        try { render(screenRegisterEmail); return; } catch {}
+      }
+      if (n === "register-otp" && typeof screenRegisterOTP === "function") {
+        try { render(screenRegisterOTP); return; } catch {}
+      }
+      if (n === "register-zone" && typeof screenZoneSelect === "function") {
+        try { render(screenZoneSelect); return; } catch {}
+      }
+      if (n === "login" && typeof screenLogin === "function") {
+        try { render(screenLogin); return; } catch {}
+      }
+      if ((n === "search" || n === "tabs") && typeof screenSearch === "function") {
+        try {
+          // Simular sesión mínima para que se pueda ver la pantalla y el tabbar
+          state.user = state.user || { id: "preview", name: "Preview", email: "demo@aura.app", photo: "" };
+          state.zone = state.zone || "hetero";
+          try { tabbar.hidden = false; document.body.classList.add("app-open"); } catch {}
+          render(screenSearch);
+          return;
+        } catch {}
+      }
+      // welcome, brand, desktop-cards, other → bienvenida (contiene marca)
+      try { render(screenWelcome); } catch {}
+    }
+    renderPreviewScreen(previewScreen);
+    try { applyContent(); } catch {}
+    try { applyDesign(); } catch {}
+    // Bloquear navegación y submits (es sólo visualización)
+    document.body.addEventListener("submit", (e) => { e.preventDefault(); }, true);
+    document.body.addEventListener("click", (e) => {
+      const t = e.target && e.target.closest ? e.target.closest("a[href], button[type=submit]") : null;
+      if (t) e.preventDefault();
+    }, true);
+    return;
+  }
+  // status bar clock
+  const setClock = () => {
+    const d = new Date();
+    $("#statusTime").textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2,"0")}`;
+  };
+  setClock(); setInterval(setClock, 30000);
+
+  wireAdminButtons();
+  await loadContent();
+  // Seed hashes so first poll doesn't re-render unnecessarily. Format must
+  // match _stableStringify() used inside pollLiveConfig().
+  try {
+    const [cr, pr] = await Promise.all([
+      fetch("/api/content", { cache: "no-store" }),
+      fetch("/api/public-config", { cache: "no-store" }),
+    ]);
+    if (cr.ok) _lastContentHash = _stableStringify(await cr.json());
+    if (pr.ok) _lastConfigHash  = _stableStringify(await pr.json());
+  } catch {}
+  // Deep-link inicial (por si el usuario abre https://…/likes o /verify?code=…).
+  // Guardamos la intención; se aplicará automáticamente cuando showApp() se
+  // dispare tras el login/registro. Si el usuario NO va a loguearse (p.ej. es
+  // una acción como /verify), lo procesamos aquí mismo.
+  // Info-pages públicas: se pueden ver SIN sesión. Al llegar desde un email
+  // (ayuda, privacidad, normas, términos, contacto, faq, preferencias) se
+  // renderiza directamente la pantalla informativa en lugar de screenWelcome.
+  const PUBLIC_INFO_ROUTES = {
+    ayuda:        () => typeof screenInfoHelp    === "function" ? screenInfoHelp    : null,
+    help:         () => typeof screenInfoHelp    === "function" ? screenInfoHelp    : null,
+    faq:          () => typeof screenInfoFaq     === "function" ? screenInfoFaq     : null,
+    preguntas:    () => typeof screenInfoFaq     === "function" ? screenInfoFaq     : null,
+    privacidad:   () => typeof screenInfoPrivacy === "function" ? screenInfoPrivacy : null,
+    privacy:      () => typeof screenInfoPrivacy === "function" ? screenInfoPrivacy : null,
+    terminos:     () => typeof screenInfoTerms   === "function" ? screenInfoTerms   : null,
+    "términos":   () => typeof screenInfoTerms   === "function" ? screenInfoTerms   : null,
+    terms:        () => typeof screenInfoTerms   === "function" ? screenInfoTerms   : null,
+    legal:        () => typeof screenInfoTerms   === "function" ? screenInfoTerms   : null,
+    contacto:     () => typeof screenInfoContact === "function" ? screenInfoContact : null,
+    contact:      () => typeof screenInfoContact === "function" ? screenInfoContact : null,
+    soporte:      () => typeof screenInfoContact === "function" ? screenInfoContact : null,
+    support:      () => typeof screenInfoContact === "function" ? screenInfoContact : null,
+    normas:       () => typeof screenInfoRules   === "function" ? screenInfoRules   : null,
+    rules:        () => typeof screenInfoRules   === "function" ? screenInfoRules   : null,
+    reglas:       () => typeof screenInfoRules   === "function" ? screenInfoRules   : null,
+    preferencias: () => typeof screenInfoPreferences === "function" ? screenInfoPreferences : null,
+    preferences:  () => typeof screenInfoPreferences === "function" ? screenInfoPreferences : null,
+    notificaciones: () => typeof screenInfoPreferences === "function" ? screenInfoPreferences : null,
+  };
+  let publicInfoScreen = null;
+  try {
+    const dl = parseDeepLink(location.pathname, location.search);
+    if (dl) {
+      // Info-página pública sin sesión: prioritaria y no requiere login.
+      const infoFn = PUBLIC_INFO_ROUTES[dl.section] && PUBLIC_INFO_ROUTES[dl.section]();
+      if (infoFn && !state.user) {
+        publicInfoScreen = infoFn;
+        // Limpia la URL para que un refresh no repita el deep-link.
+        try { history.replaceState(null, "", "/"); } catch {}
+      } else {
+        state.pendingDeepLink = dl;
+        // Persistimos en sessionStorage para sobrevivir a recargas durante
+        // el flujo de login/registro (verificación OTP, etc.). Se limpia al
+        // aplicarse en showApp().
+        try { sessionStorage.setItem("aura_deep_link", JSON.stringify(dl)); } catch {}
+        // Casos que necesitan procesarse sin sesión: verify con código en la URL.
+        const params = new URLSearchParams(location.search || "");
+        const code = params.get("code");
+        if (dl.section === "verify" && code) {
+          // Guarda el código para que la pantalla de OTP lo autorrellene.
+          try { sessionStorage.setItem("aura_pending_otp", code); } catch {}
+        }
+      }
+    }
+  } catch {}
+  // Retorno de la pasarela KYC (Didit): /?kyc=return&token=...
+  // Recuperamos el token guardado en localStorage y saltamos a la
+  // pantalla de comprobación de resultado.
+  try {
+    const kp = new URLSearchParams(location.search || "");
+    if (kp.get("kyc") === "return") {
+      const tk = kp.get("token") || (function(){ try { return localStorage.getItem("aura.kyc.token") || ""; } catch { return ""; } })();
+      if (tk) {
+        state.kyc = state.kyc || {};
+        state.kyc.sessionToken = tk;
+        state.kyc.provider     = "didit";
+        try { history.replaceState(null, "", "/"); } catch {}
+        render(screenVerifyDiditReturn);
+        applyContent(); startLivePolling();
+        try {
+          document.documentElement.classList.remove("js-loading");
+          const sp = document.getElementById("auraSplash"); if (sp) setTimeout(() => sp.remove(), 350);
+        } catch {}
+        return;
+      }
+    }
+  } catch {}
+  // Modo pruebas privadas: al arrancar mostramos la pantalla de bienvenida
+  // (con input de código de invitación de tester). Desde ahí el usuario
+  // puede pulsar "🧪 Ver estado de la beta / Soy superadmin" para ir a la
+  // pantalla beta (waitlist + acceso superadmin) si lo necesita.
+  render(publicInfoScreen || screenWelcome);
+  // Deep-link para apelaciones desde el email de moderación:
+  // /?appeal=1&email=xxx  → siempre muestra primero la pantalla de aviso con
+  // el motivo, la duración y los botones. El usuario debe pulsar "📝 Enviar
+  // apelación" para abrir el formulario. Esto evita que al recargar la página
+  // (o si el link se comparte por error) el usuario vaya directo al form.
+  try {
+    const p = new URLSearchParams(location.search || "");
+    if (p.get("appeal") === "1") {
+      const em = (p.get("email") || "").trim().toLowerCase();
+      const reasonQ = p.get("reason") || "";
+      const kindQ = p.get("kind") || "restricted";
+      showBlockedAccount(reasonQ || "Se ha comunicado una restricción sobre tu cuenta.", {
+        kind: kindQ,
+        reason: reasonQ,
+        email: em,
+      });
+      // Limpia el parámetro `appeal` de la URL para que una recarga posterior
+      // no dispare de nuevo el flujo (aunque tampoco abriríamos el form).
+      try {
+        p.delete("appeal");
+        const qs = p.toString();
+        const url = location.pathname + (qs ? "?" + qs : "") + location.hash;
+        history.replaceState(null, "", url);
+      } catch {}
+    }
+  } catch {}
+  // Re-apply design so hero background / text-color inline styles land on the
+  // freshly-rendered .screen-hero element (applyContent from loadContent ran
+  // before the DOM node existed).
+  applyContent();
+  startLivePolling();
+  // Anti-FOUC: revela el DOM ya renderizado y desvanece el splash inicial.
+  try {
+    document.documentElement.classList.remove("js-loading");
+    const sp = document.getElementById("auraSplash");
+    if (sp) setTimeout(() => sp.remove(), 350);
+  } catch {}
+}
+
+/* Admin access is only via /admin. No entry point from the app itself. */
+function wireAdminButtons() { /* intentionally empty */ }
+
+function openAdminLogin() {
+  const existing = document.getElementById("adminLoginModal");
+  if (existing) existing.remove();
+  const modal = el("div", { id: "adminLoginModal", class: "admin-login-modal" }, [
+    el("div", { class: "alm-scrim", onclick: () => modal.remove() }),
+    el("div", { class: "alm-card" }, [
+      el("h3", {}, "Acceso administrador"),
+      el("p", { class: "small muted" }, "Introduce las credenciales de administrador."),
+      el("form", { onsubmit: async (e) => {
+        e.preventDefault();
+        const email = modal.querySelector("input[name=email]").value.trim();
+        const password = modal.querySelector("input[name=password]").value;
+        const err = modal.querySelector(".alm-err");
+        err.textContent = "";
+        try {
+          const r = await fetch("/api/admin/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email, password })
+          });
+          const data = await r.json();
+          if (!r.ok) { err.textContent = "Credenciales incorrectas"; return; }
+          localStorage.setItem("adminToken", data.token);
+          modal.remove();
+          wireAdminButtons();
+          window.open("admin.html?adminToken=" + encodeURIComponent(data.token), "_blank");
+        } catch (ex) {
+          err.textContent = "Error de red";
+        }
+      }}, [
+        el("label", { class: "field" }, [ el("span", {}, "Email"), el("input", { class: "input", name: "email", type: "email", required: true, autocomplete: "email" }) ]),
+        el("label", { class: "field" }, [ el("span", {}, "Contraseña"), el("input", { class: "input", name: "password", type: "password", required: true, autocomplete: "current-password" }) ]),
+        el("div", { class: "alm-err small" }, ""),
+        el("div", { class: "alm-actions" }, [
+          el("button", { type: "button", class: "btn ghost", onclick: () => modal.remove() }, "Cancelar"),
+          el("button", { type: "submit", class: "btn primary" }, "Entrar"),
+        ]),
+      ]),
+    ]),
+  ]);
+  document.body.appendChild(modal);
+}
+
+/* ================================================================
+   V450+ · Pantalla de preferencias de notificación
+   ================================================================ */
+function screenNotificationSettings(root) {
+  root.appendChild(topbar("Notificaciones", () => render(screenMe)));
+
+  const wrap = el("div", { class: "container", style: "padding:16px;max-width:640px;margin:0 auto" });
+  root.appendChild(wrap);
+
+  wrap.appendChild(el("p", { class: "muted" }, "Elige qué avisos quieres recibir y en qué dispositivos."));
+
+  const loading = el("p", { class: "muted" }, "Cargando…");
+  wrap.appendChild(loading);
+
+  const TYPES = [
+    ["matches","💘 Nuevos matches"],
+    ["likes","❤️ Nuevos likes"],
+    ["chats","💬 Mensajes de chat"],
+    ["visits","👀 Visitas a tu perfil"],
+    ["nearby","📍 Alguien cerca de ti"],
+    ["promos","🎁 Ofertas y promociones"],
+    ["news","📰 Novedades de la app"],
+    ["security","🔒 Seguridad de la cuenta"],
+  ];
+
+  (async () => {
+    try {
+      const prefs = await fetch("/api/my/notification-prefs", { headers: authHeaders() }).then(r => r.json());
+      const cur = prefs.prefs || {};
+      loading.remove();
+
+      const chanBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      chanBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "¿Dónde quieres recibir avisos?"));
+      const channels = [
+        ["push","🔔 Solo push"],
+        ["email","✉️ Solo email"],
+        ["both","🔔 + ✉️ Ambos"],
+        ["none","🔕 Ninguno"],
+      ];
+      const chanSel = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px" });
+      channels.forEach(([v,l]) => {
+        const b = el("button", { type: "button", class: "btn " + ((cur.channel || "both") === v ? "btn-brand" : "btn-ghost") }, l);
+        b.addEventListener("click", async () => {
+          try {
+            await fetch("/api/my/notification-prefs", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ channel: v }),
+            });
+            render(screenNotificationSettings);
+          } catch(e){ toast("Error"); }
+        });
+        chanSel.appendChild(b);
+      });
+      chanBox.appendChild(chanSel);
+      wrap.appendChild(chanBox);
+
+      const pushBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      pushBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "Push en este dispositivo"));
+      const pushInfo = el("p", { class: "muted", style: "margin:0 0 8px;font-size:13px" }, "");
+      pushBox.appendChild(pushInfo);
+      const pushBtn = el("button", { class: "btn btn-brand", type: "button" }, "Cargando…");
+      pushBox.appendChild(pushBtn);
+
+      async function refreshPushState() {
+        if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+          pushInfo.textContent = "Tu navegador no soporta notificaciones push.";
+          pushBtn.style.display = "none";
+          return;
+        }
+        const perm = Notification.permission;
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+        if (perm === "denied") {
+          pushInfo.textContent = "Notificaciones bloqueadas en el navegador. Actívalas en ajustes del sistema.";
+          pushBtn.style.display = "none";
+          return;
+        }
+        if (sub) {
+          pushInfo.textContent = "Push activadas en este dispositivo.";
+          pushBtn.textContent = "🔕 Desactivar push aquí";
+          pushBtn.onclick = async () => {
+            try {
+              await sub.unsubscribe();
+              await fetch("/api/my/push-unsubscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+              });
+              toast("Push desactivadas");
+              refreshPushState();
+            } catch(e){ toast("Error: " + e.message); }
+          };
+        } else {
+          pushInfo.textContent = "Recibe avisos incluso cuando la app esté cerrada.";
+          pushBtn.textContent = "🔔 Activar push en este dispositivo";
+          pushBtn.onclick = async () => {
+            try {
+              const p = await Notification.requestPermission();
+              if (p !== "granted") { toast("Permiso denegado"); return; }
+              const reg2 = await navigator.serviceWorker.ready;
+              const vapid = window.__vapidPublicKey || null;
+              const subOpts = { userVisibleOnly: true };
+              if (vapid) subOpts.applicationServerKey = urlBase64ToUint8Array(vapid);
+              const newSub = await reg2.pushManager.subscribe(subOpts);
+              const raw = newSub.toJSON();
+              await fetch("/api/my/push-subscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ endpoint: raw.endpoint, p256dh: raw.keys?.p256dh, auth: raw.keys?.auth, ua: navigator.userAgent }),
+              });
+              toast("Push activadas");
+              refreshPushState();
+            } catch(e){ toast("Error: " + e.message); }
+          };
+        }
+      }
+      refreshPushState();
+      wrap.appendChild(pushBox);
+
+      const typesBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      typesBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "¿Qué avisos quieres recibir?"));
+      const types = cur.types || {};
+      TYPES.forEach(([k, label]) => {
+        const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border,#eee);cursor:pointer" });
+        row.appendChild(el("span", {}, label));
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = types[k] !== false;
+        cb.addEventListener("change", async () => {
+          try {
+            await fetch("/api/my/notification-prefs", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ type: k, enabled: cb.checked }),
+            });
+          } catch(e) { toast("Error"); }
+        });
+        row.appendChild(cb);
+        typesBox.appendChild(row);
+      });
+      wrap.appendChild(typesBox);
+
+      const quietBox = el("div", { style: "background:var(--panel,#fff);border:1px solid var(--border,#eee);border-radius:14px;padding:14px;margin:12px 0" });
+      quietBox.appendChild(el("h4", { style: "margin:0 0 8px" }, "🌙 No molestar"));
+      quietBox.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "Silencia todos los avisos entre estas horas."));
+      const from = el("input", { type: "time", value: cur.quiet_from || "" });
+      const to = el("input", { type: "time", value: cur.quiet_to || "" });
+      const rowQ = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+      rowQ.appendChild(el("span", {}, "De"));
+      rowQ.appendChild(from);
+      rowQ.appendChild(el("span", {}, "a"));
+      rowQ.appendChild(to);
+      const saveQ = el("button", { class: "btn btn-brand", type: "button" }, "Guardar");
+      saveQ.addEventListener("click", async () => {
+        try {
+          await fetch("/api/my/notification-prefs", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ quiet_from: from.value || null, quiet_to: to.value || null }),
+          });
+          toast("Guardado");
+        } catch(e) { toast("Error"); }
+      });
+      rowQ.appendChild(saveQ);
+      quietBox.appendChild(rowQ);
+      wrap.appendChild(quietBox);
+
+    } catch (e) {
+      loading.remove();
+      wrap.appendChild(el("p", { class: "err" }, "Error cargando preferencias: " + e.message));
+    }
+  })();
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+// Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
+// Se llama tras showApp() (login/registro OK). No molesta si ya está permitido
+// o si el usuario ya lo denegó.
+async function maybePromptForPush() {
+  try {
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (Notification.permission === "denied") return;
+    const vapid = window.__vapidPublicKey || null;
+    if (!vapid) return; // backend sin VAPID configurado
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      if (Notification.permission === "default") {
+        // Guardamos flag para no volver a pedir cada login si el usuario cierra el prompt.
+        try {
+          const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
+          if (Date.now() - lastAsk < 3 * 24 * 3600 * 1000) return; // no más de 1 vez cada 3 días
+          localStorage.setItem("aura_push_last_ask", String(Date.now()));
+        } catch {}
+        const p = await Notification.requestPermission();
+        if (p !== "granted") return;
+      }
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapid),
+        });
+      } catch (e) { return; }
+    }
+    const raw = sub.toJSON();
+    let lang = ""; try { lang = (navigator.language || "").slice(0, 8); } catch {}
+    await fetch("/api/my/push-subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        endpoint: raw.endpoint,
+        p256dh: raw.keys?.p256dh,
+        auth: raw.keys?.auth,
+        ua: navigator.userAgent,
+        lang,
+      }),
+    }).catch(()=>{});
+  } catch {}
+}
+
+function authHeaders() {
+  const h = {};
+  try { if (state && state.user && state.user.id) h["X-User-Id"] = String(state.user.id); } catch {}
+  return h;
+}
+
+/* ================================================================
+   V450+ · Popup in-app activo
+   ================================================================ */
+async function checkActivePopup() {
+  if (!state || !state.user || !state.user.id) return;
+  try {
+    const r = await fetch("/api/my/popup-active", { headers: authHeaders() });
+    if (!r.ok) return;
+    const p = await r.json();
+    if (!p || !p.id) return;
+    renderPopup(p);
+  } catch {}
+}
+
+function renderPopup(p) {
+  if (document.getElementById("auraPopup")) return;
+  const themes = {
+    default:  { bg: "linear-gradient(160deg,#5b9bff,#c26bff)", fg: "#fff" },
+    pride:    { bg: "linear-gradient(90deg,#ff2b2b,#ff8a3b,#f7d02c,#4caf50,#2196f3,#9c27b0)", fg: "#fff" },
+    valentine:{ bg: "linear-gradient(160deg,#ff5c8a,#ff8fbf)", fg: "#fff" },
+    christmas:{ bg: "linear-gradient(160deg,#0f5132,#c00)", fg: "#fff" },
+    summer:   { bg: "linear-gradient(160deg,#ffd166,#ff6b6b)", fg: "#fff" },
+    premium:  { bg: "linear-gradient(160deg,#111,#333)", fg: "#ffd700" },
+  };
+  const th = themes[p.theme] || themes.default;
+  const overlay = el("div", { id: "auraPopup", style: "position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .2s" });
+  const card = el("div", { style: "background:var(--panel,#fff);border-radius:20px;max-width:420px;width:100%;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.4);animation:popupIn .3s cubic-bezier(.34,1.56,.64,1)" });
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) dismiss(); });
+
+  if (!document.getElementById("popupCss")) {
+    const st = document.createElement("style");
+    st.id = "popupCss";
+    st.textContent = "@keyframes fadeIn{from{opacity:0}to{opacity:1}}@keyframes popupIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}";
+    document.head.appendChild(st);
+  }
+
+  const hero = el("div", { style: `background:${th.bg};color:${th.fg};padding:32px 20px;text-align:center;position:relative` });
+  if (p.image_url) hero.style.backgroundImage = `linear-gradient(rgba(0,0,0,.2),rgba(0,0,0,.4)), url(${p.image_url})`;
+  hero.style.backgroundSize = "cover"; hero.style.backgroundPosition = "center";
+  const closeBtn = el("button", { style: "position:absolute;top:10px;right:10px;background:rgba(0,0,0,.3);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer", "aria-label": "Cerrar" }, "×");
+  closeBtn.addEventListener("click", dismiss);
+  hero.appendChild(closeBtn);
+  hero.appendChild(el("h2", { style: "margin:0 0 8px;font-size:24px;font-weight:800;line-height:1.2" }, p.title || ""));
+  if (p.body) hero.appendChild(el("p", { style: "margin:0;font-size:15px;opacity:.95;line-height:1.4" }, p.body));
+  card.appendChild(hero);
+
+  const foot = el("div", { style: "padding:16px 20px;display:flex;gap:8px;flex-direction:column" });
+  if (p.cta_text) {
+    const cta = el("button", { class: "btn btn-brand btn-block", style: "font-weight:700;padding:14px;font-size:15px;border-radius:12px" }, p.cta_text);
+    cta.addEventListener("click", () => {
+      trackEvent("click");
+      dismiss();
+      if (p.cta_url) {
+        if (p.cta_url.startsWith("http")) window.open(p.cta_url, "_blank");
+        else if (p.cta_url.startsWith("/")) location.href = p.cta_url;
+      }
+    });
+    foot.appendChild(cta);
+  }
+  const dismissBtn = el("button", { class: "btn btn-ghost btn-block", style: "font-size:13px" }, "Ahora no");
+  dismissBtn.addEventListener("click", dismiss);
+  foot.appendChild(dismissBtn);
+  card.appendChild(foot);
+  document.body.appendChild(overlay);
+
+  trackEvent("view");
+
+  function dismiss() { trackEvent("dismiss"); overlay.remove(); }
+  function trackEvent(kind) {
+    try {
+      fetch(`/api/my/popup/${p.id}/event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ event: kind }),
+      });
+    } catch {}
+  }
+}
+
+// Comprobar popups periódicamente cuando la app está visible
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") setTimeout(checkActivePopup, 800);
+});
+setTimeout(() => { try { checkActivePopup(); } catch {} }, 3500);
+
+/* ============================================================
+   V500+ · Seguridad del dispositivo — versión pro
+   ============================================================ */
+(function injectSecurityCss(){
+  if (document.getElementById("securityCss")) return;
+  const s = document.createElement("style"); s.id = "securityCss";
+  s.textContent = `
+  .screen-security{padding:16px;max-width:640px;margin:0 auto}
+  .sec-hero{background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+  .sec-hero h2{margin:0;font-size:22px}
+  .sec-hero p{margin:8px 0 0;opacity:.9;font-size:14px}
+  .sec-steps{display:flex;gap:8px;margin:16px 0;justify-content:space-between}
+  .sec-step{flex:1;text-align:center;padding:12px 6px;background:#1a1d2b;border-radius:10px;border:1px solid #2a2f45;font-size:11px;color:#9aa4bf}
+  .sec-step .n{display:inline-block;width:24px;height:24px;border-radius:50%;background:#3b82f6;color:#fff;font-weight:700;margin-bottom:6px;line-height:24px}
+  .sec-step.done .n{background:#10b981}
+  .sec-form-card{background:#12141c;border:1px solid #2a2f45;border-radius:14px;padding:16px;color:#e6e9f2;margin-top:12px}
+  .sec-form-card label{display:block;margin:12px 0 4px;font-size:12px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.3px}
+  .sec-form-card input,.sec-form-card select,.sec-form-card textarea{width:100%;padding:10px 12px;background:#0f1220;border:1px solid #2a2f45;border-radius:8px;color:#fff;font-size:14px;box-sizing:border-box}
+  .sec-form-card input:focus,.sec-form-card select:focus,.sec-form-card textarea:focus{outline:none;border-color:#3b82f6}
+  .sec-form-card small{color:#9aa4bf;font-size:11px}
+  .sec-btn-primary{background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;border:none;padding:14px;border-radius:10px;font-weight:600;font-size:15px;width:100%;cursor:pointer;margin-top:16px;box-shadow:0 6px 16px rgba(220,38,38,.4)}
+  .sec-btn-primary:hover{filter:brightness(1.1)}
+  .sec-case{background:#12141c;border:1px solid #2a2f45;border-radius:12px;padding:12px;margin-bottom:8px;color:#e6e9f2}
+  .sec-case .head{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+  .sec-case .status{padding:2px 8px;border-radius:12px;font-size:10px;background:#2a2f45}
+  .sec-case .status.active{background:#dc2626;color:#fff}
+  .sec-case .status.pending{background:#f59e0b;color:#111}
+  `;
+  document.head.appendChild(s);
+})();
+
+async function screenDeviceSecurity(container) {
+  const wrap = el("section", { class: "screen-security" });
+  // render() ya monta un <div class="screen"> y nos lo pasa como container.
+  // Debemos añadir nuestros nodos ahí (no devolverlos).
+  if (container && container.appendChild) container.appendChild(wrap);
+  wrap.appendChild(el("div", { class: "sec-hero" }, [
+    el("h2", {}, "🛡 Seguridad del dispositivo"),
+    el("p", {}, "¿Perdiste el móvil o te lo han robado? Solicita alarma sonora, mensaje remoto o bloqueo con verificación de identidad."),
+  ]));
+
+  // Steps
+  wrap.appendChild(el("div", { class: "sec-steps" }, [
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "1"), el("div", {}, "Rellenar formulario") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "2"), el("div", {}, "Adjuntar denuncia") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "3"), el("div", {}, "Selfie en vivo") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "4"), el("div", {}, "Admin verifica") ]),
+  ]));
+
+  const list = el("div", { class: "device-incidents-list" });
+  wrap.appendChild(el("h3", { style: "margin:16px 0 8px;font-size:14px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.4px" }, "Mis casos"));
+  wrap.appendChild(list);
+  async function loadMine() {
+    list.innerHTML = '<p class="muted">Cargando…</p>';
+    try {
+      const r = await fetch("/api/my/device-incidents", { headers: authHeaders() });
+      const j = await r.json();
+      list.innerHTML = "";
+      if (!j.items || !j.items.length) {
+        list.appendChild(el("p", { class: "muted" }, "No tienes casos abiertos."));
+      } else {
+        j.items.forEach(it => {
+          const statusCls = it.status === "active" ? "active" : (it.status === "pending_admin" || it.status === "pending_selfie" ? "pending" : "");
+          const c = el("div", { class: "sec-case" }, [
+            el("div", { class: "head" }, [
+              el("div", {}, [el("strong", {}, `Caso #${it.id}`), el("span", { style: "margin-left:8px;color:#9aa4bf" }, it.type)]),
+              el("span", { class: `status ${statusCls}` }, it.status),
+            ]),
+            it.reason ? el("p", { style: "margin:8px 0 0;font-size:13px;color:#c1c7d8;font-style:italic" }, `"${it.reason}"`) : null,
+            it.police_report_url ? el("a", { href: it.police_report_url, target: "_blank", style: "font-size:12px;color:#93c5fd" }, "📎 Ver denuncia") : null,
+          ].filter(Boolean));
+          list.appendChild(c);
+        });
+      }
+    } catch(e) { list.innerHTML = ""; list.appendChild(el("p", { class: "err" }, e.message || "Error")); }
+  }
+
+  // Formulario de nuevo caso
+  const form = el("form", { class: "sec-form-card" });
+  form.appendChild(el("h3", { style: "margin:0 0 8px;font-size:16px" }, "Nuevo reporte"));
+  const type = el("select", { name: "type" }, [
+    ["lost", "🔍 Perdido"], ["stolen", "🚨 Robado"], ["suspicious", "⚠️ Actividad sospechosa"], ["other", "Otro"]
+  ].map(([v, t]) => el("option", { value: v }, t)));
+  form.appendChild(el("label", {}, ["Tipo: ", type]));
+
+  const reason = el("textarea", { name: "reason", placeholder: "Cuenta qué ha pasado, cuándo y dónde…", rows: 3, style: "width:100%" });
+  form.appendChild(el("label", {}, ["Motivo: ", reason]));
+
+  const policeUrl = el("input", { name: "police_report_url", placeholder: "URL a la denuncia (obligatoria)", style: "width:100%" });
+  form.appendChild(el("label", {}, ["📎 Denuncia policial (URL): ", policeUrl]));
+  form.appendChild(el("small", { class: "muted" }, "Sube tu denuncia a Drive/Dropbox/imgur y pega aquí el enlace. Es obligatoria para activar la alarma o el bloqueo."));
+
+  const emeE = el("input", { name: "emergency_email", type: "email", placeholder: "email de emergencia (opcional)" });
+  const emeP = el("input", { name: "emergency_phone", placeholder: "teléfono de emergencia (opcional)" });
+  form.appendChild(el("label", {}, "Contacto de emergencia (email)"));
+  form.appendChild(emeE);
+  form.appendChild(el("label", {}, "Contacto de emergencia (teléfono)"));
+  form.appendChild(emeP);
+
+  const saveDefault = el("label", { style: "display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px;color:#c1c7d8;text-transform:none;letter-spacing:0" }, [
+    el("input", { type: "checkbox", id: "saveEmergencyDefault", checked: true, style: "width:auto" }),
+    "Guardar como contactos por defecto para futuros casos"
+  ]);
+  form.appendChild(saveDefault);
+
+  // Precargar contactos guardados
+  (async () => {
+    try {
+      const r = await fetch("/api/my/emergency-contacts", { headers: authHeaders() });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.emergency_email) emeE.value = j.emergency_email;
+        if (j.emergency_phone) emeP.value = j.emergency_phone;
+      }
+    } catch {}
+  })();
+
+  const lockMsg = el("textarea", { name: "lock_screen_message", rows: 2, placeholder: "Mensaje que verá quien tenga el móvil (ej: 'Devolver al 600...')", style: "width:100%" });
+  form.appendChild(el("label", {}, ["Mensaje de pantalla bloqueada: ", lockMsg]));
+
+  const submit = el("button", { class: "sec-btn-primary", type: "submit" }, "🚨 Enviar solicitud y hacer selfie");
+  form.appendChild(submit);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!policeUrl.value.trim()) { alert("La URL de la denuncia es obligatoria."); return; }
+    submit.disabled = true;
+    try {
+      const r = await fetch("/api/my/device-incidents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          type: type.value, reason: reason.value,
+          police_report_url: policeUrl.value.trim(),
+          emergency_contact_email: emeE.value.trim() || null,
+          emergency_contact_phone: emeP.value.trim() || null,
+          lock_screen_message: lockMsg.value.trim() || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      // Guardar contactos por defecto si el checkbox está marcado
+      const chk = document.getElementById("saveEmergencyDefault");
+      if (chk && chk.checked) {
+        try {
+          await fetch("/api/my/emergency-contacts", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ emergency_email: emeE.value.trim() || null, emergency_phone: emeP.value.trim() || null })
+          });
+        } catch {}
+      }
+      alert("Solicitud enviada. Ahora te pediremos un selfie en vivo para verificar tu identidad.");
+      await requestVerificationSelfie(j.incident_id);
+      loadMine();
+    } catch(err) { alert(err.message); }
+    finally { submit.disabled = false; }
+  });
+  wrap.appendChild(form);
+
+  async function requestVerificationSelfie(incidentId) {
+    // Captura simple desde la cámara web
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      const video = document.createElement("video");
+      video.srcObject = stream; video.autoplay = true;
+      const modal = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center" });
+      video.style.maxWidth = "80%"; video.style.borderRadius = "8px";
+      modal.appendChild(video);
+      const btnShot = el("button", { class: "btn btn-primary", style: "margin-top:16px" }, "📸 Capturar selfie");
+      modal.appendChild(btnShot);
+      document.body.appendChild(modal);
+      await new Promise(res => btnShot.addEventListener("click", res, { once: true }));
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      stream.getTracks().forEach(t => t.stop());
+      modal.remove();
+      // Se envía como URL data — en producción sube a S3/Cloudinary
+      await fetch(`/api/my/device-incidents/${incidentId}/selfie`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ selfie_url: dataUrl }),
+      });
+      alert("Selfie enviado. El administrador revisará tu caso.");
+    } catch(e) { alert("No se pudo abrir la cámara: " + e.message); }
+  }
+
+  loadMine();
+  return wrap;
+}
+
+/* ============================================================
+   V500 · Recepción de alarmas remotas (sound / message / lock)
+   ============================================================ */
+async function pollDeviceAlerts() {
+  try {
+    if (!state.user || !state.user.id) return;
+    const r = await fetch("/api/my/device-status", { headers: authHeaders() });
+    const j = await r.json();
+    if (j.locked) {
+      showLockScreen(j.reason || "Este dispositivo ha sido bloqueado.");
+      return;
+    }
+    // Buscar notificaciones tipo device_alert
+    const nr = await fetch("/api/my/notifications?type=device_alert&limit=5", { headers: authHeaders() });
+    if (nr.ok) {
+      const nj = await nr.json();
+      (nj.items || []).forEach(n => {
+        try {
+          const d = typeof n.data === "string" ? JSON.parse(n.data) : (n.data || {});
+          if (d.kind === "sound" && !n.__played) { playAlarm(d.duration_sec || 30, d.volume || 1.0); n.__played = true; }
+          if (d.kind === "message") showFullScreenMessage(d.message || n.body);
+        } catch {}
+      });
+    }
+    // Casos activos → enviar GPS live + preguntar confirmación
+    const mine = await fetch("/api/my/device-incidents", { headers: authHeaders() });
+    if (mine.ok) {
+      const j2 = await mine.json();
+      const openCase = (j2.items || []).find(x => ["active", "approved", "pending_admin"].includes(x.status));
+      if (openCase) {
+        // GPS live
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(async pos => {
+            try {
+              await fetch(`/api/my/device-incidents/${openCase.id}/gps-live`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) })
+              });
+            } catch {}
+          }, () => {}, { enableHighAccuracy: true, timeout: 8000 });
+        }
+        // Preguntar al usuario si es él quien está usando el móvil (una vez por sesión)
+        if (!window.__confirmAskedForCase || window.__confirmAskedForCase !== openCase.id) {
+          window.__confirmAskedForCase = openCase.id;
+          showUserConfirmationModal(openCase.id);
+        }
+      }
+    }
+  } catch {}
+}
+
+function showUserConfirmationModal(caseId) {
+  if (document.getElementById("__userConfirmModal")) return;
+  const modal = el("div", { id: "__userConfirmModal", style: "position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:99998;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center" });
+  modal.appendChild(el("div", { style: "font-size:64px" }, "🛡"));
+  modal.appendChild(el("h2", { style: "color:#fff;margin:12px 0 6px" }, "Tienes un reporte de dispositivo perdido abierto"));
+  modal.appendChild(el("p", { style: "color:#c1c7d8;max-width:400px" }, "Confirma si eres tú quien está usando este dispositivo ahora mismo. Si no confirmas, se bloqueará automáticamente."));
+  const btns = el("div", { style: "display:flex;gap:10px;margin-top:20px" });
+  const yes = el("button", { style: "padding:14px 24px;background:#10b981;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "✅ Soy yo, estoy a salvo");
+  yes.addEventListener("click", async () => {
+    try {
+      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ confirm_type: "its_me" })
+      });
+      modal.remove();
+      alert("Caso cerrado. Bienvenido de vuelta.");
+    } catch(e) { alert(e.message); }
+  });
+  const no = el("button", { style: "padding:14px 24px;background:#dc2626;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "🚨 No soy yo, bloquear");
+  no.addEventListener("click", async () => {
+    if (!confirm("Esto bloqueará la cuenta inmediatamente. ¿Confirmas?")) return;
+    try {
+      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ confirm_type: "not_me" })
+      });
+      // Se recargará → middleware 423 activará showLockScreen
+      location.reload();
+    } catch(e) { alert(e.message); }
+  });
+  btns.appendChild(yes); btns.appendChild(no);
+  modal.appendChild(btns);
+  document.body.appendChild(modal);
+}
+// Wake Lock para mantener la pantalla encendida
+let __wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) { __wakeLock = await navigator.wakeLock.request("screen"); }
+  } catch(e) { console.warn("wakeLock:", e); }
+}
+function releaseWakeLock() {
+  try { __wakeLock && __wakeLock.release(); __wakeLock = null; } catch {}
+}
+
+function playAlarm(seconds, volume) {
+  requestWakeLock();
+  // Intentar poner brillo al máximo simulando fondo blanco brillante intermitente
+  try {
+    // Vibración (Android)
+    if (navigator.vibrate) {
+      const pattern = [];
+      for (let i = 0; i < Math.min(30, seconds || 30); i++) pattern.push(400, 200);
+      navigator.vibrate(pattern);
+    }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = volume || 1.0;
+    osc.type = "square"; osc2.type = "sine";
+    osc.frequency.value = 880; osc2.frequency.value = 1200;
+    osc.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc2.start();
+    let i = 0;
+    const beep = setInterval(() => {
+      osc.frequency.value = i % 2 ? 880 : 440;
+      osc2.frequency.value = i % 2 ? 1200 : 660;
+      // Modulación de volumen (efecto sirena)
+      gain.gain.setValueAtTime(i % 2 ? (volume || 1.0) : 0.3, ctx.currentTime);
+      i++;
+    }, 250);
+    // Banner visual mientras suena
+    const banner = el("div", { id: "__alarmBanner", style: "position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#dc2626,#991b1b);color:#fff;padding:12px;text-align:center;font-weight:700;z-index:100001;font-size:14px;animation:alarmPulse 1s infinite" }, "🔊 ALARMA REMOTA ACTIVA · Aura Seguridad");
+    const style = document.createElement("style");
+    style.textContent = "@keyframes alarmPulse{0%,100%{background:linear-gradient(90deg,#dc2626,#991b1b)}50%{background:linear-gradient(90deg,#fbbf24,#dc2626)}}";
+    document.head.appendChild(style);
+    document.body.appendChild(banner);
+    setTimeout(() => {
+      clearInterval(beep);
+      try { osc.stop(); osc2.stop(); ctx.close(); } catch {}
+      banner.remove(); style.remove();
+      if (navigator.vibrate) navigator.vibrate(0);
+      releaseWakeLock();
+    }, (seconds || 30) * 1000);
+  } catch(e) { console.warn("playAlarm:", e); }
+}
+function showFullScreenMessage(msg) {
+  const modal = el("div", { style: "position:fixed;inset:0;background:linear-gradient(180deg,#1e3a8a,#0f1220);color:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;animation:fadeIn .3s" });
+  modal.appendChild(el("div", { style: "font-size:64px;margin-bottom:16px" }, "📢"));
+  modal.appendChild(el("h1", { style: "font-size:28px;margin:0 0 12px" }, "Mensaje desde Aura"));
+  modal.appendChild(el("p", { style: "font-size:18px;max-width:80%;line-height:1.5;background:rgba(255,255,255,.1);padding:16px;border-radius:12px" }, msg));
+  const btn2 = el("button", { style: "margin-top:24px;padding:14px 40px;background:#fff;color:#1e3a8a;border:none;border-radius:10px;font-weight:700;cursor:pointer;font-size:15px" }, "He leído el mensaje");
+  btn2.addEventListener("click", () => modal.remove());
+  modal.appendChild(btn2);
+  document.body.appendChild(modal);
+}
+function showLockScreen(reason) {
+  if (document.getElementById("__deviceLockOverlay")) return;
+  const overlay = el("div", { id: "__deviceLockOverlay", style: "position:fixed;inset:0;background:linear-gradient(180deg,#7f1d1d,#450a0a,#000);color:#fff;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center" });
+  overlay.appendChild(el("div", { style: "font-size:96px;margin-bottom:12px;filter:drop-shadow(0 8px 20px rgba(220,38,38,.6))" }, "🔒"));
+  overlay.appendChild(el("h1", { style: "font-size:32px;margin:0" }, "Dispositivo bloqueado"));
+  overlay.appendChild(el("div", { style: "width:60px;height:3px;background:#dc2626;margin:14px 0;border-radius:2px" }));
+  overlay.appendChild(el("p", { style: "max-width:80%;font-size:17px;line-height:1.5;background:rgba(0,0,0,.4);padding:16px 20px;border-radius:12px;border:1px solid rgba(255,255,255,.1)" }, reason));
+  const box = el("div", { style: "margin-top:32px;background:rgba(255,255,255,.05);padding:16px 20px;border-radius:12px;font-size:13px;color:#fca5a5;max-width:400px" });
+  box.appendChild(el("div", { style: "font-weight:600;margin-bottom:6px" }, "¿Es un error?"));
+  box.appendChild(el("div", {}, "Contacta con soporte@citasaura.es o al 900 000 000 desde otro dispositivo indicando el ID de tu cuenta."));
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+setInterval(pollDeviceAlerts, 15 * 1000);
+setTimeout(pollDeviceAlerts, 4000);
+
+boot();
