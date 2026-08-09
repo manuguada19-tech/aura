@@ -6216,36 +6216,182 @@ body:not(.app-open) #twofaReminder {
   }
 }
 
-/* --- ESCRITORIO: hero dentro del phone frame 400×820 sin scroll --- */
+/* --- ESCRITORIO: hero dentro del phone frame 400×820 sin scroll ---
+   Todo el contenido (logo + subtítulo + card invite + input +
+   2 botones + términos + 2 pasos + 4 chips + footer con enlaces
+   + copyright) debe caber en ~780px de alto útil del phone.
+   Uso valores fijos y compactos, sin scroll. */
 @media (hover: hover) and (pointer: fine) {
   .phone .app-viewport .screen.screen-hero {
     overflow: hidden !important;
     height: 100% !important;
     max-height: 100% !important;
-    padding: 10px 14px 12px !important;
+    padding: 6px 12px 8px !important;
     display: flex !important;
     flex-direction: column !important;
-    justify-content: space-between !important;
+    justify-content: flex-start !important;
+    gap: 4px !important;
     box-sizing: border-box !important;
   }
+
+  /* Logo compacto */
+  .phone .screen-hero .welcome-logo { margin: 2px auto !important; }
   .phone .screen-hero .welcome-heart,
   .phone .screen-hero .welcome-heart.logo-transparent {
-    width: 130px !important;
-    height: 130px !important;
-    max-width: 130px !important;
-    max-height: 130px !important;
+    width: 90px !important;
+    height: 90px !important;
+    max-width: 90px !important;
+    max-height: 90px !important;
+    margin: 0 auto !important;
   }
+
+  /* Subtítulo compacto */
+  .phone .screen-hero .welcome-sub {
+    margin: 2px 0 4px !important;
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+  }
+  .phone .screen-hero .welcome-title { display: none !important; }
+
+  /* Card pruebas privadas ultra-compacta */
+  .phone .screen-hero .welcome-closed {
+    padding: 6px 10px !important;
+    margin: 2px 0 !important;
+  }
+  .phone .screen-hero .welcome-closed strong { font-size: 12.5px !important; }
+  .phone .screen-hero .welcome-closed p {
+    font-size: 11px !important;
+    line-height: 1.25 !important;
+    margin: 2px 0 0 !important;
+  }
+  .phone .screen-hero .welcome-invite-input {
+    padding: 7px 10px !important;
+    font-size: 11.5px !important;
+    margin: 2px 0 !important;
+    height: 34px !important;
+  }
+
+  /* CTAs compactos */
+  .phone .screen-hero .welcome-cta {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    margin: 2px 0 !important;
+  }
+  .phone .screen-hero .welcome-cta .btn {
+    height: 34px !important;
+    min-height: 0 !important;
+    font-size: 12.5px !important;
+    padding: 0 12px !important;
+    border-radius: 999px !important;
+  }
+  .phone .screen-hero .welcome-cta .btn-primary {
+    background: linear-gradient(135deg, var(--brand-1, #ff3b6b), var(--brand-2, #ff8a3b)) !important;
+    color: #fff !important;
+    border: none !important;
+  }
+
+  /* OAuth compacto */
+  .phone .screen-hero .welcome-or {
+    margin: 3px 0 !important;
+    font-size: 10px !important;
+  }
+  .phone .screen-hero .welcome-oauth {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr 1fr !important;
+    gap: 4px !important;
+  }
+  .phone .screen-hero .oauth-btn {
+    height: 30px !important;
+    font-size: 11px !important;
+    padding: 0 6px !important;
+    border-radius: 8px !important;
+  }
+
+  /* Términos compactos */
+  .phone .screen-hero .welcome-terms {
+    margin: 2px 0 !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Bloque "Cómo funciona" compacto */
+  .phone .screen-hero .welcome-below {
+    margin: 0 !important;
+    gap: 2px !important;
+    padding: 0 !important;
+  }
+  .phone .screen-hero .welcome-steps-title {
+    font-size: 11px !important;
+    margin: 3px 0 2px !important;
+    letter-spacing: .06em !important;
+  }
+  .phone .screen-hero .welcome-steps {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 3px !important;
+  }
+  .phone .screen-hero .welcome-step {
+    padding: 4px 8px !important;
+    gap: 8px !important;
+    border-radius: 10px !important;
+  }
+  .phone .screen-hero .welcome-step-ic {
+    width: 22px !important;
+    height: 22px !important;
+    flex: 0 0 22px !important;
+    font-size: 11px !important;
+    border-radius: 6px !important;
+  }
+  .phone .screen-hero .welcome-step-h {
+    font-size: 12px !important;
+    margin: 0 !important;
+    line-height: 1.15 !important;
+  }
+  .phone .screen-hero .welcome-step-p {
+    font-size: 11px !important;
+    line-height: 1.2 !important;
+    margin: 1px 0 0 !important;
+  }
+
+  /* Chips en fila 4 columnas compactas */
   .phone .screen-hero .welcome-trust {
     display: grid !important;
     grid-template-columns: repeat(4, 1fr) !important;
-    gap: 4px !important;
+    gap: 3px !important;
+    margin: 3px 0 !important;
   }
   .phone .screen-hero .welcome-badge {
-    font-size: 10px !important;
-    padding: 4px 6px !important;
+    padding: 3px 5px !important;
+    font-size: 9.5px !important;
+    line-height: 1.1 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    justify-content: center !important;
   }
+  .phone .screen-hero .welcome-badge svg {
+    width: 10px !important;
+    height: 10px !important;
+    flex: 0 0 10px !important;
+  }
+
+  /* Footer con enlaces + copyright en 2 líneas */
   .phone .screen-hero .welcome-foot {
-    font-size: 10.5px !important;
+    margin: 3px 0 0 !important;
+    padding: 0 !important;
+    font-size: 10px !important;
+    line-height: 1.3 !important;
+    text-align: center !important;
+  }
+  .phone .screen-hero .welcome-foot a {
+    margin: 0 1px !important;
+    text-decoration: underline !important;
+    white-space: nowrap !important;
+  }
+  .phone .screen-hero .welcome-foot .foot-sep {
+    margin: 0 1px !important;
+    opacity: .5 !important;
   }
   .phone .screen-hero .welcome-foot br { display: none !important; }
 }
