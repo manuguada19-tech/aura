@@ -8597,6 +8597,17 @@ const DESIGN_DEFAULTS = {
   welc_chip_h:"36",          // Altura de los chips de confianza
   welc_chip_font:"11.5",     // Tamaño de fuente de los chips
   welc_foot_size:"11.5",     // Tamaño del texto del footer
+  welc_title_size:"22",      // Título grande "Aura"
+  welc_closed_title:"15",    // Título "Aura está en pruebas privadas"
+  welc_closed_p:"12.5",      // Texto explicativo bajo el título rojo
+  welc_terms_size:"11.5",    // Texto "Al continuar aceptas los términos..."
+  welc_steps_title:"12.5",   // Título "CÓMO FUNCIONA"
+  welc_or_size:"10",         // Separador "o continúa con"
+  welc_oauth_h:"38",         // Altura de botones OAuth
+  welc_gap:"10",             // Gap general entre bloques del hero
+  welc_below_gap:"6",        // Gap dentro de la sección "cómo funciona"
+  welc_pad_top:"56",         // Espacio superior del hero (móvil)
+  welc_pad_bot:"16",         // Espacio inferior del hero (móvil)
 };
 
 async function viewDesign(root) {
@@ -9008,11 +9019,18 @@ async function viewDesign(root) {
       bSz.appendChild(el("p", { class: "help" },
         "Ajusta el tamaño de cada elemento de la pantalla de bienvenida. Los valores se aplican en tiempo real a todos los usuarios."));
       bSz.appendChild(range("Logo (diámetro)", "welc_logo_size", 60, 220, "px"));
-      bSz.appendChild(range("Subtítulo (tamaño de fuente)", "welc_sub_size", 10, 22, "px"));
-      bSz.appendChild(range("Tarjeta pruebas privadas (padding)", "welc_card_pad", 4, 24, "px"));
+      bSz.appendChild(range("Título grande \"Aura\" (fuente)", "welc_title_size", 14, 40, "px"));
+      bSz.appendChild(range("Subtítulo (fuente)", "welc_sub_size", 10, 22, "px"));
+      bSz.appendChild(range("Tarjeta pruebas privadas — padding", "welc_card_pad", 4, 24, "px"));
+      bSz.appendChild(range("Tarjeta pruebas privadas — título (fuente)", "welc_closed_title", 12, 22, "px"));
+      bSz.appendChild(range("Tarjeta pruebas privadas — texto (fuente)", "welc_closed_p", 10, 18, "px"));
       bSz.appendChild(range("Input código invitación (altura)", "welc_input_h", 32, 64, "px"));
       bSz.appendChild(range("Botón principal (altura)", "welc_btn_h", 36, 68, "px"));
       bSz.appendChild(range("Botón beta / superadmin (altura)", "welc_beta_h", 32, 64, "px"));
+      bSz.appendChild(range("Separador \"o continúa con\" (fuente)", "welc_or_size", 8, 14, "px"));
+      bSz.appendChild(range("Botón OAuth (altura)", "welc_oauth_h", 28, 52, "px"));
+      bSz.appendChild(range("Términos (fuente)", "welc_terms_size", 9, 16, "px"));
+      bSz.appendChild(range("Título \"CÓMO FUNCIONA\" (fuente)", "welc_steps_title", 10, 18, "px"));
       bSz.appendChild(range("Paso — padding vertical", "welc_steps_pad", 4, 20, "px"));
       bSz.appendChild(range("Paso — tamaño del icono", "welc_step_ic", 18, 44, "px"));
       bSz.appendChild(range("Paso — título (fuente)", "welc_step_h_size", 11, 20, "px"));
@@ -9020,6 +9038,10 @@ async function viewDesign(root) {
       bSz.appendChild(range("Chip de confianza (altura)", "welc_chip_h", 24, 56, "px"));
       bSz.appendChild(range("Chip de confianza (fuente)", "welc_chip_font", 9, 16, "px"));
       bSz.appendChild(range("Footer (fuente)", "welc_foot_size", 9, 16, "px"));
+      bSz.appendChild(range("Espacio entre bloques (gap)", "welc_gap", 2, 24, "px"));
+      bSz.appendChild(range("Espacio dentro de \"cómo funciona\" (gap)", "welc_below_gap", 2, 20, "px"));
+      bSz.appendChild(range("Espacio superior del hero (móvil)", "welc_pad_top", 8, 120, "px"));
+      bSz.appendChild(range("Espacio inferior del hero (móvil)", "welc_pad_bot", 4, 60, "px"));
       fieldsWrap.appendChild(pSz);
 
       fieldsWrap.appendChild(sectionTextPanel("welcome", "Bienvenida"));

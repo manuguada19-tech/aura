@@ -6295,17 +6295,33 @@ body:not(.app-open) #twofaReminder {
    - Footer en 1 sola línea con separadores compactos.
    ============================================================ */
 
-/* --- MÓVIL: NO SCROLL --- */
+/* --- MÓVIL: contenido siempre completo, con scroll si hace falta --- */
 @media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
-  .app-viewport .screen.screen-hero {
-    overflow: hidden !important;
-    height: 100dvh !important;
+  html, body {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
     min-height: 100dvh !important;
-    max-height: 100dvh !important;
-    padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+    max-height: none !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  .app-viewport {
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+  .app-viewport .screen.screen-hero {
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    padding: calc(env(safe-area-inset-top, 0px) + 56px) 12px calc(env(safe-area-inset-bottom, 0px) + 16px) !important;
     display: flex !important;
     flex-direction: column !important;
-    justify-content: center !important;
+    justify-content: flex-start !important;
     gap: 10px !important;
     box-sizing: border-box !important;
   }
@@ -6515,6 +6531,27 @@ body:not(.app-open) #twofaReminder {
   }
   .screen-hero .welcome-badge {
     font-size: 10px !important;
+  }
+}
+
+/* --- Móviles cortos (≤720px de alto) — reducir logo y textos, forzar footer visible --- */
+@media (max-width: 900px) and (max-height: 720px) and ((pointer: coarse) or (hover: none)) {
+  .app-viewport .screen.screen-hero .welcome-heart,
+  .app-viewport .screen.screen-hero .welcome-heart.logo-transparent {
+    width: clamp(64px, 12vh, 96px) !important;
+    height: clamp(64px, 12vh, 96px) !important;
+    max-width: 96px !important;
+    max-height: 96px !important;
+  }
+  .app-viewport .screen.screen-hero .welcome-sub { margin: 2px 0 4px !important; }
+  .app-viewport .screen.screen-hero .welcome-steps { gap: 6px !important; }
+  .app-viewport .screen.screen-hero .welcome-step { padding: 8px 10px !important; }
+  .app-viewport .screen.screen-hero .welcome-trust { margin: 4px 0 !important; }
+  .app-viewport .screen.screen-hero .welcome-below .welcome-foot {
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    margin: 6px 0 0 !important;
   }
 }
 
@@ -7015,8 +7052,15 @@ body:not(.app-open) #twofaReminder {
    selectores de alta especificidad para asobrescribir los
    valores fijos de los media-queries móvil/desktop/tablet.
    ============================================================ */
+/* Logo: en móvil escalado a min(config, 18vh) para no cortarse en pantallas
+   pequeñas. En escritorio (marco .phone) usa el valor exacto configurado. */
 .app-viewport .screen.screen-hero .welcome-heart,
-.app-viewport .screen.screen-hero .welcome-heart.logo-transparent,
+.app-viewport .screen.screen-hero .welcome-heart.logo-transparent {
+  width: min(var(--welc-logo-size, 140px), 18vh) !important;
+  height: min(var(--welc-logo-size, 140px), 18vh) !important;
+  max-width: min(var(--welc-logo-size, 140px), 18vh) !important;
+  max-height: min(var(--welc-logo-size, 140px), 18vh) !important;
+}
 .phone .screen-hero .welcome-heart,
 .phone .screen-hero .welcome-heart.logo-transparent {
   width: var(--welc-logo-size, 140px) !important;
@@ -7024,62 +7068,138 @@ body:not(.app-open) #twofaReminder {
   max-width: var(--welc-logo-size, 140px) !important;
   max-height: var(--welc-logo-size, 140px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-sub,
+/* Subtítulo: móvil cap por vh, escritorio valor exacto */
+.app-viewport .screen.screen-hero .welcome-sub {
+  font-size: min(var(--welc-sub-size, 14px), 2vh) !important;
+}
 .phone .screen-hero .welcome-sub {
   font-size: var(--welc-sub-size, 14px) !important;
 }
+/* Tarjeta pruebas privadas */
 .app-viewport .screen.screen-hero .welcome-closed,
-.app-viewport .screen.screen-hero .welcome-invite-panel,
+.app-viewport .screen.screen-hero .welcome-invite-panel {
+  padding: min(var(--welc-card-pad, 12px), 1.5vh) calc(min(var(--welc-card-pad, 12px), 1.5vh) + 4px) !important;
+}
 .phone .screen-hero .welcome-closed,
 .phone .screen-hero .welcome-invite-panel {
   padding: var(--welc-card-pad, 12px) calc(var(--welc-card-pad, 12px) + 4px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-invite-input,
+/* Input código */
+.app-viewport .screen.screen-hero .welcome-invite-input {
+  height: min(var(--welc-input-h, 46px), 6.5vh) !important;
+  min-height: min(var(--welc-input-h, 46px), 6.5vh) !important;
+}
 .phone .screen-hero .welcome-invite-input {
   height: var(--welc-input-h, 46px) !important;
   min-height: var(--welc-input-h, 46px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-cta .btn,
+/* Botón principal */
+.app-viewport .screen.screen-hero .welcome-cta .btn {
+  height: min(var(--welc-btn-h, 48px), 6.8vh) !important;
+  min-height: min(var(--welc-btn-h, 48px), 6.8vh) !important;
+}
 .phone .screen-hero .welcome-cta .btn {
   height: var(--welc-btn-h, 48px) !important;
   min-height: var(--welc-btn-h, 48px) !important;
 }
+/* Botón beta */
 .app-viewport .screen.screen-hero .welcome-cta .btn.btn-ghost,
-.app-viewport .screen.screen-hero .welcome-cta a.btn.btn-ghost,
+.app-viewport .screen.screen-hero .welcome-cta a.btn.btn-ghost {
+  height: min(var(--welc-beta-h, 46px), 6.5vh) !important;
+  min-height: min(var(--welc-beta-h, 46px), 6.5vh) !important;
+}
 .phone .screen-hero .welcome-cta .btn.btn-ghost,
 .phone .screen-hero .welcome-cta a.btn.btn-ghost {
   height: var(--welc-beta-h, 46px) !important;
   min-height: var(--welc-beta-h, 46px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-below .welcome-step,
+/* Steps padding */
+.app-viewport .screen.screen-hero .welcome-below .welcome-step {
+  padding-top: min(var(--welc-steps-pad, 10px), 1.3vh) !important;
+  padding-bottom: min(var(--welc-steps-pad, 10px), 1.3vh) !important;
+}
 .phone .screen-hero .welcome-below .welcome-step {
   padding-top: var(--welc-steps-pad, 10px) !important;
   padding-bottom: var(--welc-steps-pad, 10px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-below .welcome-step-ic,
+/* Step icono */
+.app-viewport .screen.screen-hero .welcome-below .welcome-step-ic {
+  width: min(var(--welc-step-ic, 28px), 4vh) !important;
+  height: min(var(--welc-step-ic, 28px), 4vh) !important;
+  flex: 0 0 min(var(--welc-step-ic, 28px), 4vh) !important;
+  font-size: calc(min(var(--welc-step-ic, 28px), 4vh) * .5) !important;
+}
 .phone .screen-hero .welcome-below .welcome-step-ic {
   width: var(--welc-step-ic, 28px) !important;
   height: var(--welc-step-ic, 28px) !important;
   flex: 0 0 var(--welc-step-ic, 28px) !important;
   font-size: calc(var(--welc-step-ic, 28px) * .5) !important;
 }
-.app-viewport .screen.screen-hero .welcome-below .welcome-step-h,
+/* Step tipografía */
+.app-viewport .screen.screen-hero .welcome-below .welcome-step-h {
+  font-size: min(var(--welc-step-h-size, 14px), 1.9vh) !important;
+}
 .phone .screen-hero .welcome-below .welcome-step-h {
   font-size: var(--welc-step-h-size, 14px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-below .welcome-step-p,
+.app-viewport .screen.screen-hero .welcome-below .welcome-step-p {
+  font-size: min(var(--welc-step-p-size, 12.5px), 1.7vh) !important;
+}
 .phone .screen-hero .welcome-below .welcome-step-p {
   font-size: var(--welc-step-p-size, 12.5px) !important;
 }
-.app-viewport .screen.screen-hero .welcome-below .welcome-badge,
+/* Chips */
+.app-viewport .screen.screen-hero .welcome-below .welcome-badge {
+  min-height: min(var(--welc-chip-h, 36px), 5vh) !important;
+  font-size: min(var(--welc-chip-font, 11.5px), 1.6vh) !important;
+}
 .phone .screen-hero .welcome-below .welcome-badge {
   min-height: var(--welc-chip-h, 36px) !important;
   font-size: var(--welc-chip-font, 11.5px) !important;
-  padding-top: calc((var(--welc-chip-h, 36px) - var(--welc-chip-font, 11.5px)) * .3) !important;
-  padding-bottom: calc((var(--welc-chip-h, 36px) - var(--welc-chip-font, 11.5px)) * .3) !important;
 }
-.app-viewport .screen.screen-hero .welcome-below .welcome-foot,
+/* Footer: NUNCA se oculta; siempre visible en la pantalla */
 .app-viewport .screen.screen-hero .welcome-foot,
+.app-viewport .screen.screen-hero .welcome-below .welcome-foot,
 .phone .screen-hero .welcome-foot {
-  font-size: var(--welc-foot-size, 11.5px) !important;
+  font-size: min(var(--welc-foot-size, 11.5px), 1.55vh) !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* V521 — Overrides adicionales: título, textos, gaps, paddings */
+.app-viewport .screen.screen-hero .welcome-title {
+  font-size: var(--welc-title-size, 22px) !important;
+}
+.app-viewport .screen.screen-hero .welcome-closed strong,
+.app-viewport .screen.screen-hero .welcome-invite-panel strong {
+  font-size: var(--welc-closed-title, 15px) !important;
+}
+.app-viewport .screen.screen-hero .welcome-closed p,
+.app-viewport .screen.screen-hero .welcome-invite-panel p {
+  font-size: var(--welc-closed-p, 12.5px) !important;
+}
+.app-viewport .screen.screen-hero .welcome-terms {
+  font-size: var(--welc-terms-size, 11.5px) !important;
+}
+.app-viewport .screen.screen-hero .welcome-steps-title {
+  font-size: var(--welc-steps-title, 12.5px) !important;
+}
+.app-viewport .screen.screen-hero .welcome-or {
+  font-size: var(--welc-or-size, 10px) !important;
+}
+.app-viewport .screen.screen-hero .oauth-btn {
+  min-height: var(--welc-oauth-h, 38px) !important;
+  height: var(--welc-oauth-h, 38px) !important;
+}
+/* Gaps configurables */
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
+  .app-viewport .screen.screen-hero {
+    gap: var(--welc-gap, 10px) !important;
+    padding-top: calc(env(safe-area-inset-top, 0px) + var(--welc-pad-top, 56px)) !important;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--welc-pad-bot, 16px)) !important;
+  }
+  .app-viewport .screen.screen-hero .welcome-below {
+    gap: var(--welc-below-gap, 6px) !important;
+  }
 }

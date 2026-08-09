@@ -1487,6 +1487,17 @@ function applyDesign() {
   setPx("--welc-chip-h", "welc_chip_h", "36");
   setPx("--welc-chip-font", "welc_chip_font", "11.5");
   setPx("--welc-foot-size", "welc_foot_size", "11.5");
+  setPx("--welc-title-size", "welc_title_size", "22");
+  setPx("--welc-closed-title", "welc_closed_title", "15");
+  setPx("--welc-closed-p", "welc_closed_p", "12.5");
+  setPx("--welc-terms-size", "welc_terms_size", "11.5");
+  setPx("--welc-steps-title", "welc_steps_title", "12.5");
+  setPx("--welc-or-size", "welc_or_size", "10");
+  setPx("--welc-oauth-h", "welc_oauth_h", "38");
+  setPx("--welc-gap", "welc_gap", "10");
+  setPx("--welc-below-gap", "welc_below_gap", "6");
+  setPx("--welc-pad-top", "welc_pad_top", "56");
+  setPx("--welc-pad-bot", "welc_pad_bot", "16");
 }
 
 /* Build the welcome logo inner HTML based on current settings. */
