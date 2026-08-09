@@ -8,6 +8,22 @@ const path = require("path");
 const fs = require("fs");
 const nodemailer = require("nodemailer");
 const emailTx = require("./email-translations");
+let webpush = null;
+try {
+  webpush = require("web-push");
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    webpush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:soporte@citasaura.es",
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+    console.log("[push] web-push VAPID configured");
+  } else {
+    console.warn("[push] VAPID keys missing — push disabled. Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY.");
+  }
+} catch (e) {
+  console.warn("[push] web-push module not installed:", e.message);
+}
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
@@ -3474,6 +3490,759 @@ app.patch("/api/campaigns/:id", wrap(async (req, res) => {
   if (!updates.length) return res.json({ ok: true });
   params.push(req.params.id);
   await pool.execute(`UPDATE notification_campaigns SET ${updates.join(", ")} WHERE id=?`, params);
+  res.json({ ok: true });
+}));
+
+/* ============================================================
+   WEB PUSH — Suscripciones, campañas y envío real
+   ============================================================ */
+
+// -- Tablas ---------------------------------------------------------------
+(async function ensurePushTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_devices (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NULL,
+        endpoint VARCHAR(512) NOT NULL UNIQUE,
+        p256dh VARCHAR(255) NOT NULL,
+        auth_key VARCHAR(255) NOT NULL,
+        ua VARCHAR(255) NULL,
+        lang VARCHAR(16) NULL,
+        country VARCHAR(4) NULL,
+        active TINYINT(1) DEFAULT 1,
+        last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_user (user_id),
+        INDEX idx_active (active),
+        INDEX idx_country (country),
+        INDEX idx_lang (lang)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_campaigns (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        body TEXT NOT NULL,
+        url VARCHAR(500) DEFAULT '/',
+        icon VARCHAR(500) NULL,
+        image VARCHAR(500) NULL,
+        segment VARCHAR(64) DEFAULT 'all',
+        segment_params JSON NULL,
+        status ENUM('draft','queued','sending','sent','failed','scheduled') DEFAULT 'draft',
+        target_count INT DEFAULT 0,
+        delivered_count INT DEFAULT 0,
+        failed_count INT DEFAULT 0,
+        click_count INT DEFAULT 0,
+        scheduled_at DATETIME NULL,
+        sent_at DATETIME NULL,
+        created_by INT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_status (status),
+        INDEX idx_scheduled (scheduled_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS push_campaign_clicks (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        campaign_id INT NOT NULL,
+        user_id INT NULL,
+        clicked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_campaign (campaign_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (e) { console.warn("[push] ensurePushTables:", e.message); }
+})();
+
+// -- Helpers --------------------------------------------------------------
+function pushEnabled() { return !!(webpush && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY); }
+
+async function buildAudienceQuery(segment, params) {
+  params = params || {};
+  const clauses = ["active = 1"];
+  const args = [];
+  switch (segment) {
+    case "all":                clauses.push("user_id IS NOT NULL"); break;
+    case "all_including_anon": /* no filter */ break;
+    case "anon":               clauses.push("user_id IS NULL"); break;
+    case "anon_country":       clauses.push("user_id IS NULL"); if (params.country) { clauses.push("country = ?"); args.push(String(params.country).toUpperCase().slice(0,4)); } break;
+    case "anon_lang":          clauses.push("user_id IS NULL"); if (params.lang) { clauses.push("lang LIKE ?"); args.push(String(params.lang).slice(0,8) + "%"); } break;
+    case "premium":            clauses.push("user_id IN (SELECT id FROM users WHERE plan IN ('gold','platinum','premium'))"); break;
+    case "free":               clauses.push("user_id IN (SELECT id FROM users WHERE plan IS NULL OR plan='free')"); break;
+    case "zone":               if (params.zone) { clauses.push("user_id IN (SELECT id FROM users WHERE zone=?)"); args.push(params.zone); } break;
+    case "country":            if (params.country) { clauses.push("user_id IN (SELECT id FROM users WHERE country=?)"); args.push(params.country); } break;
+    case "city":               if (params.city) { clauses.push("user_id IN (SELECT id FROM users WHERE city=?)"); args.push(params.city); } break;
+    case "age": {
+      const mn = parseInt(params.min_age,10) || 18;
+      const mx = parseInt(params.max_age,10) || 99;
+      clauses.push("user_id IN (SELECT id FROM users WHERE age BETWEEN ? AND ?)");
+      args.push(mn, mx); break;
+    }
+    case "active_days": {
+      const d = parseInt(params.days,10) || 7;
+      clauses.push("user_id IN (SELECT id FROM users WHERE last_login >= NOW() - INTERVAL ? DAY)");
+      args.push(d); break;
+    }
+    case "user_ids": {
+      const ids = Array.isArray(params.user_ids) ? params.user_ids.map(x=>parseInt(x,10)).filter(Boolean) : [];
+      if (!ids.length) { clauses.push("1=0"); }
+      else { clauses.push(`user_id IN (${ids.map(()=>"?").join(",")})`); args.push(...ids); }
+      break;
+    }
+    default: clauses.push("user_id IS NOT NULL");
+  }
+  return { where: "WHERE " + clauses.join(" AND "), args };
+}
+
+async function sendPushToDevice(device, payload) {
+  if (!pushEnabled()) return { ok: false, error: "push_disabled" };
+  const sub = {
+    endpoint: device.endpoint,
+    keys: { p256dh: device.p256dh, auth: device.auth_key },
+  };
+  try {
+    await webpush.sendNotification(sub, JSON.stringify(payload));
+    return { ok: true };
+  } catch (e) {
+    // 404/410 => desuscribir dispositivo
+    if (e.statusCode === 404 || e.statusCode === 410) {
+      try { await pool.execute("UPDATE push_devices SET active=0 WHERE endpoint=?", [device.endpoint]); } catch {}
+      return { ok: false, error: "gone" };
+    }
+    return { ok: false, error: e.message };
+  }
+}
+
+async function processCampaign(id) {
+  const [[c]] = await pool.query("SELECT * FROM push_campaigns WHERE id=?", [id]);
+  if (!c) return;
+  await pool.execute("UPDATE push_campaigns SET status='sending' WHERE id=?", [id]);
+  let params = null;
+  try { params = c.segment_params ? (typeof c.segment_params === "string" ? JSON.parse(c.segment_params) : c.segment_params) : {}; } catch { params = {}; }
+  const q = await buildAudienceQuery(c.segment, params);
+  const [devices] = await pool.query(`SELECT id, endpoint, p256dh, auth_key FROM push_devices ${q.where}`, q.args);
+  const payload = {
+    title: c.title, body: c.body, url: c.url || "/",
+    icon: c.icon || "/aura-logo.png", badge: "/aura-logo-tiny.png",
+    image: c.image || undefined, tag: `camp-${c.id}`,
+    campaign_id: c.id,
+  };
+  let ok = 0, fail = 0;
+  const CONCURRENCY = 20;
+  for (let i = 0; i < devices.length; i += CONCURRENCY) {
+    const batch = devices.slice(i, i+CONCURRENCY);
+    const results = await Promise.all(batch.map(d => sendPushToDevice(d, payload)));
+    for (const r of results) { if (r.ok) ok++; else fail++; }
+  }
+  await pool.execute(
+    "UPDATE push_campaigns SET status='sent', target_count=?, delivered_count=?, failed_count=?, sent_at=NOW() WHERE id=?",
+    [devices.length, ok, fail, id]
+  );
+}
+
+// Loop cada 60s para lanzar campañas programadas
+setInterval(async () => {
+  try {
+    const [rows] = await pool.query("SELECT id FROM push_campaigns WHERE status='scheduled' AND scheduled_at <= NOW() LIMIT 5");
+    for (const r of rows) { processCampaign(r.id).catch(e => console.warn("[push] campaign", r.id, e.message)); }
+  } catch (e) { /* silent */ }
+}, 60000);
+
+// -- Endpoints públicos usuario ------------------------------------------
+app.post("/api/my/push-subscribe", wrap(async (req, res) => {
+  const uid = readMyUserId(req); // puede ser null (anónimo)
+  const { endpoint, p256dh, auth, ua, lang, country } = req.body || {};
+  if (!endpoint || !p256dh || !auth) return res.status(400).json({ error: "missing_keys" });
+  await pool.execute(
+    `INSERT INTO push_devices (user_id, endpoint, p256dh, auth_key, ua, lang, country, active)
+     VALUES (?,?,?,?,?,?,?,1)
+     ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), p256dh=VALUES(p256dh), auth_key=VALUES(auth_key),
+       ua=VALUES(ua), lang=VALUES(lang), country=VALUES(country), active=1, last_seen_at=NOW()`,
+    [uid, endpoint, p256dh, auth, (ua||"").slice(0,255), (lang||"").slice(0,16), (country||"").slice(0,4)]
+  );
+  res.json({ ok: true });
+}));
+
+app.post("/api/my/push-unsubscribe", wrap(async (req, res) => {
+  const { endpoint } = req.body || {};
+  if (!endpoint) return res.status(400).json({ error: "missing_endpoint" });
+  await pool.execute("UPDATE push_devices SET active=0 WHERE endpoint=?", [endpoint]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/my/push/click-track", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  const cid = parseInt(req.body?.campaign_id, 10);
+  if (!cid) return res.json({ ok: true });
+  try {
+    await pool.execute("INSERT INTO push_campaign_clicks (campaign_id, user_id) VALUES (?,?)", [cid, uid]);
+    await pool.execute("UPDATE push_campaigns SET click_count = click_count + 1 WHERE id=?", [cid]);
+  } catch {}
+  res.json({ ok: true });
+}));
+
+// -- Endpoints admin -----------------------------------------------------
+app.get("/api/admin/push/stats", requireAdmin, wrap(async (req, res) => {
+  const [[u]] = await pool.query("SELECT COUNT(DISTINCT user_id) AS c FROM push_devices WHERE active=1 AND user_id IS NOT NULL");
+  const [[t]] = await pool.query("SELECT COUNT(*) AS c FROM push_devices WHERE active=1 AND user_id IS NOT NULL");
+  const [[a]] = await pool.query("SELECT COUNT(*) AS c FROM push_devices WHERE active=1 AND user_id IS NULL");
+  res.json({
+    unique_registered_users: u.c || 0,
+    total_registered_devices: t.c || 0,
+    anon_devices: a.c || 0,
+    push_enabled: pushEnabled(),
+  });
+}));
+
+app.get("/api/admin/push/campaigns", requireAdmin, wrap(async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit,10) || 100, 500);
+  const [rows] = await pool.query("SELECT * FROM push_campaigns ORDER BY created_at DESC LIMIT ?", [limit]);
+  res.json({ campaigns: rows });
+}));
+
+app.post("/api/admin/push/preview-audience", requireAdmin, wrap(async (req, res) => {
+  const { segment, segment_params } = req.body || {};
+  const q = await buildAudienceQuery(segment || "all", segment_params || {});
+  const [[t]] = await pool.query(`SELECT COUNT(*) AS c FROM push_devices ${q.where}`, q.args);
+  const [[u]] = await pool.query(`SELECT COUNT(*) AS c FROM push_devices ${q.where} AND user_id IS NOT NULL`, q.args);
+  const [[a]] = await pool.query(`SELECT COUNT(*) AS c FROM push_devices ${q.where} AND user_id IS NULL`, q.args);
+  res.json({ count: t.c || 0, users: u.c || 0, anons: a.c || 0 });
+}));
+
+app.post("/api/admin/push/test", requireAdmin, wrap(async (req, res) => {
+  if (!pushEnabled()) return res.status(400).json({ error: "push_disabled", reason: "Falta configurar VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY." });
+  const { user_id, title, body, url, icon } = req.body || {};
+  const uid = parseInt(user_id,10);
+  if (!uid || !title || !body) return res.status(400).json({ error: "missing_fields" });
+  const [devs] = await pool.query("SELECT id, endpoint, p256dh, auth_key FROM push_devices WHERE user_id=? AND active=1", [uid]);
+  if (!devs.length) return res.json({ sent: 0, note: "sin_dispositivos" });
+  const payload = { title, body, url: url || "/", icon: icon || "/aura-logo.png", tag: "test" };
+  let sent = 0;
+  for (const d of devs) { const r = await sendPushToDevice(d, payload); if (r.ok) sent++; }
+  res.json({ sent, total: devs.length });
+}));
+
+app.post("/api/admin/push/campaigns", requireAdmin, wrap(async (req, res) => {
+  const { title, body, url, icon, image, segment, segment_params, send_now, scheduled_at } = req.body || {};
+  if (!title || !body) return res.status(400).json({ error: "missing_fields" });
+  let status = "draft";
+  let schedDt = null;
+  if (send_now) status = "queued";
+  else if (scheduled_at) { status = "scheduled"; schedDt = new Date(scheduled_at); if (isNaN(schedDt.getTime())) schedDt = null; }
+  const [ins] = await pool.execute(
+    `INSERT INTO push_campaigns (title, body, url, icon, image, segment, segment_params, status, scheduled_at, created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [
+      String(title).slice(0,255),
+      String(body).slice(0,2000),
+      String(url||"/").slice(0,500),
+      icon ? String(icon).slice(0,500) : null,
+      image ? String(image).slice(0,500) : null,
+      String(segment||"all").slice(0,64),
+      JSON.stringify(segment_params || {}),
+      status,
+      schedDt,
+      (req.admin && req.admin.user_id) || null,
+    ]
+  );
+  if (send_now) { processCampaign(ins.insertId).catch(e => console.warn("[push] campaign", ins.insertId, e.message)); }
+  res.json({ ok: true, id: ins.insertId, status });
+}));
+
+app.post("/api/admin/push/campaigns/:id/send-now", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  await pool.execute("UPDATE push_campaigns SET status='queued', scheduled_at=NULL WHERE id=?", [id]);
+  processCampaign(id).catch(e => console.warn("[push] campaign", id, e.message));
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/push/campaigns/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  await pool.execute("DELETE FROM push_campaigns WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+/* ============================================================
+   POPUPS IN-APP + envío opcional como PUSH
+   ============================================================ */
+(async function ensurePopupsTables() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS popups (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(255) NOT NULL,
+        body TEXT NULL,
+        image_url VARCHAR(500) NULL,
+        cta_text VARCHAR(120) NULL,
+        cta_url VARCHAR(500) NULL,
+        theme VARCHAR(40) DEFAULT 'default',
+        segment VARCHAR(40) DEFAULT 'all',
+        target_user_ids TEXT NULL,
+        start_at DATETIME NULL,
+        end_at DATETIME NULL,
+        priority INT DEFAULT 0,
+        show_once TINYINT(1) DEFAULT 1,
+        push_enabled TINYINT(1) DEFAULT 0,
+        push_sent TINYINT(1) DEFAULT 0,
+        active TINYINT(1) DEFAULT 1,
+        views INT DEFAULT 0,
+        clicks INT DEFAULT 0,
+        dismisses INT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_active (active),
+        INDEX idx_dates (start_at, end_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS popup_seen (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        popup_id INT NOT NULL,
+        user_id INT NOT NULL,
+        event VARCHAR(20) DEFAULT 'view',
+        seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_seen (popup_id, user_id, event),
+        INDEX idx_pop (popup_id),
+        INDEX idx_user (user_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (e) { console.warn("[popups] ensurePopupsTables:", e.message); }
+})();
+
+// Convierte segmento de popup a query SQL de dispositivos push
+async function popupSegmentToPushDevices(segment, targetIdsCsv) {
+  const clauses = ["active = 1", "user_id IS NOT NULL"];
+  const args = [];
+  if (targetIdsCsv && String(targetIdsCsv).trim()) {
+    const ids = String(targetIdsCsv).split(/[,\s]+/).map(x=>parseInt(x,10)).filter(Boolean);
+    if (!ids.length) return { where: "WHERE 1=0", args: [] };
+    clauses.push(`user_id IN (${ids.map(()=>"?").join(",")})`);
+    args.push(...ids);
+    return { where: "WHERE " + clauses.join(" AND "), args };
+  }
+  switch (segment) {
+    case "premium":   clauses.push("user_id IN (SELECT id FROM users WHERE plan IN ('gold','platinum','premium'))"); break;
+    case "free":      clauses.push("user_id IN (SELECT id FROM users WHERE plan IS NULL OR plan='free')"); break;
+    case "verified":  clauses.push("user_id IN (SELECT id FROM users WHERE verified=1)"); break;
+    case "unverified":clauses.push("user_id IN (SELECT id FROM users WHERE verified=0 OR verified IS NULL)"); break;
+    case "male":      clauses.push("user_id IN (SELECT id FROM users WHERE gender='male')"); break;
+    case "female":    clauses.push("user_id IN (SELECT id FROM users WHERE gender='female')"); break;
+    case "lgbt":      clauses.push("user_id IN (SELECT id FROM users WHERE zone='lgtb')"); break;
+    case "new":       clauses.push("user_id IN (SELECT id FROM users WHERE created_at >= NOW() - INTERVAL 30 DAY)"); break;
+    case "all":
+    default: /* all users */ break;
+  }
+  return { where: "WHERE " + clauses.join(" AND "), args };
+}
+
+async function sendPopupAsPush(popup) {
+  if (!pushEnabled()) return { sent: 0, note: "push_disabled" };
+  const q = await popupSegmentToPushDevices(popup.segment, popup.target_user_ids);
+  const [devices] = await pool.query(`SELECT id, endpoint, p256dh, auth_key FROM push_devices ${q.where}`, q.args);
+  const payload = {
+    title: popup.title,
+    body: (popup.body || "").replace(/<[^>]+>/g, "").slice(0, 500),
+    url: popup.cta_url || "/",
+    icon: "/aura-logo.png",
+    image: popup.image_url || undefined,
+    tag: `popup-${popup.id}`,
+  };
+  let ok = 0;
+  for (let i = 0; i < devices.length; i += 20) {
+    const batch = devices.slice(i, i+20);
+    const results = await Promise.all(batch.map(d => sendPushToDevice(d, payload)));
+    for (const r of results) if (r.ok) ok++;
+  }
+  await pool.execute("UPDATE popups SET push_sent=1 WHERE id=?", [popup.id]);
+  return { sent: ok, total: devices.length };
+}
+
+// -- Endpoints admin popups --------------------------------------------
+app.get("/api/admin/popups", requireAdmin, wrap(async (req, res) => {
+  const [rows] = await pool.query("SELECT * FROM popups ORDER BY priority DESC, created_at DESC");
+  res.json({ popups: rows });
+}));
+
+app.post("/api/admin/popups", requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!b.title) return res.status(400).json({ error: "missing_title" });
+  const [ins] = await pool.execute(
+    `INSERT INTO popups (title, body, image_url, cta_text, cta_url, theme, segment, target_user_ids,
+       start_at, end_at, priority, show_once, push_enabled, active)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      String(b.title).slice(0,255),
+      b.body || null,
+      b.image_url || null,
+      b.cta_text || null,
+      b.cta_url || null,
+      b.theme || "default",
+      b.segment || "all",
+      b.target_user_ids || null,
+      b.start_at ? new Date(b.start_at) : null,
+      b.end_at ? new Date(b.end_at) : null,
+      parseInt(b.priority,10) || 0,
+      b.show_once ? 1 : 0,
+      b.push_enabled ? 1 : 0,
+      b.active ? 1 : 0,
+    ]
+  );
+  const id = ins.insertId;
+  // Si tiene push activado y está activo, mandarlo YA como push (una vez).
+  if (b.push_enabled && b.active) {
+    const [[row]] = await pool.query("SELECT * FROM popups WHERE id=?", [id]);
+    sendPopupAsPush(row).catch(e => console.warn("[popup->push]", e.message));
+  }
+  res.json({ ok: true, id });
+}));
+
+app.patch("/api/admin/popups/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const fields = ["title","body","image_url","cta_text","cta_url","theme","segment","target_user_ids",
+                  "start_at","end_at","priority","show_once","push_enabled","active"];
+  const updates = [], params = [];
+  for (const f of fields) {
+    if (f in req.body) {
+      updates.push(`${f}=?`);
+      let v = req.body[f];
+      if (f === "start_at" || f === "end_at") v = v ? new Date(v) : null;
+      if (f === "priority") v = parseInt(v,10) || 0;
+      if (f === "show_once" || f === "push_enabled" || f === "active") v = v ? 1 : 0;
+      params.push(v);
+    }
+  }
+  if (!updates.length) return res.json({ ok: true });
+  params.push(id);
+  await pool.execute(`UPDATE popups SET ${updates.join(", ")} WHERE id=?`, params);
+  // Si acaba de activar push (y aún no se envió), disparar envío
+  if (req.body.push_enabled && req.body.active !== 0) {
+    const [[row]] = await pool.query("SELECT * FROM popups WHERE id=?", [id]);
+    if (row && row.active && row.push_enabled && !row.push_sent) {
+      sendPopupAsPush(row).catch(e => console.warn("[popup->push]", e.message));
+    }
+  }
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/popups/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  await pool.execute("DELETE FROM popups WHERE id=?", [id]);
+  await pool.execute("DELETE FROM popup_seen WHERE popup_id=?", [id]);
+  res.json({ ok: true });
+}));
+
+// Fuerza re-envío push del popup (para pruebas)
+app.post("/api/admin/popups/:id/send-push", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const [[row]] = await pool.query("SELECT * FROM popups WHERE id=?", [id]);
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const r = await sendPopupAsPush(row);
+  res.json({ ok: true, ...r });
+}));
+
+// -- Endpoints públicos usuario ---------------------------------------
+function matchesUserSegment(u, seg) {
+  if (!seg || seg === "all") return true;
+  if (seg === "premium")    return ["gold","platinum","premium"].includes(u.plan);
+  if (seg === "free")       return !u.plan || u.plan === "free";
+  if (seg === "verified")   return u.verified === 1;
+  if (seg === "unverified") return !u.verified;
+  if (seg === "male")       return u.gender === "male";
+  if (seg === "female")     return u.gender === "female";
+  if (seg === "lgbt")       return u.zone === "lgtb";
+  if (seg === "new")        return u.created_at && (Date.now() - new Date(u.created_at).getTime()) < 30*24*3600*1000;
+  return true;
+}
+
+app.get("/api/my/popup-active", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "unauthorized" });
+  const [[user]] = await pool.query("SELECT id, plan, verified, gender, zone, created_at FROM users WHERE id=?", [uid]);
+  if (!user) return res.status(404).json({ error: "no_user" });
+  const [popups] = await pool.query(
+    `SELECT * FROM popups
+     WHERE active=1
+       AND (start_at IS NULL OR start_at <= NOW())
+       AND (end_at IS NULL OR end_at >= NOW())
+     ORDER BY priority DESC, created_at DESC`
+  );
+  for (const p of popups) {
+    // Target users específicos
+    if (p.target_user_ids && String(p.target_user_ids).trim()) {
+      const ids = String(p.target_user_ids).split(/[,\s]+/).map(x=>parseInt(x,10)).filter(Boolean);
+      if (!ids.includes(uid)) continue;
+    } else if (!matchesUserSegment(user, p.segment)) {
+      continue;
+    }
+    // show_once: si ya lo vio y show_once=1, saltar
+    if (p.show_once) {
+      const [[seen]] = await pool.query("SELECT id FROM popup_seen WHERE popup_id=? AND user_id=? AND event='view' LIMIT 1", [p.id, uid]);
+      if (seen) continue;
+    }
+    return res.json(p);
+  }
+  res.json({});
+}));
+
+app.post("/api/my/popup/:id/event", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "unauthorized" });
+  const pid = parseInt(req.params.id, 10);
+  const ev = String(req.body?.event || "view").slice(0,20);
+  try { await pool.execute("INSERT IGNORE INTO popup_seen (popup_id, user_id, event) VALUES (?,?,?)", [pid, uid, ev]); } catch {}
+  const col = ev === "click" ? "clicks" : (ev === "dismiss" ? "dismisses" : "views");
+  try { await pool.execute(`UPDATE popups SET ${col} = ${col} + 1 WHERE id=?`, [pid]); } catch {}
+  res.json({ ok: true });
+}));
+
+/* ============================================================
+   STAFF · miembros del panel de administración
+   ============================================================ */
+(async function ensureStaffTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS staff (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(190) NOT NULL UNIQUE,
+        name VARCHAR(120) NULL,
+        role ENUM('admin','moderator','viewer') DEFAULT 'moderator',
+        permissions JSON NULL,
+        status ENUM('active','pending','suspended') DEFAULT 'pending',
+        last_login DATETIME NULL,
+        invited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_status (status)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (e) { console.warn("[staff] ensure:", e.message); }
+})();
+
+app.get("/api/admin/staff", requireAdmin, wrap(async (req, res) => {
+  const [rows] = await pool.query("SELECT * FROM staff ORDER BY created_at DESC");
+  res.json({ items: rows });
+}));
+
+app.post("/api/admin/staff", requireAdmin, wrap(async (req, res) => {
+  const { email, name, role, permissions } = req.body || {};
+  if (!email) return res.status(400).json({ error: "missing_email" });
+  try {
+    const [ins] = await pool.execute(
+      `INSERT INTO staff (email, name, role, permissions, status) VALUES (?,?,?,?,'pending')`,
+      [String(email).toLowerCase().slice(0,190), name || null, role || "moderator", JSON.stringify(permissions || [])]
+    );
+    res.json({ ok: true, id: ins.insertId });
+  } catch (e) {
+    if (e.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "duplicate_email" });
+    throw e;
+  }
+}));
+
+app.patch("/api/admin/staff/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const fields = ["name","role","permissions","status"];
+  const updates = [], params = [];
+  for (const f of fields) {
+    if (f in req.body) {
+      updates.push(`${f}=?`);
+      params.push(f === "permissions" ? JSON.stringify(req.body[f] || []) : req.body[f]);
+    }
+  }
+  if (!updates.length) return res.json({ ok: true });
+  params.push(id);
+  await pool.execute(`UPDATE staff SET ${updates.join(", ")} WHERE id=?`, params);
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/staff/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  await pool.execute("DELETE FROM staff WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/staff/:id/resend-invite", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const [[m]] = await pool.query("SELECT * FROM staff WHERE id=?", [id]);
+  if (!m) return res.status(404).json({ error: "not_found" });
+  await pool.execute("UPDATE staff SET invited_at=NOW(), status='pending' WHERE id=?", [id]);
+  // Nota: aquí iría el envío real del email de invitación con nodemailer.
+  res.json({ ok: true, note: "invite_marked_resent" });
+}));
+
+/* ============================================================
+   NEWSLETTERS · campañas de email
+   ============================================================ */
+(async function ensureNewslettersTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS newsletters (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        subject VARCHAR(255) NULL,
+        html_body MEDIUMTEXT NULL,
+        text_body TEXT NULL,
+        segment VARCHAR(64) DEFAULT 'all',
+        status ENUM('draft','scheduled','sending','sent','failed') DEFAULT 'draft',
+        sent_count INT DEFAULT 0,
+        opens INT DEFAULT 0,
+        scheduled_at DATETIME NULL,
+        sent_at DATETIME NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (e) { console.warn("[newsletters] ensure:", e.message); }
+})();
+
+app.get("/api/admin/newsletters", requireAdmin, wrap(async (req, res) => {
+  const [rows] = await pool.query("SELECT id, name, subject, segment, status, sent_count, opens, scheduled_at, sent_at, created_at FROM newsletters ORDER BY created_at DESC");
+  res.json({ items: rows });
+}));
+
+app.get("/api/admin/newsletters/seasonal-templates", requireAdmin, wrap(async (req, res) => {
+  res.json({
+    items: [
+      { emoji: "🎄", name: "Navidad",        subject: "Felices fiestas de parte de Aura", html_body: "<h1>Felices fiestas 🎄</h1><p>Que este fin de año te traiga alguien especial.</p>" },
+      { emoji: "🌸", name: "San Valentín",   subject: "¡Feliz San Valentín!",              html_body: "<h1>Feliz San Valentín 💘</h1><p>Encuentra tu match este 14 de febrero.</p>" },
+      { emoji: "☀️", name: "Verano",          subject: "Un verano lleno de citas",          html_body: "<h1>Verano en Aura ☀️</h1><p>Nuevos perfiles esperándote.</p>" },
+      { emoji: "🎃", name: "Halloween",      subject: "Aura te da un susto (bueno)",       html_body: "<h1>Halloween 🎃</h1><p>Descubre matches escalofriantes.</p>" },
+      { emoji: "🏳️‍🌈", name: "Pride",         subject: "Feliz Pride desde Aura",             html_body: "<h1>Feliz Pride 🏳️‍🌈</h1><p>Celebramos contigo.</p>" },
+      { emoji: "🎉", name: "Año Nuevo",      subject: "Nuevo año, nuevas conexiones",       html_body: "<h1>¡Feliz año nuevo! 🎉</h1><p>Empieza 2025 con nuevos matches.</p>" },
+    ],
+  });
+}));
+
+app.post("/api/admin/newsletters", requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (!b.name) return res.status(400).json({ error: "missing_name" });
+  const [ins] = await pool.execute(
+    `INSERT INTO newsletters (name, subject, html_body, text_body, segment, status, scheduled_at)
+     VALUES (?,?,?,?,?,?,?)`,
+    [
+      String(b.name).slice(0,255),
+      b.subject || null,
+      b.html_body || null,
+      b.text_body || null,
+      b.segment || "all",
+      b.status || "draft",
+      b.scheduled_at ? new Date(b.scheduled_at) : null,
+    ]
+  );
+  res.json({ ok: true, id: ins.insertId });
+}));
+
+app.patch("/api/admin/newsletters/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const fields = ["name","subject","html_body","text_body","segment","status","scheduled_at"];
+  const updates = [], params = [];
+  for (const f of fields) {
+    if (f in req.body) {
+      updates.push(`${f}=?`);
+      let v = req.body[f];
+      if (f === "scheduled_at") v = v ? new Date(v) : null;
+      params.push(v);
+    }
+  }
+  if (!updates.length) return res.json({ ok: true });
+  params.push(id);
+  await pool.execute(`UPDATE newsletters SET ${updates.join(", ")} WHERE id=?`, params);
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/newsletters/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  await pool.execute("DELETE FROM newsletters WHERE id=?", [id]);
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/newsletters/:id/send", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const [[n]] = await pool.query("SELECT * FROM newsletters WHERE id=?", [id]);
+  if (!n) return res.status(404).json({ error: "not_found" });
+  // Marca como enviada y cuenta usuarios del segmento. El envío real depende
+  // de tu configuración SMTP (nodemailer ya está requerido arriba).
+  let seg = "1=1";
+  switch (n.segment) {
+    case "premium":   seg = "plan IN ('gold','platinum','premium')"; break;
+    case "free":      seg = "(plan IS NULL OR plan='free')"; break;
+    case "verified":  seg = "verified=1"; break;
+    case "unverified":seg = "(verified=0 OR verified IS NULL)"; break;
+    case "new":       seg = "created_at >= NOW() - INTERVAL 30 DAY"; break;
+  }
+  const [[c]] = await pool.query(`SELECT COUNT(*) AS c FROM users WHERE ${seg}`);
+  await pool.execute("UPDATE newsletters SET status='sent', sent_count=?, sent_at=NOW() WHERE id=?", [c.c || 0, id]);
+  res.json({ ok: true, count: c.c || 0 });
+}));
+
+/* ============================================================
+   DUPLICATES · detección de cuentas duplicadas
+   ============================================================ */
+(async function ensureDuplicatesTable() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS duplicates (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_a_id INT NOT NULL,
+        user_b_id INT NOT NULL,
+        score INT DEFAULT 0,
+        auto_action ENUM('none','flagged','blocked') DEFAULT 'none',
+        signals JSON NULL,
+        status ENUM('pending','confirmed','dismissed','merged') DEFAULT 'pending',
+        note TEXT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        resolved_at DATETIME NULL,
+        UNIQUE KEY uniq_pair (user_a_id, user_b_id),
+        INDEX idx_status (status),
+        INDEX idx_score (score)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    `);
+  } catch (e) { console.warn("[duplicates] ensure:", e.message); }
+})();
+
+app.get("/api/admin/duplicates", requireAdmin, wrap(async (req, res) => {
+  const status = String(req.query.status || "pending");
+  const [rows] = await pool.query(
+    `SELECT d.*,
+       ua.email AS user_a_email, ua.name AS user_a_name, ua.photo_url AS user_a_photo, ua.created_at AS user_a_created, ua.status AS user_a_status,
+       ub.email AS user_b_email, ub.name AS user_b_name, ub.photo_url AS user_b_photo, ub.created_at AS user_b_created, ub.status AS user_b_status
+     FROM duplicates d
+     LEFT JOIN users ua ON ua.id = d.user_a_id
+     LEFT JOIN users ub ON ub.id = d.user_b_id
+     WHERE d.status = ?
+     ORDER BY d.score DESC, d.created_at DESC
+     LIMIT 200`,
+    [status]
+  );
+  const matches = rows.map(r => {
+    let signals = [];
+    try { signals = r.signals ? (typeof r.signals === "string" ? JSON.parse(r.signals) : r.signals) : []; } catch {}
+    return { ...r, signals };
+  });
+  res.json({ matches });
+}));
+
+app.post("/api/admin/duplicates/:id/action", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const action = String(req.body?.action || "");
+  const note = req.body?.note || null;
+  const [[m]] = await pool.query("SELECT * FROM duplicates WHERE id=?", [id]);
+  if (!m) return res.status(404).json({ error: "not_found" });
+  if (action === "confirm") {
+    await pool.execute("UPDATE duplicates SET status='confirmed', note=?, resolved_at=NOW() WHERE id=?", [note, id]);
+  } else if (action === "dismiss") {
+    await pool.execute("UPDATE duplicates SET status='dismissed', note=?, resolved_at=NOW() WHERE id=?", [note, id]);
+  } else if (action === "ban_a") {
+    try { await pool.execute("UPDATE users SET status='banned' WHERE id=?", [m.user_a_id]); } catch {}
+    await pool.execute("UPDATE duplicates SET status='confirmed', note=?, resolved_at=NOW() WHERE id=?", [note || "banned A", id]);
+  } else if (action === "ban_b") {
+    try { await pool.execute("UPDATE users SET status='banned' WHERE id=?", [m.user_b_id]); } catch {}
+    await pool.execute("UPDATE duplicates SET status='confirmed', note=?, resolved_at=NOW() WHERE id=?", [note || "banned B", id]);
+  } else {
+    return res.status(400).json({ error: "unknown_action" });
+  }
   res.json({ ok: true });
 }));
 
@@ -8188,6 +8957,10 @@ app.get("/api/public-config", (req, res) => {
       maintenance: isTrue("app.maintenance", false),
       access_locked: isTrue("app.access_locked", false),
       private_beta: isTrue("app.access_locked", false),
+    },
+    push: {
+      vapid_public_key: process.env.VAPID_PUBLIC_KEY || "",
+      enabled: !!(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY),
     },
     payments: {
       stripe: isTrue("payments.stripe", true),
