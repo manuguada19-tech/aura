@@ -7517,3 +7517,27 @@ body:not(.app-open) #twofaReminder {
 :root[data-theme="light"] .stage-side-right .mock-card .muted {
   color: #5b6270 !important;
 }
+
+/* V536 — FUERZA DEFINITIVA del tamaño del logo del hero. Sobrescribe cualquier
+   media-query anterior que fijase un tamaño pequeño. Usa la variable
+   --welc-logo-size (inyectada por applyDesign) con fallback 160px, y cap 25vh. */
+html body .welcome-heart,
+html body .welcome-heart.logo-transparent,
+html body .screen-hero .welcome-heart,
+html body .app-viewport .screen.screen-hero .welcome-heart,
+html body .phone .screen-hero .welcome-heart {
+  width: min(var(--welc-logo-size, 160px), 25vh, 220px) !important;
+  height: min(var(--welc-logo-size, 160px), 25vh, 220px) !important;
+  max-width: min(var(--welc-logo-size, 160px), 25vh, 220px) !important;
+  max-height: min(var(--welc-logo-size, 160px), 25vh, 220px) !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  aspect-ratio: 1 / 1 !important;
+}
+html body .welcome-heart > img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+}
