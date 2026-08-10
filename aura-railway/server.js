@@ -5812,6 +5812,45 @@ async function seedContentDefaults() {
     console.error("[migration V530] Failed:", e && e.message);
   }
 
+  // V535: Fuerza el logo circular Aura (v6) y el fondo vino oscuro tras el
+  // deploy actual. Se ejecuta una única vez con sentinel. NO depende de
+  // que la migración V532 se saltase por el sentinel anterior.
+  try {
+    const [rowsV535] = await pool.execute(
+      "SELECT v FROM settings WHERE k = 'content.design.restore.v535'"
+    );
+    if (!rowsV535 || rowsV535.length === 0) {
+      const auraV535 = {
+        "content.design.brand1": "#ff3b6b",
+        "content.design.brand2": "#a855f7",
+        "content.design.bg": "#14060b",
+        "content.design.hero_style": "solid",
+        "content.design.hero_image": "",
+        "content.design.hero_solid_color": "#14060b",
+        "content.design.logo_mode": "image",
+        "content.design.logo_image": "assets/aura-logo-round.png?v=6",
+        "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=6",
+        "content.design.logo_bg": "transparent",
+        "content.design.logo_size": "115",
+        "content.design.welc_logo_size": "115",
+        "content.design.logo_radius": "50",
+      };
+      for (const [k, v] of Object.entries(auraV535)) {
+        await pool.execute(
+          "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+          [k, v]
+        );
+      }
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.restore.v535", "1"]
+      );
+      console.log("[migration V535] Aura round logo v6 forced");
+    }
+  } catch (e) {
+    console.error("[migration V535] Failed:", e && e.message);
+  }
+
   // V381: Forzar registros CERRADOS una única vez para arrancar con waitlist
   // por defecto. A partir de aquí el admin decide desde el panel.
   try {
