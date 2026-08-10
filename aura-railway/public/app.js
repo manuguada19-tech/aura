@@ -10861,34 +10861,27 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-// Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
-// Se llama tras showApp() (login/registro OK). No molesta si ya está permitido
-// o si el usuario ya lo denegó.
-async function maybePromptForPush() {
+// V588 · Comprueba si el push Web es viable en este navegador/backend.
+function pushSupported() {
+  return ("Notification" in window) && ("serviceWorker" in navigator) && ("PushManager" in window) && !!window.__vapidPublicKey;
+}
+
+// V588 · Suscribe este dispositivo y lo registra en backend. Asume permiso
+// ya concedido (o lo pide el navegador dentro de subscribe()). Funciona
+// también sin login: authHeaders() no añade X-User-Id y el backend guarda
+// el dispositivo como anónimo (user_id NULL).
+async function subscribePushDevice() {
   try {
-    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
-    if (Notification.permission === "denied") return;
-    const vapid = window.__vapidPublicKey || null;
-    if (!vapid) return; // backend sin VAPID configurado
+    if (!pushSupported() || Notification.permission === "denied") return false;
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
     if (!sub) {
-      if (Notification.permission === "default") {
-        // Guardamos flag para no volver a pedir cada login si el usuario cierra el prompt.
-        try {
-          const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
-          if (Date.now() - lastAsk < 3 * 24 * 3600 * 1000) return; // no más de 1 vez cada 3 días
-          localStorage.setItem("aura_push_last_ask", String(Date.now()));
-        } catch {}
-        const p = await Notification.requestPermission();
-        if (p !== "granted") return;
-      }
       try {
         sub = await reg.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(vapid),
+          applicationServerKey: urlBase64ToUint8Array(window.__vapidPublicKey),
         });
-      } catch (e) { return; }
+      } catch (e) { return false; }
     }
     const raw = sub.toJSON();
     let lang = ""; try { lang = (navigator.language || "").slice(0, 8); } catch {}
@@ -10903,8 +10896,101 @@ async function maybePromptForPush() {
         lang,
       }),
     }).catch(()=>{});
+    return true;
+  } catch { return false; }
+}
+
+// V588 · Soft-prompt de dos pasos: banner propio ANTES del prompt nativo.
+// Así un "Ahora no" no quema el permiso del navegador (denied es casi
+// irreversible) y la tasa de aceptación del prompt real sube.
+// context: "user" (tras login) | "anon" (visitante con PWA instalada)
+function showPushSoftPrompt(context) {
+  if (document.getElementById("auraPushSoft")) return;
+  const isAnon = context === "anon";
+  const wrap = el("div", { id: "auraPushSoft", class: "push-soft" }, [
+    el("div", { class: "push-soft-ico" }, "🔔"),
+    el("div", { class: "push-soft-body" }, [
+      el("strong", {}, isAnon ? "¿Te contamos las novedades de Aura?" : "¿Te avisamos de tus matches y mensajes?"),
+      el("small", {}, "Solo cosas importantes, sin spam. Puedes desactivarlo cuando quieras."),
+    ]),
+    el("div", { class: "push-soft-actions" }, [
+      el("button", { class: "push-soft-no", onclick: () => {
+        try { localStorage.setItem("aura_push_last_ask", String(Date.now())); } catch {}
+        wrap.remove();
+      } }, "Ahora no"),
+      el("button", { class: "push-soft-yes", onclick: async () => {
+        wrap.remove();
+        try { localStorage.setItem("aura_push_last_ask", String(Date.now())); } catch {}
+        // Solo aquí lanzamos el prompt NATIVO del navegador.
+        try {
+          const p = await Notification.requestPermission();
+          if (p !== "granted") return;
+        } catch { return; }
+        const ok = await subscribePushDevice();
+        if (ok) { try { toast("Avisos activados 🔔"); } catch {} }
+      } }, "Sí, avisadme"),
+    ]),
+  ]);
+  document.body.appendChild(wrap);
+  setTimeout(() => wrap.classList.add("show"), 30);
+}
+
+// Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
+// Se llama tras showApp() (login/registro OK). No molesta si ya está permitido
+// o si el usuario ya lo denegó.
+// V588 · Ahora en dos pasos: si el permiso está en "default" muestra primero
+// el soft-prompt propio; el prompt nativo solo se lanza si el usuario acepta.
+async function maybePromptForPush() {
+  try {
+    if (!pushSupported()) return;
+    if (Notification.permission === "denied") return;
+    if (Notification.permission === "granted") {
+      // Permiso ya concedido → (re)suscribir en silencio y vincular al usuario.
+      await subscribePushDevice();
+      return;
+    }
+    // permission === "default" → soft-prompt con cooldown de 3 días
+    try {
+      const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
+      if (Date.now() - lastAsk < 3 * 24 * 3600 * 1000) return;
+    } catch {}
+    showPushSoftPrompt("user");
   } catch {}
 }
+
+// V588 · Opt-in para visitantes SIN cuenta que instalaron la PWA (señal de
+// interés real). Se dispara al arrancar en modo standalone sin sesión, o
+// justo tras el evento appinstalled. Cooldown de 7 días para anónimos.
+async function maybePromptForPushAnon() {
+  try {
+    if (!pushSupported()) return;
+    if (Notification.permission === "denied") return;
+    // Si ya hay sesión, este flujo no aplica (lo gestiona maybePromptForPush).
+    try {
+      const s = JSON.parse(localStorage.getItem("aura-session") || "null");
+      if (s && (s.id || s.user_id)) return;
+    } catch {}
+    if (Notification.permission === "granted") { await subscribePushDevice(); return; }
+    try {
+      const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
+      if (Date.now() - lastAsk < 7 * 24 * 3600 * 1000) return;
+    } catch {}
+    showPushSoftPrompt("anon");
+  } catch {}
+}
+
+// V588 · Disparadores del flujo anónimo:
+// 1) La PWA arranca en standalone sin sesión → visitante instalado sin cuenta.
+// 2) El usuario acaba de instalar la PWA desde el navegador (appinstalled).
+(function initAnonPushOptIn() {
+  try {
+    const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+    if (standalone) setTimeout(() => { try { maybePromptForPushAnon(); } catch {} }, 6000);
+    window.addEventListener("appinstalled", () => {
+      setTimeout(() => { try { maybePromptForPushAnon(); } catch {} }, 3000);
+    });
+  } catch {}
+})();
 
 function authHeaders() {
   const h = {};

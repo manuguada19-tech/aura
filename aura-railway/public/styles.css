@@ -7814,3 +7814,31 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 .notif-time { font-size: 11px; margin-top: 4px; }
 .notif-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b6b; flex: 0 0 auto; margin-top: 6px; }
 .notif-empty { text-align: center; padding: 28px 12px; }
+
+/* V588 · Soft-prompt de push (banner propio previo al prompt nativo) */
+.push-soft {
+  position: fixed; left: 12px; right: 12px; bottom: 76px; z-index: 9500;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+  box-shadow: 0 12px 36px rgba(0,0,0,.28);
+  opacity: 0; transform: translateY(12px);
+  transition: opacity .25s ease, transform .25s ease;
+  max-width: 520px; margin: 0 auto;
+}
+.push-soft.show { opacity: 1; transform: none; }
+.push-soft-ico { font-size: 26px; flex: 0 0 auto; }
+.push-soft-body { flex: 1; min-width: 0; }
+.push-soft-body strong { display: block; font-size: 13.5px; }
+.push-soft-body small { display: block; font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.push-soft-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.push-soft-yes {
+  padding: 8px 14px; border-radius: 999px; border: none; cursor: pointer;
+  background: linear-gradient(135deg, #ff3b6b, #a855f7); color: #fff;
+  font-weight: 700; font-size: 12.5px;
+}
+.push-soft-no {
+  padding: 6px 14px; border-radius: 999px; cursor: pointer;
+  background: transparent; border: 1px solid var(--border-strong);
+  color: var(--text-soft); font-weight: 600; font-size: 12px;
+}
