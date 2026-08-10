@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_push_ctx"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_push_ctx"];
 
   function readTok() {
     try {
@@ -1203,6 +1203,99 @@
       });
     }
 
+    // ---- V568 · Notas de voz (moderación) --------------------------
+    async function view_voice_notes(container) {
+      const DEPT_LABEL = { safety: "🛡️ Seguridad", quality: "⚙️ Calidad", legal: "⚖️ Legal", support: "🎧 Soporte", none: "—" };
+      DataView(container, {
+        title: "Notas de voz", subtitle: "Auditoría de audios enviados en chat (V568)", icon: "🎤",
+        fetch: async () => (await api("/api/admin/voice-notes")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total", value: rows.length, accent: "blue" },
+          { label: "Seguridad", value: rows.filter((r) => r.audio_department === "safety").length, accent: "red" },
+          { label: "Calidad", value: rows.filter((r) => r.audio_department === "quality").length, accent: "amber" },
+          { label: "Legal", value: rows.filter((r) => r.audio_department === "legal").length, accent: "purple" },
+          { label: "Soporte", value: rows.filter((r) => r.audio_department === "support").length, accent: "blue" },
+          { label: "Últ. 24h", value: rows.filter((r) => Date.now() - new Date(r.created_at).getTime() < 86400000).length, accent: "green" },
+        ],
+        filters: [
+          { key: "audio_department", label: "Departamento", type: "select", options: [ { value: "safety", label: "Seguridad" }, { value: "quality", label: "Calidad" }, { value: "legal", label: "Legal" }, { value: "support", label: "Soporte" }, { value: "none", label: "Sin clasificar" } ] },
+          { key: "sender_id", label: "ID emisor", type: "text" },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "sender", label: "Emisor", render: (r) => (r.sender_name || `#${r.sender_id}`) + (r.sender_email ? ` <span class="fx-muted">${r.sender_email}</span>` : "") },
+          { key: "receiver", label: "Receptor", render: (r) => r.receiver_name || `#${r.receiver_id}` },
+          { key: "audio", label: "Audio", render: (r) => {
+            if (!r.media_url) return "[borrado]";
+            const wrap = document.createElement("div");
+            wrap.style.cssText = "display:flex;align-items:center;gap:6px";
+            const a = document.createElement("audio"); a.src = r.media_url; a.controls = true; a.preload = "none"; a.style.maxWidth = "220px";
+            wrap.appendChild(a);
+            return wrap;
+          } },
+          { key: "duration", label: "Duración", render: (r) => r.audio_duration_ms ? Math.max(1, Math.round(r.audio_duration_ms/1000)) + "s" : "—" },
+          { key: "size", label: "Tamaño", render: (r) => r.audio_bytes ? Math.round(r.audio_bytes/1024) + " KB" : "—" },
+          { key: "audio_department", label: "Depto.", render: (r) => DEPT_LABEL[r.audio_department || "none"] },
+          { key: "audio_triage_flags", label: "Flags", render: (r) => r.audio_triage_flags || "—" },
+          { key: "created_at", label: "Enviado", sortable: true, render: (r) => fmtDate(r.created_at) },
+        ],
+        actions: [
+          { label: "Detalle", icon: "🔍", title: "Ver detalle", onClick: async (r) => {
+            const det = await api(`/api/admin/voice-notes/${r.id}`);
+            const n = det.data?.note;
+            const back = document.createElement("div");
+            back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px";
+            const card = document.createElement("div");
+            card.style.cssText = "background:#1c1e2e;color:#fff;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:16px;border-radius:12px";
+            card.innerHTML = `
+              <h3>🎤 Nota de voz #${n.id}</h3>
+              <p>Conversación: #${n.conversation_id}<br>
+                 Emisor: ${n.sender_name || n.sender_id} (${n.sender_email || ""})<br>
+                 Receptor: ${n.user_a === n.sender_id ? (n.ub_name || n.user_b) : (n.ua_name || n.user_a)}
+                 (${n.user_a === n.sender_id ? (n.ub_email || "") : (n.ua_email || "")})</p>
+              <p>Duración: ${n.audio_duration_ms ? Math.round(n.audio_duration_ms/1000)+"s" : "—"} · ${n.audio_bytes ? Math.round(n.audio_bytes/1024)+" KB" : "—"} · ${n.audio_mime || "?"}<br>
+                 Enviada: ${fmtDate(n.created_at)}${n.read_at ? " · Leída: "+fmtDate(n.read_at) : ""}</p>
+              <p>Triage: <b>${DEPT_LABEL[n.audio_department || "none"]}</b> · score ${n.audio_triage_score || 0} · flags: ${n.audio_triage_flags || "—"}</p>
+              ${n.audio_admin_notes ? `<p style="background:rgba(255,255,255,0.05);padding:8px;border-radius:6px">📝 ${n.audio_admin_notes}</p>` : ""}
+              ${n.media_url ? `<audio src="${n.media_url}" controls style="width:100%;margin:8px 0"></audio>` : "<i>Audio eliminado</i>"}
+              <textarea id="fxNotes" placeholder="Notas del moderador…" style="width:100%;min-height:60px;background:#0e1020;color:#fff;border:1px solid #333;border-radius:6px;padding:6px">${n.audio_admin_notes || ""}</textarea>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+                <button data-d="safety" class="fx-btn">🛡️ Seguridad</button>
+                <button data-d="quality" class="fx-btn">⚙️ Calidad</button>
+                <button data-d="legal" class="fx-btn">⚖️ Legal</button>
+                <button data-d="support" class="fx-btn">🎧 Soporte</button>
+                <button data-d="none" class="fx-btn">— Sin clasificar</button>
+                <button data-retry class="fx-btn">🔄 Re-triage</button>
+                <button data-del class="fx-btn" style="background:#e53950;color:#fff">🗑️ Borrar audio</button>
+                <button data-close class="fx-btn">Cerrar</button>
+              </div>`;
+            back.appendChild(card);
+            back.onclick = (e) => { if (e.target === back) back.remove(); };
+            document.body.appendChild(back);
+            card.querySelectorAll("button[data-d]").forEach((b) => b.onclick = async () => {
+              const dept = b.getAttribute("data-d");
+              const notes = card.querySelector("#fxNotes").value.trim() || null;
+              await api(`/api/admin/voice-notes/${n.id}/department`, { method: "PATCH", body: JSON.stringify({ department: dept, notes }) });
+              toast("Departamento actualizado", "ok"); back.remove();
+            });
+            card.querySelector("[data-retry]").onclick = async () => {
+              await api(`/api/admin/voice-notes/${n.id}/triage`, { method: "POST" });
+              toast("Triage recalculado", "ok"); back.remove();
+            };
+            card.querySelector("[data-del]").onclick = async () => {
+              const ok = await confirmDialog({ title: "Borrar audio", message: `Se eliminará el archivo. El mensaje pasará a mostrar "[audio eliminado por moderación]".`, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              await api(`/api/admin/voice-notes/${n.id}`, { method: "DELETE" });
+              toast("Audio borrado", "ok"); back.remove();
+            };
+            card.querySelector("[data-close]").onclick = () => back.remove();
+          } },
+        ],
+        bulkEndpoint: "/api/admin/voice-notes/bulk-delete",
+      });
+    }
+
     // ---- Push contextuales -----------------------------------------
     async function view_push_ctx(container) {
       DataView(container, {
@@ -1255,6 +1348,7 @@
       fx_heatmap: wrapView(view_heatmap),
       fx_moderation_ai: wrapView(view_moderation_ai),
       fx_video: wrapView(view_video),
+      fx_voice_notes: wrapView(view_voice_notes),
       fx_push_ctx: wrapView(view_push_ctx),
     });
     console.log("[admin_features] v556 · 10 vistas premium registradas");

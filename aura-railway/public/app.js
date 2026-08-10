@@ -7416,7 +7416,7 @@ function screenChat(root, u, isNew, opts = {}) {
         // V566 · Subimos por /api/my/audio/upload (data-URL base64 → fichero real
         // servido desde /uploads/audio/…). Sin fallback a data-URL en línea (peso).
         const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
-        let audioUrl = null;
+        let audioUrl = null; let audioBytes = 0; let audioMime = "audio/webm";
         try {
           const up = await fetch("/api/my/audio/upload", {
             method: "POST",
@@ -7429,7 +7429,7 @@ function screenChat(root, u, isNew, opts = {}) {
             return;
           }
           if (!up.ok || !j?.url) throw new Error(j?.error || "upload_failed");
-          audioUrl = j.url;
+          audioUrl = j.url; audioBytes = j.bytes || 0; audioMime = j.mime || audioMime;
         } catch (e) {
           console.error("[audio upload]", e);
           toast("No se pudo subir el audio.");
@@ -7437,8 +7437,8 @@ function screenChat(root, u, isNew, opts = {}) {
         }
         const endpoint = ephemeralState.on ? "/api/my/messages/ephemeral" : "/api/my/messages/audio";
         const body = ephemeralState.on
-          ? { conversation_id: state_.convId, media_type: "audio", media_url: audioUrl }
-          : { conversation_id: state_.convId, media_url: audioUrl };
+          ? { conversation_id: state_.convId, media_type: "audio", media_url: audioUrl, duration_ms, bytes: audioBytes, mime: audioMime }
+          : { conversation_id: state_.convId, media_url: audioUrl, duration_ms, bytes: audioBytes, mime: audioMime };
         try {
           const r = await fetch(endpoint, {
             method: "POST",

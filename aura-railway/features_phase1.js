@@ -75,6 +75,15 @@ async function migrate(pool) {
   await q(`ALTER TABLE messages ADD COLUMN sticker_id INT NULL`);
   await q(`ALTER TABLE messages ADD COLUMN ephemeral TINYINT(1) DEFAULT 0`);
   await q(`ALTER TABLE messages ADD INDEX idx_expires (expires_at)`);
+  // V568 · Moderación de notas de voz (audio en chat).
+  await q(`ALTER TABLE messages ADD COLUMN audio_bytes INT NULL`);
+  await q(`ALTER TABLE messages ADD COLUMN audio_duration_ms INT NULL`);
+  await q(`ALTER TABLE messages ADD COLUMN audio_mime VARCHAR(64) NULL`);
+  await q(`ALTER TABLE messages ADD COLUMN audio_department ENUM('safety','quality','legal','support','none') DEFAULT 'none'`);
+  await q(`ALTER TABLE messages ADD COLUMN audio_triage_score INT DEFAULT 0`);
+  await q(`ALTER TABLE messages ADD COLUMN audio_triage_flags TEXT NULL`);
+  await q(`ALTER TABLE messages ADD COLUMN audio_admin_notes TEXT NULL`);
+  await q(`ALTER TABLE messages ADD INDEX idx_audio_dept (audio_department)`);
 
   // Seed rompehielo (una vez)
   const [seedCheck] = await pool.query("SELECT COUNT(*) c FROM icebreakers");
@@ -298,15 +307,22 @@ function register(app, pool, helpers) {
     }
     const cid = parseInt(req.body?.conversation_id, 10);
     const mediaUrl = req.body?.media_url ? String(req.body.media_url).slice(0, 500) : "";
+    const bytes = parseInt(req.body?.bytes, 10) || null;
+    const duration_ms = parseInt(req.body?.duration_ms, 10) || null;
+    const mime = req.body?.mime ? String(req.body.mime).slice(0, 64) : null;
     if (!cid || !mediaUrl) return res.status(400).json({ error: "params" });
     const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
     if (!c.length) return res.status(404).json({ error: "not_found" });
     if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
     const [r] = await pool.execute(
-      "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url) VALUES (?,?,?,?,?)",
-      [cid, me, null, "audio", mediaUrl]
+      `INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url,
+                             audio_bytes, audio_duration_ms, audio_mime)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [cid, me, null, "audio", mediaUrl, bytes, duration_ms, mime]
     );
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
+    // V568 · Auto-triage inicial
+    try { await autoTriageVoiceNote(pool, r.insertId); } catch (e) { console.warn("[voice triage]", e.message); }
     res.json({ ok: true, id: r.insertId });
   }));
 
@@ -494,7 +510,163 @@ function register(app, pool, helpers) {
     }
   }));
 
+  // ============ V568 · ADMIN: Notas de voz ==========================
+  // Listado con filtros + KPIs + reproductor por fila + triage.
+  app.get("/api/admin/voice-notes", requireAdmin, wrap(async (req, res) => {
+    const dept = String(req.query?.department || "").toLowerCase();
+    const params = [];
+    let where = "WHERE m.media_type='audio' AND m.media_url IS NOT NULL";
+    if (dept && ["safety","quality","legal","support","none"].includes(dept)) {
+      where += " AND m.audio_department=?"; params.push(dept);
+    }
+    const [rows] = await pool.query(
+      `SELECT m.id, m.conversation_id, m.sender_id, m.media_url, m.audio_bytes,
+              m.audio_duration_ms, m.audio_mime, m.audio_department, m.audio_triage_score,
+              m.audio_triage_flags, m.audio_admin_notes, m.created_at, m.read_at,
+              m.ephemeral, m.expires_at,
+              su.name AS sender_name, su.email AS sender_email,
+              c.user_a, c.user_b,
+              ua.name AS ua_name, ub.name AS ub_name
+         FROM messages m
+         LEFT JOIN users su ON su.id=m.sender_id
+         LEFT JOIN conversations c ON c.id=m.conversation_id
+         LEFT JOIN users ua ON ua.id=c.user_a
+         LEFT JOIN users ub ON ub.id=c.user_b
+         ${where}
+         ORDER BY m.id DESC LIMIT 500`,
+      params
+    );
+    // Enriquecer con "receiver_*"
+    const items = rows.map((r) => {
+      const rid = r.sender_id === r.user_a ? r.user_b : r.user_a;
+      const rname = r.sender_id === r.user_a ? r.ub_name : r.ua_name;
+      return { ...r, receiver_id: rid, receiver_name: rname };
+    });
+    res.json({ ok: true, items });
+  }));
+
+  app.get("/api/admin/voice-notes/:id", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const [[m]] = await pool.query(
+      `SELECT m.*, su.name AS sender_name, su.email AS sender_email,
+              c.user_a, c.user_b, ua.name AS ua_name, ub.name AS ub_name,
+              ua.email AS ua_email, ub.email AS ub_email
+         FROM messages m
+         LEFT JOIN users su ON su.id=m.sender_id
+         LEFT JOIN conversations c ON c.id=m.conversation_id
+         LEFT JOIN users ua ON ua.id=c.user_a
+         LEFT JOIN users ub ON ub.id=c.user_b
+         WHERE m.id=? AND m.media_type='audio' LIMIT 1`, [id]
+    ).then((rr)=>[rr[0]]);
+    if (!m) return res.status(404).json({ error: "not_found" });
+    res.json({ ok: true, note: m });
+  }));
+
+  app.patch("/api/admin/voice-notes/:id/department", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const dept = String(req.body?.department || "").toLowerCase();
+    if (!["safety","quality","legal","support","none"].includes(dept)) {
+      return res.status(400).json({ error: "invalid_department" });
+    }
+    const notes = req.body?.notes != null ? String(req.body.notes).slice(0, 2000) : null;
+    await pool.execute(
+      "UPDATE messages SET audio_department=?, audio_admin_notes=COALESCE(?, audio_admin_notes) WHERE id=? AND media_type='audio'",
+      [dept, notes, id]
+    );
+    res.json({ ok: true });
+  }));
+
+  app.post("/api/admin/voice-notes/:id/triage", requireAdmin, wrap(async (req, res) => {
+    const r = await autoTriageVoiceNote(pool, parseInt(req.params.id, 10));
+    res.json({ ok: true, ...r });
+  }));
+
+  app.delete("/api/admin/voice-notes/:id", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const [[m]] = await pool.query("SELECT media_url FROM messages WHERE id=? AND media_type='audio' LIMIT 1", [id]).then((rr)=>[rr[0]]);
+    if (!m) return res.status(404).json({ error: "not_found" });
+    const fs = require("fs");
+    const path = require("path");
+    const abs = path.join(__dirname, "public", String(m.media_url || "").replace(/^\/+/, ""));
+    try { fs.unlinkSync(abs); } catch {}
+    // No borramos la fila del mensaje (rompería el hilo); anulamos media y marcamos texto.
+    await pool.execute("UPDATE messages SET media_url=NULL, body='[audio eliminado por moderación]' WHERE id=?", [id]);
+    res.json({ ok: true });
+  }));
+
+  app.post("/api/admin/voice-notes/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Boolean) : [];
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [rows] = await pool.query(`SELECT id, media_url FROM messages WHERE id IN (${ids.map(()=>"?").join(",")}) AND media_type='audio'`, ids);
+    const fs = require("fs"); const path = require("path");
+    for (const r of rows) {
+      const abs = path.join(__dirname, "public", String(r.media_url || "").replace(/^\/+/, ""));
+      try { fs.unlinkSync(abs); } catch {}
+    }
+    await pool.execute(
+      `UPDATE messages SET media_url=NULL, body='[audio eliminado por moderación]' WHERE id IN (${ids.map(()=>"?").join(",")})`,
+      ids
+    );
+    res.json({ ok: true, deleted: rows.length });
+  }));
+
   console.log("[phase1] endpoints registered");
 }
 
-module.exports = { migrate, register, startExpiryJob, planAtLeast, PLAN_RANK };
+// V568 · Triage heurístico de nota de voz.
+//   - Duración > 2 min → "quality" (raro, límite es 2 min)
+//   - Duración < 1 s → "quality" (fallo técnico / spam)
+//   - Emisor con >=1 reporte activo → "safety"
+//   - Emisor envía >= 5 audios en la última hora → "safety" (posible acoso/spam)
+//   - Ratio de audios/textos muy alto en 24h → "safety"
+//   - Todo OK → "none"
+async function autoTriageVoiceNote(pool, messageId) {
+  const [[m]] = await pool.query(
+    "SELECT id, sender_id, conversation_id, audio_duration_ms, audio_bytes, created_at FROM messages WHERE id=? AND media_type='audio' LIMIT 1",
+    [messageId]
+  ).then((rr)=>[rr[0]]);
+  if (!m) return { skipped: true };
+  const flags = []; let dept = "none"; let score = 0;
+  const dur = m.audio_duration_ms || 0;
+  if (dur > 0 && dur < 1000) { dept = "quality"; flags.push("too_short"); score += 15; }
+  else if (dur > 130 * 1000) { dept = "quality"; flags.push("too_long"); score += 10; }
+
+  // Reportes activos contra el emisor
+  try {
+    const [[rep]] = await pool.query(
+      "SELECT COUNT(*) c FROM reports WHERE target_id=?", [m.sender_id]
+    ).then((rr)=>[rr[0]]);
+    if (rep && rep.c > 0) { dept = "safety"; flags.push("sender_has_reports:"+rep.c); score += 40; }
+  } catch {}
+
+  // Ráfaga de audios en la última hora
+  try {
+    const [[burst]] = await pool.query(
+      "SELECT COUNT(*) c FROM messages WHERE sender_id=? AND media_type='audio' AND created_at > (NOW() - INTERVAL 1 HOUR)",
+      [m.sender_id]
+    ).then((rr)=>[rr[0]]);
+    if (burst && burst.c >= 5) { dept = "safety"; flags.push("burst_"+burst.c+"_per_hour"); score += 30; }
+  } catch {}
+
+  // Ratio audios/textos en 24h
+  try {
+    const [[stats]] = await pool.query(
+      `SELECT
+         SUM(CASE WHEN media_type='audio' THEN 1 ELSE 0 END) a,
+         SUM(CASE WHEN media_type!='audio' THEN 1 ELSE 0 END) t
+       FROM messages WHERE sender_id=? AND created_at > (NOW() - INTERVAL 24 HOUR)`,
+      [m.sender_id]
+    ).then((rr)=>[rr[0]]);
+    if (stats && stats.a >= 10 && stats.a > (stats.t || 0) * 3) {
+      dept = "safety"; flags.push("audio_ratio_high"); score += 25;
+    }
+  } catch {}
+
+  await pool.execute(
+    "UPDATE messages SET audio_department=?, audio_triage_flags=?, audio_triage_score=? WHERE id=?",
+    [dept, flags.join(","), score, messageId]
+  );
+  return { department: dept, flags, score };
+}
+
+module.exports = { migrate, register, startExpiryJob, planAtLeast, PLAN_RANK, autoTriageVoiceNote };
