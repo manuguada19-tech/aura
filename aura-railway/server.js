@@ -9309,7 +9309,9 @@ app.get("/admin.css", gateAdminAsset, (req, res) => {
   res.setHeader("Content-Type", "text/css; charset=utf-8");
   res.sendFile(path.join(__dirname, "public", "admin.css"));
 });
-app.get("/admin_features.js", gateAdminAsset, (req, res) => {
+// admin_features.js: sólo UI, sin secretos. Todas las llamadas API que hace
+// están gateadas por requireAdmin. Servir sin gate para que cargue siempre.
+app.get("/admin_features.js", (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
   res.sendFile(path.join(__dirname, "public", "admin_features.js"));
