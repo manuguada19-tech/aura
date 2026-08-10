@@ -90,6 +90,42 @@ html, body {
 }
 button { font-family: inherit; cursor: pointer; }
 input, select, textarea { font-family: inherit; }
+
+/* V572 · Fondo oscuro global para TODOS los filtros/formularios del admin.
+   Se aplica salvo que el tema sea light explicitamente. */
+input, select, textarea {
+  color-scheme: dark;
+}
+select option, select optgroup {
+  background: #1b1f2e !important;
+  color: #e8ebf5 !important;
+}
+input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]):not([type=range]),
+select, textarea {
+  background-color: #1b1f2e;
+  color: #e8ebf5;
+  border-color: rgba(255,255,255,0.14);
+}
+input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]):not([type=range])::placeholder,
+textarea::placeholder { color: #96a0b8; }
+input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]):not([type=range]):focus,
+select:focus, textarea:focus {
+  background-color: #20263a;
+  border-color: #7a5cff;
+}
+/* En modo claro dejamos que el CSS anterior siga controlando */
+[data-theme="light"] input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]):not([type=range]),
+[data-theme="light"] select,
+[data-theme="light"] textarea {
+  background-color: #fff;
+  color: #111;
+  color-scheme: light;
+}
+[data-theme="light"] select option,
+[data-theme="light"] select optgroup {
+  background: #fff !important;
+  color: #111 !important;
+}
 a { color: inherit; text-decoration: none; }
 
 .admin-shell {
