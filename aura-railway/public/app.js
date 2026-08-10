@@ -7338,6 +7338,49 @@ function screenChat(root, u, isNew, opts = {}) {
     }
   }
 
+  // V566 · Burbuja de nota de voz con play/pause, tiempo y duración.
+  function renderAudioBubble(url, duration_ms, mine) {
+    const bub = el("div", { class: "bubble " + (mine ? "out" : "in") + " audio-bubble", style: "display:flex;align-items:center;gap:10px;min-width:160px" });
+    const audio = new Audio(url);
+    audio.preload = "metadata";
+    const btn = el("button", { class: "icon-btn", style: "width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,0.15);color:inherit;display:grid;place-items:center;flex-shrink:0", html: "▶" });
+    const bar = el("div", { style: "flex:1;height:4px;background:rgba(0,0,0,0.15);border-radius:2px;position:relative;overflow:hidden" }, [
+      el("div", { class: "audio-progress", style: "position:absolute;left:0;top:0;bottom:0;width:0%;background:currentColor;opacity:0.8" }),
+    ]);
+    const timeEl = el("span", { class: "audio-time", style: "font-size:12px;opacity:0.75;font-variant-numeric:tabular-nums;min-width:38px;text-align:right" }, "0:00");
+    bub.appendChild(btn); bub.appendChild(bar); bub.appendChild(timeEl);
+    const fmt = (s) => { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s/60) + ":" + String(s%60).padStart(2,"0"); };
+    const setTotal = (secs) => { timeEl.textContent = fmt(secs); };
+    if (duration_ms > 0) setTotal(duration_ms / 1000);
+    audio.addEventListener("loadedmetadata", () => {
+      if (isFinite(audio.duration) && audio.duration > 0) setTotal(audio.duration);
+    });
+    audio.addEventListener("timeupdate", () => {
+      const d = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (duration_ms/1000);
+      const pct = d > 0 ? (audio.currentTime / d) * 100 : 0;
+      bar.querySelector(".audio-progress").style.width = pct + "%";
+      if (!audio.paused) timeEl.textContent = fmt(d - audio.currentTime);
+    });
+    audio.addEventListener("ended", () => {
+      btn.innerHTML = "▶";
+      bar.querySelector(".audio-progress").style.width = "0%";
+      const d = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (duration_ms/1000);
+      setTotal(d);
+    });
+    btn.onclick = () => {
+      if (audio.paused) { audio.play().catch(()=>{}); btn.innerHTML = "❚❚"; }
+      else { audio.pause(); btn.innerHTML = "▶"; }
+    };
+    bar.onclick = (e) => {
+      const rect = bar.getBoundingClientRect();
+      const pct = (e.clientX - rect.left) / rect.width;
+      const d = isFinite(audio.duration) && audio.duration > 0 ? audio.duration : (duration_ms/1000);
+      if (d > 0) audio.currentTime = Math.max(0, Math.min(d - 0.1, pct * d));
+    };
+    return bub;
+  }
+  window.__renderAudioBubble = renderAudioBubble;
+
   // V545 · Grabación de audio (Oro+). MediaRecorder → blob → upload → send.
   async function sendAudioMsg() {
     if (!state_.convId) return;
@@ -7363,24 +7406,34 @@ function screenChat(root, u, isNew, opts = {}) {
         const s = Math.floor((Date.now()-t0)/1000);
         const el = document.getElementById("recTimer");
         if (el) el.textContent = Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
-        if (s >= 60) rec.stop();
+        if (s >= 120) rec.stop();
       }, 300);
       rec.onstop = async () => {
         clearInterval(ti);
+        const duration_ms = Date.now() - t0;
         recBackdrop.remove();
-        const blob = new Blob(chunks, { type: "audio/webm" });
-        // Upload: reutilizamos /api/upload si existe; si no, data-URL en el momento.
-        const fd = new FormData();
-        fd.append("file", blob, "audio.webm");
+        const blob = new Blob(chunks, { type: (rec.mimeType || "audio/webm") });
+        // V566 · Subimos por /api/my/audio/upload (data-URL base64 → fichero real
+        // servido desde /uploads/audio/…). Sin fallback a data-URL en línea (peso).
+        const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
         let audioUrl = null;
         try {
-          const up = await fetch("/api/upload", { method: "POST", headers: chatApi.headers(), body: fd });
+          const up = await fetch("/api/my/audio/upload", {
+            method: "POST",
+            headers: { ...chatApi.headers(), "Content-Type": "application/json" },
+            body: JSON.stringify({ data_url: dataUrl, duration_ms }),
+          });
           const j = await up.json();
-          audioUrl = j.url || j.location || null;
-        } catch {}
-        if (!audioUrl) {
-          // Fallback: convertimos a data-URL (para demo/desarrollo). En prod usar S3/cloud.
-          audioUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
+          if (up.status === 402 || j?.error === "plan_required") {
+            openPlanLockModal(j.required_plan || "gold", "Notas de voz");
+            return;
+          }
+          if (!up.ok || !j?.url) throw new Error(j?.error || "upload_failed");
+          audioUrl = j.url;
+        } catch (e) {
+          console.error("[audio upload]", e);
+          toast("No se pudo subir el audio.");
+          return;
         }
         const endpoint = ephemeralState.on ? "/api/my/messages/ephemeral" : "/api/my/messages/audio";
         const body = ephemeralState.on
@@ -7394,10 +7447,10 @@ function screenChat(root, u, isNew, opts = {}) {
           });
           const j = await r.json();
           if (!r.ok) {
-            if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Audios de chat"); return; }
+            if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Notas de voz"); return; }
             throw new Error();
           }
-          const bub = el("div", { class: "bubble out audio-bubble" }, [ el("audio", { controls: true, src: audioUrl }) ]);
+          const bub = renderAudioBubble(audioUrl, duration_ms, /*mine*/true);
           msgs.appendChild(bub);
           msgs.scrollTop = msgs.scrollHeight;
         } catch { toast("No se pudo enviar audio."); }
@@ -7477,7 +7530,9 @@ function screenChat(root, u, isNew, opts = {}) {
       if (m.media_type === "photo" && m.media_url) {
         node = photoBubble(t, m.media_url, m.created_at);
       } else if (m.media_type === "audio") {
-        node = audioBubble(t, 12);
+        // V566 · nota de voz real cuando hay media_url; fallback dummy si no.
+        if (m.media_url) node = renderAudioBubble(m.media_url, 0, mine);
+        else node = audioBubble(t, 12);
       } else if (m.body) {
         node = bubble(t, m.body, m.created_at);
       }

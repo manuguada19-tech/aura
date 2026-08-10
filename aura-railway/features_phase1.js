@@ -154,6 +154,53 @@ async function getUserPlan(pool, userId) {
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
 
+  // ============ V566 · Upload de notas de voz =========================
+  // Recibe { data_url, duration_ms } (data:audio/webm;base64,...), decodifica,
+  // guarda en disco bajo /uploads/audio/YYYY/MM/hash.webm y devuelve la URL
+  // pública. Máx 2 MB (~1 min a 128kbps). Requiere Oro (o grant audio_msg).
+  app.post("/api/my/audio/upload", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    const plan = await getUserPlan(pool, me);
+    if (!(await canUse(pool, me, "audio_msg", "gold", plan))) {
+      return res.status(402).json({ error: "plan_required", required_plan: "gold" });
+    }
+    const dataUrl = String(req.body?.data_url || "");
+    const duration_ms = parseInt(req.body?.duration_ms, 10) || 0;
+    const m = /^data:(audio\/[a-z0-9+.-]+);base64,(.+)$/i.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: "invalid_data_url" });
+    const mime = m[1].toLowerCase();
+    const b64 = m[2];
+    const buf = Buffer.from(b64, "base64");
+    if (buf.length > 2 * 1024 * 1024) return res.status(413).json({ error: "too_large" });
+    if (buf.length < 500) return res.status(400).json({ error: "empty_audio" });
+    // Extensión según mime
+    const ext = mime.includes("webm") ? "webm"
+              : mime.includes("mp4") || mime.includes("m4a") ? "m4a"
+              : mime.includes("ogg") ? "ogg"
+              : mime.includes("mpeg") ? "mp3"
+              : "bin";
+    const fs = require("fs");
+    const path = require("path");
+    const crypto = require("crypto");
+    const hash = crypto.createHash("sha1").update(buf).digest("hex").slice(0, 20);
+    const now = new Date();
+    const yyyy = String(now.getUTCFullYear());
+    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const dir = path.join(__dirname, "public", "uploads", "audio", yyyy, mm);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    const fname = `${Date.now().toString(36)}_${hash}.${ext}`;
+    const abs = path.join(dir, fname);
+    try {
+      fs.writeFileSync(abs, buf);
+    } catch (e) {
+      console.error("[audio upload] write error", e);
+      return res.status(500).json({ error: "write_failed" });
+    }
+    const url = `/uploads/audio/${yyyy}/${mm}/${fname}`;
+    res.json({ ok: true, url, mime, bytes: buf.length, duration_ms });
+  }));
+
   // ---- GET /api/my/icebreakers ---------------------------------------
   // Devuelve un set aleatorio (5) de rompehielo compatibles con el plan.
   app.get("/api/my/icebreakers", wrap(async (req, res) => {
