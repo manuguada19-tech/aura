@@ -1301,6 +1301,27 @@ function route(view) {
   container.appendChild(loading);
   // V547 · Vistas extendidas registradas por admin_features.js
   const extras = (window.__adminExtraViews) || {};
+  // V555 · Espera activa: si es una vista fx_* y aún no está registrada,
+  // reintentamos hasta 3s antes de caer al dashboard.
+  const isFx = typeof view === "string" && view.indexOf("fx_") === 0;
+  if (isFx && !extras[view]) {
+    let tries = 0;
+    const wait = setInterval(() => {
+      const now = (window.__adminExtraViews) || {};
+      if (now[view]) {
+        clearInterval(wait);
+        loading.remove();
+        Promise.resolve(now[view](container, { el, $, api: window.__adminApi }))
+          .catch(err => { console.error(err); container.appendChild(el("div", { class: "error" }, "Error: " + (err && err.message || err))); })
+          .finally(() => { labelTables(container); });
+      } else if (++tries > 30) {
+        clearInterval(wait);
+        loading.remove();
+        container.innerHTML = "<div style='padding:24px'><h2>Módulo no cargado</h2><p>El paquete de Novedades no se pudo inicializar. Recarga la página con caché limpia (Ctrl+Shift+R).</p><p style='color:#888;font-size:12px'>view=" + view + "</p></div>";
+      }
+    }, 100);
+    return;
+  }
   const renderer = map[view] || extras[view] || viewDashboard;
   Promise.resolve(renderer(container, { el, $, api: window.__adminApi }))
     .catch(err => { console.error(err); container.appendChild(el("div", { class: "error" }, "Error cargando datos.")); })
