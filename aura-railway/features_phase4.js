@@ -6,6 +6,16 @@
      - Push contextuales ("te vieron", "match cerca", etc.)
    ================================================================ */
 const { planAtLeast } = require("./features_phase1");
+// V558 · grants por función (permite acceso individual sin cambiar de plan)
+let __phase5 = null;
+try { __phase5 = require("./features_phase5"); } catch {}
+async function canUse(pool, userId, feature, minPlan) {
+  if (__phase5 && typeof __phase5.hasFeature === "function") {
+    try { return await __phase5.hasFeature(pool, userId, feature); } catch {}
+  }
+  const plan = await getUserPlan(pool, userId);
+  return planAtLeast(plan, minPlan);
+}
 
 // ---- Moderación heurística sin API externa ---------------------------
 const BAD_WORDS_ES = ["puta","gilipollas","cabron","mierda","joder","maricon","zorra","hijoputa"];
@@ -152,8 +162,7 @@ function register(app, pool, helpers) {
   app.post("/api/my/messages/:id/translate", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
-    const plan = await getUserPlan(pool, me);
-    if (!planAtLeast(plan, "platinum")) {
+    if (!(await canUse(pool, me, "translate", "platinum"))) {
       return res.status(402).json({ error: "plan_required", required_plan: "platinum" });
     }
     const mid = parseInt(req.params.id, 10);
@@ -175,9 +184,12 @@ function register(app, pool, helpers) {
   app.post("/api/my/video/start", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
-    const plan = await getUserPlan(pool, me);
-    if (!planAtLeast(plan, "platinum")) {
-      return res.status(402).json({ error: "plan_required", required_plan: "platinum" });
+    // V558 · audio-only también soportado. mode: "video"|"audio"
+    const mode = req.body?.mode === "audio" ? "audio" : "video";
+    const feature = mode === "audio" ? "audio_call" : "video_call";
+    const minPlan = mode === "audio" ? "gold" : "platinum";
+    if (!(await canUse(pool, me, feature, minPlan))) {
+      return res.status(402).json({ error: "plan_required", required_plan: minPlan, feature });
     }
     const callee = parseInt(req.body?.callee_id, 10);
     if (!callee) return res.status(400).json({ error: "callee_required" });
@@ -186,13 +198,13 @@ function register(app, pool, helpers) {
       "INSERT INTO video_calls (caller_id,callee_id,room_id,status) VALUES (?,?,?, 'ringing')",
       [me, callee, roomId]
     );
-    // Push contextual al callee
+    // Push contextual al callee (incluye modo)
     await pool.execute(
       "INSERT INTO push_context_events (user_id,kind,payload) VALUES (?,?, ?)",
-      [callee, "video_call_incoming", JSON.stringify({ room_id: roomId, caller_id: me, call_id: r.insertId })]
+      [callee, "video_call_incoming", JSON.stringify({ room_id: roomId, caller_id: me, call_id: r.insertId, mode })]
     );
-    pushSignal(roomId, { type: "incoming", caller_id: me, callee_id: callee, room_id: roomId });
-    res.json({ ok: true, call_id: r.insertId, room_id: roomId, ice_servers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    pushSignal(roomId, { type: "incoming", caller_id: me, callee_id: callee, room_id: roomId, mode });
+    res.json({ ok: true, call_id: r.insertId, room_id: roomId, mode, ice_servers: [{ urls: "stun:stun.l.google.com:19302" }] });
   }));
 
   app.post("/api/my/video/:call_id/accept", wrap(async (req, res) => {

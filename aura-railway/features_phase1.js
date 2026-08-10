@@ -18,6 +18,16 @@ function planAtLeast(userPlan, required) {
   return u >= r;
 }
 
+// V558 · resolver con grants (si el módulo phase5 está disponible)
+let __phase5 = null;
+try { __phase5 = require("./features_phase5"); } catch {}
+async function canUse(pool, userId, feature, minPlan, currentPlan) {
+  if (__phase5 && typeof __phase5.hasFeature === "function") {
+    try { return await __phase5.hasFeature(pool, userId, feature); } catch {}
+  }
+  return planAtLeast(currentPlan, minPlan);
+}
+
 async function migrate(pool) {
   const q = (sql) => pool.query(sql).catch((e) => {
     console.warn("[phase1 migrate]", e.code || e.message);
@@ -204,7 +214,7 @@ function register(app, pool, helpers) {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
     const plan = await getUserPlan(pool, me);
-    if (!planAtLeast(plan, "gold")) {
+    if (!(await canUse(pool, me, "stickers_send", "gold", plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: "gold" });
     }
     const cid = parseInt(req.body?.conversation_id, 10);
@@ -216,7 +226,9 @@ function register(app, pool, helpers) {
         WHERE s.id=? LIMIT 1`, [stickerId]
     ).then((rr) => [rr[0]]);
     if (!sticker) return res.status(404).json({ error: "sticker_not_found" });
-    if (!planAtLeast(plan, sticker.min_plan)) {
+    // Feature específica del pack (gold o platinum)
+    const packFeature = sticker.min_plan === "platinum" ? "stickers_platinum" : "stickers_gold";
+    if (!(await canUse(pool, me, packFeature, sticker.min_plan, plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: sticker.min_plan });
     }
     const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
@@ -236,7 +248,7 @@ function register(app, pool, helpers) {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
     const plan = await getUserPlan(pool, me);
-    if (!planAtLeast(plan, "gold")) {
+    if (!(await canUse(pool, me, "audio_msg", "gold", plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: "gold" });
     }
     const cid = parseInt(req.body?.conversation_id, 10);
@@ -260,7 +272,7 @@ function register(app, pool, helpers) {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
     const plan = await getUserPlan(pool, me);
-    if (!planAtLeast(plan, "gold")) {
+    if (!(await canUse(pool, me, "ephemeral_msg", "gold", plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: "gold" });
     }
     const cid = parseInt(req.body?.conversation_id, 10);
