@@ -7368,3 +7368,112 @@ body:not(.app-open) #twofaReminder {
 @media (hover: hover) and (pointer: fine) {
   .phone .screen-hero .welcome-foot { position: static !important; }
 }
+
+/* ============================================================
+   V526 — Anillo gradiente alrededor del logo Aura
+   El logo Aura tiene un anillo circular rosa→morado→azul.
+   Se dibuja con un pseudo-elemento con conic-gradient sobre
+   .welcome-heart cuando contiene una <img> (modo image).
+   ============================================================ */
+.welcome-heart:has(> img) {
+  position: relative;
+  isolation: isolate;
+  overflow: visible !important;
+  border-radius: 50% !important;
+  padding: 4px;
+  background: transparent !important;
+  backdrop-filter: none !important;
+}
+.welcome-heart:has(> img)::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  padding: 3px;
+  background: conic-gradient(
+    from 90deg,
+    #ff3b6b 0%,
+    #ff8a3b 15%,
+    #ffbe3b 25%,
+    #ff3bd1 40%,
+    #a13bff 55%,
+    #3b6bff 75%,
+    #3bd1ff 90%,
+    #ff3b6b 100%
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  z-index: 0;
+  pointer-events: none;
+}
+.welcome-heart:has(> img) > img {
+  position: relative;
+  z-index: 1;
+  border-radius: 50% !important;
+  background: #ffffff;
+  object-fit: contain;
+  width: 100% !important;
+  height: 100% !important;
+}
+/* Tema oscuro: fondo interno del logo blanco (queda como el logo original) */
+:root[data-theme="dark"] .welcome-heart:has(> img) > img {
+  background: #ffffff;
+}
+/* Tema claro: fondo interno del logo también blanco (el anillo se ve sobre gradiente) */
+:root[data-theme="light"] .welcome-heart:has(> img) > img {
+  background: #ffffff;
+}
+
+/* ============================================================
+   V527 — Modo claro: fondo blanco con gradiente sutil rosa→naranja
+   Cuando el hero está en modo "solid" y el tema es "light",
+   pintamos un gradiente vertical claro para que no quede vacío.
+   ============================================================ */
+:root[data-theme="light"] .screen-hero.hero-solid {
+  background:
+    radial-gradient(1200px 600px at 50% 0%, rgba(255,59,107,.10), transparent 60%),
+    radial-gradient(900px 500px at 100% 100%, rgba(255,138,59,.10), transparent 60%),
+    #ffffff !important;
+  color: #14161d !important;
+}
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-title { color: #14161d !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-sub { color: #5b6270 !important; opacity: 1 !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-terms { color: #5b6270 !important; opacity: 1 !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-foot { color: #5b6270 !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-foot a { color: #14161d !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-closed,
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-invite-panel {
+  background: rgba(255, 59, 107, 0.06) !important;
+  border-color: rgba(255, 59, 107, 0.18) !important;
+  color: #14161d !important;
+}
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-closed p,
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-invite-panel p {
+  color: #14161d !important;
+}
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-step {
+  background: #ffffff !important;
+  border-color: rgba(0,0,0,.08) !important;
+}
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-step h4 { color: #14161d !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-step p { color: #5b6270 !important; }
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-badge {
+  background: #ffffff !important;
+  color: #14161d !important;
+  border-color: rgba(0,0,0,.08) !important;
+}
+:root[data-theme="light"] .screen-hero.hero-solid input[type="text"],
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-invite-input {
+  background: #ffffff !important;
+  color: #14161d !important;
+  border-color: rgba(0,0,0,.12) !important;
+}
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-beta-btn,
+:root[data-theme="light"] .screen-hero.hero-solid .welcome-superadmin-btn {
+  background: #ffffff !important;
+  color: #14161d !important;
+  border-color: rgba(0,0,0,.08) !important;
+}
