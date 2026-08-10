@@ -1464,9 +1464,8 @@ function applyDesign() {
   r.setProperty("--text-hero-title", heroT || defTitle);
   r.setProperty("--text-hero-sub", heroS || defSub);
 
-  // Logo tokens — defaults marca Aura: logo circular con anillo gradiente rosa→morado→azul
-  // (por defecto transparente para que se vea el logo Aura completo)
-  const logoSize = parseInt(g("content.design.logo_size","96"),10) || 96;
+  // Logo tokens — defaults marca Aura: logo circular con anillo arcoíris CSS
+  const logoSize = parseInt(g("content.design.logo_size","200"),10) || 200;
   const logoRad = parseInt(g("content.design.logo_radius","50"),10) || 50;
   r.setProperty("--logo-size", logoSize + "px");
   r.setProperty("--logo-radius", logoRad + "px");
@@ -1482,7 +1481,7 @@ function applyDesign() {
     const v = parseFloat(g("content.design." + key, def)) || parseFloat(def);
     r.setProperty(name, v + "px");
   };
-  setPx("--welc-logo-size", "welc_logo_size", "90");
+  setPx("--welc-logo-size", "welc_logo_size", "200");
   setPx("--welc-sub-size", "welc_sub_size", "13");
   setPx("--welc-card-pad", "welc_card_pad", "8");
   setPx("--welc-input-h", "welc_input_h", "40");
@@ -1517,8 +1516,8 @@ function buildLogoInnerHTML() {
   if (mode === "image") {
     // Choose a light-mode alternate if configured and current theme is light
     const theme = document.documentElement.dataset.theme || "dark";
-    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-light.png?v=3");
-    const urlDark = _t("content.design.logo_image", "assets/aura-logo.png?v=3");
+    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round.png?v=5");
+    const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=5");
     const url = (theme === "light" && urlLight) ? urlLight : urlDark;
     if (url) return `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
   }
@@ -1575,8 +1574,8 @@ function applyContent() {
     let inner = "";
     if (mode === "image") {
       const theme = document.documentElement.dataset.theme || "dark";
-      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-light.png?v=3");
-      const urlDark = _t("content.design.logo_image", "assets/aura-logo.png?v=3");
+      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round.png?v=5");
+      const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=5");
       const url = (theme === "light" && urlLight) ? urlLight : (urlDark || urlLight);
       inner = `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
     } else if (mode === "emoji") {
@@ -5544,7 +5543,7 @@ function screenDiscover(root) {
       el("span", {
         class: "brand-logo-mini brand-logo-crop",
         "aria-label": "Aura",
-        html: `<img src="assets/aura-logo.png?v=3" alt="Aura" />`,
+        html: `<img src="assets/aura-logo-round.png?v=5" alt="Aura" />`,
       }),
       el("button", { class: "chip", onclick: openFilters }, [
         el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),

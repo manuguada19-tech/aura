@@ -8562,11 +8562,11 @@ function fileToResizedDataUrl(file, maxDim = 512, quality = 0.9) {
 }
 
 const DESIGN_DEFAULTS = {
-  // Marca Aura — colores y hero por defecto (aunque la BD esté vacía)
-  brand1:"#ff3b6b", brand2:"#ff8a3b", bg:"#0e0f14", text:"#f2f3f7",
+  // Marca Aura — colores y hero por defecto (tema vino oscuro con anillo arcoíris)
+  brand1:"#ff3b6b", brand2:"#a855f7", bg:"#14060b", text:"#f2f3f7",
   radius:"18",
-  // Hero oscuro sólido para que resalte el logo Aura, no gradiente
-  hero_style:"solid", hero_image:"", hero_solid_color:"#0e0f14",
+  // Hero oscuro vino sólido (el CSS aplica gradiente vino→negro cuando data-theme=dark)
+  hero_style:"solid", hero_image:"", hero_solid_color:"#14060b",
   font:"system", btn_style:"pill",
   card_radius:"16", card_shadow:"medium", card_border:"#1f2130",
   tab_bg:"#0e0f14", tab_active:"#ff3b6b", tab_inactive:"#9ca3af",
@@ -8583,16 +8583,16 @@ const DESIGN_DEFAULTS = {
   text_welcome:"", text_discover:"", text_search:"", text_likes:"",
   text_chats:"", text_profile:"", text_tabbar:"",
   text_muted:"", text_hero_title:"", text_hero_sub:"",
-  // Logo customization — Marca Aura: imagen circular con anillo gradiente rosa→morado→azul
-  // logo_bg="transparent" para que el anillo (dibujado por CSS) no quede tapado por un fondo naranja.
+  // Logo customization — Marca Aura: imagen PNG completa (ya incluye anillo gradiente).
+  // Fondo transparente y tamaño grande para respetar la referencia oficial.
   logo_mode:"image",
-  logo_image:"assets/aura-logo.png?v=3",
-  logo_image_light:"assets/aura-logo-light.png?v=3",
+  logo_image:"assets/aura-logo-round.png?v=5",
+  logo_image_light:"assets/aura-logo-round.png?v=5",
   logo_emoji:"💘",
   logo_bg:"transparent", logo_color:"#ffffff",
-  logo_size:"96", logo_radius:"50",
+  logo_size:"200", logo_radius:"50",
   // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
-  welc_logo_size:"90",       // Diámetro del logo en la pantalla de bienvenida
+  welc_logo_size:"200",      // Diámetro del logo en la pantalla de bienvenida
   welc_sub_size:"13",        // Tamaño del subtítulo
   welc_card_pad:"8",         // Padding de la tarjeta "pruebas privadas"
   welc_input_h:"40",         // Altura del input de código de invitación

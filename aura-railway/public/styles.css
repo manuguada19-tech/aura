@@ -453,10 +453,9 @@ img { max-width: 100%; display: block; }
 .welcome-heart.logo-transparent {
   background: transparent;
   backdrop-filter: none;
-  overflow: hidden;
-  border-radius: 0;
-  aspect-ratio: 786 / 879;
-  height: auto;
+  overflow: visible;
+  border-radius: 50%;
+  aspect-ratio: 1 / 1;
 }
 .welcome-heart img { display:block; width:100%; height:100%; object-fit: contain; }
 @keyframes pop {
@@ -7057,17 +7056,17 @@ body:not(.app-open) #twofaReminder {
    pequeñas. En escritorio (marco .phone) usa el valor exacto configurado. */
 .app-viewport .screen.screen-hero .welcome-heart,
 .app-viewport .screen.screen-hero .welcome-heart.logo-transparent {
-  width: min(var(--welc-logo-size, 90px), 12vh, 100px) !important;
-  height: min(var(--welc-logo-size, 90px), 12vh, 100px) !important;
-  max-width: min(var(--welc-logo-size, 90px), 12vh, 100px) !important;
-  max-height: min(var(--welc-logo-size, 90px), 12vh, 100px) !important;
+  width: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
+  height: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
+  max-width: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
+  max-height: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
 }
 .phone .screen-hero .welcome-heart,
 .phone .screen-hero .welcome-heart.logo-transparent {
-  width: var(--welc-logo-size, 110px) !important;
-  height: var(--welc-logo-size, 110px) !important;
-  max-width: var(--welc-logo-size, 110px) !important;
-  max-height: var(--welc-logo-size, 110px) !important;
+  width: var(--welc-logo-size, 200px) !important;
+  height: var(--welc-logo-size, 200px) !important;
+  max-width: var(--welc-logo-size, 200px) !important;
+  max-height: var(--welc-logo-size, 200px) !important;
 }
 /* Subtítulo: móvil cap por vh, escritorio valor exacto */
 .app-viewport .screen.screen-hero .welcome-sub {
@@ -7317,120 +7316,120 @@ body:not(.app-open) #twofaReminder {
   }
 }
 
-/* V523 — Footer del hero SIEMPRE visible en móvil, anclado al fondo del viewport.
-   Se posiciona FIXED para no depender de qué ancestro sea "position: relative".
-   Así se garantiza que el footer se pinta al fondo de la pantalla móvil. */
-@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
-  .app-viewport .screen.screen-hero {
-    position: relative !important;
-  }
-  /* welcome-below y welcome-cta: quitar cualquier ancestor absolute-parent nuevo.
-     Reservar espacio inferior suficiente para que los chips no queden bajo
-     el footer fijo (footer ~30px + inset + margen). */
-  .app-viewport .screen.screen-hero .welcome-cta {
-    position: static !important;
-  }
-  .app-viewport .screen.screen-hero .welcome-below {
-    position: static !important;
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 72px) !important;
-  }
-  .app-viewport .screen.screen-hero .welcome-foot,
-  .app-viewport .screen.screen-hero .welcome-below .welcome-foot,
-  .phone .screen-hero .welcome-foot {
-    position: fixed !important;
-    left: 0 !important;
-    right: 0 !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 6px) !important;
-    width: 100% !important;
-    max-width: 100vw !important;
-    margin: 0 !important;
-    padding: 0 12px !important;
-    text-align: center !important;
-    display: block !important;
-    visibility: visible !important;
-    opacity: 1 !important;
-    z-index: 100 !important;
-    line-height: 1.35 !important;
-    white-space: normal !important;
-    background: transparent !important;
-    box-sizing: border-box !important;
-    pointer-events: auto !important;
-  }
-  .app-viewport .screen.screen-hero .welcome-foot a {
-    white-space: nowrap !important;
-    display: inline-block !important;
-    margin: 0 2px !important;
-  }
-  /* En .phone (escritorio) NO fijar el footer al viewport global */
-  .phone .screen-hero .welcome-foot { position: static !important; }
+/* V531 — Footer del hero: mismo comportamiento en móvil, PWA y desktop.
+   El hero es flex column con min-height:100dvh y el footer usa margin-top:auto
+   para pegarse abajo SIN position:fixed (así no se solapa con los chips ni
+   depende de qué ancestro sea position:relative). */
+.app-viewport .screen.screen-hero,
+.phone .screen-hero {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 100dvh !important;
+  position: relative !important;
 }
-/* En escritorio, el footer nunca es fixed */
-@media (hover: hover) and (pointer: fine) {
-  .phone .screen-hero .welcome-foot { position: static !important; }
+.app-viewport .screen.screen-hero .welcome-foot,
+.app-viewport .screen.screen-hero .welcome-below .welcome-foot,
+.phone .screen-hero .welcome-foot,
+.phone .screen-hero .welcome-below .welcome-foot {
+  position: static !important;
+  margin-top: auto !important;
+  padding: 12px 12px calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+  text-align: center !important;
+  display: block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  z-index: 1 !important;
+  line-height: 1.4 !important;
+  white-space: normal !important;
+  background: transparent !important;
+  box-sizing: border-box !important;
+  pointer-events: auto !important;
+  width: 100% !important;
+}
+.app-viewport .screen.screen-hero .welcome-foot a,
+.phone .screen-hero .welcome-foot a {
+  white-space: nowrap !important;
+  display: inline-block !important;
+  margin: 0 2px !important;
+}
+/* Espacio residual bajo los chips (welcome-below) para que respire */
+.app-viewport .screen.screen-hero .welcome-below,
+.phone .screen-hero .welcome-below {
+  padding-bottom: 4px !important;
 }
 
 /* ============================================================
-   V526 — Anillo gradiente alrededor del logo Aura
-   El logo Aura tiene un anillo circular rosa→morado→azul.
-   Se dibuja con un pseudo-elemento con conic-gradient sobre
-   .welcome-heart cuando contiene una <img> (modo image).
+   V530 — Logo Aura circular con anillo arcoíris (recuperado de la
+   copia de seguridad v265). El PNG muestra personajes + heart +
+   "Aura" + "CONECTA TU ESENCIA" y el anillo lo dibuja CSS con
+   conic-gradient rosa→naranja→amarillo→verde→azul→morado.
    ============================================================ */
-.welcome-heart:has(> img) {
+.welcome-heart:has(> img),
+.welcome-heart.logo-transparent {
   position: relative;
-  isolation: isolate;
   overflow: visible !important;
   border-radius: 50% !important;
-  padding: 4px;
-  background: transparent !important;
+  background:
+    conic-gradient(from 210deg,
+      #ff3b6b 0%, #ff8a3b 15%, #f9d423 30%,
+      #34d399 50%, #38bdf8 70%, #a855f7 85%, #ff3b6b 100%) !important;
   backdrop-filter: none !important;
+  padding: 3px !important;
+  aspect-ratio: 1 / 1 !important;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.06),
+    0 12px 30px rgba(0,0,0,.4),
+    0 0 30px rgba(255,59,107,.18);
 }
-.welcome-heart:has(> img)::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  padding: 3px;
-  background: conic-gradient(
-    from 90deg,
-    #ff3b6b 0%,
-    #ff8a3b 15%,
-    #ffbe3b 25%,
-    #ff3bd1 40%,
-    #a13bff 55%,
-    #3b6bff 75%,
-    #3bd1ff 90%,
-    #ff3b6b 100%
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-          mask-composite: exclude;
-  z-index: 0;
-  pointer-events: none;
-}
-.welcome-heart:has(> img) > img {
-  position: relative;
-  z-index: 1;
-  border-radius: 50% !important;
-  background: #ffffff;
-  object-fit: contain;
+.welcome-heart:has(> img) > img,
+.welcome-heart.logo-transparent > img {
   width: 100% !important;
   height: 100% !important;
+  object-fit: contain !important;
+  background: #14060b !important;
+  border-radius: 50% !important;
+  display: block;
+  padding: 8% !important;
+  box-sizing: border-box !important;
 }
-/* Tema oscuro: fondo interno del logo blanco (queda como el logo original) */
-:root[data-theme="dark"] .welcome-heart:has(> img) > img {
-  background: #ffffff;
+:root[data-theme="light"] .welcome-heart:has(> img) > img,
+:root[data-theme="light"] .welcome-heart.logo-transparent > img {
+  background: #ffffff !important;
 }
-/* Tema claro: fondo interno del logo también blanco (el anillo se ve sobre gradiente) */
-:root[data-theme="light"] .welcome-heart:has(> img) > img {
-  background: #ffffff;
+
+/* ============================================================
+   V528 — Modo oscuro: gradiente vertical morado/vino → negro
+   La referencia buena muestra un fondo con degradado desde un
+   morado/vino oscuro arriba hasta casi negro abajo. Reemplaza
+   el solid negro anterior cuando el tema es dark.
+   ============================================================ */
+:root[data-theme="dark"] .screen-hero.hero-solid,
+:root[data-theme="dark"] .phone .screen-hero.hero-solid,
+:root[data-theme="dark"] .app-viewport .screen.screen-hero.hero-solid {
+  background:
+    radial-gradient(120% 80% at 50% 0%,
+      #4a1a2b 0%,
+      #2e1018 40%,
+      #180a10 75%,
+      #0a0508 100%
+    ) !important;
+  color: #f2f3f7 !important;
+}
+/* Modo claro: gradiente rosa muy suave con logo bien visible */
+:root[data-theme="light"] .screen-hero.hero-solid,
+:root[data-theme="light"] .phone .screen-hero.hero-solid,
+:root[data-theme="light"] .app-viewport .screen.screen-hero.hero-solid {
+  background:
+    radial-gradient(120% 80% at 50% 0%,
+      #fff2f5 0%,
+      #ffe6ec 40%,
+      #ffffff 100%
+    ) !important;
+  color: #14060b !important;
 }
 
 /* ============================================================
    V527 — Modo claro: fondo blanco con gradiente sutil rosa→naranja
-   Cuando el hero está en modo "solid" y el tema es "light",
-   pintamos un gradiente vertical claro para que no quede vacío.
    ============================================================ */
 :root[data-theme="light"] .screen-hero.hero-solid {
   background:
