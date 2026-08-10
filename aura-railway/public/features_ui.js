@@ -361,7 +361,23 @@
   };
 
   // ---- Botón flotante FAB con menú de features ---
+  // V557 · Sólo se monta si hay sesión iniciada. La landing pública NO debe
+  // mostrar esta burbuja (Historias, Progreso, Quedadas… son features de la
+  // app logueada). Se re-evalúa cuando cambia aura-session.
+  function isLoggedIn() {
+    try {
+      const raw = localStorage.getItem("aura-session");
+      if (!raw) return false;
+      const u = JSON.parse(raw);
+      return !!(u && (u.id || u.user_id || u.email));
+    } catch { return false; }
+  }
+  function removeFAB() {
+    const f = document.getElementById("aura2Fab"); if (f) f.remove();
+    const m = document.getElementById("aura2Menu"); if (m) m.remove();
+  }
   function mountFAB() {
+    if (!isLoggedIn()) { removeFAB(); return; }
     if (document.getElementById("aura2Fab")) return;
     const fab = h("button", { id: "aura2Fab", class: "aura2-fab", title: "Novedades" }, "✨");
     const menu = h("div", { id: "aura2Menu", class: "aura2-menu hidden" }, [
@@ -375,6 +391,21 @@
     document.body.appendChild(fab);
     document.body.appendChild(menu);
   }
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", mountFAB);
-  else mountFAB();
+  function evaluateFAB() {
+    if (isLoggedIn()) mountFAB();
+    else removeFAB();
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", evaluateFAB);
+  else evaluateFAB();
+  // Reaccionar a login/logout en la misma pestaña y entre pestañas
+  try {
+    window.addEventListener("storage", (e) => { if (e.key === "aura-session") evaluateFAB(); });
+    // Poll ligero: si app.js cambia aura-session sin storage-event (misma pestaña),
+    // detectamos el cambio.
+    let lastSess = localStorage.getItem("aura-session") || "";
+    setInterval(() => {
+      const cur = localStorage.getItem("aura-session") || "";
+      if (cur !== lastSess) { lastSess = cur; evaluateFAB(); }
+    }, 1500);
+  } catch {}
 })();
