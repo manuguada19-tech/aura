@@ -1528,8 +1528,8 @@ function buildLogoInnerHTML() {
   if (mode === "image") {
     // Choose a light-mode alternate if configured and current theme is light
     const theme = document.documentElement.dataset.theme || "dark";
-    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=8");
-    const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=8");
+    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=9");
+    const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=9");
     const url = (theme === "light" && urlLight) ? urlLight : urlDark;
     if (url) return `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
   }
@@ -1586,8 +1586,8 @@ function applyContent() {
     let inner = "";
     if (mode === "image") {
       const theme = document.documentElement.dataset.theme || "dark";
-      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=8");
-      const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=8");
+      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=9");
+      const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=9");
       const url = (theme === "light" && urlLight) ? urlLight : (urlDark || urlLight);
       inner = `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
     } else if (mode === "emoji") {
@@ -5555,7 +5555,7 @@ function screenDiscover(root) {
       el("span", {
         class: "brand-logo-mini brand-logo-crop",
         "aria-label": "Aura",
-        html: `<img src="assets/aura-logo-round.png?v=8" alt="Aura" />`,
+        html: `<img src="assets/aura-logo-round.png?v=9" alt="Aura" />`,
       }),
       el("button", { class: "chip", onclick: openFilters }, [
         el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
