@@ -5637,8 +5637,8 @@ async function seedContentDefaults() {
     "content.design.text_hero_sub": "",
     // Logo customization — Marca Aura por defecto (imagen circular con anillo gradiente CSS)
     "content.design.logo_mode": "image",   // heart | image | emoji | initial
-    "content.design.logo_image": "assets/aura-logo-round.png?v=7",       // URL to custom image (dark theme)
-    "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=7", // URL to alt image for light theme
+    "content.design.logo_image": "assets/aura-logo-round.png?v=8",       // URL to custom image (dark theme)
+    "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=8", // URL to alt image for light theme
     "content.design.logo_emoji": "💘",     // used when mode=emoji
     "content.design.logo_bg": "transparent",// gradient | solid | transparent (anillo es CSS)
     "content.design.logo_color": "#ffffff",// stroke/fill color for heart & initial
@@ -5789,8 +5789,8 @@ async function seedContentDefaults() {
         "content.design.hero_image": "",
         "content.design.hero_solid_color": "#14060b",
         "content.design.logo_mode": "image",
-        "content.design.logo_image": "assets/aura-logo-round.png?v=7",
-        "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=7",
+        "content.design.logo_image": "assets/aura-logo-round.png?v=8",
+        "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=8",
         "content.design.logo_bg": "transparent",
         "content.design.logo_size": "115",
         "content.design.welc_logo_size": "115",
@@ -5828,8 +5828,8 @@ async function seedContentDefaults() {
         "content.design.hero_image": "",
         "content.design.hero_solid_color": "#14060b",
         "content.design.logo_mode": "image",
-        "content.design.logo_image": "assets/aura-logo-round.png?v=7",
-        "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=7",
+        "content.design.logo_image": "assets/aura-logo-round.png?v=8",
+        "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=8",
         "content.design.logo_bg": "transparent",
         "content.design.logo_size": "115",
         "content.design.welc_logo_size": "115",

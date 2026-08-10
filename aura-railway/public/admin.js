@@ -8586,8 +8586,8 @@ const DESIGN_DEFAULTS = {
   // Logo customization — Marca Aura: imagen PNG completa (ya incluye anillo gradiente).
   // Fondo transparente y tamaño grande para respetar la referencia oficial.
   logo_mode:"image",
-  logo_image:"assets/aura-logo-round.png?v=7",
-  logo_image_light:"assets/aura-logo-round-light.png?v=7",
+  logo_image:"assets/aura-logo-round.png?v=8",
+  logo_image_light:"assets/aura-logo-round-light.png?v=8",
   logo_emoji:"💘",
   logo_bg:"transparent", logo_color:"#ffffff",
   logo_size:"115", logo_radius:"50",
