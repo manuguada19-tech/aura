@@ -540,41 +540,16 @@
     translateMsg,
   };
 
-  // ---- Botón flotante FAB con menú de features ---
-  // V557 · Sólo se monta si hay sesión iniciada. La landing pública NO debe
-  // mostrar esta burbuja (Historias, Progreso, Quedadas… son features de la
-  // app logueada). Se re-evalúa cuando cambia aura-session.
-  function isLoggedIn() {
-    try {
-      const raw = localStorage.getItem("aura-session");
-      if (!raw) return false;
-      const u = JSON.parse(raw);
-      return !!(u && (u.id || u.user_id || u.email));
-    } catch { return false; }
-  }
+  // V576 · FAB retirado. Las entradas Historias/Progreso/Quedadas/Filtros/Mis
+  // datos ahora viven dentro de la pantalla "Mi perfil" (screenMe) usando
+  // window.aura2.* Se mantiene esta función sólo para retirar restos antiguos
+  // si algún build previo dejó DOM en cache.
   function removeFAB() {
-    const f = document.getElementById("aura2Fab"); if (f) f.remove();
-    const m = document.getElementById("aura2Menu"); if (m) m.remove();
+    try {
+      document.querySelectorAll("#aura2Fab, #aura2Menu, .aura2-fab, .aura2-menu").forEach((n) => n.remove());
+    } catch {}
   }
-  function mountFAB() {
-    if (!isLoggedIn()) { removeFAB(); return; }
-    if (document.getElementById("aura2Fab")) return;
-    const fab = h("button", { id: "aura2Fab", class: "aura2-fab", title: "Novedades" }, "✨");
-    const menu = h("div", { id: "aura2Menu", class: "aura2-menu hidden" }, [
-      h("button", { onclick: () => { menu.classList.add("hidden"); openStoriesFeed(); } }, "📸 Historias"),
-      h("button", { onclick: () => { menu.classList.add("hidden"); openGamification(); } }, "🎮 Progreso"),
-      h("button", { onclick: () => { menu.classList.add("hidden"); openEvents(); } }, "📅 Quedadas"),
-      h("button", { onclick: () => { menu.classList.add("hidden"); openFilters(); } }, "🎯 Filtros"),
-      h("button", { onclick: () => { menu.classList.add("hidden"); openGDPR(); } }, "🔒 Mis datos"),
-    ]);
-    fab.onclick = () => menu.classList.toggle("hidden");
-    document.body.appendChild(fab);
-    document.body.appendChild(menu);
-  }
-  function evaluateFAB() {
-    if (isLoggedIn()) mountFAB();
-    else removeFAB();
-  }
+  function evaluateFAB() { removeFAB(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", evaluateFAB);
   else evaluateFAB();
 

@@ -7907,6 +7907,12 @@ function screenMe(root) {
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
     ]},
+    { title: "Novedades", items: [
+      { icon: "📸", title: "Historias 24h", sub: "Publica y descubre historias efímeras", onClick: () => { try { window.aura2 && window.aura2.openStoriesFeed && window.aura2.openStoriesFeed(); } catch {} } },
+      { icon: "🎮", title: "Progreso y logros", sub: "XP, nivel y misiones diarias", onClick: () => { try { window.aura2 && window.aura2.openGamification && window.aura2.openGamification(); } catch {} } },
+      { icon: "📅", title: "Quedadas", sub: "Eventos y planes con la comunidad", onClick: () => { try { window.aura2 && window.aura2.openEvents && window.aura2.openEvents(); } catch {} } },
+      { icon: "🔒", title: "Mis datos (GDPR)", sub: "Exporta o elimina tus datos personales", onClick: () => { try { window.aura2 && window.aura2.openGDPR && window.aura2.openGDPR(); } catch {} } },
+    ]},
     { title: T("content.me.group_prefs") || "Preferencias", items: [
       { icon: "🎛️", title: T("content.me.item_filters") || "Filtros de descubrimiento", onClick: openFilters },
       { icon: "🌈", title: T("content.me.item_zone") || "Cambiar zona", sub: zoneSub, onClick: openZoneSwitch },

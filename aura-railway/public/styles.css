@@ -7714,28 +7714,8 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 .video-modal .modal-card { max-width: 720px; width: 96%; }
 .video-call-wrap video { display: block; }
 
-/* FAB */
-.aura2-fab {
-  position: fixed; right: 18px; bottom: 90px; z-index: 9997;
-  width: 52px; height: 52px; border-radius: 50%;
-  background: linear-gradient(135deg, #ff3b6b, #ff8a3b);
-  color: #fff; font-size: 26px; border: none; cursor: pointer;
-  box-shadow: 0 8px 20px rgba(255,59,107,.45);
-}
-.aura2-menu {
-  position: fixed; right: 18px; bottom: 150px; z-index: 9997;
-  display: flex; flex-direction: column; gap: 6px;
-  background: rgba(20,20,30,.95); padding: 10px; border-radius: 14px;
-  box-shadow: 0 12px 30px rgba(0,0,0,.4);
-}
-:root[data-theme="light"] .aura2-menu { background: #ffffff; color: #111827; border: 1px solid #e6e8ef; }
-.aura2-menu.hidden { display: none; }
-.aura2-menu button {
-  background: none; color: inherit; border: none; padding: 8px 14px;
-  text-align: left; cursor: pointer; border-radius: 8px; font-size: 14px;
-}
-.aura2-menu button:hover { background: rgba(255,255,255,.08); }
-:root[data-theme="light"] .aura2-menu button:hover { background: #f6f7fb; }
+/* V576 · FAB retirado. Las funciones ahora viven dentro de "Mi perfil". */
+.aura2-fab, .aura2-menu, #aura2Fab, #aura2Menu { display: none !important; }
 
 
 
