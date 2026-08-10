@@ -9,21 +9,104 @@
    - Toasts, modales, drawers propios (no interfieren con admin.js)
    ================================================================ */
 (function () {
-  function boot() {
-    if (!window.__adminApi || !window.__adminEl) { setTimeout(boot, 50); return; }
-    inject();
+  // v550 — sin dependencias externas. Se auto-inicializa.
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_push_ctx"];
+
+  function readTok() {
+    try {
+      const u = new URL(location.href);
+      return u.searchParams.get("adminToken") || localStorage.getItem("adminToken") || window.__ADMIN_TOKEN__ || "";
+    } catch { return ""; }
   }
-  boot();
+  // Fallback locales por si admin.js aún no expuso globals
+  function elFallback(tag, attrs, kids) {
+    const n = document.createElement(tag);
+    if (attrs) for (const [k,v] of Object.entries(attrs)) {
+      if (k === "class") n.className = v;
+      else if (k === "style" && typeof v === "string") n.setAttribute("style", v);
+      else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+      else if (v != null) n.setAttribute(k, v);
+    }
+    if (Array.isArray(kids)) kids.forEach((k) => { if (k == null) return; n.appendChild(typeof k === "string" ? document.createTextNode(k) : k); });
+    else if (typeof kids === "string") n.textContent = kids;
+    else if (kids instanceof Node) n.appendChild(kids);
+    return n;
+  }
+  async function apiLocal(url, opts) {
+    opts = opts || {};
+    const method = (opts.method || "GET").toUpperCase();
+    const hasBody = opts.body != null;
+    const headers = { "Authorization": "Bearer " + readTok() };
+    if (hasBody) headers["Content-Type"] = "application/json";
+    const r = await fetch(url, {
+      method, headers, cache: "no-store",
+      body: hasBody ? (typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body)) : undefined,
+    });
+    if (!r.ok) {
+      const err = new Error(method + " " + url + " " + r.status); err.status = r.status;
+      try { err.data = await r.json(); } catch {}
+      throw err;
+    }
+    try { return await r.json(); } catch { return {}; }
+  }
+
+  function init() {
+    inject();
+    hookNav();
+    // Si la URL trae ?fx=xxx renderizamos directo
+    try {
+      const params = new URL(location.href).searchParams;
+      const v = params.get("fx");
+      if (v && FX_VIEWS.includes(v)) renderView(v);
+    } catch {}
+  }
+
+  // Reengancha el clic en nav-links de novedades para bypass del router de admin.js
+  function hookNav() {
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest && e.target.closest("[data-view]");
+      if (!a) return;
+      const v = a.getAttribute("data-view");
+      if (!FX_VIEWS.includes(v)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation && e.stopImmediatePropagation();
+      // Marca activo visual
+      try {
+        document.querySelectorAll(".nav-link").forEach((l) => l.classList.toggle("active", l === a));
+      } catch {}
+      // Cierra sidebar si aplica
+      if (typeof window.__closeSidebar === "function") try { window.__closeSidebar(); } catch {}
+      renderView(v);
+    }, true); // capture=true para adelantarnos al listener de admin.js
+  }
+
+  function renderView(v) {
+    const container = document.getElementById("view");
+    if (!container) return;
+    container.innerHTML = "";
+    const map = window.__adminExtraViews || {};
+    const fn = map[v];
+    if (typeof fn !== "function") {
+      container.innerHTML = "<div class='fx-empty'><div class='fx-empty-icon'>⏳</div><h3>Cargando módulo…</h3><p class='fx-muted'>Recarga la página si tarda demasiado.</p></div>";
+      return;
+    }
+    try { fn(container); } catch (e) {
+      container.innerHTML = "<div class='fx-empty'><div class='fx-empty-icon'>⚠️</div><h3>Error</h3><p class='fx-muted'>" + (e && e.message || e) + "</p></div>";
+    }
+  }
+
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
+  else init();
 
   function inject() {
-    const rawApi = window.__adminApi;
-    // Normalizador: admin.js `api()` devuelve el JSON directamente, pero el
-    // resto de este archivo espera un envoltorio con `.data`. Envolvemos.
+    const rawApi = window.__adminApi || apiLocal;
+    // Normalizador: `api()` de admin.js devuelve el JSON directamente; envolvemos.
     const api = async function (url, opts) {
       const json = await rawApi(url, opts);
       return { data: json || {}, ok: !json || json.ok !== false };
     };
-    const el  = window.__adminEl;
+    const el  = window.__adminEl || elFallback;
 
     // -----------------------------------------------------------------
     // Estilos premium (una sola inyección)
