@@ -2473,18 +2473,21 @@ async function viewUsers(root){
     st.id = "usersBulkCss";
     st.textContent = `
       .adv-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin:8px 0}
-      /* V584 · Bulk-bar más oscura y contrastada. El gradiente claro anterior
-         (#5b9bff → #c26bff) volvía ilegibles los textos de los botones. */
-      .bulk-bar{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#1e2749,#3a1e5b);color:#fff;padding:10px 14px;border-radius:12px;display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);border:1px solid rgba(124,58,237,.25)}
+      /* V585 · Bulk-bar totalmente NEUTRA (sin azul) para que los botones
+         se distingan siempre. Antes el fondo azul/magenta era tan brillante
+         que los botones semitransparentes se fundían con él. */
+      .bulk-bar{position:sticky;top:0;z-index:5;background:#141821;color:#fff;padding:10px 14px;border-radius:12px;display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;box-shadow:0 6px 18px rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.08)}
       .bulk-bar.on{display:flex}
       .bulk-bar .count{font-weight:700;font-size:15px;color:#fff}
-      .bulk-bar .btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);color:#fff;font-weight:600;text-shadow:0 1px 0 rgba(0,0,0,.35)}
-      .bulk-bar .btn:hover{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.35)}
-      .bulk-bar .btn.danger{background:rgba(239,68,68,.28);border-color:rgba(239,68,68,.55);color:#ffe4e4}
-      .bulk-bar .btn.danger:hover{background:rgba(239,68,68,.42)}
-      /* Tema claro del panel: variante más discreta pero legible */
-      [data-theme="light"] .bulk-bar{background:linear-gradient(135deg,#2d3557,#4b2a72);color:#fff}
-      [data-theme="light"] .bulk-bar .btn{color:#fff}
+      /* Botones: fondo sólido gris oscuro (no transparente) → se ven siempre */
+      .bulk-bar .btn{background:#242a38;border:1px solid rgba(255,255,255,.14);color:#e8ecf5;font-weight:600;padding:6px 12px;border-radius:8px}
+      .bulk-bar .btn:hover{background:#2f3648;border-color:rgba(255,255,255,.28);color:#fff}
+      .bulk-bar .btn.danger{background:#3a1a20;border-color:rgba(239,68,68,.5);color:#ffb4b4}
+      .bulk-bar .btn.danger:hover{background:#4a2028;color:#ffd4d4}
+      /* Tema claro del panel: fondo blanco-grisáceo, botones oscuros */
+      [data-theme="light"] .bulk-bar{background:#1e2230;color:#fff;border-color:rgba(0,0,0,.08)}
+      [data-theme="light"] .bulk-bar .btn{background:#2b3040;color:#f4f6fb}
+      [data-theme="light"] .bulk-bar .btn:hover{background:#39405a}
       .user-tag-badge{display:inline-block;background:rgba(91,155,255,.15);color:#5b9bff;font-size:10.5px;padding:2px 7px;border-radius:999px;margin-right:4px}
     `;
     document.head.appendChild(st);
