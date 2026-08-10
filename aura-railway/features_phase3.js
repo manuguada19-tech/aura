@@ -28,6 +28,14 @@ async function migrate(pool) {
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_start (starts_at), INDEX idx_creator (creator_id)
   )`);
+  // V571 · columnas extra para panel avanzado
+  const alterEvt = async (col, def) => {
+    try { await pool.query(`ALTER TABLE events ADD COLUMN ${col} ${def}`); } catch (e) {}
+  };
+  await alterEvt("featured", "TINYINT(1) DEFAULT 0");
+  await alterEvt("admin_notes", "TEXT NULL");
+  await alterEvt("cover_url", "VARCHAR(500) DEFAULT NULL");
+  await alterEvt("min_plan", "VARCHAR(20) DEFAULT 'free'");
 
   await q(`CREATE TABLE IF NOT EXISTS event_attendees (
     event_id INT NOT NULL,
@@ -169,20 +177,160 @@ function register(app, pool, helpers) {
     res.json({ ok: true, deleted: r.affectedRows });
   }));
 
-  // Admin: listar/moderar
+  // Admin: listar/moderar (V571 · panel avanzado)
   app.get("/api/admin/events", requireAdmin, wrap(async (req, res) => {
-    const [rows] = await pool.query("SELECT * FROM events ORDER BY starts_at DESC LIMIT 200");
+    const [rows] = await pool.query(
+      `SELECT e.*, u.email AS creator_email, u.name AS creator_name,
+              (SELECT COUNT(*) FROM event_attendees a WHERE a.event_id=e.id AND a.status='going') AS attendees_count,
+              (SELECT COUNT(*) FROM event_attendees a WHERE a.event_id=e.id AND a.status='maybe') AS maybe_count
+         FROM events e LEFT JOIN users u ON u.id=e.creator_id
+         ORDER BY e.starts_at DESC LIMIT 500`
+    );
     res.json({ ok: true, items: rows });
   }));
+
+  app.get("/api/admin/events/:id", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const [ev] = await pool.query(
+      `SELECT e.*, u.email AS creator_email, u.name AS creator_name
+         FROM events e LEFT JOIN users u ON u.id=e.creator_id WHERE e.id=? LIMIT 1`, [id]
+    );
+    if (!ev.length) return res.status(404).json({ error: "not_found" });
+    const [attendees] = await pool.query(
+      `SELECT a.user_id, a.status, a.joined_at, u.email, u.name
+         FROM event_attendees a LEFT JOIN users u ON u.id=a.user_id WHERE a.event_id=? ORDER BY a.joined_at ASC`, [id]
+    );
+    res.json({ ok: true, event: ev[0], attendees });
+  }));
+
+  // Crear desde admin (permite fijar creator_id opcional)
+  app.post("/api/admin/events", requireAdmin, wrap(async (req, res) => {
+    const b = req.body || {};
+    const title = String(b.title || "").trim();
+    const starts_at = b.starts_at;
+    if (!title || !starts_at) return res.status(400).json({ error: "title_startsat_required" });
+    let creator_id = parseInt(b.creator_id, 10);
+    if (!Number.isFinite(creator_id) || creator_id <= 0) {
+      // por defecto, primer admin
+      const [a] = await pool.query("SELECT id FROM users WHERE is_admin=1 OR role='admin' ORDER BY id ASC LIMIT 1").catch(()=>[[]]);
+      creator_id = a[0]?.id || 1;
+    }
+    const [r] = await pool.execute(
+      `INSERT INTO events
+         (creator_id,title,description,place,lat,lng,starts_at,ends_at,max_attendees,category,status,featured,admin_notes,cover_url,min_plan)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [
+        creator_id,
+        title.slice(0,140),
+        b.description || null,
+        String(b.place || "").slice(0,200),
+        b.lat == null ? null : parseFloat(b.lat),
+        b.lng == null ? null : parseFloat(b.lng),
+        starts_at,
+        b.ends_at || null,
+        parseInt(b.max_attendees, 10) || 0,
+        String(b.category || "general").slice(0,60),
+        ["open","closed","cancelled"].includes(b.status) ? b.status : "open",
+        b.featured ? 1 : 0,
+        b.admin_notes || null,
+        b.cover_url || null,
+        ["free","premium","gold","platinum"].includes(b.min_plan) ? b.min_plan : "free",
+      ]
+    );
+    res.json({ ok: true, id: r.insertId });
+  }));
+
   app.put("/api/admin/events/:id", requireAdmin, wrap(async (req, res) => {
-    const { status, title } = req.body || {};
-    await pool.execute("UPDATE events SET status=COALESCE(?,status), title=COALESCE(?,title) WHERE id=?", [status ?? null, title ?? null, parseInt(req.params.id,10)]);
+    const b = req.body || {};
+    const id = parseInt(req.params.id, 10);
+    await pool.execute(
+      `UPDATE events SET
+         title       = COALESCE(?, title),
+         description = COALESCE(?, description),
+         place       = COALESCE(?, place),
+         lat         = COALESCE(?, lat),
+         lng         = COALESCE(?, lng),
+         starts_at   = COALESCE(?, starts_at),
+         ends_at     = COALESCE(?, ends_at),
+         max_attendees = COALESCE(?, max_attendees),
+         category    = COALESCE(?, category),
+         status      = COALESCE(?, status),
+         featured    = COALESCE(?, featured),
+         admin_notes = COALESCE(?, admin_notes),
+         cover_url   = COALESCE(?, cover_url),
+         min_plan    = COALESCE(?, min_plan)
+       WHERE id=?`,
+      [
+        b.title ?? null,
+        b.description ?? null,
+        b.place ?? null,
+        b.lat == null ? null : parseFloat(b.lat),
+        b.lng == null ? null : parseFloat(b.lng),
+        b.starts_at ?? null,
+        b.ends_at ?? null,
+        b.max_attendees == null ? null : parseInt(b.max_attendees, 10) || 0,
+        b.category ?? null,
+        b.status ?? null,
+        b.featured == null ? null : (b.featured ? 1 : 0),
+        b.admin_notes ?? null,
+        b.cover_url ?? null,
+        b.min_plan ?? null,
+        id,
+      ]
+    );
     res.json({ ok: true });
   }));
+
   app.delete("/api/admin/events/:id", requireAdmin, wrap(async (req, res) => {
     await pool.execute("DELETE FROM event_attendees WHERE event_id=?", [parseInt(req.params.id,10)]);
     await pool.execute("DELETE FROM events WHERE id=?", [parseInt(req.params.id,10)]);
     res.json({ ok: true });
+  }));
+
+  // Duplicar
+  app.post("/api/admin/events/:id/duplicate", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const [row] = await pool.query("SELECT * FROM events WHERE id=? LIMIT 1", [id]);
+    if (!row.length) return res.status(404).json({ error: "not_found" });
+    const e = row[0];
+    const [r] = await pool.execute(
+      `INSERT INTO events (creator_id,title,description,place,lat,lng,starts_at,ends_at,max_attendees,category,status,featured,admin_notes,cover_url,min_plan)
+         VALUES (?,?,?,?,?,?,?,?,?,?, 'open', ?,?,?,?)`,
+      [e.creator_id, e.title + " (copia)", e.description, e.place, e.lat, e.lng, e.starts_at, e.ends_at, e.max_attendees, e.category, e.featured || 0, e.admin_notes || null, e.cover_url || null, e.min_plan || "free"]
+    );
+    res.json({ ok: true, id: r.insertId });
+  }));
+
+  // Gestion de asistentes
+  app.delete("/api/admin/events/:id/attendees/:uid", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const uid = parseInt(req.params.uid, 10);
+    const [r] = await pool.execute("DELETE FROM event_attendees WHERE event_id=? AND user_id=?", [id, uid]);
+    res.json({ ok: true, removed: r.affectedRows });
+  }));
+
+  app.post("/api/admin/events/:id/attendees", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const uid = parseInt(req.body?.user_id, 10);
+    const st = ["going","maybe","declined"].includes(req.body?.status) ? req.body.status : "going";
+    if (!Number.isFinite(uid) || uid <= 0) return res.status(400).json({ error: "user_id_required" });
+    await pool.query("INSERT INTO event_attendees (event_id,user_id,status) VALUES (?,?,?) ON DUPLICATE KEY UPDATE status=VALUES(status)", [id, uid, st]);
+    res.json({ ok: true });
+  }));
+
+  // KPIs / estadisticas
+  app.get("/api/admin/events/stats/summary", requireAdmin, wrap(async (req, res) => {
+    const [tot] = await pool.query("SELECT COUNT(*) c FROM events");
+    const [open] = await pool.query("SELECT COUNT(*) c FROM events WHERE status='open'");
+    const [upcoming] = await pool.query("SELECT COUNT(*) c FROM events WHERE status='open' AND starts_at > NOW()");
+    const [past] = await pool.query("SELECT COUNT(*) c FROM events WHERE starts_at < NOW()");
+    const [feat] = await pool.query("SELECT COUNT(*) c FROM events WHERE featured=1 AND status='open'");
+    const [att] = await pool.query("SELECT COUNT(*) c FROM event_attendees WHERE status='going'");
+    const [byCat] = await pool.query("SELECT COALESCE(category,'general') category, COUNT(*) c FROM events GROUP BY category ORDER BY c DESC LIMIT 20");
+    res.json({ ok: true,
+      total: tot[0].c, open: open[0].c, upcoming: upcoming[0].c, past: past[0].c,
+      featured: feat[0].c, going_total: att[0].c, by_category: byCat
+    });
   }));
 
   // ==== Filtros avanzados ========================================

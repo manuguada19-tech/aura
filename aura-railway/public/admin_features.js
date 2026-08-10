@@ -836,38 +836,299 @@
     }
 
     // ---- Quedadas / Eventos -----------------------------------------
+    // V571 · Panel avanzado de Quedadas ------------------------------
+    function toLocalDatetimeInput(v) {
+      if (!v) return "";
+      const d = new Date(v);
+      if (Number.isNaN(d.getTime())) return "";
+      const pad = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    }
+
+    async function openEventEditor(evt, onSaved) {
+      const isNew = !evt || !evt.id;
+      const back = document.createElement("div"); back.className = "fx-modal-back";
+      const card = document.createElement("div"); card.className = "fx-modal-card wide";
+      card.style.maxWidth = "720px";
+      card.innerHTML = `
+        <div class="fx-modal-head"><h3>${isNew ? "Nueva quedada" : "Editar quedada #" + evt.id}</h3></div>
+        <div class="fx-modal-body">
+          <div class="fx-form-grid">
+            <div class="fx-field span2"><label>Título *</label><input id="e_title" class="fx-input" placeholder="Título de la quedada"></div>
+            <div class="fx-field span2"><label>Descripción</label><textarea id="e_desc" class="fx-input" rows="3" placeholder="Descripción visible para los usuarios"></textarea></div>
+            <div class="fx-field"><label>Lugar</label><input id="e_place" class="fx-input" placeholder="Bar, parque, ciudad…"></div>
+            <div class="fx-field"><label>Categoría</label>
+              <select id="e_cat" class="fx-input">
+                <option value="general">general</option><option value="deporte">deporte</option>
+                <option value="cine">cine</option><option value="gastronomia">gastronomía</option>
+                <option value="musica">música</option><option value="cultura">cultura</option>
+                <option value="fiesta">fiesta</option><option value="viajes">viajes</option>
+                <option value="tecnologia">tecnología</option><option value="otros">otros</option>
+              </select></div>
+            <div class="fx-field"><label>Empieza *</label><input id="e_start" class="fx-input" type="datetime-local"></div>
+            <div class="fx-field"><label>Termina</label><input id="e_end" class="fx-input" type="datetime-local"></div>
+            <div class="fx-field"><label>Latitud</label><input id="e_lat" class="fx-input" type="number" step="0.0000001" placeholder="40.4168"></div>
+            <div class="fx-field"><label>Longitud</label><input id="e_lng" class="fx-input" type="number" step="0.0000001" placeholder="-3.7038"></div>
+            <div class="fx-field"><label>Aforo máx. (0 = ilimitado)</label><input id="e_max" class="fx-input" type="number" min="0" placeholder="0"></div>
+            <div class="fx-field"><label>Plan mínimo</label>
+              <select id="e_plan" class="fx-input">
+                <option value="free">free</option><option value="premium">premium</option>
+                <option value="gold">gold</option><option value="platinum">platinum</option>
+              </select></div>
+            <div class="fx-field"><label>Estado</label>
+              <select id="e_status" class="fx-input">
+                <option value="open">Abierto</option><option value="closed">Cerrado</option><option value="cancelled">Cancelado</option>
+              </select></div>
+            <div class="fx-field"><label>ID creador (opcional)</label><input id="e_creator" class="fx-input" type="number" placeholder="Se usa 1er admin si vacío"></div>
+            <div class="fx-field span2"><label>Portada (URL)</label><input id="e_cover" class="fx-input" placeholder="https://…"></div>
+            <div class="fx-field span2"><label style="display:flex;align-items:center;gap:8px"><input id="e_feat" type="checkbox"> Destacada (aparece antes)</label></div>
+            <div class="fx-field span2"><label>Notas internas (admin)</label><textarea id="e_notes" class="fx-input" rows="2" placeholder="Solo visibles para administración"></textarea></div>
+          </div>
+        </div>
+        <div class="fx-modal-foot"></div>`;
+      const q = (id) => card.querySelector("#" + id);
+      // Precargar
+      const d = evt || {};
+      q("e_title").value = d.title || "";
+      q("e_desc").value  = d.description || "";
+      q("e_place").value = d.place || "";
+      q("e_cat").value   = d.category || "general";
+      q("e_start").value = toLocalDatetimeInput(d.starts_at);
+      q("e_end").value   = toLocalDatetimeInput(d.ends_at);
+      q("e_lat").value   = d.lat == null ? "" : d.lat;
+      q("e_lng").value   = d.lng == null ? "" : d.lng;
+      q("e_max").value   = d.max_attendees || 0;
+      q("e_plan").value  = d.min_plan || "free";
+      q("e_status").value= d.status || "open";
+      q("e_creator").value = d.creator_id || "";
+      q("e_cover").value = d.cover_url || "";
+      q("e_feat").checked= !!d.featured;
+      q("e_notes").value = d.admin_notes || "";
+
+      const foot = card.querySelector(".fx-modal-foot");
+      foot.appendChild(btn("Cancelar", { variant: "ghost", onClick: () => back.remove() }));
+      foot.appendChild(btn(isNew ? "Crear" : "Guardar", { variant: "primary", onClick: async () => {
+        const body = {
+          title: q("e_title").value.trim(),
+          description: q("e_desc").value || null,
+          place: q("e_place").value || "",
+          category: q("e_cat").value,
+          starts_at: q("e_start").value ? q("e_start").value.replace("T"," ") + ":00" : null,
+          ends_at: q("e_end").value ? q("e_end").value.replace("T"," ") + ":00" : null,
+          lat: q("e_lat").value === "" ? null : parseFloat(q("e_lat").value),
+          lng: q("e_lng").value === "" ? null : parseFloat(q("e_lng").value),
+          max_attendees: parseInt(q("e_max").value, 10) || 0,
+          min_plan: q("e_plan").value,
+          status: q("e_status").value,
+          creator_id: q("e_creator").value ? parseInt(q("e_creator").value, 10) : null,
+          cover_url: q("e_cover").value || null,
+          featured: q("e_feat").checked ? 1 : 0,
+          admin_notes: q("e_notes").value || null,
+        };
+        if (!body.title || !body.starts_at) { toast("Título y fecha de inicio son obligatorios", "err"); return; }
+        try {
+          if (isNew) await api("/api/admin/events", { method: "POST", body });
+          else       await api(`/api/admin/events/${evt.id}`, { method: "PUT", body });
+          toast(isNew ? "Quedada creada" : "Cambios guardados", "ok");
+          back.remove();
+          if (onSaved) onSaved();
+        } catch (e) { toast("Error: " + (e.message || e), "err"); }
+      } }));
+      back.appendChild(card);
+      document.body.appendChild(back);
+      back.addEventListener("click", (e) => { if (e.target === back) back.remove(); });
+    }
+
+    async function openEventDetail(id, onChanged) {
+      const { data } = await api(`/api/admin/events/${id}`);
+      if (!data || !data.event) { toast("No encontrado", "err"); return; }
+      const ev = data.event; const attendees = data.attendees || [];
+      const back = document.createElement("div"); back.className = "fx-modal-back";
+      const card = document.createElement("div"); card.className = "fx-modal-card wide";
+      card.style.maxWidth = "820px";
+      const going = attendees.filter((a) => a.status === "going");
+      const maybe = attendees.filter((a) => a.status === "maybe");
+      const declined = attendees.filter((a) => a.status === "declined");
+      card.innerHTML = `
+        <div class="fx-modal-head">
+          <h3>${escapeHtml(ev.title)} <span class="fx-badge ${({open:"ok",closed:"amber",cancelled:"off"}[ev.status]||"")}" style="margin-left:8px">${ev.status}</span>${ev.featured ? '<span class="fx-badge purple" style="margin-left:6px">★ destacada</span>':""}</h3>
+        </div>
+        <div class="fx-modal-body">
+          <div class="fx-form-grid">
+            <div class="fx-field"><label>ID</label><div class="fx-muted">#${ev.id}</div></div>
+            <div class="fx-field"><label>Categoría</label><div>${escapeHtml(ev.category || "—")}</div></div>
+            <div class="fx-field"><label>Inicio</label><div>${fmtDate(ev.starts_at)}</div></div>
+            <div class="fx-field"><label>Fin</label><div>${ev.ends_at ? fmtDate(ev.ends_at) : "—"}</div></div>
+            <div class="fx-field"><label>Lugar</label><div>${escapeHtml(ev.place || "—")}</div></div>
+            <div class="fx-field"><label>Aforo</label><div>${ev.max_attendees ? ev.max_attendees : "ilimitado"}</div></div>
+            <div class="fx-field"><label>Plan mínimo</label><div>${escapeHtml(ev.min_plan || "free")}</div></div>
+            <div class="fx-field"><label>Creador</label><div>${escapeHtml(ev.creator_name || "")} <span class="fx-muted">${escapeHtml(ev.creator_email || "")}</span> · #${ev.creator_id}</div></div>
+            ${ev.cover_url ? `<div class="fx-field span2"><label>Portada</label><img src="${escapeHtml(ev.cover_url)}" style="max-width:100%;border-radius:10px;max-height:200px"></div>`:""}
+            <div class="fx-field span2"><label>Descripción</label><div>${escapeHtml(ev.description || "—")}</div></div>
+            ${ev.admin_notes ? `<div class="fx-field span2"><label>Notas internas</label><div class="fx-muted">${escapeHtml(ev.admin_notes)}</div></div>`:""}
+          </div>
+          <hr style="border:0;border-top:1px solid rgba(255,255,255,0.08);margin:16px 0">
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
+            <div><span class="fx-badge ok">${going.length}</span> confirmados</div>
+            <div><span class="fx-badge amber">${maybe.length}</span> tal vez</div>
+            <div><span class="fx-badge off">${declined.length}</span> no van</div>
+          </div>
+          <div id="att_wrap" class="fx-table-wrap"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <input id="new_att_uid" class="fx-input" type="number" placeholder="ID usuario a añadir">
+            <select id="new_att_st" class="fx-input"><option value="going">going</option><option value="maybe">maybe</option><option value="declined">declined</option></select>
+            <button class="fx-btn" id="btn_add_att">Añadir asistente</button>
+          </div>
+        </div>
+        <div class="fx-modal-foot">
+          <button class="fx-btn" id="btn_close">Cerrar</button>
+          <button class="fx-btn" id="btn_dup">Duplicar</button>
+          <button class="fx-btn primary" id="btn_edit">Editar</button>
+        </div>`;
+      // tabla asistentes
+      const attWrap = card.querySelector("#att_wrap");
+      const t = document.createElement("table"); t.className = "fx-table compact";
+      t.innerHTML = `<thead><tr><th>#UID</th><th>Nombre</th><th>Email</th><th>Estado</th><th>Se unió</th><th></th></tr></thead><tbody></tbody>`;
+      const tb = t.querySelector("tbody");
+      attendees.forEach((a) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>#${a.user_id}</td><td>${escapeHtml(a.name || "")}</td><td class="fx-muted">${escapeHtml(a.email || "")}</td>
+          <td><span class="fx-badge ${({going:"ok",maybe:"amber",declined:"off"}[a.status]||"")}">${a.status}</span></td>
+          <td>${fmtDate(a.joined_at)}</td>
+          <td><button class="fx-btn danger-icon" data-remove="${a.user_id}" title="Expulsar">&#x1f5d1;</button></td>`;
+        tb.appendChild(tr);
+      });
+      if (!attendees.length) tb.innerHTML = `<tr><td colspan="6" class="fx-muted" style="text-align:center;padding:14px">Sin asistentes todavía</td></tr>`;
+      attWrap.appendChild(t);
+      // acciones
+      const close = () => back.remove();
+      card.querySelector("#btn_close").onclick = close;
+      card.querySelector("#btn_edit").onclick = () => { close(); openEventEditor(ev, onChanged); };
+      card.querySelector("#btn_dup").onclick = async () => {
+        const ok = await confirmDialog({ title: "Duplicar quedada", message: "Se creará una copia en estado abierto.", confirmLabel: "Duplicar" });
+        if (!ok) return;
+        await api(`/api/admin/events/${ev.id}/duplicate`, { method: "POST" });
+        toast("Duplicada", "ok"); close(); if (onChanged) onChanged();
+      };
+      card.querySelector("#btn_add_att").onclick = async () => {
+        const uid = parseInt(card.querySelector("#new_att_uid").value, 10);
+        const st = card.querySelector("#new_att_st").value;
+        if (!Number.isFinite(uid) || uid <= 0) return toast("ID inválido", "err");
+        await api(`/api/admin/events/${ev.id}/attendees`, { method: "POST", body: { user_id: uid, status: st } });
+        toast("Asistente añadido", "ok"); close(); openEventDetail(ev.id, onChanged);
+      };
+      attWrap.querySelectorAll("[data-remove]").forEach((b) => {
+        b.onclick = async () => {
+          const uid = b.getAttribute("data-remove");
+          const ok = await confirmDialog({ title: "Expulsar asistente", message: `Retirar al usuario #${uid} de la quedada.`, danger: true, confirmLabel: "Expulsar" });
+          if (!ok) return;
+          await api(`/api/admin/events/${ev.id}/attendees/${uid}`, { method: "DELETE" });
+          toast("Retirado", "ok"); close(); openEventDetail(ev.id, onChanged);
+        };
+      });
+      back.appendChild(card);
+      document.body.appendChild(back);
+      back.addEventListener("click", (e) => { if (e.target === back) close(); });
+    }
+
     async function view_events(container) {
       DataView(container, {
-        title: "Quedadas / Eventos", subtitle: "Eventos creados por usuarios (Oro+ para crear)", icon: "📅",
+        title: "Quedadas / Eventos",
+        subtitle: "Panel avanzado · crear, editar, gestionar asistentes",
+        icon: "📅",
         fetch: async () => (await api("/api/admin/events")).data?.items || [],
         rowId: (r) => r.id,
+        headerActions: [
+          { label: "Nueva quedada", variant: "primary", icon: "＋", onClick: () => openEventEditor(null, () => rerender()) },
+        ],
         kpis: (rows) => [
-          { label: "Total eventos", value: rows.length, accent: "blue" },
+          { label: "Total", value: rows.length, accent: "blue" },
           { label: "Abiertos", value: rows.filter((r) => r.status === "open").length, accent: "green" },
-          { label: "Cerrados", value: rows.filter((r) => r.status === "closed").length, accent: "amber" },
+          { label: "Próximos", value: rows.filter((r) => r.status === "open" && new Date(r.starts_at) > new Date()).length, accent: "purple" },
+          { label: "Pasados", value: rows.filter((r) => new Date(r.starts_at) < new Date()).length, accent: "amber" },
           { label: "Cancelados", value: rows.filter((r) => r.status === "cancelled").length, accent: "red" },
+          { label: "Asistentes (going)", value: rows.reduce((a, r) => a + (r.attendees_count || 0), 0), accent: "blue" },
         ],
         filters: [
           { key: "status", label: "Estado", type: "select", options: [
             { value: "open", label: "Abiertos" }, { value: "closed", label: "Cerrados" }, { value: "cancelled", label: "Cancelados" }
           ] },
           { key: "category", label: "Categoría", type: "text" },
+          { key: "featured", label: "Destacada", type: "select", options: [{ value: 1, label: "Sí" }, { value: 0, label: "No" }] },
+          { key: "min_plan", label: "Plan mínimo", type: "select", options: [
+            { value: "free", label: "free" }, { value: "premium", label: "premium" },
+            { value: "gold", label: "gold" }, { value: "platinum", label: "platinum" }
+          ] },
         ],
         columns: [
           { key: "id", label: "ID", sortable: true },
-          { key: "title", label: "Título" },
-          { key: "starts_at", label: "Fecha", sortable: true, render: (r) => fmtDate(r.starts_at) },
+          { key: "title", label: "Título", render: (r) => {
+              const div = document.createElement("div");
+              div.innerHTML = `<div style="font-weight:600">${escapeHtml(r.title)}${r.featured ? ' <span class="fx-badge purple" style="font-size:10px">★</span>':""}</div>
+                <div class="fx-muted" style="font-size:11px">${escapeHtml(r.place || "sin lugar")}</div>`;
+              return div;
+            } },
+          { key: "starts_at", label: "Cuándo", sortable: true, render: (r) => fmtDate(r.starts_at) },
           { key: "category", label: "Categoría" },
-          { key: "status", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + ({ open:"ok", closed:"amber", cancelled:"off" }[r.status]||""); b.textContent = r.status; return b; } },
+          { key: "attendees_count", label: "Asistentes", sortable: true, render: (r) => {
+              const total = (r.attendees_count || 0) + (r.maybe_count || 0);
+              const cap = r.max_attendees ? `/${r.max_attendees}` : "";
+              const badge = document.createElement("span");
+              badge.className = "fx-badge " + (r.max_attendees && (r.attendees_count || 0) >= r.max_attendees ? "amber" : "ok");
+              badge.textContent = `${r.attendees_count || 0}${cap}`;
+              const wrap = document.createElement("div");
+              wrap.appendChild(badge);
+              if (r.maybe_count) { const s = document.createElement("span"); s.className = "fx-muted"; s.style.marginLeft="6px"; s.style.fontSize="11px"; s.textContent = `+${r.maybe_count} tal vez`; wrap.appendChild(s); }
+              return wrap;
+            } },
+          { key: "creator_email", label: "Creador", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div>${escapeHtml(r.creator_name || "")}</div><div class="fx-muted" style="font-size:11px">${escapeHtml(r.creator_email || "")} · #${r.creator_id}</div>`;
+              return d;
+            } },
+          { key: "min_plan", label: "Plan mín.", render: (r) => escapeHtml(r.min_plan || "free") },
+          { key: "status", label: "Estado", render: (r) => {
+              const b = document.createElement("span");
+              b.className = "fx-badge " + ({ open:"ok", closed:"amber", cancelled:"off" }[r.status] || "");
+              b.textContent = r.status;
+              return b;
+            } },
         ],
         actions: [
-          { label: "Cerrar", variant: "ghost", visible: (r) => r.status === "open", onClick: async (r, reload) => { await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "closed" } }); toast("Cerrado","ok"); reload(); } },
-          { label: "Cancelar", variant: "ghost", visible: (r) => r.status === "open", onClick: async (r, reload) => { await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "cancelled" } }); toast("Cancelado","ok"); reload(); } },
+          { label: "Ver", variant: "ghost", onClick: (r, reload) => openEventDetail(r.id, reload) },
+          { label: "Editar", variant: "ghost", onClick: (r, reload) => openEventEditor(r, reload) },
+          { label: "Destacar", variant: "ghost", visible: (r) => !r.featured, onClick: async (r, reload) => {
+              await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { featured: 1 } });
+              toast("Destacada", "ok"); reload();
+            } },
+          { label: "Quitar destacado", variant: "ghost", visible: (r) => !!r.featured, onClick: async (r, reload) => {
+              await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { featured: 0 } });
+              toast("Actualizada", "ok"); reload();
+            } },
+          { label: "Cerrar", variant: "ghost", visible: (r) => r.status === "open", onClick: async (r, reload) => {
+              await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "closed" } });
+              toast("Cerrada", "ok"); reload();
+            } },
+          { label: "Reabrir", variant: "ghost", visible: (r) => r.status !== "open", onClick: async (r, reload) => {
+              await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "open" } });
+              toast("Reabierta", "ok"); reload();
+            } },
+          { label: "Cancelar", variant: "ghost", visible: (r) => r.status === "open", onClick: async (r, reload) => {
+              const ok = await confirmDialog({ title: "Cancelar quedada", message: r.title, danger: true, confirmLabel: "Cancelar quedada" });
+              if (!ok) return;
+              await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "cancelled" } });
+              toast("Cancelada", "ok"); reload();
+            } },
+          { label: "Duplicar", variant: "ghost", onClick: async (r, reload) => {
+              await api(`/api/admin/events/${r.id}/duplicate`, { method: "POST" });
+              toast("Duplicada", "ok"); reload();
+            } },
           { label: "", icon: "&#x1f5d1;", title: "Borrar", variant: "danger-icon", onClick: async (r, reload) => {
-            const ok = await confirmDialog({ title: "Borrar evento", message: r.title, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
-            await api(`/api/admin/events/${r.id}`, { method: "DELETE" });
-            toast("Borrado", "ok"); reload();
-          } },
+              const ok = await confirmDialog({ title: "Borrar quedada", message: r.title, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              await api(`/api/admin/events/${r.id}`, { method: "DELETE" });
+              toast("Borrada", "ok"); reload();
+            } },
         ],
         bulkEndpoint: "/api/admin/events/bulk-delete",
       });
@@ -1558,6 +1819,11 @@
   select.fx-input option, select.fx-input optgroup { background:#1b1f2e; color:#e8ebf5; }
   .fx-filter { display:flex; flex-direction:column; }
   .fx-filter label { font-size:10px; text-transform:uppercase; color: var(--fg-muted,#96a0b8); letter-spacing:0.5px; margin-bottom:3px; font-weight:600; }
+  .fx-form-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
+  .fx-form-grid .fx-field { display:flex; flex-direction:column; gap:4px; }
+  .fx-form-grid .fx-field.span2 { grid-column: 1 / -1; }
+  .fx-form-grid .fx-field label { font-size:11px; text-transform:uppercase; color:#96a0b8; letter-spacing:0.4px; font-weight:600; }
+  @media (max-width: 640px) { .fx-form-grid { grid-template-columns: 1fr; } }
   /* Aseguramos legibilidad tambien si el panel tiene tema claro */
   input.fx-input, textarea.fx-input { color-scheme: dark; }
 
