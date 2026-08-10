@@ -5585,14 +5585,14 @@ async function seedContentDefaults() {
     "content.me.logout": "Cerrar sesión",
     // Design tokens (customizable from admin → Diseño) — Marca Aura por defecto
     "content.design.brand1": "#ff3b6b",
-    "content.design.brand2": "#ff8a3b",
-    "content.design.bg": "#0e0f14",
+    "content.design.brand2": "#a855f7",
+    "content.design.bg": "#14060b",
     "content.design.text": "#f2f3f7",
     "content.design.radius": "18",
-    // Hero oscuro sólido (tema dark). El modo claro puede sobrescribir después.
+    // Hero vino oscuro sólido; el CSS aplica gradiente vino→negro en dark.
     "content.design.hero_style": "solid",
     "content.design.hero_image": "",
-    "content.design.hero_solid_color": "#0e0f14",
+    "content.design.hero_solid_color": "#14060b",
     "content.design.font": "system",
     "content.design.btn_style": "pill",
     // Per-section design
@@ -5635,14 +5635,14 @@ async function seedContentDefaults() {
     "content.design.text_muted": "",
     "content.design.text_hero_title": "",
     "content.design.text_hero_sub": "",
-    // Logo customization — Marca Aura por defecto (imagen circular con anillo gradiente)
+    // Logo customization — Marca Aura por defecto (imagen circular con anillo gradiente CSS)
     "content.design.logo_mode": "image",   // heart | image | emoji | initial
-    "content.design.logo_image": "assets/aura-logo.png?v=3",       // URL to custom image (dark theme)
-    "content.design.logo_image_light": "assets/aura-logo-light.png?v=3", // URL to alt image for light theme
+    "content.design.logo_image": "assets/aura-logo-round.png?v=5",       // URL to custom image (dark theme)
+    "content.design.logo_image_light": "assets/aura-logo-round.png?v=5", // URL to alt image for light theme
     "content.design.logo_emoji": "💘",     // used when mode=emoji
-    "content.design.logo_bg": "gradient",  // gradient | solid | transparent
+    "content.design.logo_bg": "transparent",// gradient | solid | transparent (anillo es CSS)
     "content.design.logo_color": "#ffffff",// stroke/fill color for heart & initial
-    "content.design.logo_size": "88",      // px, welcome logo size
+    "content.design.logo_size": "200",     // px, welcome logo size
     "content.design.logo_radius": "50",    // px, background radius (circular)
   };
   for (const [k, v] of Object.entries(defaults)) {
@@ -5689,14 +5689,15 @@ async function seedContentDefaults() {
         "content.design.likes_grid_cols": "2",
         "content.design.side_left_bg": "none",
         "content.design.side_right_bg": "none",
-        // Logo Aura: imagen circular con anillo gradiente rosa→azul
+        // Logo Aura: imagen circular con anillo gradiente rosa→morado→azul (dibujado por CSS).
+        // logo_bg="transparent" para que el anillo no quede tapado por un fondo naranja.
         "content.design.logo_mode": "image",
-        "content.design.logo_image": "assets/aura-logo.png?v=3",
-        "content.design.logo_image_light": "assets/aura-logo-light.png?v=3",
+        "content.design.logo_image": "assets/aura-logo-round.png?v=5",
+        "content.design.logo_image_light": "assets/aura-logo-round.png?v=5",
         "content.design.logo_emoji": "💘",
-        "content.design.logo_bg": "gradient",
+        "content.design.logo_bg": "transparent",
         "content.design.logo_color": "#ffffff",
-        "content.design.logo_size": "88",
+        "content.design.logo_size": "96",
         "content.design.logo_radius": "50",
       };
       for (const [k, v] of Object.entries(auraDesign)) {
@@ -5713,6 +5714,102 @@ async function seedContentDefaults() {
     }
   } catch (e) {
     console.error("[migration V525] Failed to restore Aura design:", e && e.message);
+  }
+
+  // V526: Ajuste fino del logo Aura — cambiar logo_bg a "transparent" y
+  // aumentar logo_size a 96 para que se vea el logo con anillo gradiente
+  // dibujado por CSS. Migración one-shot con centinela propio.
+  try {
+    const [rows] = await pool.execute(
+      "SELECT v FROM settings WHERE k = 'content.design.restore.v526'"
+    );
+    if (!rows || rows.length === 0) {
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.logo_bg", "transparent"]
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.logo_size", "96"]
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.restore.v526", "1"]
+      );
+      console.log("[migration V526] Logo bg fixed (transparent + size 96)");
+    }
+  } catch (e) {
+    console.error("[migration V526] Failed:", e && e.message);
+  }
+
+  // V529: Agrandar logo Aura — logo_size = 140 y welc_logo_size = 140.
+  // El PNG original ya incluye su propio anillo, así que se muestra sin fondo.
+  // Migración one-shot con centinela propio.
+  try {
+    const [rows] = await pool.execute(
+      "SELECT v FROM settings WHERE k = 'content.design.restore.v529'"
+    );
+    if (!rows || rows.length === 0) {
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.logo_size", "140"]
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.welc_logo_size", "140"]
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.logo_bg", "transparent"]
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.restore.v529", "1"]
+      );
+      console.log("[migration V529] Logo size increased to 140");
+    }
+  } catch (e) {
+    console.error("[migration V529] Failed:", e && e.message);
+  }
+
+  // V530: Tema Aura definitivo (fondo vino oscuro + logo circular con
+  // anillo arcoíris). Fuerza los valores en la BD para que el "restablecer
+  // valores por defecto" del panel deje este diseño y NO el naranja anterior.
+  try {
+    const [rows] = await pool.execute(
+      "SELECT v FROM settings WHERE k = 'content.design.restore.v530'"
+    );
+    if (!rows || rows.length === 0) {
+      const auraV530 = {
+        "content.design.brand1": "#ff3b6b",
+        "content.design.brand2": "#a855f7",
+        "content.design.bg": "#14060b",
+        "content.design.text": "#f2f3f7",
+        "content.design.hero_style": "solid",
+        "content.design.hero_image": "",
+        "content.design.hero_solid_color": "#14060b",
+        "content.design.logo_mode": "image",
+        "content.design.logo_image": "assets/aura-logo-round.png?v=5",
+        "content.design.logo_image_light": "assets/aura-logo-round.png?v=5",
+        "content.design.logo_bg": "transparent",
+        "content.design.logo_size": "200",
+        "content.design.welc_logo_size": "200",
+        "content.design.logo_radius": "50",
+      };
+      for (const [k, v] of Object.entries(auraV530)) {
+        await pool.execute(
+          "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+          [k, v]
+        );
+      }
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.restore.v530", "1"]
+      );
+      console.log("[migration V530] Aura wine theme + rainbow ring logo applied");
+    }
+  } catch (e) {
+    console.error("[migration V530] Failed:", e && e.message);
   }
 
   // V381: Forzar registros CERRADOS una única vez para arrancar con waitlist
