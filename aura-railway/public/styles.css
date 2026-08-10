@@ -5104,12 +5104,20 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
     height: 100dvh !important;
     max-height: 100dvh !important;
   }
-  /* app-viewport es el contenedor scrollable interno */
+  /* app-viewport es el contenedor scrollable interno.
+     V579 · Se usa flex-grow para NO empujar la tabbar fuera del
+     área visible de .phone (que tiene overflow:hidden). */
   .app-viewport {
-    height: 100%;
+    flex: 1 1 auto;
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* V579 · Asegurar que la tabbar SIEMPRE es visible al final del .phone. */
+  .phone .tabbar:not([hidden]) {
+    flex: 0 0 auto !important;
+    display: grid !important;
+    z-index: 6 !important;
   }
   /* Pantallas normales: hacen scroll si el contenido es más
      largo, pero SIN dejar hueco final (el bottom-padding se
