@@ -683,6 +683,7 @@
     reward_rejected: { icon: "❌", label: "Canje rechazado" },
     reward_granted:  { icon: "🎁", label: "Recompensa concedida" },
     admin_message:   { icon: "📣", label: "Mensaje del equipo" },
+    new_match:       { icon: "💘", label: "Nuevo match" }, // V591
   };
 
   function timeAgo(d) {

@@ -3644,6 +3644,43 @@ async function pushToUser(userId, payload) {
   }
 }
 
+// V591 · Push de mensajes de chat: throttling en memoria (1 push por
+// conversación+destinatario cada 2 min) para no spamear en conversaciones activas.
+const msgPushThrottle = new Map(); // "cid:uid" -> ts último push
+function msgPushAllowed(cid, uid) {
+  const k = `${cid}:${uid}`;
+  const last = msgPushThrottle.get(k) || 0;
+  if (Date.now() - last < 2 * 60 * 1000) return false;
+  msgPushThrottle.set(k, Date.now());
+  if (msgPushThrottle.size > 5000) {
+    const cutoff = Date.now() - 10 * 60 * 1000;
+    for (const [key, ts] of msgPushThrottle) if (ts < cutoff) msgPushThrottle.delete(key);
+  }
+  return true;
+}
+
+// V591 · Notificar mensaje nuevo al otro participante de la conversación.
+// Solo push web (el chat ya tiene su propio contador de no leídos) y solo si
+// el destinatario NO está online (si está en la app lo ve en tiempo real).
+async function notifyNewMessage(senderId, cid, preview) {
+  try {
+    const [[c]] = await pool.query("SELECT user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
+    if (!c) return;
+    const peer = c.user_a === senderId ? c.user_b : c.user_a;
+    if (!peer || peer === senderId) return;
+    const [[peerRow]] = await pool.query("SELECT online FROM users WHERE id=? LIMIT 1", [peer]);
+    if (peerRow && peerRow.online) return;
+    if (!msgPushAllowed(cid, peer)) return;
+    const [[sender]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [senderId]);
+    await pushToUser(peer, {
+      title: `💬 ${(sender?.name || "Alguien")} te ha escrito`,
+      body: (preview || "Tienes un mensaje nuevo").slice(0, 120),
+      url: "/",
+      tag: `chat-${cid}`,
+    });
+  } catch (e) { /* best-effort */ }
+}
+
 async function processCampaign(id) {
   const [[c]] = await pool.query("SELECT * FROM push_campaigns WHERE id=?", [id]);
   if (!c) return;
@@ -8765,6 +8802,26 @@ app.post("/api/my/conversations", wrap(async (req, res) => {
     "INSERT INTO conversations (user_a, user_b, last_message_at) VALUES (?,?,NOW())",
     [a, b]
   );
+  // V591 · Match nuevo: notificación in-app + push al otro usuario (best-effort)
+  (async () => {
+    try {
+      const [[meRow]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
+      const meName = meRow?.name || "Alguien";
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, data)
+         VALUES (?, 'new_match', ?, ?, '💘', ?)`,
+        [peer, "💘 ¡Nuevo match!",
+         `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
+         JSON.stringify({ conversation_id: r.insertId, peer_id: me })]
+      );
+      await pushToUser(peer, {
+        title: "💘 ¡Nuevo match!",
+        body: `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
+        url: "/",
+        tag: `match-${r.insertId}`,
+      });
+    } catch (e) { /* best-effort */ }
+  })().catch(() => {});
   res.json({ ok: true, id: r.insertId });
 }));
 
@@ -9187,6 +9244,8 @@ app.post("/api/my/messages", wrap(async (req, res) => {
       targetType: "conversation", targetId: cid, req,
     });
   } catch {}
+  // V591 · Push al destinatario si está offline (best-effort, con throttling)
+  notifyNewMessage(me, cid, media_type === "text" ? body : media_type === "audio" ? "🎤 Nota de voz" : "📷 Foto").catch(() => {});
   res.json({ ok: true, id: r.insertId });
 }));
 
@@ -9582,7 +9641,7 @@ const phase5 = require("./features_phase5"); // V558 · grants por función
 const phase6 = require("./features_phase6_vault"); // V569 · bóveda cifrada
 const phase7 = require("./features_phase7_rewards"); // V576 · recompensas/cupones XP
 const phase8 = require("./features_phase8_notifications"); // V587 · notificaciones in-app
-phase1.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage }); // V591 · +notifyNewMessage
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });

@@ -1928,6 +1928,7 @@
         reward_rejected: { c: "red",    t: "❌ Canje rechazado" },
         reward_granted:  { c: "purple", t: "🎁 Recompensa concedida" },
         admin_message:   { c: "blue",   t: "📣 Mensaje admin" },
+        new_match:       { c: "pink",   t: "💘 Nuevo match" }, // V591
       };
       DataView(container, {
         title: "Notificaciones enviadas",

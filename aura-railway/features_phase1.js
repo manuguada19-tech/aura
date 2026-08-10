@@ -165,6 +165,8 @@ async function getUserPlan(pool, userId) {
 
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
+  // V591 · push web al destinatario si está offline (no-op si no llega el helper)
+  const notifyNewMessage = typeof helpers.notifyNewMessage === "function" ? helpers.notifyNewMessage : async () => {};
 
   // ============ V569 · Reproducción de nota de voz cifrada ===========
   // El emisor y el receptor de la conversación pueden reproducir su propio
@@ -358,6 +360,7 @@ function register(app, pool, helpers) {
       [cid, me, null, "photo", sticker.url, stickerId]
     );
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
+    notifyNewMessage(me, cid, "🎨 Sticker").catch(() => {}); // V591
     res.json({ ok: true, id: r.insertId, sticker_url: sticker.url });
   }));
 
@@ -392,6 +395,7 @@ function register(app, pool, helpers) {
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
     // V568 · Auto-triage inicial
     try { await autoTriageVoiceNote(pool, r.insertId); } catch (e) { console.warn("[voice triage]", e.message); }
+    notifyNewMessage(me, cid, "🎤 Nota de voz").catch(() => {}); // V591
     res.json({ ok: true, id: r.insertId });
   }));
 
@@ -421,6 +425,7 @@ function register(app, pool, helpers) {
       [cid, me, body, media_type, media_url, sticker_id]
     );
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
+    notifyNewMessage(me, cid, body || "✨ Mensaje efímero").catch(() => {}); // V591
     res.json({ ok: true, id: r.insertId, expires_in_hours: 24 });
   }));
 
