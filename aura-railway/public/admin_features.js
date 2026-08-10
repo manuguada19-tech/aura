@@ -659,11 +659,16 @@
         const pActs = card.querySelector(".fx-pack-actions");
         pActs.appendChild(btn("＋ Sticker", { variant: "primary", onClick: async () => {
           const d = await prompt2({ title: "Nuevo sticker", fields: [
-            { name: "slug", label: "Slug único" },
-            { name: "url", label: "URL de la imagen" },
+            { name: "slug", label: "Slug único (ej. corazon-rojo)" },
+            { name: "url", label: "URL de la imagen (PNG/GIF/WebP)" },
+            { name: "keywords", label: "Keywords para búsqueda (opcional)", placeholder: "amor, corazon, love" },
+            { name: "sort_order", label: "Orden", type: "number", default: "0" },
           ]});
           if (!d || !d.slug || !d.url) return;
-          await api("/api/admin/stickers", { method: "POST", body: { pack_id: p.id, slug: d.slug, url: d.url } });
+          await api("/api/admin/stickers", { method: "POST", body: {
+            pack_id: p.id, slug: d.slug, url: d.url,
+            keywords: d.keywords || "", sort_order: parseInt(d.sort_order || "0", 10) || 0,
+          } });
           toast("Sticker añadido", "ok"); rerender();
         } }));
         pActs.appendChild(btn("Borrar pack", { variant: "danger", icon: "&#x1f5d1;", onClick: async () => {
@@ -680,7 +685,24 @@
         } else {
           packStickers.forEach((s) => {
             const it = document.createElement("div"); it.className = "fx-sticker-item";
-            it.innerHTML = `<img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.slug)}"/><span>${escapeHtml(s.slug)}</span>`;
+            it.innerHTML = `<img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.slug)}"/><span title="${escapeHtml(s.keywords||"")}">${escapeHtml(s.slug)}</span>`;
+            // V560 · Editar sticker
+            const ed = btn("✎", { variant: "ghost", title: "Editar sticker", onClick: async () => {
+              const d = await prompt2({ title: "Editar sticker", fields: [
+                { name: "slug", label: "Slug", default: s.slug || "" },
+                { name: "url", label: "URL imagen", default: s.url || "" },
+                { name: "keywords", label: "Keywords", default: s.keywords || "" },
+                { name: "sort_order", label: "Orden", type: "number", default: String(s.sort_order || 0) },
+              ]});
+              if (!d) return;
+              await api(`/api/admin/stickers/${s.id}`, { method: "PUT", body: {
+                slug: d.slug, url: d.url, keywords: d.keywords || "",
+                sort_order: parseInt(d.sort_order || "0", 10) || 0,
+              } });
+              toast("Sticker actualizado", "ok"); rerender();
+            } });
+            ed.classList.add("fx-sticker-edit");
+            it.appendChild(ed);
             const rm = btn("×", { variant: "danger-icon", title: "Borrar sticker", onClick: async () => {
               const ok = await confirmDialog({ title: "Borrar sticker", message: s.slug, danger: true, confirmLabel: "Borrar" });
               if (!ok) return;

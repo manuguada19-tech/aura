@@ -373,6 +373,30 @@ function register(app, pool, helpers) {
     );
     res.json({ ok: true, id: r.insertId });
   }));
+  // V560 · Editar sticker
+  app.put("/api/admin/stickers/:id", requireAdmin, wrap(async (req, res) => {
+    const { slug, url, keywords, sort_order, pack_id } = req.body || {};
+    await pool.execute(
+      `UPDATE stickers SET
+         slug=COALESCE(?,slug),
+         url=COALESCE(?,url),
+         keywords=COALESCE(?,keywords),
+         sort_order=COALESCE(?,sort_order),
+         pack_id=COALESCE(?,pack_id)
+       WHERE id=?`,
+      [slug ?? null, url ?? null, keywords ?? null, sort_order ?? null, pack_id ?? null, parseInt(req.params.id,10)]
+    );
+    res.json({ ok: true });
+  }));
+  // V560 · Listar stickers de un pack para admin
+  app.get("/api/admin/sticker-packs/:pack_id/stickers", requireAdmin, wrap(async (req, res) => {
+    const pid = parseInt(req.params.pack_id, 10);
+    const [rows] = await pool.query(
+      "SELECT id, pack_id, slug, url, keywords, sort_order FROM stickers WHERE pack_id=? ORDER BY sort_order, id",
+      [pid]
+    );
+    res.json({ ok: true, items: rows });
+  }));
   app.delete("/api/admin/stickers/:id", requireAdmin, wrap(async (req, res) => {
     await pool.execute("DELETE FROM stickers WHERE id=?", [parseInt(req.params.id,10)]);
     res.json({ ok: true });
