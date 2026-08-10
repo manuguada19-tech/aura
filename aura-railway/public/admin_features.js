@@ -849,40 +849,77 @@
       const isNew = !evt || !evt.id;
       const back = document.createElement("div"); back.className = "fx-modal-back";
       const card = document.createElement("div"); card.className = "fx-modal-card wide";
-      card.style.maxWidth = "720px";
       card.innerHTML = `
-        <div class="fx-modal-head"><h3>${isNew ? "Nueva quedada" : "Editar quedada #" + evt.id}</h3></div>
+        <div class="fx-modal-head">
+          <h3>${isNew ? "📅 Nueva quedada" : "✏️ Editar quedada #" + evt.id}</h3>
+        </div>
         <div class="fx-modal-body">
-          <div class="fx-form-grid">
-            <div class="fx-field span2"><label>Título *</label><input id="e_title" class="fx-input" placeholder="Título de la quedada"></div>
-            <div class="fx-field span2"><label>Descripción</label><textarea id="e_desc" class="fx-input" rows="3" placeholder="Descripción visible para los usuarios"></textarea></div>
-            <div class="fx-field"><label>Lugar</label><input id="e_place" class="fx-input" placeholder="Bar, parque, ciudad…"></div>
-            <div class="fx-field"><label>Categoría</label>
-              <select id="e_cat" class="fx-input">
-                <option value="general">general</option><option value="deporte">deporte</option>
-                <option value="cine">cine</option><option value="gastronomia">gastronomía</option>
-                <option value="musica">música</option><option value="cultura">cultura</option>
-                <option value="fiesta">fiesta</option><option value="viajes">viajes</option>
-                <option value="tecnologia">tecnología</option><option value="otros">otros</option>
-              </select></div>
-            <div class="fx-field"><label>Empieza *</label><input id="e_start" class="fx-input" type="datetime-local"></div>
-            <div class="fx-field"><label>Termina</label><input id="e_end" class="fx-input" type="datetime-local"></div>
-            <div class="fx-field"><label>Latitud</label><input id="e_lat" class="fx-input" type="number" step="0.0000001" placeholder="40.4168"></div>
-            <div class="fx-field"><label>Longitud</label><input id="e_lng" class="fx-input" type="number" step="0.0000001" placeholder="-3.7038"></div>
-            <div class="fx-field"><label>Aforo máx. (0 = ilimitado)</label><input id="e_max" class="fx-input" type="number" min="0" placeholder="0"></div>
-            <div class="fx-field"><label>Plan mínimo</label>
-              <select id="e_plan" class="fx-input">
-                <option value="free">free</option><option value="premium">premium</option>
-                <option value="gold">gold</option><option value="platinum">platinum</option>
-              </select></div>
-            <div class="fx-field"><label>Estado</label>
-              <select id="e_status" class="fx-input">
-                <option value="open">Abierto</option><option value="closed">Cerrado</option><option value="cancelled">Cancelado</option>
-              </select></div>
-            <div class="fx-field"><label>ID creador (opcional)</label><input id="e_creator" class="fx-input" type="number" placeholder="Se usa 1er admin si vacío"></div>
-            <div class="fx-field span2"><label>Portada (URL)</label><input id="e_cover" class="fx-input" placeholder="https://…"></div>
-            <div class="fx-field span2"><label style="display:flex;align-items:center;gap:8px"><input id="e_feat" type="checkbox"> Destacada (aparece antes)</label></div>
-            <div class="fx-field span2"><label>Notas internas (admin)</label><textarea id="e_notes" class="fx-input" rows="2" placeholder="Solo visibles para administración"></textarea></div>
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">📌</span>Información básica</div>
+            <div class="fx-form-grid">
+              <div class="fx-field span2"><label>Título *</label><input id="e_title" class="fx-input" placeholder="Ej: Cena italiana en Malasaña" maxlength="140"></div>
+              <div class="fx-field span2"><label>Descripción</label><textarea id="e_desc" class="fx-input" rows="3" placeholder="¿De qué va la quedada? Duración, plan, punto de encuentro…"></textarea></div>
+              <div class="fx-field"><label>Categoría</label>
+                <select id="e_cat" class="fx-input">
+                  <option value="general">general</option><option value="deporte">deporte</option>
+                  <option value="cine">cine</option><option value="gastronomia">gastronomía</option>
+                  <option value="musica">música</option><option value="cultura">cultura</option>
+                  <option value="fiesta">fiesta</option><option value="viajes">viajes</option>
+                  <option value="tecnologia">tecnología</option><option value="otros">otros</option>
+                </select></div>
+              <div class="fx-field"><label>Estado</label>
+                <select id="e_status" class="fx-input">
+                  <option value="open">Abierta</option><option value="closed">Cerrada</option><option value="cancelled">Cancelada</option>
+                </select></div>
+            </div>
+          </div>
+
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">🗓️</span>Fecha y ubicación</div>
+            <div class="fx-form-grid">
+              <div class="fx-field"><label>Empieza *</label><input id="e_start" class="fx-input" type="datetime-local"></div>
+              <div class="fx-field"><label>Termina</label><input id="e_end" class="fx-input" type="datetime-local"></div>
+              <div class="fx-field span2"><label>Lugar</label><input id="e_place" class="fx-input" placeholder="Nombre del sitio o dirección" maxlength="200"></div>
+              <div class="fx-field"><label>Latitud <span class="fx-form-hint" style="display:inline">(opcional)</span></label><input id="e_lat" class="fx-input" type="number" step="0.0000001" placeholder="40.4168"></div>
+              <div class="fx-field"><label>Longitud <span class="fx-form-hint" style="display:inline">(opcional)</span></label><input id="e_lng" class="fx-input" type="number" step="0.0000001" placeholder="-3.7038"></div>
+            </div>
+          </div>
+
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">👥</span>Aforo y acceso</div>
+            <div class="fx-form-grid">
+              <div class="fx-field"><label>Aforo máximo</label><input id="e_max" class="fx-input" type="number" min="0" placeholder="0"><div class="fx-form-hint">0 = ilimitado</div></div>
+              <div class="fx-field"><label>Plan mínimo</label>
+                <select id="e_plan" class="fx-input">
+                  <option value="free">free</option><option value="premium">premium</option>
+                  <option value="gold">gold</option><option value="platinum">platinum</option>
+                </select><div class="fx-form-hint">Plan requerido para unirse</div></div>
+            </div>
+          </div>
+
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">🎨</span>Presentación</div>
+            <div class="fx-form-grid">
+              <div class="fx-field span2"><label>Portada (URL)</label><input id="e_cover" class="fx-input" placeholder="https://…"></div>
+              <div class="fx-field span2">
+                <label class="fx-checkbox-row" for="e_feat">
+                  <input id="e_feat" type="checkbox">
+                  <div>
+                    <div class="fx-checkbox-title">Marcar como destacada ★</div>
+                    <div class="fx-checkbox-hint">Aparece con prioridad en el listado de usuarios</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">🛡️</span>Administración interna</div>
+            <div class="fx-form-grid">
+              <div class="fx-field"><label>ID creador</label><input id="e_creator" class="fx-input" type="number" placeholder="ID de usuario"><div class="fx-form-hint">Si se deja vacío se usa el primer admin</div></div>
+              <div class="fx-field"></div>
+              <div class="fx-field span2"><label>Notas internas</label><textarea id="e_notes" class="fx-input" rows="2" placeholder="Solo visibles para administración"></textarea></div>
+            </div>
           </div>
         </div>
         <div class="fx-modal-foot"></div>`;
@@ -944,46 +981,54 @@
       if (!data || !data.event) { toast("No encontrado", "err"); return; }
       const ev = data.event; const attendees = data.attendees || [];
       const back = document.createElement("div"); back.className = "fx-modal-back";
-      const card = document.createElement("div"); card.className = "fx-modal-card wide";
-      card.style.maxWidth = "820px";
+      const card = document.createElement("div"); card.className = "fx-modal-card xwide";
       const going = attendees.filter((a) => a.status === "going");
       const maybe = attendees.filter((a) => a.status === "maybe");
       const declined = attendees.filter((a) => a.status === "declined");
       card.innerHTML = `
         <div class="fx-modal-head">
-          <h3>${escapeHtml(ev.title)} <span class="fx-badge ${({open:"ok",closed:"amber",cancelled:"off"}[ev.status]||"")}" style="margin-left:8px">${ev.status}</span>${ev.featured ? '<span class="fx-badge purple" style="margin-left:6px">★ destacada</span>':""}</h3>
+          <h3>${escapeHtml(ev.title)}
+            <span class="fx-badge ${({open:"ok",closed:"amber",cancelled:"off"}[ev.status]||"")}">${ev.status}</span>
+            ${ev.featured ? '<span class="fx-badge purple">★ destacada</span>':""}
+            <span class="fx-muted" style="font-size:12px;font-weight:400">#${ev.id}</span>
+          </h3>
         </div>
         <div class="fx-modal-body">
-          <div class="fx-form-grid">
-            <div class="fx-field"><label>ID</label><div class="fx-muted">#${ev.id}</div></div>
-            <div class="fx-field"><label>Categoría</label><div>${escapeHtml(ev.category || "—")}</div></div>
-            <div class="fx-field"><label>Inicio</label><div>${fmtDate(ev.starts_at)}</div></div>
-            <div class="fx-field"><label>Fin</label><div>${ev.ends_at ? fmtDate(ev.ends_at) : "—"}</div></div>
-            <div class="fx-field"><label>Lugar</label><div>${escapeHtml(ev.place || "—")}</div></div>
-            <div class="fx-field"><label>Aforo</label><div>${ev.max_attendees ? ev.max_attendees : "ilimitado"}</div></div>
-            <div class="fx-field"><label>Plan mínimo</label><div>${escapeHtml(ev.min_plan || "free")}</div></div>
-            <div class="fx-field"><label>Creador</label><div>${escapeHtml(ev.creator_name || "")} <span class="fx-muted">${escapeHtml(ev.creator_email || "")}</span> · #${ev.creator_id}</div></div>
-            ${ev.cover_url ? `<div class="fx-field span2"><label>Portada</label><img src="${escapeHtml(ev.cover_url)}" style="max-width:100%;border-radius:10px;max-height:200px"></div>`:""}
-            <div class="fx-field span2"><label>Descripción</label><div>${escapeHtml(ev.description || "—")}</div></div>
-            ${ev.admin_notes ? `<div class="fx-field span2"><label>Notas internas</label><div class="fx-muted">${escapeHtml(ev.admin_notes)}</div></div>`:""}
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">📌</span>Detalles</div>
+            <div class="fx-form-grid">
+              <div class="fx-field"><label>Categoría</label><div>${escapeHtml(ev.category || "—")}</div></div>
+              <div class="fx-field"><label>Plan mínimo</label><div>${escapeHtml(ev.min_plan || "free")}</div></div>
+              <div class="fx-field"><label>Inicio</label><div>${fmtDate(ev.starts_at)}</div></div>
+              <div class="fx-field"><label>Fin</label><div>${ev.ends_at ? fmtDate(ev.ends_at) : "—"}</div></div>
+              <div class="fx-field"><label>Lugar</label><div>${escapeHtml(ev.place || "—")}</div></div>
+              <div class="fx-field"><label>Aforo</label><div>${ev.max_attendees ? ev.max_attendees : "ilimitado"}</div></div>
+              <div class="fx-field span2"><label>Creador</label><div>${escapeHtml(ev.creator_name || "")} <span class="fx-muted">${escapeHtml(ev.creator_email || "")}</span> · #${ev.creator_id}</div></div>
+              <div class="fx-field span2"><label>Descripción</label><div style="white-space:pre-wrap">${escapeHtml(ev.description || "—")}</div></div>
+              ${ev.cover_url ? `<div class="fx-field span2"><label>Portada</label><img src="${escapeHtml(ev.cover_url)}" style="max-width:100%;border-radius:10px;max-height:220px"></div>`:""}
+              ${ev.admin_notes ? `<div class="fx-field span2"><label>Notas internas</label><div class="fx-muted" style="white-space:pre-wrap">${escapeHtml(ev.admin_notes)}</div></div>`:""}
+            </div>
           </div>
-          <hr style="border:0;border-top:1px solid rgba(255,255,255,0.08);margin:16px 0">
-          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px">
-            <div><span class="fx-badge ok">${going.length}</span> confirmados</div>
-            <div><span class="fx-badge amber">${maybe.length}</span> tal vez</div>
-            <div><span class="fx-badge off">${declined.length}</span> no van</div>
-          </div>
-          <div id="att_wrap" class="fx-table-wrap"></div>
-          <div style="display:flex;gap:8px;margin-top:10px">
-            <input id="new_att_uid" class="fx-input" type="number" placeholder="ID usuario a añadir">
-            <select id="new_att_st" class="fx-input"><option value="going">going</option><option value="maybe">maybe</option><option value="declined">declined</option></select>
-            <button class="fx-btn" id="btn_add_att">Añadir asistente</button>
+
+          <div class="fx-form-section">
+            <div class="fx-form-section-title"><span class="fx-form-section-ico">👥</span>Asistentes</div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px">
+              <div><span class="fx-badge ok">${going.length}</span> confirmados</div>
+              <div><span class="fx-badge amber">${maybe.length}</span> tal vez</div>
+              <div><span class="fx-badge off">${declined.length}</span> no van</div>
+            </div>
+            <div id="att_wrap" class="fx-table-wrap"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+              <input id="new_att_uid" class="fx-input" type="number" placeholder="ID usuario a añadir" style="flex:1;min-width:180px">
+              <select id="new_att_st" class="fx-input" style="min-width:120px"><option value="going">going</option><option value="maybe">maybe</option><option value="declined">declined</option></select>
+              <button class="fx-btn primary" id="btn_add_att">Añadir asistente</button>
+            </div>
           </div>
         </div>
         <div class="fx-modal-foot">
           <button class="fx-btn" id="btn_close">Cerrar</button>
           <button class="fx-btn" id="btn_dup">Duplicar</button>
-          <button class="fx-btn primary" id="btn_edit">Editar</button>
+          <button class="fx-btn primary" id="btn_edit">✏️ Editar</button>
         </div>`;
       // tabla asistentes
       const attWrap = card.querySelector("#att_wrap");
@@ -1911,20 +1956,34 @@
   .fx-sticker-del { position:absolute; top:4px; right:4px; padding:0 6px !important; font-size:14px !important; line-height:1; }
   .fx-emoji-big { font-size:22px; }
 
-  .fx-modal-back { position:fixed; inset:0; background: rgba(6,10,20,0.72); backdrop-filter: blur(6px); display:flex; align-items:center; justify-content:center; z-index:10000; animation: fx-fadein 0.15s ease; }
+  .fx-modal-back { position:fixed; inset:0; background: rgba(6,10,20,0.72); backdrop-filter: blur(6px); display:flex; align-items:center; justify-content:center; z-index:10000; animation: fx-fadein 0.15s ease; padding: 24px 16px; overflow-y:auto; }
   @keyframes fx-fadein { from { opacity:0; } to { opacity:1; } }
-  .fx-modal-card { background: #121729; color:#e8ebf5; border-radius:16px; padding:0; min-width:360px; max-width:520px; box-shadow: 0 30px 80px rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.08); animation: fx-scalein 0.2s ease; }
-  .fx-modal-card.wide { max-width:640px; width: min(90vw, 640px); }
-  @keyframes fx-scalein { from { transform: scale(0.94); opacity:0; } to { transform:none; opacity:1; } }
-  .fx-modal-head { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); }
+  .fx-modal-card { background: #121729; color:#e8ebf5; border-radius:16px; padding:0; min-width:360px; max-width:520px; box-shadow: 0 30px 80px rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.08); animation: fx-scalein 0.2s ease; display:flex; flex-direction:column; max-height: calc(100vh - 48px); overflow:hidden; }
+  .fx-modal-card.wide { max-width:720px; width: min(94vw, 720px); }
+  .fx-modal-card.xwide { max-width: 900px; width: min(96vw, 900px); }
+  @keyframes fx-scalein { from { transform: scale(0.96); opacity:0; } to { transform:none; opacity:1; } }
+  .fx-modal-head { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); flex-shrink:0; }
   .fx-modal-head.danger h3 { color:#f87171; }
-  .fx-modal-head h3 { margin:0; font-size:16px; }
-  .fx-modal-body { padding:16px 20px; }
-  .fx-modal-foot { padding:14px 20px; display:flex; justify-content:flex-end; gap:10px; border-top:1px solid rgba(255,255,255,0.06); }
+  .fx-modal-head h3 { margin:0; font-size:16px; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+  .fx-modal-body { padding:18px 22px; overflow-y:auto; overflow-x:hidden; flex:1 1 auto; min-height:0; }
+  .fx-modal-body::-webkit-scrollbar { width:10px; }
+  .fx-modal-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius:6px; }
+  .fx-modal-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
+  .fx-modal-foot { padding:14px 20px; display:flex; justify-content:flex-end; gap:10px; border-top:1px solid rgba(255,255,255,0.06); flex-shrink:0; background: rgba(255,255,255,0.02); flex-wrap:wrap; }
   .fx-field { margin-bottom:12px; }
-  .fx-field label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#96a0b8; margin-bottom:4px; font-weight:600; }
+  .fx-field label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#96a0b8; margin-bottom:5px; font-weight:600; }
   .fx-field .fx-input, .fx-field textarea, .fx-field select { width:100%; box-sizing:border-box; padding:9px 12px; }
   .fx-field textarea { min-height:80px; resize: vertical; font-family: inherit; }
+  /* V574 · Secciones dentro de un formulario modal */
+  .fx-form-section { margin-bottom:22px; }
+  .fx-form-section:last-child { margin-bottom:0; }
+  .fx-form-section-title { font-size:11px; text-transform:uppercase; letter-spacing:0.7px; color:#a5b0c7; font-weight:700; margin: 0 0 12px 0; padding-bottom:8px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; gap:8px; }
+  .fx-form-section-title .fx-form-section-ico { width:22px;height:22px;border-radius:6px;background: linear-gradient(135deg, rgba(255,59,107,0.22), rgba(120,86,255,0.22)); display:inline-flex; align-items:center; justify-content:center; font-size:13px; }
+  .fx-form-hint { font-size:11px; color:#7c8394; margin-top:4px; }
+  .fx-checkbox-row { display:flex; align-items:center; gap:10px; padding:10px 12px; background: rgba(255,255,255,0.04); border-radius:10px; border:1px solid rgba(255,255,255,0.06); cursor:pointer; }
+  .fx-checkbox-row input[type=checkbox] { width:18px; height:18px; accent-color:#ff3b6b; }
+  .fx-checkbox-row .fx-checkbox-title { font-weight:600; font-size:13px; }
+  .fx-checkbox-row .fx-checkbox-hint { font-size:11px; color:#96a0b8; }
 
   #fx-toast { position:fixed; top:16px; right:16px; z-index:20000; display:flex; flex-direction:column; gap:8px; }
   .fx-toast-line { background: #121729; color:#e8ebf5; padding:11px 16px; border-radius:10px; font-size:13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-left: 4px solid #7a5cff; transform: translateX(20px); opacity:0; transition: all .25s ease; }
