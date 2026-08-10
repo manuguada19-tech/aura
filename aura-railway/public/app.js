@@ -7850,8 +7850,21 @@ function screenMe(root) {
       el("div", { class: "me-mail" }, meMail),
       el("span", { class: "me-tier" }, meTier),
     ]),
-    el("button", { class: "me-edit", onclick: () => render(screenEditProfile) }, T("content.me.edit_button") || "Editar"),
+    el("div", { class: "me-hero-actions" }, [
+      // V587 · Campanita de notificaciones in-app con badge de no leídas
+      el("button", {
+        class: "me-bell",
+        title: "Notificaciones",
+        onclick: () => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} },
+      }, [
+        el("span", { class: "me-bell-ico" }, "🔔"),
+        el("span", { class: "me-bell-badge", style: "display:none" }, "0"),
+      ]),
+      el("button", { class: "me-edit", onclick: () => render(screenEditProfile) }, T("content.me.edit_button") || "Editar"),
+    ]),
   ]));
+  // Actualiza el badge nada más pintar la pantalla
+  try { window.aura2 && window.aura2.updateNotifBadge && window.aura2.updateNotifBadge(); } catch {}
 
   // Banner "Mi cuenta y estado" — solo se muestra si hay algo activo
   // (KYC pendiente, apelaciones abiertas, infracciones sin resolver).
@@ -7908,6 +7921,7 @@ function screenMe(root) {
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
     ]},
     { title: "Novedades", items: [
+      { icon: "🔔", title: "Notificaciones", sub: "Avisos de canjes, mensajes del equipo y más", onClick: () => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} } },
       { icon: "📸", title: "Historias 24h", sub: "Publica y descubre historias efímeras", onClick: () => { try { window.aura2 && window.aura2.openStoriesFeed && window.aura2.openStoriesFeed(); } catch {} } },
       { icon: "🎮", title: "Progreso y logros", sub: "XP, nivel y misiones diarias", onClick: () => { try { window.aura2 && window.aura2.openGamification && window.aura2.openGamification(); } catch {} } },
       { icon: "📅", title: "Quedadas", sub: "Eventos y planes con la comunidad", onClick: () => { try { window.aura2 && window.aura2.openEvents && window.aura2.openEvents(); } catch {} } },

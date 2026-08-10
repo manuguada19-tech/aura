@@ -7778,3 +7778,39 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 
 
 
+
+/* V587 · Notificaciones in-app: campanita + badge + lista */
+.me-hero-actions { display: flex; align-items: center; gap: 8px; }
+.me-bell {
+  position: relative; width: 38px; height: 38px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--surface);
+  color: var(--text); font-size: 17px; line-height: 1;
+  display: grid; place-items: center; cursor: pointer;
+}
+.me-bell:hover { background: var(--surface-2); }
+.me-bell-badge {
+  position: absolute; top: -5px; right: -5px;
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px;
+  background: linear-gradient(135deg, #ff3b6b, #ef4444); color: #fff;
+  font-size: 10px; font-weight: 700; line-height: 17px; text-align: center;
+  box-shadow: 0 2px 6px rgba(255,59,107,.45);
+}
+.notif-list-wrap { display: flex; flex-direction: column; gap: 12px; }
+.notif-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.notif-head h3 { margin: 0; font-size: 19px; }
+.notif-readall { font-size: 12px; padding: 6px 10px; }
+.notif-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; }
+.notif-item {
+  display: flex; align-items: flex-start; gap: 10px; padding: 11px 12px;
+  border-radius: 12px; background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.06); cursor: pointer;
+}
+:root[data-theme="light"] .notif-item { background: #fff; border-color: #e6e8ef; }
+.notif-item.unread { background: rgba(255,59,107,.07); border-color: rgba(255,59,107,.22); }
+.notif-icon { font-size: 22px; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.notif-body { flex: 1; min-width: 0; }
+.notif-title { font-weight: 600; font-size: 13.5px; }
+.notif-text { font-size: 12px; margin-top: 2px; white-space: pre-line; }
+.notif-time { font-size: 11px; margin-top: 4px; }
+.notif-dot { width: 8px; height: 8px; border-radius: 50%; background: #ff3b6b; flex: 0 0 auto; margin-top: 6px; }
+.notif-empty { text-align: center; padding: 28px 12px; }

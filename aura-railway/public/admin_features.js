@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards","fx_notifications"];
 
   function readTok() {
     try {
@@ -1921,6 +1921,66 @@
       });
     }
 
+    // ---- Notificaciones enviadas (V587) ----------------------------
+    async function view_notifications(container) {
+      const TYPE = {
+        reward_approved: { c: "green",  t: "🎉 Canje aprobado" },
+        reward_rejected: { c: "red",    t: "❌ Canje rechazado" },
+        reward_granted:  { c: "purple", t: "🎁 Recompensa concedida" },
+        admin_message:   { c: "blue",   t: "📣 Mensaje admin" },
+      };
+      DataView(container, {
+        title: "Notificaciones enviadas",
+        subtitle: "Historial de notificaciones in-app · lectura por usuario · envío manual",
+        icon: "🔔",
+        fetch: async () => (await api("/api/admin/notifications/sent")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total", value: rows.length, accent: "blue" },
+          { label: "Leídas", value: rows.filter((r) => r.read_at).length, accent: "green" },
+          { label: "Sin leer", value: rows.filter((r) => !r.read_at).length, accent: "amber" },
+          { label: "Usuarios alcanzados", value: new Set(rows.map((r) => r.user_id)).size, accent: "purple" },
+        ],
+        filters: [
+          { key: "type", label: "Tipo", type: "select", options: Object.keys(TYPE).map((k) => ({ value: k, label: TYPE[k].t })) },
+          { key: "read_at", label: "Lectura", type: "select", options: [ { value: "1", label: "Leídas" }, { value: "0", label: "Sin leer" } ], apply: (r, v) => (r.read_at ? "1" : "0") === v },
+          { key: "user_email", label: "Email usuario", type: "text" },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "user_id", label: "Usuario", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.user_name || "—")} <span class="fx-muted">#${r.user_id}</span></div><div class="fx-muted" style="font-size:11px">${escapeHtml(r.user_email || "")}</div>`;
+              return d;
+            } },
+          { key: "type", label: "Tipo", render: (r) => { const it = TYPE[r.type] || { c: "off", t: r.type }; const b = document.createElement("span"); b.className = "fx-badge " + it.c; b.textContent = it.t; return b; } },
+          { key: "title", label: "Notificación", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${r.icon || "🔔"} ${escapeHtml(r.title || "")}</div><div class="fx-muted fx-text" style="font-size:11px;max-width:380px">${escapeHtml(r.body || "")}</div>`;
+              return d;
+            } },
+          { key: "read_at", label: "Leída", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.read_at ? "ok" : "amber"); b.textContent = r.read_at ? "✓ " + fmtDate(r.read_at) : "⏳ Sin leer"; return b; } },
+          { key: "created_at", label: "Enviada", sortable: true, render: (r) => fmtDate(r.created_at) },
+        ],
+        actions: [],
+        headerActions: [
+          { label: "Enviar notificación", icon: "＋", variant: "primary", onClick: async () => {
+              const d = await prompt2({ title: "Enviar notificación a un usuario", submitLabel: "Enviar", fields: [
+                { name: "user_id", label: "ID de usuario", type: "number" },
+                { name: "title", label: "Título", placeholder: "Ej. 📣 Nueva función disponible" },
+                { name: "body", label: "Mensaje", type: "textarea", rows: 3 },
+                { name: "icon", label: "Icono (emoji, opcional)", placeholder: "📣" },
+              ]});
+              if (!d || !d.user_id || !d.title) return;
+              const rsp = await api("/api/admin/notifications/send", { method: "POST", body: { user_id: Number(d.user_id), title: d.title, body: d.body || null, icon: d.icon || null } });
+              if (rsp.ok && rsp.data?.ok !== false) { toast("Notificación enviada", "ok"); try { rerender(); } catch {} }
+              else toast(rsp.data?.error || "No se pudo enviar", "err");
+            } },
+        ],
+        bulkEndpoint: "/api/admin/notifications/bulk-delete",
+      });
+    }
+
     // ---- Recompensas / cupones XP (V576) ---------------------------
     async function view_rewards(container) {
       const KIND = { coupon:{c:"blue",t:"🎟️ Cupón"}, discount:{c:"green",t:"💰 Descuento"}, perk:{c:"purple",t:"⚡ Ventaja"}, badge:{c:"amber",t:"🏅 Insignia"}, physical:{c:"off",t:"📦 Físico"} };
@@ -2322,8 +2382,9 @@
       fx_vault: wrapView(view_vault),
       fx_push_ctx: wrapView(view_push_ctx),
       fx_rewards: wrapView(view_rewards),
+      fx_notifications: wrapView(view_notifications),
     });
-    console.log("[admin_features] v580 · 14 vistas premium + mover stickers entre packs");
+    console.log("[admin_features] v587 · 15 vistas + notificaciones enviadas");
   }
 
   // -------------------------------------------------------------------

@@ -674,6 +674,102 @@
     ], "wide");
   }
 
+  // ============ NOTIFICACIONES IN-APP (V587) =====================
+  // Campanita en "Mi perfil" + modal con la lista + badge de no leídas.
+  // Otros módulos del backend (canjes, admin…) insertan en la tabla
+  // `notifications`; aquí solo se leen y se marcan como leídas.
+  const NOTIF_TYPE_META = {
+    reward_approved: { icon: "🎉", label: "Canje aprobado" },
+    reward_rejected: { icon: "❌", label: "Canje rechazado" },
+    reward_granted:  { icon: "🎁", label: "Recompensa concedida" },
+    admin_message:   { icon: "📣", label: "Mensaje del equipo" },
+  };
+
+  function timeAgo(d) {
+    try {
+      const diff = Date.now() - new Date(d).getTime();
+      const m = Math.floor(diff / 60000);
+      if (m < 1) return "ahora";
+      if (m < 60) return `hace ${m} min`;
+      const hh = Math.floor(m / 60);
+      if (hh < 24) return `hace ${hh} h`;
+      const dd = Math.floor(hh / 24);
+      if (dd < 7) return `hace ${dd} día${dd > 1 ? "s" : ""}`;
+      return new Date(d).toLocaleDateString("es-ES", { day: "numeric", month: "short" });
+    } catch { return ""; }
+  }
+
+  async function updateNotifBadge() {
+    try {
+      if (!readMyUserId()) return;
+      const { ok, data } = await api("/api/my/notifications/unread-count");
+      if (!ok) return;
+      const n = data?.unread || 0;
+      document.querySelectorAll(".me-bell-badge").forEach((b) => {
+        b.textContent = n > 99 ? "99+" : String(n);
+        b.style.display = n > 0 ? "" : "none";
+      });
+    } catch {}
+  }
+
+  async function openNotifications() {
+    const { ok, data } = await api("/api/my/notifications");
+    if (!ok) { toast("No se pudieron cargar las notificaciones."); return; }
+    const items = data.items || [];
+    const rows = items.length ? items.map((n) => {
+      const meta = NOTIF_TYPE_META[n.type] || {};
+      const icon = n.icon || meta.icon || "🔔";
+      const row = h("div", { class: "notif-item" + (n.read_at ? "" : " unread") }, [
+        h("div", { class: "notif-icon" }, icon),
+        h("div", { class: "notif-body" }, [
+          h("div", { class: "notif-title" }, n.title || meta.label || "Notificación"),
+          n.body ? h("div", { class: "notif-text muted" }, n.body) : null,
+          h("div", { class: "notif-time muted" }, timeAgo(n.created_at)),
+        ]),
+        n.read_at ? null : h("span", { class: "notif-dot" }, ""),
+      ]);
+      row.onclick = async () => {
+        if (!n.read_at) {
+          n.read_at = new Date().toISOString();
+          row.classList.remove("unread");
+          const dot = row.querySelector(".notif-dot");
+          if (dot) dot.remove();
+          await api(`/api/my/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
+          updateNotifBadge();
+        }
+      };
+      return row;
+    }) : [h("div", { class: "notif-empty" }, [
+      h("div", { style: "font-size:42px;margin-bottom:6px" }, "🔕"),
+      h("p", { class: "muted" }, "No tienes notificaciones todavía."),
+    ])];
+    modal([
+      h("div", { class: "notif-list-wrap" }, [
+        h("div", { class: "notif-head" }, [
+          h("h3", {}, "🔔 Notificaciones"),
+          (data.unread || 0) > 0
+            ? h("button", { class: "btn ghost notif-readall", onclick: async () => {
+                await api("/api/my/notifications/read-all", { method: "POST" }).catch(() => {});
+                updateNotifBadge();
+                closeModal();
+                openNotifications();
+              } }, "Marcar todas leídas")
+            : null,
+        ]),
+        h("div", { class: "notif-list" }, rows),
+        h("div", { class: "modal-actions" }, [
+          h("button", { class: "btn secondary", onclick: closeModal }, "Cerrar"),
+        ]),
+      ]),
+    ], "notif-modal");
+  }
+
+  // Polling del badge cada 45 s + primera actualización al cargar
+  if (typeof window !== "undefined") {
+    setInterval(updateNotifBadge, 45000);
+    setTimeout(updateNotifBadge, 2500);
+  }
+
   window.aura2 = {
     openStoriesFeed, openStoryCreate,
     openGamification,
@@ -681,6 +777,7 @@
     openFilters,
     openGDPR,
     openRewardsShop, openMyRewards,
+    openNotifications, updateNotifBadge,
     startVideoCall,
     translateMsg,
   };
