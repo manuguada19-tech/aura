@@ -36,9 +36,37 @@
   function readToken() {
     return localStorage.getItem("auth_token") || sessionStorage.getItem("auth_token") || "";
   }
+  // V582 · Autenticación real: el backend usa X-User-Id (ver server.js
+  // readMyUserId). Antes se enviaba solo Authorization: Bearer que
+  // no existe → todos los fetch devolvían 401/403 y por eso Quedadas
+  // y Recompensas no cargaban desde el perfil.
+  function readMyUserId() {
+    // Los `const` de app.js (state, chatApi) están en el "script scope"
+    // compartido de scripts clásicos, accesibles como identificadores libres.
+    try {
+      // eslint-disable-next-line no-undef
+      if (typeof state !== "undefined" && state && state.user && state.user.id) return String(state.user.id);
+    } catch {}
+    try {
+      // eslint-disable-next-line no-undef
+      if (typeof chatApi !== "undefined" && chatApi && typeof chatApi.headers === "function") {
+        const hdr = chatApi.headers();
+        if (hdr && hdr["X-User-Id"]) return String(hdr["X-User-Id"]);
+      }
+    } catch {}
+    try {
+      const raw = localStorage.getItem("aura.user") || sessionStorage.getItem("aura.user");
+      if (raw) { const u = JSON.parse(raw); if (u && u.id) return String(u.id); }
+    } catch {}
+    return "";
+  }
   function authHeaders() {
+    const headers = {};
+    const uid = readMyUserId();
+    if (uid) headers["X-User-Id"] = uid;
     const t = readToken();
-    return t ? { "Authorization": "Bearer " + t } : {};
+    if (t) headers["Authorization"] = "Bearer " + t;
+    return headers;
   }
 
   async function api(path, opts = {}) {
