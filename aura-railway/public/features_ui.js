@@ -111,14 +111,21 @@
       h("h3", {}, "📸 Nueva historia"),
       h("p", { class: "muted" }, "Sube una imagen. Se autodestruye en 24 h."),
       h("input", { type: "url", id: "storyUrl", placeholder: "URL de imagen (ej. https://…)", style: "width:100%;padding:10px;border-radius:10px;border:1px solid #ccc;margin:8px 0;" }),
-      h("input", { type: "text", id: "storyCaption", placeholder: "Pie de foto (opcional)", style: "width:100%;padding:10px;border-radius:10px;border:1px solid #ccc;" }),
+      h("input", { type: "text", id: "storyCaption", placeholder: "Pie de foto (opcional)", style: "width:100%;padding:10px;border-radius:10px;border:1px solid #ccc;margin:8px 0;" }),
+      h("label", { style: "display:block;font-size:12px;color:#96a0b8;margin-top:8px;font-weight:600;text-transform:uppercase;letter-spacing:.4px" }, "Privacidad"),
+      h("select", { id: "storyPrivacy", style: "width:100%;padding:10px;border-radius:10px;border:1px solid #ccc;margin-top:4px" }, [
+        h("option", { value: "public" }, "🌍 Pública (todos la ven)"),
+        h("option", { value: "matches" }, "💘 Solo mis matches"),
+        h("option", { value: "private" }, "🔒 Privada (solo yo)"),
+      ]),
       h("div", { class: "modal-actions" }, [
         h("button", { class: "btn secondary", onclick: closeModal }, "Cancelar"),
         h("button", { class: "btn primary", onclick: async () => {
           const url = document.getElementById("storyUrl")?.value?.trim();
           const cap = document.getElementById("storyCaption")?.value?.trim();
+          const privacy = document.getElementById("storyPrivacy")?.value || "public";
           if (!url) { toast("Añade una URL de imagen."); return; }
-          const { ok, status, data } = await api("/api/my/stories", { method: "POST", body: JSON.stringify({ media_url: url, caption: cap }) });
+          const { ok, status, data } = await api("/api/my/stories", { method: "POST", body: JSON.stringify({ media_url: url, caption: cap, privacy }) });
           if (status === 402) { planLock(data?.required_plan || "premium", "Crear historias 24h"); return; }
           if (!ok) { toast("No se pudo crear."); return; }
           toast("Historia publicada.");
@@ -187,6 +194,12 @@
       h("input", { type: "text", id: "evPlace", placeholder: "Lugar" }),
       h("input", { type: "datetime-local", id: "evStart" }),
       h("textarea", { id: "evDesc", placeholder: "Descripción" }),
+      h("label", { style: "display:block;font-size:12px;color:#96a0b8;margin-top:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px" }, "Privacidad"),
+      h("select", { id: "evPrivacy" }, [
+        h("option", { value: "public" }, "🌍 Pública (cualquiera puede apuntarse)"),
+        h("option", { value: "matches" }, "💘 Solo mis matches"),
+        h("option", { value: "private" }, "🔒 Privada (solo yo, pero puedo invitar a mano)"),
+      ]),
       h("div", { class: "modal-actions" }, [
         h("button", { class: "btn secondary", onclick: closeModal }, "Cancelar"),
         h("button", { class: "btn primary", onclick: async () => {
@@ -194,8 +207,9 @@
           const place = document.getElementById("evPlace")?.value?.trim();
           const starts_at = document.getElementById("evStart")?.value;
           const description = document.getElementById("evDesc")?.value?.trim();
+          const privacy = document.getElementById("evPrivacy")?.value || "public";
           if (!title || !starts_at) { toast("Título y fecha requeridos"); return; }
-          const r = await api("/api/my/events", { method: "POST", body: JSON.stringify({ title, place, starts_at, description }) });
+          const r = await api("/api/my/events", { method: "POST", body: JSON.stringify({ title, place, starts_at, description, privacy }) });
           if (r.status === 402) { planLock(r.data?.required_plan || "gold", "Crear quedadas"); return; }
           if (!r.ok) { toast("Error"); return; }
           toast("Quedada creada"); closeModal(); openEvents();

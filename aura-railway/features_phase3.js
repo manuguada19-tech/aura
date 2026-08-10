@@ -36,6 +36,8 @@ async function migrate(pool) {
   await alterEvt("admin_notes", "TEXT NULL");
   await alterEvt("cover_url", "VARCHAR(500) DEFAULT NULL");
   await alterEvt("min_plan", "VARCHAR(20) DEFAULT 'free'");
+  // V575 · privacidad
+  await alterEvt("privacy", "ENUM('public','matches','private') DEFAULT 'public'");
 
   await q(`CREATE TABLE IF NOT EXISTS event_attendees (
     event_id INT NOT NULL,
@@ -134,12 +136,29 @@ function register(app, pool, helpers) {
 
   // ==== Eventos ==================================================
   app.get("/api/my/events", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    // V575 · aplicar privacidad
     const [rows] = await pool.query(
       `SELECT e.*, u.name AS creator_name,
          (SELECT COUNT(*) FROM event_attendees a WHERE a.event_id = e.id AND a.status='going') AS attendees_count
          FROM events e JOIN users u ON u.id=e.creator_id
         WHERE e.status='open' AND (e.ends_at IS NULL OR e.ends_at > NOW())
-        ORDER BY e.starts_at ASC LIMIT 100`
+          AND (
+            COALESCE(e.privacy,'public') = 'public'
+            OR e.creator_id = ?
+            OR (
+              COALESCE(e.privacy,'public') = 'matches'
+              AND EXISTS (
+                SELECT 1 FROM matches m
+                 WHERE (m.user_a = ? AND m.user_b = e.creator_id)
+                    OR (m.user_b = ? AND m.user_a = e.creator_id)
+              )
+            )
+            OR EXISTS (SELECT 1 FROM event_attendees ea WHERE ea.event_id = e.id AND ea.user_id = ?)
+          )
+        ORDER BY e.starts_at ASC LIMIT 100`,
+      [me, me, me, me]
     );
     res.json({ ok: true, items: rows });
   }));
@@ -153,9 +172,10 @@ function register(app, pool, helpers) {
     }
     const { title, description = null, place = "", lat = null, lng = null, starts_at, ends_at = null, max_attendees = 0, category = "general" } = req.body || {};
     if (!title || !starts_at) return res.status(400).json({ error: "title_startsat_required" });
+    const privacy = ["public","matches","private"].includes(req.body?.privacy) ? req.body.privacy : "public";
     const [r] = await pool.execute(
-      "INSERT INTO events (creator_id,title,description,place,lat,lng,starts_at,ends_at,max_attendees,category) VALUES (?,?,?,?,?,?,?,?,?,?)",
-      [me, String(title).slice(0,140), description, String(place).slice(0,200), lat, lng, starts_at, ends_at, parseInt(max_attendees,10)||0, category]
+      "INSERT INTO events (creator_id,title,description,place,lat,lng,starts_at,ends_at,max_attendees,category,privacy) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+      [me, String(title).slice(0,140), description, String(place).slice(0,200), lat, lng, starts_at, ends_at, parseInt(max_attendees,10)||0, category, privacy]
     );
     await pool.execute("INSERT IGNORE INTO event_attendees (event_id,user_id,status) VALUES (?,?, 'going')", [r.insertId, me]);
     res.json({ ok: true, id: r.insertId });
@@ -165,9 +185,34 @@ function register(app, pool, helpers) {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
     const eid = parseInt(req.params.id, 10);
+    // V575 · comprobar privacidad antes de permitir apuntarse
+    const [ev] = await pool.query("SELECT creator_id, COALESCE(privacy,'public') privacy, status FROM events WHERE id=? LIMIT 1", [eid]);
+    if (!ev.length) return res.status(404).json({ error: "not_found" });
+    const e = ev[0];
+    if (e.status !== "open") return res.status(400).json({ error: "not_open" });
+    if (e.creator_id !== me) {
+      if (e.privacy === "private") return res.status(403).json({ error: "forbidden" });
+      if (e.privacy === "matches") {
+        const [m] = await pool.query(
+          "SELECT 1 FROM matches WHERE (user_a=? AND user_b=?) OR (user_b=? AND user_a=?) LIMIT 1",
+          [me, e.creator_id, me, e.creator_id]
+        );
+        if (!m.length) return res.status(403).json({ error: "forbidden" });
+      }
+    }
     const status = ["going","maybe","declined"].includes(req.body?.status) ? req.body.status : "going";
     await pool.query("INSERT INTO event_attendees (event_id,user_id,status) VALUES (?,?,?) ON DUPLICATE KEY UPDATE status=VALUES(status)", [eid, me, status]);
     res.json({ ok: true });
+  }));
+
+  // V575 · cambiar privacidad de una quedada propia
+  app.put("/api/my/events/:id/privacy", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    const privacy = ["public","matches","private"].includes(req.body?.privacy) ? req.body.privacy : null;
+    if (!privacy) return res.status(400).json({ error: "invalid_privacy" });
+    const [r] = await pool.execute("UPDATE events SET privacy=? WHERE id=? AND creator_id=?", [privacy, parseInt(req.params.id,10), me]);
+    res.json({ ok: true, updated: r.affectedRows });
   }));
 
   app.delete("/api/my/events/:id", wrap(async (req, res) => {
@@ -217,8 +262,8 @@ function register(app, pool, helpers) {
     }
     const [r] = await pool.execute(
       `INSERT INTO events
-         (creator_id,title,description,place,lat,lng,starts_at,ends_at,max_attendees,category,status,featured,admin_notes,cover_url,min_plan)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+         (creator_id,title,description,place,lat,lng,starts_at,ends_at,max_attendees,category,status,featured,admin_notes,cover_url,min_plan,privacy)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         creator_id,
         title.slice(0,140),
@@ -235,6 +280,7 @@ function register(app, pool, helpers) {
         b.admin_notes || null,
         b.cover_url || null,
         ["free","premium","gold","platinum"].includes(b.min_plan) ? b.min_plan : "free",
+        ["public","matches","private"].includes(b.privacy) ? b.privacy : "public",
       ]
     );
     res.json({ ok: true, id: r.insertId });
@@ -258,7 +304,8 @@ function register(app, pool, helpers) {
          featured    = COALESCE(?, featured),
          admin_notes = COALESCE(?, admin_notes),
          cover_url   = COALESCE(?, cover_url),
-         min_plan    = COALESCE(?, min_plan)
+         min_plan    = COALESCE(?, min_plan),
+         privacy     = COALESCE(?, privacy)
        WHERE id=?`,
       [
         b.title ?? null,
@@ -275,6 +322,7 @@ function register(app, pool, helpers) {
         b.admin_notes ?? null,
         b.cover_url ?? null,
         b.min_plan ?? null,
+        ["public","matches","private"].includes(b.privacy) ? b.privacy : null,
         id,
       ]
     );

@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx"];
 
   function readTok() {
     try {
@@ -894,6 +894,12 @@
                   <option value="free">free</option><option value="premium">premium</option>
                   <option value="gold">gold</option><option value="platinum">platinum</option>
                 </select><div class="fx-form-hint">Plan requerido para unirse</div></div>
+              <div class="fx-field span2"><label>Privacidad</label>
+                <select id="e_privacy" class="fx-input">
+                  <option value="public">🌍 Pública (todos pueden apuntarse)</option>
+                  <option value="matches">💘 Solo matches del creador</option>
+                  <option value="private">🔒 Privada (solo invitados manualmente)</option>
+                </select><div class="fx-form-hint">Quién puede ver y apuntarse desde la app</div></div>
             </div>
           </div>
 
@@ -941,6 +947,7 @@
       q("e_cover").value = d.cover_url || "";
       q("e_feat").checked= !!d.featured;
       q("e_notes").value = d.admin_notes || "";
+      q("e_privacy").value = d.privacy || "public";
 
       const foot = card.querySelector(".fx-modal-foot");
       foot.appendChild(btn("Cancelar", { variant: "ghost", onClick: () => back.remove() }));
@@ -961,6 +968,7 @@
           cover_url: q("e_cover").value || null,
           featured: q("e_feat").checked ? 1 : 0,
           admin_notes: q("e_notes").value || null,
+          privacy: q("e_privacy").value || "public",
         };
         if (!body.title || !body.starts_at) { toast("Título y fecha de inicio son obligatorios", "err"); return; }
         try {
@@ -999,6 +1007,8 @@
             <div class="fx-form-grid">
               <div class="fx-field"><label>Categoría</label><div>${escapeHtml(ev.category || "—")}</div></div>
               <div class="fx-field"><label>Plan mínimo</label><div>${escapeHtml(ev.min_plan || "free")}</div></div>
+              <div class="fx-field"><label>Privacidad</label><div>${({public:"🌍 Pública",matches:"💘 Solo matches",private:"🔒 Privada"}[ev.privacy||"public"])}</div></div>
+              <div class="fx-field"></div>
               <div class="fx-field"><label>Inicio</label><div>${fmtDate(ev.starts_at)}</div></div>
               <div class="fx-field"><label>Fin</label><div>${ev.ends_at ? fmtDate(ev.ends_at) : "—"}</div></div>
               <div class="fx-field"><label>Lugar</label><div>${escapeHtml(ev.place || "—")}</div></div>
@@ -1104,6 +1114,11 @@
             { value: "free", label: "free" }, { value: "premium", label: "premium" },
             { value: "gold", label: "gold" }, { value: "platinum", label: "platinum" }
           ] },
+          { key: "privacy", label: "Privacidad", type: "select", options: [
+            { value: "public", label: "🌍 Pública" },
+            { value: "matches", label: "💘 Solo matches" },
+            { value: "private", label: "🔒 Privada" },
+          ] },
         ],
         columns: [
           { key: "id", label: "ID", sortable: true },
@@ -1132,6 +1147,14 @@
               return d;
             } },
           { key: "min_plan", label: "Plan mín.", render: (r) => escapeHtml(r.min_plan || "free") },
+          { key: "privacy", label: "Privacidad", render: (r) => {
+              const map = { public: { c:"ok", t:"🌍 pública" }, matches: { c:"amber", t:"💘 matches" }, private: { c:"off", t:"🔒 privada" } };
+              const it = map[r.privacy || "public"] || map.public;
+              const b = document.createElement("span");
+              b.className = "fx-badge " + it.c;
+              b.textContent = it.t;
+              return b;
+            } },
           { key: "status", label: "Estado", render: (r) => {
               const b = document.createElement("span");
               b.className = "fx-badge " + ({ open:"ok", closed:"amber", cancelled:"off" }[r.status] || "");
@@ -1176,6 +1199,90 @@
             } },
         ],
         bulkEndpoint: "/api/admin/events/bulk-delete",
+      });
+    }
+
+    // V575 · Historias -------------------------------------------------
+    async function view_stories(container) {
+      const PRIV = { public: { c:"ok", t:"🌍 pública" }, matches: { c:"amber", t:"💘 matches" }, private: { c:"off", t:"🔒 privada" } };
+      DataView(container, {
+        title: "Historias 24h",
+        subtitle: "Publicaciones de usuarios · caducan a las 24h · filtro por privacidad",
+        icon: "📸",
+        fetch: async () => (await api("/api/admin/stories")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total", value: rows.length, accent: "blue" },
+          { label: "Públicas", value: rows.filter((r) => (r.privacy || "public") === "public").length, accent: "green" },
+          { label: "Solo matches", value: rows.filter((r) => r.privacy === "matches").length, accent: "amber" },
+          { label: "Privadas", value: rows.filter((r) => r.privacy === "private").length, accent: "red" },
+          { label: "Vistas totales", value: rows.reduce((a, r) => a + (r.views || 0), 0), accent: "purple" },
+        ],
+        filters: [
+          { key: "privacy", label: "Privacidad", type: "select", options: [
+            { value: "public", label: "🌍 Públicas" },
+            { value: "matches", label: "💘 Solo matches" },
+            { value: "private", label: "🔒 Privadas" },
+          ] },
+          { key: "media_type", label: "Tipo", type: "select", options: [
+            { value: "photo", label: "Foto" }, { value: "video", label: "Video" }
+          ] },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "user_id", label: "Usuario", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.name || "")}</div><div class="fx-muted" style="font-size:11px">#${r.user_id}</div>`;
+              return d;
+            } },
+          { key: "media", label: "Media", render: (r) => {
+              if (r.media_type === "video" || /\.(mp4|webm|mov)$/i.test(r.media_url || "")) {
+                return document.createTextNode("🎬 video");
+              }
+              const img = document.createElement("img");
+              img.src = r.media_url; img.alt = "";
+              img.style.cssText = "width:56px;height:56px;object-fit:cover;border-radius:8px;cursor:pointer";
+              img.onclick = () => { window.open(r.media_url, "_blank"); };
+              return img;
+            } },
+          { key: "caption", label: "Pie", render: (r) => {
+              const s = r.caption || "—";
+              const d = document.createElement("div");
+              d.style.cssText = "max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+              d.textContent = s;
+              d.title = s;
+              return d;
+            } },
+          { key: "privacy", label: "Privacidad", render: (r) => {
+              const it = PRIV[r.privacy || "public"] || PRIV.public;
+              const b = document.createElement("span"); b.className = "fx-badge " + it.c; b.textContent = it.t;
+              return b;
+            } },
+          { key: "views", label: "Vistas", sortable: true },
+          { key: "created_at", label: "Publicada", sortable: true, render: (r) => fmtDate(r.created_at) },
+          { key: "expires_at", label: "Expira", sortable: true, render: (r) => fmtDate(r.expires_at) },
+        ],
+        actions: [
+          { label: "🌍", title: "Pasar a pública", variant: "ghost", visible: (r) => r.privacy !== "public", onClick: async (r, reload) => {
+              await api(`/api/admin/stories/${r.id}/privacy`, { method: "PUT", body: { privacy: "public" } });
+              toast("Ahora es pública", "ok"); reload();
+            } },
+          { label: "💘", title: "Solo matches", variant: "ghost", visible: (r) => r.privacy !== "matches", onClick: async (r, reload) => {
+              await api(`/api/admin/stories/${r.id}/privacy`, { method: "PUT", body: { privacy: "matches" } });
+              toast("Ahora solo matches", "ok"); reload();
+            } },
+          { label: "🔒", title: "Privada", variant: "ghost", visible: (r) => r.privacy !== "private", onClick: async (r, reload) => {
+              await api(`/api/admin/stories/${r.id}/privacy`, { method: "PUT", body: { privacy: "private" } });
+              toast("Ahora es privada", "ok"); reload();
+            } },
+          { label: "", icon: "&#x1f5d1;", title: "Borrar", variant: "danger-icon", onClick: async (r, reload) => {
+              const ok = await confirmDialog({ title: "Borrar historia", message: "#" + r.id, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              await api(`/api/admin/stories/${r.id}`, { method: "DELETE" });
+              toast("Borrada", "ok"); reload();
+            } },
+        ],
+        bulkEndpoint: "/api/admin/stories/bulk-delete",
       });
     }
 
@@ -1800,6 +1907,7 @@
       fx_stickers: wrapView(view_stickers),
       fx_achievements: wrapView(view_achievements),
       fx_events: wrapView(view_events),
+      fx_stories: wrapView(view_stories),
       fx_ab: wrapView(view_ab),
       fx_gdpr: wrapView(view_gdpr),
       fx_heatmap: wrapView(view_heatmap),
