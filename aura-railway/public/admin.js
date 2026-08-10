@@ -2911,6 +2911,98 @@ async function openUserDrawer(id, onChange) {
     el("span", {}, "Verificado"),
   ]));
 
+  // ================================================================
+  // V559 · Permisos por función (grants individuales)
+  // ================================================================
+  const fxWrap = el("details", { class: "user-fx-grants", style: "margin:14px 0;background:rgba(120,86,255,0.06);border:1px solid rgba(120,86,255,0.2);border-radius:10px;padding:10px 12px" });
+  fxWrap.appendChild(el("summary", { style: "cursor:pointer;font-weight:600;user-select:none" }, "🔑 Permisos por función (grants individuales)"));
+  const fxBody = el("div", { style: "margin-top:10px" }, "Cargando…");
+  fxWrap.appendChild(fxBody);
+  (async () => {
+    try {
+      const [catRes, grantsRes] = await Promise.all([
+        api.get("/api/admin/features/catalog"),
+        api.get(`/api/admin/users/${id}/feature-grants`),
+      ]);
+      const catalog = catRes.features || {};
+      const grants = grantsRes.items || [];
+      const activeByFeature = {};
+      for (const g of grants) {
+        if (!g.revoked_at && (!g.expires_at || new Date(g.expires_at) > new Date())) {
+          (activeByFeature[g.feature] = activeByFeature[g.feature] || []).push(g);
+        }
+      }
+      const PLAN_RANK_L = { free: 0, premium: 1, gold: 2, platinum: 3 };
+      const userPlanRank = PLAN_RANK_L[(u.plan || "free").toLowerCase()] ?? 0;
+      fxBody.innerHTML = "";
+      const help = el("div", { style: "font-size:12px;opacity:0.75;margin-bottom:10px" },
+        "Da acceso puntual a funciones sin cambiar el plan del usuario. Deja vacía la fecha para acceso permanente.");
+      fxBody.appendChild(help);
+      const tbl = el("table", { class: "table small", style: "width:100%" });
+      const thead = el("thead", {}, el("tr", {}, [
+        el("th", {}, "Función"),
+        el("th", {}, "Plan mínimo"),
+        el("th", {}, "Estado"),
+        el("th", {}, "Acciones"),
+      ]));
+      tbl.appendChild(thead);
+      const tbody = el("tbody", {});
+      for (const [key, def] of Object.entries(catalog)) {
+        const minRank = PLAN_RANK_L[(def.min_plan || "free").toLowerCase()] ?? 0;
+        const byPlan = userPlanRank >= minRank;
+        const activeGrants = activeByFeature[key] || [];
+        const hasGrant = activeGrants.length > 0;
+        const enabled = byPlan || hasGrant;
+        let statusHtml;
+        if (byPlan) statusHtml = "<span class='tag ok'>✓ Por plan</span>";
+        else if (hasGrant) {
+          const g = activeGrants[0];
+          const until = g.expires_at ? " (hasta " + fmt.reldate(g.expires_at) + ")" : " (permanente)";
+          statusHtml = "<span class='tag ok'>✓ Grant" + until + "</span>";
+        } else statusHtml = "<span class='tag muted'>✗ Sin acceso</span>";
+        const tr = el("tr", {}, [
+          el("td", {}, el("strong", {}, def.label + " ")),
+          el("td", {}, el("span", { class: "tag" }, def.min_plan)),
+          el("td", { html: statusHtml }),
+          el("td", {}, [
+            byPlan ? el("small", { style: "opacity:0.6" }, "—") :
+            hasGrant ? btn("Revocar", "danger xs", async () => {
+              if (!confirm("¿Revocar acceso a " + def.label + "?")) return;
+              try {
+                await api.post(`/api/admin/users/${id}/feature-grants/${key}/revoke-all`);
+                toast("Acceso revocado");
+                drawer.close();
+                setTimeout(() => openUserDrawer(id, onChange), 60);
+              } catch { toast("Error al revocar"); }
+            }) : btn("Conceder", "ok xs", async () => {
+              const expIso = prompt("Fecha de expiración (YYYY-MM-DD HH:MM) o vacío para permanente:", "");
+              const reason = prompt("Motivo (opcional):", "");
+              try {
+                const body = { feature: key };
+                if (expIso && expIso.trim()) {
+                  const d = new Date(expIso.trim().replace(" ", "T"));
+                  if (!isNaN(+d)) body.expires_at = d.toISOString();
+                }
+                if (reason && reason.trim()) body.reason = reason.trim();
+                await api.post(`/api/admin/users/${id}/feature-grants`, body);
+                toast("Acceso concedido");
+                drawer.close();
+                setTimeout(() => openUserDrawer(id, onChange), 60);
+              } catch { toast("Error al conceder"); }
+            }),
+          ]),
+        ]);
+        tr.style.opacity = enabled ? "1" : "0.85";
+        tbody.appendChild(tr);
+      }
+      tbl.appendChild(tbody);
+      fxBody.appendChild(tbl);
+    } catch (e) {
+      fxBody.innerHTML = "<div style='color:#f88'>No se pudieron cargar los permisos: " + (e && e.message || e) + "</div>";
+    }
+  })();
+  form.appendChild(fxWrap);
+
   const actions = el("div", { class: "drawer-actions" }, [
     btn("Cerrar", "ghost", () => drawer.close()),
     el("button", { class: "btn primary", type: "submit" }, "Guardar cambios"),
