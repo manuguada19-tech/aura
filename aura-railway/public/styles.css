@@ -6860,6 +6860,18 @@ body:not(.app-open) #twofaReminder {
     height: 100dvh !important;
     max-height: 100dvh !important;
   }
+  /* V578 · Cuando el usuario está dentro de la app (tabbar visible) en
+     landscape corto, reservamos el alto de la tabbar para que la barra
+     inferior de navegación NO quede tapada/oculta por overflow del .phone. */
+  body:has(#tabbar:not([hidden])) .app-viewport {
+    height: calc(100dvh - var(--tab-height, 62px) - env(safe-area-inset-bottom, 0px)) !important;
+    max-height: calc(100dvh - var(--tab-height, 62px) - env(safe-area-inset-bottom, 0px)) !important;
+  }
+  body:has(#tabbar:not([hidden])) .phone .tabbar {
+    flex: 0 0 auto !important;
+    display: grid !important;
+    z-index: 6 !important;
+  }
   .app-viewport .screen.screen-hero,
   .phone .app-viewport .screen.screen-hero {
     overflow: hidden !important;
