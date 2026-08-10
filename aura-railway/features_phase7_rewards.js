@@ -175,6 +175,8 @@ async function assessRedemptionRisk(pool, userId, reward) {
 
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
+  // V589 · push web opcional acompañando a la notificación in-app (no-op si no está configurado)
+  const pushToUser = typeof helpers.pushToUser === "function" ? helpers.pushToUser : async () => ({ sent: 0 });
 
   // ---------- Público: catálogo visible ---------------------------------
   app.get("/api/my/rewards/shop", wrap(async (req, res) => {
@@ -565,6 +567,12 @@ function register(app, pool, helpers) {
             JSON.stringify({ redemption_id: id, code: rec.code }),
           ]
         );
+        // V589 · push web (best-effort)
+        await pushToUser(rec.user_id, {
+          title: "🎉 Canje aprobado",
+          body: `Tu canje de "${rec.reward_title}" fue aprobado. Ya puedes usar tu código.`,
+          tag: "reward_approved",
+        });
       }
     } catch (e) { /* notificaciones son best-effort */ }
     res.json({ ok: true });
@@ -612,6 +620,8 @@ function register(app, pool, helpers) {
          VALUES (?, 'reward_rejected', ?, ?, ?, ?)`,
         [rec.user_id, "❌ Canje rechazado", bodyMsg, rewardIcon, JSON.stringify({ redemption_id: id, refunded_xp: refund ? rec.xp_spent : 0, note: note || null })]
       );
+      // V589 · push web (best-effort)
+      await pushToUser(rec.user_id, { title: "❌ Canje rechazado", body: bodyMsg, tag: "reward_rejected" });
     } catch (e) { /* best-effort */ }
     res.json({ ok: true, refunded_xp: refund ? rec.xp_spent : 0 });
   }));
@@ -640,6 +650,12 @@ function register(app, pool, helpers) {
          r.icon || "🎁",
          JSON.stringify({ code, reward_id: rid })]
       );
+      // V589 · push web (best-effort)
+      await pushToUser(uid, {
+        title: "🎁 Recompensa concedida",
+        body: `Un administrador te ha concedido "${r.title}". Ya puedes usar tu código.`,
+        tag: "reward_granted",
+      });
     } catch (e) {}
     res.json({ ok: true, code });
   }));

@@ -42,6 +42,8 @@ async function migrate(pool) {
 
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
+  // V589 · push web opcional acompañando a la notificación in-app (no-op si no está configurado)
+  const pushToUser = typeof helpers.pushToUser === "function" ? helpers.pushToUser : async () => ({ sent: 0 });
 
   // ---------- Público: mis notificaciones -------------------------------
   app.get("/api/my/notifications", wrap(async (req, res) => {
@@ -124,7 +126,13 @@ function register(app, pool, helpers) {
         JSON.stringify({ sent_by: req.admin?.email || "admin" }),
       ]
     );
-    res.json({ ok: true, id: ins.insertId });
+    // V589 · push web (best-effort): la notificación llega aunque la app esté cerrada
+    const push = await pushToUser(Number(user_id), {
+      title: String(title).slice(0, 200),
+      body: body ? String(body) : "",
+      tag: "admin_message",
+    });
+    res.json({ ok: true, id: ins.insertId, push_sent: push.sent || 0 });
   }));
 
   // ---------- Admin: bulk delete ------------------------------------------

@@ -3613,6 +3613,30 @@ async function sendPushToDevice(device, payload) {
   }
 }
 
+// V589 · Enviar push a todos los dispositivos activos de un usuario (best-effort).
+// Se pasa como helper a los módulos de fases para acompañar notificaciones in-app.
+async function pushToUser(userId, payload) {
+  if (!pushEnabled()) return { sent: 0, note: "push_disabled" };
+  const uid = parseInt(userId, 10);
+  if (!uid) return { sent: 0, note: "sin_usuario" };
+  try {
+    const [devs] = await pool.query(
+      "SELECT id, endpoint, p256dh, auth_key FROM push_devices WHERE user_id=? AND active=1",
+      [uid]
+    );
+    if (!devs.length) return { sent: 0, note: "sin_dispositivos" };
+    const p = { icon: "/aura-logo.png", url: "/", tag: "aura-notif", ...payload };
+    let sent = 0;
+    for (const d of devs) {
+      const r = await sendPushToDevice(d, p);
+      if (r.ok) sent++;
+    }
+    return { sent, total: devs.length };
+  } catch (e) {
+    return { sent: 0, error: e.message };
+  }
+}
+
 async function processCampaign(id) {
   const [[c]] = await pool.query("SELECT * FROM push_campaigns WHERE id=?", [id]);
   if (!c) return;
@@ -9557,8 +9581,8 @@ phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase5.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
-phase7.register(app, pool, { readMyUserId, wrap, requireAdmin });
-phase8.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser }); // V589 · +pushToUser
+phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser }); // V589 · +pushToUser
 
 (async () => {
   try {
