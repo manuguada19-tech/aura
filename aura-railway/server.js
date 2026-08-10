@@ -405,7 +405,7 @@ app.use(async (req, res, next) => {
   try { await ensureFreshSettings(); } catch (e) {}
   const p = req.path;
   const isApi = p.startsWith("/api/");
-  const isAdminPath = p === "/admin" || p === "/admin.html" || p === "/admin.js" || p === "/admin.css" || p.startsWith("/api/admin/");
+  const isAdminPath = p === "/admin" || p === "/admin.html" || p === "/admin.js" || p === "/admin.css" || p === "/admin_features.js" || p.startsWith("/api/admin/");
   const hasAdminToken = !!(await verifyAdminToken(readAdminToken(req)));
   // Maintenance mode: block everything except admin surface
   if (isTrue("app.maintenance", false) && !isAdminPath && !hasAdminToken) {
@@ -9308,6 +9308,11 @@ app.get("/admin.css", gateAdminAsset, (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "text/css; charset=utf-8");
   res.sendFile(path.join(__dirname, "public", "admin.css"));
+});
+app.get("/admin_features.js", gateAdminAsset, (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+  res.sendFile(path.join(__dirname, "public", "admin_features.js"));
 });
 
 app.use(express.static(path.join(__dirname, "public"), {

@@ -389,6 +389,14 @@ function fmtMoney(amount, cur) {
 
 /* API helper */
 // Callable: api(url, opts?) -> también objeto con .get/.post/.patch/.put/.del
+// V547 · Exponer helpers para admin_features.js
+setTimeout(() => {
+  try {
+    window.__adminApi = api;
+    window.__adminEl = el;
+    window.__adminAuthHeaders = authHeaders;
+  } catch {}
+}, 0);
 async function api(url, opts) {
   opts = opts || {};
   const method = (opts.method || "GET").toUpperCase();
@@ -1291,7 +1299,10 @@ function route(view) {
   container.innerHTML = "";
   const loading = el("div", { class: "loading" }, "Cargando…");
   container.appendChild(loading);
-  Promise.resolve((map[view] || viewDashboard)(container))
+  // V547 · Vistas extendidas registradas por admin_features.js
+  const extras = (window.__adminExtraViews) || {};
+  const renderer = map[view] || extras[view] || viewDashboard;
+  Promise.resolve(renderer(container, { el, $, api: window.__adminApi }))
     .catch(err => { console.error(err); container.appendChild(el("div", { class: "error" }, "Error cargando datos.")); })
     .finally(() => {
       loading.remove();
