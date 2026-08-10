@@ -731,16 +731,21 @@
             it.innerHTML = `<img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.slug)}"/><span title="${escapeHtml(s.keywords||"")}">${escapeHtml(s.slug)}</span>`;
             // V560 · Editar sticker
             const ed = btn("✎", { variant: "ghost", title: "Editar sticker", onClick: async () => {
+              // V586 · Editor con selector de pack integrado
+              const packOpts = packs.map((x) => ({ value: String(x.id), label: `${x.name} (${x.min_plan})` }));
               const d = await prompt2({ title: "Editar sticker", fields: [
+                { name: "pack_id", label: "Pack", type: "select", options: packOpts, default: String(s.pack_id || p.id) },
                 { name: "slug", label: "Slug", default: s.slug || "" },
                 { name: "url", label: "URL imagen", default: s.url || "" },
                 { name: "keywords", label: "Keywords", default: s.keywords || "" },
                 { name: "sort_order", label: "Orden", type: "number", default: String(s.sort_order || 0) },
               ]});
               if (!d) return;
+              const newPackId = parseInt(d.pack_id, 10);
               await api(`/api/admin/stickers/${s.id}`, { method: "PUT", body: {
                 slug: d.slug, url: d.url, keywords: d.keywords || "",
                 sort_order: parseInt(d.sort_order || "0", 10) || 0,
+                pack_id: Number.isFinite(newPackId) ? newPackId : undefined,
               } });
               toast("Sticker actualizado", "ok"); rerender();
             } });

@@ -212,7 +212,20 @@ function register(app, pool, helpers) {
         lock_reason: !meetsLevel ? "level" : !meetsPlan ? "plan" : !canAfford ? "xp" : !notExhausted ? "limit" : !hasStock ? "stock" : null,
       });
     }
-    res.json({ ok: true, xp: stats.xp, level: stats.level, plan, items: enriched });
+    // V586 · Info de progreso al siguiente nivel para mostrar en la tienda.
+    const currentLevelXP = ((stats.level || 1) - 1) * 500;
+    const nextLevelXP = (stats.level || 1) * 500;
+    const xpToNext = Math.max(0, nextLevelXP - (stats.xp || 0));
+    const progressPct = Math.min(100, Math.round((((stats.xp || 0) - currentLevelXP) / 500) * 100));
+    res.json({
+      ok: true,
+      xp: stats.xp, level: stats.level, plan,
+      xp_to_next: xpToNext,
+      next_level_xp: nextLevelXP,
+      current_level_xp: currentLevelXP,
+      progress_pct: progressPct,
+      items: enriched,
+    });
   }));
 
   // ---------- Público: canjear con XP -----------------------------------
@@ -532,6 +545,28 @@ function register(app, pool, helpers) {
       "UPDATE reward_redemptions SET status='active', reviewed_by=?, reviewed_at=NOW() WHERE id=? AND status='pending_review'",
       [email, id]
     );
+    // V586 · Notificar al usuario
+    try {
+      const [rows] = await pool.query(
+        `SELECT rr.user_id, rr.code, r.title AS reward_title, r.icon AS reward_icon
+           FROM reward_redemptions rr
+           JOIN rewards r ON r.id = rr.reward_id
+          WHERE rr.id=? LIMIT 1`, [id]);
+      if (rows[0]) {
+        const rec = rows[0];
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, data)
+           VALUES (?, 'reward_approved', ?, ?, ?, ?)`,
+          [
+            rec.user_id,
+            "🎉 Canje aprobado",
+            `Tu canje de "${rec.reward_title}" fue aprobado. Ya puedes usar tu código.`,
+            rec.reward_icon || "🎁",
+            JSON.stringify({ redemption_id: id, code: rec.code }),
+          ]
+        );
+      }
+    } catch (e) { /* notificaciones son best-effort */ }
     res.json({ ok: true });
   }));
 
@@ -562,6 +597,22 @@ function register(app, pool, helpers) {
       return res.status(500).json({ ok: false, error: "no_se_pudo_rechazar" });
     }
     conn.release();
+    // V586 · Notificar al usuario
+    try {
+      const [rrow] = await pool.query(
+        "SELECT title, icon FROM rewards WHERE id=? LIMIT 1", [rec.reward_id]
+      );
+      const rewardTitle = rrow[0]?.title || "recompensa";
+      const rewardIcon = rrow[0]?.icon || "🎁";
+      const bodyMsg = refund && rec.xp_spent > 0
+        ? `Tu canje de "${rewardTitle}" no fue aprobado. Te hemos devuelto ${rec.xp_spent} XP.${note ? " Motivo: " + note : ""}`
+        : `Tu canje de "${rewardTitle}" no fue aprobado.${note ? " Motivo: " + note : ""}`;
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, data)
+         VALUES (?, 'reward_rejected', ?, ?, ?, ?)`,
+        [rec.user_id, "❌ Canje rechazado", bodyMsg, rewardIcon, JSON.stringify({ redemption_id: id, refunded_xp: refund ? rec.xp_spent : 0, note: note || null })]
+      );
+    } catch (e) { /* best-effort */ }
     res.json({ ok: true, refunded_xp: refund ? rec.xp_spent : 0 });
   }));
 
@@ -579,6 +630,17 @@ function register(app, pool, helpers) {
        VALUES (?,?,?, 0, 'admin', 'active', ?)`,
       [rid, uid, code, req.body?.note || "Emitida por administración"]
     );
+    // V586 · Notificar al usuario
+    try {
+      await pool.query(
+        `INSERT INTO notifications (user_id, type, title, body, icon, data)
+         VALUES (?, 'reward_granted', ?, ?, ?, ?)`,
+        [uid, "🎁 Recompensa concedida",
+         `Un administrador te ha concedido "${r.title}". Ya puedes usar tu código.`,
+         r.icon || "🎁",
+         JSON.stringify({ code, reward_id: rid })]
+      );
+    } catch (e) {}
     res.json({ ok: true, code });
   }));
 

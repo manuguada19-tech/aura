@@ -584,10 +584,21 @@
         h("div", { class: "reward-action", html: btnRedeem }),
       ]);
     });
+    // V586 · Progreso al siguiente nivel visible en cabecera
+    const pct = Math.max(0, Math.min(100, data.progress_pct || 0));
     const shell = h("div", { class: "rewards-shop" }, [
       h("div", { class: "rewards-head" }, [
         h("h3", {}, "🎁 Tienda de recompensas"),
         h("div", { class: "muted" }, `Tienes ${data.xp || 0} XP · Nivel ${data.level || 1}`),
+        h("div", { class: "rewards-progress", style: "margin-top:8px" }, [
+          h("div", { class: "muted", style: "font-size:12px;margin-bottom:4px" },
+            (data.xp_to_next || 0) > 0
+              ? `Faltan ${data.xp_to_next} XP para el nivel ${(data.level || 1) + 1}`
+              : `¡Nivel ${(data.level || 1) + 1} desbloqueado!`),
+          h("div", { style: "height:8px;background:rgba(255,255,255,.08);border-radius:999px;overflow:hidden" }, [
+            h("div", { style: `height:100%;width:${pct}%;background:linear-gradient(90deg,#7c3aed,#ec4899);transition:width .4s ease` }),
+          ]),
+        ]),
       ]),
       h("div", { class: "reward-list" }, rows.length ? rows : [h("div", { class: "muted" }, "No hay recompensas disponibles ahora mismo.")]),
       h("div", { class: "modal-actions" }, [
