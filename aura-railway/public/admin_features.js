@@ -51,8 +51,22 @@
   }
 
   function init() {
-    inject();
-    hookNav();
+    try { window.__FX_LOADED = "v556"; } catch {}
+    try { inject(); } catch (e) {
+      // Registra un marcador visible incluso si inject() explota, para que
+      // el router de admin.js no muestre "Módulo no cargado".
+      try {
+        window.__adminExtraViews = window.__adminExtraViews || {};
+        FX_VIEWS.forEach((v) => {
+          window.__adminExtraViews[v] = function (container) {
+            container.innerHTML = "<div style='padding:24px'><h2>⚠️ Error al inicializar Novedades</h2><pre style='color:#f88;white-space:pre-wrap'>" +
+              String(e && e.stack || e && e.message || e) + "</pre></div>";
+          };
+        });
+      } catch {}
+      console.error("[admin_features] inject() failed:", e);
+    }
+    try { hookNav(); } catch (e) { console.error("[admin_features] hookNav failed:", e); }
     // Si la URL trae ?fx=xxx renderizamos directo
     try {
       const params = new URL(location.href).searchParams;
@@ -107,8 +121,12 @@
     }
   }
 
+  // v556 — FX_CSS es un const declarado más abajo. Si llamamos init()
+  // sincrónicamente, cae en TDZ y aborta el IIFE sin registrar las vistas.
+  // Diferimos SIEMPRE con setTimeout 0 (o DOMContentLoaded) para que todas
+  // las const/función del IIFE ya estén evaluadas.
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
-  else init();
+  else setTimeout(init, 0);
 
   function inject() {
     const rawApi = window.__adminApi || apiLocal;
@@ -1119,7 +1137,7 @@
       fx_video: wrapView(view_video),
       fx_push_ctx: wrapView(view_push_ctx),
     });
-    console.log("[admin_features] v548 · 10 vistas premium registradas");
+    console.log("[admin_features] v556 · 10 vistas premium registradas");
   }
 
   // -------------------------------------------------------------------
