@@ -419,7 +419,7 @@
         const kpis = typeof cfg.kpis === "function" ? cfg.kpis(state.rows) : (cfg.kpis || []);
         (kpis || []).forEach((k) => {
           const card = document.createElement("div"); card.className = "fx-kpi " + (k.accent || "");
-          card.innerHTML = `<div class="fx-kpi-label">${escapeHtml(k.label)}</div><div class="fx-kpi-valueue">${escapeHtml(String(k.value))}</div>${k.hint ? `<div class="fx-kpi-hint">${escapeHtml(k.hint)}</div>` : ""}`;
+          card.innerHTML = `<div class="fx-kpi-label">${escapeHtml(k.label)}</div><div class="fx-kpi-value">${escapeHtml(String(k.value))}</div>${k.hint ? `<div class="fx-kpi-hint">${escapeHtml(k.hint)}</div>` : ""}`;
           kpiRow.appendChild(card);
         });
       }
@@ -658,7 +658,7 @@
         { label: "Oro/Platino", value: packs.filter((p) => p.min_plan === "gold" || p.min_plan === "platinum").length, accent: "amber" },
       ].forEach((k) => {
         const c = document.createElement("div"); c.className = "fx-kpi " + k.accent;
-        c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`;
+        c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`;
         kpiRow.appendChild(c);
       });
 
@@ -700,6 +700,20 @@
           } });
           toast("Sticker añadido", "ok"); rerender();
         } }));
+        // V580 · Mover stickers en masa a otro pack
+        pActs.appendChild(btn("↔ Mover a…", { variant: "ghost", title: "Mover todos los stickers de este pack a otro", onClick: async () => {
+          const others = packs.filter((x) => x.id !== p.id);
+          if (!others.length) { toast("No hay otro pack destino", "warn"); return; }
+          const opts = others.map((x) => ({ value: String(x.id), label: `${x.name} (${x.min_plan})` }));
+          const d = await prompt2({ title: `Mover ${packStickers.length} stickers`, fields: [
+            { name: "pack_id", label: "Pack destino", type: "select", options: opts, default: String(others[0].id) },
+          ]});
+          if (!d || !d.pack_id) return;
+          const ids = packStickers.map((s) => s.id);
+          if (!ids.length) { toast("Este pack no tiene stickers", "warn"); return; }
+          const r = await api("/api/admin/stickers/bulk-move", { method: "POST", body: { ids, pack_id: parseInt(d.pack_id, 10) } });
+          toast(`Movidos ${r?.data?.moved ?? ids.length} stickers`, "ok"); rerender();
+        } }));
         pActs.appendChild(btn("Borrar pack", { variant: "danger", icon: "&#x1f5d1;", onClick: async () => {
           const ok = await confirmDialog({ title: `Borrar pack "${p.name}"`, message: `Se eliminarán el pack y sus ${packStickers.length} stickers.`, danger: true, confirmLabel: "Borrar" });
           if (!ok) return;
@@ -732,6 +746,20 @@
             } });
             ed.classList.add("fx-sticker-edit");
             it.appendChild(ed);
+            // V580 · Mover sticker individual a otro pack
+            const mv = btn("↔", { variant: "ghost", title: "Mover a otro pack", onClick: async () => {
+              const others = packs.filter((x) => x.id !== p.id);
+              if (!others.length) { toast("No hay otro pack destino", "warn"); return; }
+              const opts = others.map((x) => ({ value: String(x.id), label: `${x.name} (${x.min_plan})` }));
+              const d = await prompt2({ title: `Mover "${s.slug}"`, fields: [
+                { name: "pack_id", label: "Pack destino", type: "select", options: opts, default: String(others[0].id) },
+              ]});
+              if (!d || !d.pack_id) return;
+              await api("/api/admin/stickers/bulk-move", { method: "POST", body: { ids: [s.id], pack_id: parseInt(d.pack_id, 10) } });
+              toast("Sticker movido", "ok"); rerender();
+            } });
+            mv.classList.add("fx-sticker-move");
+            it.appendChild(mv);
             const rm = btn("×", { variant: "danger-icon", title: "Borrar sticker", onClick: async () => {
               const ok = await confirmDialog({ title: "Borrar sticker", message: s.slug, danger: true, confirmLabel: "Borrar" });
               if (!ok) return;
@@ -765,7 +793,7 @@
           { label: "XP medio", value: Math.round(stats.totals.avg_xp || 0), accent: "purple" },
           { label: "Nivel medio", value: Math.round((stats.totals.avg_level || 1) * 10) / 10, accent: "green" },
           { label: "Racha máxima", value: stats.totals.max_streak || 0, accent: "amber" },
-        ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`; kpiRow.appendChild(c); });
+        ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
         outer.appendChild(kpiRow);
         if (stats.top && stats.top.length) {
           const topWrap = document.createElement("div"); topWrap.className = "fx-panel";
@@ -1322,7 +1350,7 @@
         { label: "Total tests", value: items.length, accent: "blue" },
         { label: "Activos", value: items.filter((t) => t.active).length, accent: "green" },
         { label: "Pausados", value: items.filter((t) => !t.active).length, accent: "amber" },
-      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`; kpiRow.appendChild(c); });
+      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
       outer.appendChild(kpiRow);
 
       if (!items.length) {
@@ -1437,7 +1465,7 @@
         { label: "Celdas", value: points.length, accent: "blue" },
         { label: "Pings totales", value: totalHits, accent: "purple" },
         { label: "Máx. hits/celda", value: points[0]?.hits || 0, accent: "amber" },
-      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`; kpiRow.appendChild(c); });
+      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
       outer.appendChild(kpiRow);
 
       const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;";
@@ -2290,7 +2318,7 @@
       fx_push_ctx: wrapView(view_push_ctx),
       fx_rewards: wrapView(view_rewards),
     });
-    console.log("[admin_features] v576 · 14 vistas premium registradas (incluye recompensas XP)");
+    console.log("[admin_features] v580 · 14 vistas premium + mover stickers entre packs");
   }
 
   // -------------------------------------------------------------------
@@ -2328,7 +2356,7 @@
   .fx-kpi.amber::before { background:#f59e0b; }
   .fx-kpi.red::before { background:#ef4444; }
   .fx-kpi-label { font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color: var(--fg-muted,#96a0b8); font-weight:600; }
-  .fx-kpi-valueue { font-size:26px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
+  .fx-kpi-value { font-size:26px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
   .fx-kpi-hint { font-size:11px; color: var(--fg-muted,#96a0b8); margin-top:2px; }
 
   .fx-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 4px 0 12px; flex-wrap:wrap; padding:10px 12px; background: rgba(15,20,32,0.55); border:1px solid rgba(255,255,255,0.06); border-radius:12px; }
@@ -2435,6 +2463,8 @@
   .fx-sticker-item img { width:56px; height:56px; object-fit:contain; }
   .fx-sticker-item span { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .fx-sticker-del { position:absolute; top:4px; right:4px; padding:0 6px !important; font-size:14px !important; line-height:1; }
+  .fx-sticker-edit { position:absolute; top:4px; left:4px; padding:0 6px !important; font-size:13px !important; line-height:1; }
+  .fx-sticker-move { position:absolute; bottom:4px; right:4px; padding:0 6px !important; font-size:12px !important; line-height:1; }
   .fx-emoji-big { font-size:22px; }
 
   .fx-modal-back { position:fixed; inset:0; background: rgba(6,10,20,0.72); backdrop-filter: blur(6px); display:flex; align-items:center; justify-content:center; z-index:10000; animation: fx-fadein 0.15s ease; padding: 24px 16px; overflow-y:auto; }

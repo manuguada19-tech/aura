@@ -543,6 +543,26 @@ function register(app, pool, helpers) {
     const [r] = await pool.query(`DELETE FROM icebreakers WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
     res.json({ ok: true, deleted: r.affectedRows });
   }));
+  // V580 · Reasignar varios stickers a otro pack en bulk
+  app.post("/api/admin/stickers/bulk-move", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+    const packId = parseInt(req.body?.pack_id, 10);
+    if (!Number.isFinite(packId)) return res.status(400).json({ ok: false, error: "pack_id requerido" });
+    // validar que el pack existe
+    const [p] = await pool.query("SELECT id FROM sticker_packs WHERE id=? LIMIT 1", [packId]);
+    if (!p[0]) return res.status(404).json({ ok: false, error: "pack_no_existe" });
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("UPDATE stickers SET pack_id=?", [packId]);
+      return res.json({ ok: true, moved: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, moved: 0 });
+    const [r] = await pool.query(
+      `UPDATE stickers SET pack_id=? WHERE id IN (${ids.map(() => "?").join(",")})`,
+      [packId, ...ids]
+    );
+    res.json({ ok: true, moved: r.affectedRows });
+  }));
+
   app.post("/api/admin/stickers/bulk-delete", requireAdmin, wrap(async (req, res) => {
     const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
     if (req.body?.all === true) {
