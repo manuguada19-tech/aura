@@ -7056,17 +7056,17 @@ body:not(.app-open) #twofaReminder {
    pequeñas. En escritorio (marco .phone) usa el valor exacto configurado. */
 .app-viewport .screen.screen-hero .welcome-heart,
 .app-viewport .screen.screen-hero .welcome-heart.logo-transparent {
-  width: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
-  height: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
-  max-width: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
-  max-height: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
+  width: min(var(--welc-logo-size, 160px), 22vh, 200px) !important;
+  height: min(var(--welc-logo-size, 160px), 22vh, 200px) !important;
+  max-width: min(var(--welc-logo-size, 160px), 22vh, 200px) !important;
+  max-height: min(var(--welc-logo-size, 160px), 22vh, 200px) !important;
 }
 .phone .screen-hero .welcome-heart,
 .phone .screen-hero .welcome-heart.logo-transparent {
-  width: var(--welc-logo-size, 115px) !important;
-  height: var(--welc-logo-size, 115px) !important;
-  max-width: var(--welc-logo-size, 115px) !important;
-  max-height: var(--welc-logo-size, 115px) !important;
+  width: var(--welc-logo-size, 160px) !important;
+  height: var(--welc-logo-size, 160px) !important;
+  max-width: var(--welc-logo-size, 160px) !important;
+  max-height: var(--welc-logo-size, 160px) !important;
 }
 /* Subtítulo: móvil cap por vh, escritorio valor exacto */
 .app-viewport .screen.screen-hero .welcome-sub {
