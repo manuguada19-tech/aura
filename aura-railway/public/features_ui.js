@@ -573,7 +573,12 @@
         b.disabled = true;
         const rsp = await api("/api/my/rewards/redeem", { method: "POST", body: JSON.stringify({ reward_id: Number(b.dataset.redeem) }) });
         if (rsp.ok && rsp.data?.ok) {
-          toast("¡Canjeado! Código: " + rsp.data.code);
+          if (rsp.data.pending) {
+            toast("Canje enviado a revisión ⏳");
+            alert(rsp.data.message || "Tu canje está pendiente de aprobación por el equipo. Recibirás el código en cuanto se apruebe.");
+          } else {
+            toast("¡Canjeado! Código: " + rsp.data.code);
+          }
           closeModal();
           openMyRewards();
         } else {
@@ -588,15 +593,36 @@
     const { ok, data } = await api("/api/my/rewards/mine");
     if (!ok) { toast("No se pudieron cargar tus recompensas"); return; }
     const items = data.items || [];
-    const rows = items.length ? items.map((r) => h("div", { class: "reward-card" }, [
-      h("div", { class: "reward-icon" }, r.icon || "🎁"),
-      h("div", { class: "reward-body" }, [
-        h("div", { class: "reward-title" }, r.title || ""),
-        h("div", { class: "muted", style: "font-size:12px" }, `Código: `),
-        h("div", { style: "font-family:monospace;font-weight:600;user-select:all" }, r.code),
-        h("div", { class: "muted", style: "font-size:11px;margin-top:4px" }, `Estado: ${r.status}`),
-      ]),
-    ])) : [h("div", { class: "muted" }, "Aún no has canjeado ninguna recompensa.")];
+    const stateBadge = (st) => {
+      const map = {
+        active: { txt: "✅ Activo · listo para usar", cls: "ok" },
+        used: { txt: "✔️ Usado", cls: "off" },
+        pending_review: { txt: "⏳ Pendiente de aprobación", cls: "warn" },
+        rejected: { txt: "❌ Rechazado", cls: "off" },
+        revoked: { txt: "🚫 Revocado", cls: "off" },
+        expired: { txt: "⌛ Caducado", cls: "off" },
+      };
+      return map[st] || { txt: st, cls: "off" };
+    };
+    const rows = items.length ? items.map((r) => {
+      const st = stateBadge(r.status);
+      const showCode = r.status === "active" || r.status === "used";
+      return h("div", { class: "reward-card" }, [
+        h("div", { class: "reward-icon" }, r.icon || "🎁"),
+        h("div", { class: "reward-body" }, [
+          h("div", { class: "reward-title" }, r.title || ""),
+          showCode
+            ? h("div", {}, [
+                h("div", { class: "muted", style: "font-size:12px" }, "Código:"),
+                h("div", { style: "font-family:monospace;font-weight:600;user-select:all" }, r.code || "—"),
+              ])
+            : h("div", { class: "muted", style: "font-size:12px" }, r.status === "pending_review" ? "El código se emitirá cuando un admin apruebe el canje." : "Sin código disponible."),
+          h("div", { style: "margin-top:6px" }, [
+            h("span", { class: "reward-flag " + st.cls }, st.txt),
+          ]),
+        ]),
+      ]);
+    }) : [h("div", { class: "muted" }, "Aún no has canjeado ninguna recompensa.")];
     modal([
       h("div", { class: "rewards-shop" }, [
         h("h3", {}, "🎫 Mis recompensas"),

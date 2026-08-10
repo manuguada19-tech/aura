@@ -419,7 +419,7 @@
         const kpis = typeof cfg.kpis === "function" ? cfg.kpis(state.rows) : (cfg.kpis || []);
         (kpis || []).forEach((k) => {
           const card = document.createElement("div"); card.className = "fx-kpi " + (k.accent || "");
-          card.innerHTML = `<div class="fx-kpi-label">${escapeHtml(k.label)}</div><div class="fx-kpi-value">${escapeHtml(String(k.value))}</div>${k.hint ? `<div class="fx-kpi-hint">${escapeHtml(k.hint)}</div>` : ""}`;
+          card.innerHTML = `<div class="fx-kpi-label">${escapeHtml(k.label)}</div><div class="fx-kpi-valueue">${escapeHtml(String(k.value))}</div>${k.hint ? `<div class="fx-kpi-hint">${escapeHtml(k.hint)}</div>` : ""}`;
           kpiRow.appendChild(card);
         });
       }
@@ -658,7 +658,7 @@
         { label: "Oro/Platino", value: packs.filter((p) => p.min_plan === "gold" || p.min_plan === "platinum").length, accent: "amber" },
       ].forEach((k) => {
         const c = document.createElement("div"); c.className = "fx-kpi " + k.accent;
-        c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`;
+        c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`;
         kpiRow.appendChild(c);
       });
 
@@ -765,7 +765,7 @@
           { label: "XP medio", value: Math.round(stats.totals.avg_xp || 0), accent: "purple" },
           { label: "Nivel medio", value: Math.round((stats.totals.avg_level || 1) * 10) / 10, accent: "green" },
           { label: "Racha máxima", value: stats.totals.max_streak || 0, accent: "amber" },
-        ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
+        ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`; kpiRow.appendChild(c); });
         outer.appendChild(kpiRow);
         if (stats.top && stats.top.length) {
           const topWrap = document.createElement("div"); topWrap.className = "fx-panel";
@@ -1322,7 +1322,7 @@
         { label: "Total tests", value: items.length, accent: "blue" },
         { label: "Activos", value: items.filter((t) => t.active).length, accent: "green" },
         { label: "Pausados", value: items.filter((t) => !t.active).length, accent: "amber" },
-      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
+      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`; kpiRow.appendChild(c); });
       outer.appendChild(kpiRow);
 
       if (!items.length) {
@@ -1437,7 +1437,7 @@
         { label: "Celdas", value: points.length, accent: "blue" },
         { label: "Pings totales", value: totalHits, accent: "purple" },
         { label: "Máx. hits/celda", value: points[0]?.hits || 0, accent: "amber" },
-      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
+      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-valueue">${k.value}</div>`; kpiRow.appendChild(c); });
       outer.appendChild(kpiRow);
 
       const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;";
@@ -1901,6 +1901,7 @@
         kpis: (rows) => [
           { label: "Total", value: rows.length, accent: "blue" },
           { label: "Activas", value: rows.filter(r => r.active).length, accent: "green" },
+          { label: "Requieren revisión", value: rows.filter(r => r.requires_review).length, accent: "red" },
           { label: "Auto por nivel", value: rows.filter(r => r.auto_grant_level).length, accent: "purple" },
           { label: "Canjes totales", value: rows.reduce((a,r) => a + (r.redemptions_count || 0), 0), accent: "amber" },
         ],
@@ -1930,6 +1931,7 @@
           { key: "auto_grant_level", label: "Auto @ nivel", render: (r) => document.createTextNode(r.auto_grant_level ? String(r.auto_grant_level) : "—") },
           { key: "redemptions_count", label: "Canjes", sortable: true },
           { key: "active", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.active ? "ok" : "off"); b.textContent = r.active ? "Activa" : "Inactiva"; return b; } },
+          { key: "requires_review", label: "Revisión", render: (r) => { if (!r.requires_review) return document.createTextNode("—"); const b = document.createElement("span"); b.className = "fx-badge amber"; b.textContent = "⚠️ Manual"; return b; } },
         ],
         actions: [
           { label: "✏️", title: "Editar", variant: "ghost", onClick: async (r, reload) => { openRewardEditor(r, reload); } },
@@ -1956,8 +1958,151 @@
         ],
         headerActions: [
           { label: "Nueva recompensa", icon: "＋", variant: "primary", onClick: () => openRewardEditor(null, () => { try { rerender(); } catch {} }) },
+          { label: "Pendientes de revisión", icon: "⚠️", variant: "ghost", onClick: () => openPendingReviewDialog() },
+          { label: "Perfil por usuario", icon: "👤", variant: "ghost", onClick: async () => {
+              const d = await prompt2({ title: "Ver perfil de recompensas", fields: [ { name: "user_id", label: "ID de usuario", type: "number" } ]});
+              if (d && d.user_id) openUserRewardsProfile(Number(d.user_id));
+            } },
           { label: "Ver canjes", icon: "📜", variant: "ghost", onClick: () => openRedemptionsDialog() },
         ],
+      });
+    }
+
+    async function openPendingReviewDialog() {
+      const rsp = await api("/api/admin/rewards/pending-review");
+      const items = rsp.data?.items || [];
+      const back = document.createElement("div"); back.className = "fx-modal-back";
+      const card = document.createElement("div"); card.className = "fx-modal-card xwide";
+      const rowsHtml = items.map(it => {
+        const reasons = (() => { try { return JSON.parse(it.risk_reasons || "[]"); } catch { return []; } })();
+        const reasonsHtml = reasons.map(r => `<span class="fx-badge amber" style="margin:2px">${escapeHtml(r)}</span>`).join(" ");
+        return `<tr>
+          <td>#${it.id}</td>
+          <td>${it.reward_icon || "🎁"} ${escapeHtml(it.reward_title || "")}<br><span class="fx-muted" style="font-size:11px">Coste: ${it.reward_xp_cost || 0} XP</span></td>
+          <td>${escapeHtml(it.user_name || "")} <span class="fx-muted">#${it.user_id}</span><br><span class="fx-muted" style="font-size:11px">${escapeHtml(it.user_email || "")}</span></td>
+          <td>${it.user_xp || 0} XP · Lv ${it.user_level || 1} · <span class="fx-badge blue">${escapeHtml(it.user_plan || 'free')}</span></td>
+          <td><span class="fx-badge ${it.risk_score >= 80 ? 'red' : it.risk_score >= 50 ? 'amber' : 'ok'}">${it.risk_score || 0}</span></td>
+          <td>${reasonsHtml || '<span class="fx-muted">—</span>'}</td>
+          <td>${fmtDate(it.created_at)}</td>
+          <td>
+            <button class="fx-btn primary small" data-approve="${it.id}">✓ Aprobar</button>
+            <button class="fx-btn danger small" data-reject="${it.id}">✕ Rechazar</button>
+            <button class="fx-btn ghost small" data-profile="${it.user_id}">Perfil</button>
+          </td>
+        </tr>`;
+      }).join("");
+      card.innerHTML = `
+        <div class="fx-modal-head"><h2>⚠️ Canjes pendientes de revisión</h2><button class="fx-icon-btn" data-close>✕</button></div>
+        <div class="fx-modal-body">
+          <p class="fx-muted" style="margin:0 0 12px">Estos canjes se detectaron como potencialmente sospechosos y esperan tu aprobación. Al rechazar se devuelve el XP al usuario.</p>
+          <table class="fx-table"><thead><tr>
+            <th>ID</th><th>Recompensa</th><th>Usuario</th><th>Perfil</th><th>Riesgo</th><th>Motivos</th><th>Fecha</th><th>Acciones</th>
+          </tr></thead><tbody>${rowsHtml || `<tr><td colspan="8" class="fx-muted" style="text-align:center;padding:24px">No hay canjes pendientes de revisión. 🎉</td></tr>`}</tbody></table>
+        </div>
+        <div class="fx-modal-foot"><button class="fx-btn ghost" data-close>Cerrar</button></div>`;
+      back.appendChild(card);
+      document.body.appendChild(back);
+      const close = () => back.remove();
+      card.querySelectorAll("[data-close]").forEach(b => b.onclick = close);
+      back.addEventListener("click", (e) => { if (e.target === back) close(); });
+      card.querySelectorAll("[data-approve]").forEach(b => b.onclick = async () => {
+        const ok = await confirmDialog({ title: "Aprobar canje", message: "El usuario recibirá el código.", confirmLabel: "Aprobar" });
+        if (!ok) return;
+        await api(`/api/admin/rewards/redemptions/${b.dataset.approve}/approve`, { method: "POST" });
+        toast("Canje aprobado", "ok"); close(); openPendingReviewDialog();
+      });
+      card.querySelectorAll("[data-reject]").forEach(b => b.onclick = async () => {
+        const d = await prompt2({ title: "Rechazar canje", fields: [
+          { name: "note", label: "Motivo (opcional)" },
+          { name: "refund", label: "Devolver XP", type: "checkbox", default: true },
+        ]});
+        if (!d) return;
+        await api(`/api/admin/rewards/redemptions/${b.dataset.reject}/reject`, { method: "POST", body: { note: d.note, refund: d.refund !== false } });
+        toast("Canje rechazado" + (d.refund !== false ? " (XP devuelto)" : ""), "ok"); close(); openPendingReviewDialog();
+      });
+      card.querySelectorAll("[data-profile]").forEach(b => b.onclick = () => { close(); openUserRewardsProfile(Number(b.dataset.profile)); });
+    }
+
+    async function openUserRewardsProfile(userId) {
+      const rsp = await api(`/api/admin/users/${userId}/rewards-profile`);
+      if (!rsp.ok) { toast(rsp.data?.error || "Usuario no encontrado", "err"); return; }
+      const d = rsp.data;
+      const back = document.createElement("div"); back.className = "fx-modal-back";
+      const card = document.createElement("div"); card.className = "fx-modal-card xwide";
+      const pct = d.stats.progress_pct;
+      const catalogRows = d.catalog.map(r => `
+        <tr>
+          <td>${r.icon || "🎁"} ${escapeHtml(r.title)}</td>
+          <td>${r.xp_cost || 0}</td>
+          <td>${r.min_level || 1}</td>
+          <td>${escapeHtml(r.plan_required || 'free')}</td>
+          <td>${r.can_redeem ? '<span class="fx-badge ok">Puede canjear</span>' : r.lock_reason === "xp" ? `<span class="fx-badge amber">Faltan ${r.missing_xp} XP</span>` : `<span class="fx-badge off">Bloqueada · ${escapeHtml(r.lock_reason || '')}</span>`}</td>
+          <td>${r.can_redeem ? `<button class="fx-btn primary small" data-force="${r.id}">Otorgar directo</button>` : ''}</td>
+        </tr>`).join("");
+      const historyRows = d.history.map(h => {
+        const stCls = h.status === 'active' ? 'ok' : h.status === 'used' ? 'blue' : h.status === 'pending_review' ? 'amber' : 'off';
+        return `<tr>
+          <td>#${h.id}</td>
+          <td>${h.reward_icon || "🎁"} ${escapeHtml(h.reward_title)}</td>
+          <td>${h.xp_spent || 0}</td>
+          <td>${escapeHtml(h.source)}</td>
+          <td><span class="fx-badge ${stCls}">${h.status}</span></td>
+          <td>${h.risk_score || 0}</td>
+          <td>${fmtDate(h.created_at)}</td>
+          <td>${h.code ? `<code>${escapeHtml(h.code)}</code>` : '<span class="fx-muted">—</span>'}</td>
+        </tr>`;
+      }).join("");
+      card.innerHTML = `
+        <div class="fx-modal-head">
+          <h2>👤 Perfil de recompensas · ${escapeHtml(d.user.name || d.user.email || '')}</h2>
+          <button class="fx-icon-btn" data-close>✕</button>
+        </div>
+        <div class="fx-modal-body">
+          <div class="fx-form-section"><div class="fx-form-title">📊 Estado del usuario</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:8px 0 4px">
+              <div class="fx-kpi"><div class="fx-kpi-label">Nivel</div><div class="fx-kpi-value">${d.stats.level}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">XP acumulado</div><div class="fx-kpi-value">${d.stats.xp}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">XP p/ siguiente nivel</div><div class="fx-kpi-value">${d.stats.xp_to_next}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">Plan</div><div class="fx-kpi-value">${escapeHtml(d.user.plan || 'free')}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">Canjes</div><div class="fx-kpi-value">${d.totals.redemptions}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">Pendientes</div><div class="fx-kpi-value" style="color:#f5b830">${d.totals.pending}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">Rechazados/revocados</div><div class="fx-kpi-value" style="color:#ff7777">${d.totals.revoked}</div></div>
+              <div class="fx-kpi"><div class="fx-kpi-label">XP gastado</div><div class="fx-kpi-value">${d.totals.xp_spent}</div></div>
+            </div>
+            <div style="margin-top:8px">
+              <div class="fx-muted" style="font-size:12px;margin-bottom:4px">Progreso al nivel ${d.stats.level + 1}</div>
+              <div style="height:10px;background:rgba(255,255,255,.08);border-radius:6px;overflow:hidden">
+                <div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#7856ff,#ff3b6b)"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="fx-form-section"><div class="fx-form-title">🎁 Recompensas que PUEDE canjear ahora (${d.can_redeem_now.length})</div>
+            ${d.can_redeem_now.length ? `<table class="fx-table"><thead><tr><th>Recompensa</th><th>XP</th><th>Nivel</th><th>Plan</th><th>Estado</th><th>Acción</th></tr></thead><tbody>${d.can_redeem_now.map(r => `
+              <tr><td>${r.icon || '🎁'} ${escapeHtml(r.title)}</td><td>${r.xp_cost || 0}</td><td>${r.min_level || 1}</td><td>${escapeHtml(r.plan_required || 'free')}</td><td><span class="fx-badge ok">Disponible</span></td><td><button class="fx-btn primary small" data-force="${r.id}">Otorgar directo</button></td></tr>
+            `).join("")}</tbody></table>` : '<p class="fx-muted">Ninguna recompensa disponible ahora mismo.</p>'}
+          </div>
+
+          <div class="fx-form-section"><div class="fx-form-title">📚 Catálogo aplicable (${d.catalog.length})</div>
+            <table class="fx-table"><thead><tr><th>Recompensa</th><th>XP</th><th>Nivel</th><th>Plan</th><th>Estado</th><th></th></tr></thead><tbody>${catalogRows || '<tr><td colspan="6" class="fx-muted">Sin recompensas activas</td></tr>'}</tbody></table>
+          </div>
+
+          <div class="fx-form-section"><div class="fx-form-title">🕒 Historial completo</div>
+            <table class="fx-table"><thead><tr><th>ID</th><th>Recompensa</th><th>XP</th><th>Origen</th><th>Estado</th><th>Riesgo</th><th>Fecha</th><th>Código</th></tr></thead><tbody>${historyRows || '<tr><td colspan="8" class="fx-muted">Sin canjes todavía</td></tr>'}</tbody></table>
+          </div>
+        </div>
+        <div class="fx-modal-foot"><button class="fx-btn ghost" data-close>Cerrar</button></div>`;
+      back.appendChild(card);
+      document.body.appendChild(back);
+      const close = () => back.remove();
+      card.querySelectorAll("[data-close]").forEach(b => b.onclick = close);
+      back.addEventListener("click", (e) => { if (e.target === back) close(); });
+      card.querySelectorAll("[data-force]").forEach(b => b.onclick = async () => {
+        const ok = await confirmDialog({ title: "Otorgar recompensa", message: "Se emitirá un código a este usuario sin coste de XP.", confirmLabel: "Emitir" });
+        if (!ok) return;
+        const r = await api(`/api/admin/rewards/${b.dataset.force}/force-redeem/${userId}`, { method: "POST", body: { note: "Emitida desde perfil admin" } });
+        if (r.ok) { toast(`Emitida. Código: ${r.data?.code}`, "ok"); close(); openUserRewardsProfile(userId); }
+        else toast("No se pudo emitir", "err");
       });
     }
 
@@ -2022,6 +2167,7 @@
             <label>Prefijo del código <input class="fx-input" id="r_prefix" value="${escapeHtml(r.code_prefix || "AURA")}" maxlength="16"></label>
             <label>Condiciones (texto legal breve) <textarea class="fx-input" id="r_terms" rows="2">${escapeHtml(r.terms || "")}</textarea></label>
             <label class="fx-checkbox-row"><input type="checkbox" id="r_active" ${(r.active == null || r.active) ? "checked" : ""}> Activa</label>
+            <label class="fx-checkbox-row"><input type="checkbox" id="r_review" ${r.requires_review ? "checked" : ""}> ⚠️ Requiere revisión manual antes de emitir el código (recompensa sensible)</label>
           </div>
         </div>
         <div class="fx-modal-foot">
@@ -2058,6 +2204,7 @@
           code_prefix: card.querySelector("#r_prefix").value.trim() || "AURA",
           terms: card.querySelector("#r_terms").value,
           active: card.querySelector("#r_active").checked ? 1 : 0,
+          requires_review: card.querySelector("#r_review").checked ? 1 : 0,
         };
         if (!body.title || (!isEdit && !body.slug)) { toast("Slug y título son obligatorios", "err"); return; }
         const rsp = isEdit
@@ -2086,6 +2233,7 @@
           <td>
             ${it.status === 'active' ? `<button class="fx-btn ghost small" data-used="${it.id}">Marcar usado</button>` : ""}
             ${it.status !== 'revoked' ? `<button class="fx-btn ghost small" data-rev="${it.id}">Revocar</button>` : ""}
+            <button class="fx-btn ghost small" data-uprof="${it.user_id}">👤 Perfil</button>
           </td>
         </tr>`).join("");
       card.innerHTML = `
@@ -2109,6 +2257,7 @@
         await api(`/api/admin/rewards/redemptions/${b.dataset.rev}/revoke`, { method: "POST" });
         toast("Revocada", "ok"); close(); openRedemptionsDialog();
       });
+      card.querySelectorAll("[data-uprof]").forEach(b => b.onclick = () => { close(); openUserRewardsProfile(Number(b.dataset.uprof)); });
     }
 
     // -----------------------------------------------------------------
@@ -2179,7 +2328,7 @@
   .fx-kpi.amber::before { background:#f59e0b; }
   .fx-kpi.red::before { background:#ef4444; }
   .fx-kpi-label { font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color: var(--fg-muted,#96a0b8); font-weight:600; }
-  .fx-kpi-value { font-size:26px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
+  .fx-kpi-valueue { font-size:26px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
   .fx-kpi-hint { font-size:11px; color: var(--fg-muted,#96a0b8); margin-top:2px; }
 
   .fx-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 4px 0 12px; flex-wrap:wrap; padding:10px 12px; background: rgba(15,20,32,0.55); border:1px solid rgba(255,255,255,0.06); border-radius:12px; }
