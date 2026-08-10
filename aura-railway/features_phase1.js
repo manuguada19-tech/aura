@@ -102,14 +102,12 @@ async function migrate(pool) {
     console.log("[phase1] seeded icebreakers:", seeds.length);
   }
 
-  // Seed 1 pack de stickers vacío como ejemplo (opcional)
-  const [pk] = await pool.query("SELECT COUNT(*) c FROM sticker_packs");
-  if (pk[0].c === 0) {
-    await pool.query(
-      "INSERT INTO sticker_packs (slug,name,min_plan,sort_order) VALUES (?,?,?,?)",
-      ["aura-classic", "Aura Clásicos", "gold", 1]
-    );
-    console.log("[phase1] seeded default sticker pack");
+  // V564 · Seed de packs y stickers predefinidos (Twemoji)
+  try {
+    const { seedStickers } = require("./features_phase1_stickers_seed");
+    await seedStickers(pool, { force: false });
+  } catch (e) {
+    console.warn("[phase1] seedStickers error:", e.message);
   }
 
   console.log("[phase1] migrate OK");
@@ -434,6 +432,19 @@ function register(app, pool, helpers) {
     await pool.query(`DELETE FROM stickers WHERE pack_id IN (${ids.map(()=>"?").join(",")})`, ids);
     const [r] = await pool.query(`DELETE FROM sticker_packs WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
     res.json({ ok: true, deleted: r.affectedRows });
+  }));
+
+  // V564 · Re-sembrar packs y stickers predefinidos
+  // body: { force: true } → borra los stickers de los packs seed y regenera.
+  //                          Si false o vacío, solo añade lo que falte.
+  app.post("/api/admin/stickers/reseed", requireAdmin, wrap(async (req, res) => {
+    try {
+      const { seedStickers } = require("./features_phase1_stickers_seed");
+      const out = await seedStickers(pool, { force: req.body?.force === true });
+      res.json({ ok: true, ...out });
+    } catch (e) {
+      res.status(500).json({ error: "seed_failed", message: e.message });
+    }
   }));
 
   console.log("[phase1] endpoints registered");

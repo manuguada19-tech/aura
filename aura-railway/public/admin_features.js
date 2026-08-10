@@ -596,6 +596,35 @@
       head.innerHTML = `<div class="fx-view-title"><div class="fx-view-emoji">🎨</div><div><h1>Stickers</h1><p class="fx-muted">Packs y stickers disponibles (por defecto Oro+)</p></div></div><div class="fx-view-actions"></div>`;
       wrap.appendChild(head);
       const actsHead = head.querySelector(".fx-view-actions");
+      // V564 · Cargar packs y stickers predefinidos (Twemoji)
+      actsHead.appendChild(btn("Cargar predefinidos", { variant: "ghost", icon: "&#x1f504;", title: "Añade packs Aura Clásicos / Diversión / Fiesta / Platino con stickers listos", onClick: async () => {
+        const ok = await confirmDialog({
+          title: "Cargar stickers predefinidos",
+          message: "Se crearán 4 packs (Clásicos, Diversión, Fiesta, Platino) con ~48 stickers listos usando emojis oficiales de Twemoji. Si ya existían, no se duplican.",
+          confirmLabel: "Cargar",
+        });
+        if (!ok) return;
+        try {
+          const { data } = await api("/api/admin/stickers/reseed", { method: "POST", body: {} });
+          const msg = `Packs nuevos: ${data.packsCreated || 0}, actualizados: ${data.packsUpdated || 0}, stickers añadidos: ${data.stickersCreated || 0}`;
+          toast(msg, "ok");
+          rerender();
+        } catch (e) { toast("Error al cargar predefinidos", "err"); }
+      } }));
+      actsHead.appendChild(btn("Regenerar predefinidos", { variant: "ghost", title: "BORRA los stickers de los packs seed y los vuelve a crear desde cero", onClick: async () => {
+        const ok = await confirmDialog({
+          title: "Regenerar stickers predefinidos",
+          message: "Se borrarán los stickers de los 4 packs seed (Clásicos, Diversión, Fiesta, Platino) y se volverán a crear. Los packs custom no se tocan.",
+          danger: true,
+          confirmLabel: "Regenerar",
+        });
+        if (!ok) return;
+        try {
+          const { data } = await api("/api/admin/stickers/reseed", { method: "POST", body: { force: true } });
+          toast(`Regenerado. Stickers creados: ${data.stickersCreated || 0}`, "ok");
+          rerender();
+        } catch { toast("Error al regenerar", "err"); }
+      } }));
       actsHead.appendChild(btn("Nuevo pack", { variant: "primary", icon: "＋", onClick: async () => {
         const d = await prompt2({ title: "Nuevo pack", fields: [
           { name: "slug", label: "Slug (sin espacios)" },
