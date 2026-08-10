@@ -7403,7 +7403,7 @@ body:not(.app-open) #twofaReminder {
 .app-viewport .screen.screen-hero .welcome-logo,
 .phone .screen-hero .welcome-logo,
 .screen-hero .welcome-logo {
-  margin-top: -40px !important;
+  margin-top: 8px !important;
   margin-bottom: 0 !important;
   padding-top: 0 !important;
 }
