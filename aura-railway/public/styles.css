@@ -7518,20 +7518,19 @@ body:not(.app-open) #twofaReminder {
   color: #5b6270 !important;
 }
 
-/* V542 — Tamaño equilibrado del logo del hero.
-   - Escritorio: 260px
-   - PWA / tablet: 220px
-   - Móvil navegador (<=768px): 180px
-   Sin fondo/borde/sombra: transparente puro. */
+/* V543 — Volver al tamaño que funcionaba en PWA (V541: 320px cap 42vh/60vw)
+   y solo bajar un poco en navegador móvil pequeño. */
 html body .welcome-heart,
 html body .welcome-heart.logo-transparent,
 html body .screen-hero .welcome-heart,
 html body .app-viewport .screen.screen-hero .welcome-heart,
 html body .phone .screen-hero .welcome-heart {
-  width: 260px !important;
-  height: 260px !important;
-  max-width: 260px !important;
-  max-height: 260px !important;
+  width: min(var(--welc-logo-size, 320px), 42vh, 60vw) !important;
+  height: min(var(--welc-logo-size, 320px), 42vh, 60vw) !important;
+  max-width: min(var(--welc-logo-size, 320px), 42vh, 60vw) !important;
+  max-height: min(var(--welc-logo-size, 320px), 42vh, 60vw) !important;
+  min-width: 180px !important;
+  min-height: 180px !important;
   background: transparent !important;
   background-color: transparent !important;
   border: none !important;
@@ -7542,25 +7541,15 @@ html body .phone .screen-hero .welcome-heart {
   border-radius: 0 !important;
   aspect-ratio: 1 / 1 !important;
 }
-@media (max-width: 768px) {
+/* Solo navegador móvil (NO PWA): bajar 15% */
+@media (max-width: 768px) and (display-mode: browser) {
   html body .welcome-heart,
   html body .welcome-heart.logo-transparent,
-  html body .screen-hero .welcome-heart,
-  html body .app-viewport .screen.screen-hero .welcome-heart,
-  html body .phone .screen-hero .welcome-heart {
-    width: 180px !important;
-    height: 180px !important;
-    max-width: 180px !important;
-    max-height: 180px !important;
-  }
-}
-@media (max-width: 768px) and (display-mode: standalone) {
-  html body .welcome-heart,
-  html body .welcome-heart.logo-transparent {
-    width: 210px !important;
-    height: 210px !important;
-    max-width: 210px !important;
-    max-height: 210px !important;
+  html body .screen-hero .welcome-heart {
+    width: min(var(--welc-logo-size, 320px), 34vh, 50vw) !important;
+    height: min(var(--welc-logo-size, 320px), 34vh, 50vw) !important;
+    max-width: min(var(--welc-logo-size, 320px), 34vh, 50vw) !important;
+    max-height: min(var(--welc-logo-size, 320px), 34vh, 50vw) !important;
   }
 }
 html body .welcome-heart > img {
