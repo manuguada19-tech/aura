@@ -9527,6 +9527,10 @@ async function ensureSuperadminAccessSettings() {
   } catch (e) { console.warn("[superadmin] ensure settings:", e.message); }
 }
 
+// V545 · Fase 1 de features (rompehielo, stickers, audios, mensajes efímeros)
+const phase1 = require("./features_phase1");
+phase1.register(app, pool, { readMyUserId, wrap, requireAdmin });
+
 (async () => {
   try {
     await migrate();
@@ -9539,6 +9543,12 @@ async function ensureSuperadminAccessSettings() {
     await seedConversations();
     await ensureSuperadminAccessSettings();
     await loadRuntimeSettings();
+    try {
+      await phase1.migrate(pool);
+      phase1.startExpiryJob(pool);
+    } catch (e) {
+      console.error("[phase1] init error:", e);
+    }
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT));
   } catch (e) {

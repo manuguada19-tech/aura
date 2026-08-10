@@ -7143,8 +7143,18 @@ function screenChat(root, u, isNew, opts = {}) {
   msgs.appendChild(el("div", { class: "message-day" }, isNew ? "Hoy · Ahora sois match ✨" : "Hoy"));
   root.appendChild(msgs);
 
+  // V545 · Composer ampliado: rompehielo + stickers + audio + toggle 24h
+  const ephemeralState = { on: false };
   const composer = el("div", { class: "composer" }, [
+    el("button", { class: "icon-btn", title: "Rompehielo", id: "icebreakerBtn", onclick: () => openIcebreakerPanel(), html: "❄️" }),
     el("button", { class: "icon-btn", title: "Adjuntar", onclick: () => sendPhoto(), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>` }),
+    el("button", { class: "icon-btn", title: "Stickers", id: "stickersBtn", onclick: () => openStickersPanel(), html: "🎨" }),
+    el("button", { class: "icon-btn", title: "Audio", id: "audioBtn", onclick: () => sendAudioMsg(), html: "🎤" }),
+    el("button", { class: "icon-btn ephemeral-toggle", title: "Mensajes de 24h", id: "ephemeralBtn", onclick: (e) => {
+        ephemeralState.on = !ephemeralState.on;
+        e.currentTarget.classList.toggle("active", ephemeralState.on);
+        e.currentTarget.innerHTML = ephemeralState.on ? "⏱️24h" : "⏱️";
+      }, html: "⏱️" }),
     el("input", {
       placeholder: "Escribe un mensaje…",
       id: "chatInput",
@@ -7153,7 +7163,6 @@ function screenChat(root, u, isNew, opts = {}) {
       autocomplete: "off",
       autocorrect: "on",
       onkeydown: (e) => { if (e.key === "Enter") sendMsg(); },
-      // Only enable keyboard input on explicit tap on the composer input
       onclick: (e) => {
         const inp = e.currentTarget;
         if (inp.hasAttribute("readonly")) {
@@ -7180,11 +7189,38 @@ function screenChat(root, u, isNew, opts = {}) {
     optimistic.dataset.pending = "1";
     msgs.appendChild(optimistic);
     msgs.scrollTop = msgs.scrollHeight;
-    const r = await chatApi.sendMessage(state_.convId, v);
-    if (!r) {
-      optimistic.style.opacity = ".5";
-      toast("No se pudo enviar. Reintenta.");
-      return;
+    let r;
+    if (ephemeralState.on) {
+      // Mensaje efímero (Oro+)
+      try {
+        const resp = await fetch("/api/my/messages/ephemeral", {
+          method: "POST",
+          headers: { ...chatApi.headers(), "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: state_.convId, body: v, media_type: "text" }),
+        });
+        r = await resp.json();
+        if (!resp.ok) {
+          if (r?.error === "plan_required") {
+            openPlanLockModal(r.required_plan || "gold", "Mensajes efímeros 24h");
+            optimistic.remove();
+            return;
+          }
+          throw new Error(r?.error || "err");
+        }
+        optimistic.classList.add("ephemeral-msg");
+        optimistic.title = "Este mensaje se autoborrará en 24 h";
+      } catch (e) {
+        optimistic.style.opacity = ".5";
+        toast("No se pudo enviar (efímero).");
+        return;
+      }
+    } else {
+      r = await chatApi.sendMessage(state_.convId, v);
+      if (!r) {
+        optimistic.style.opacity = ".5";
+        toast("No se pudo enviar. Reintenta.");
+        return;
+      }
     }
     if (r.id > lastId) lastId = r.id;
     optimistic.dataset.msgId = String(r.id);
@@ -7197,6 +7233,179 @@ function screenChat(root, u, isNew, opts = {}) {
     msgs.scrollTop = msgs.scrollHeight;
     await chatApi.sendMessage(state_.convId, null, "photo", url);
   };
+
+  // V545 · Modal genérico de plan bloqueado
+  function openPlanLockModal(requiredPlan, featureName) {
+    const label = { premium: "Premium", gold: "Oro", platinum: "Platino" }[requiredPlan] || "Superior";
+    const backdrop = el("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) backdrop.remove(); } }, [
+      el("div", { class: "modal-card plan-lock-card" }, [
+        el("div", { class: "plan-lock-icon" }, requiredPlan === "platinum" ? "💎" : requiredPlan === "gold" ? "🥇" : "⭐"),
+        el("h3", {}, "Función " + label),
+        el("p", { class: "muted" }, `“${featureName}” está disponible con el plan ${label} o superior.`),
+        el("div", { class: "modal-actions" }, [
+          el("button", { class: "btn secondary", onclick: () => backdrop.remove() }, "Cerrar"),
+          el("button", { class: "btn primary", onclick: () => { backdrop.remove(); try { location.hash = "#planes"; } catch{} } }, "Ver planes"),
+        ]),
+      ]),
+    ]);
+    document.body.appendChild(backdrop);
+  }
+
+  // V545 · Panel de rompehielo (Premium+)
+  async function openIcebreakerPanel() {
+    if (!state_.convId) return;
+    try {
+      const resp = await fetch("/api/my/icebreakers", { headers: chatApi.headers(), cache: "no-store" });
+      const data = await resp.json();
+      if (data.locked) {
+        openPlanLockModal(data.required_plan || "premium", "Preguntas rompehielo");
+        return;
+      }
+      const items = data.items || [];
+      const backdrop = el("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) backdrop.remove(); } }, [
+        el("div", { class: "modal-card icebreaker-card" }, [
+          el("h3", {}, "❄️ Elige un rompehielo"),
+          el("div", { class: "icebreaker-list" }, items.map((it) =>
+            el("button", { class: "icebreaker-item", onclick: async () => {
+              backdrop.remove();
+              const inp = $("#chatInput");
+              inp.value = it.text;
+              try { inp.focus(); } catch {}
+            } }, it.text)
+          )),
+          el("button", { class: "btn secondary", onclick: () => backdrop.remove() }, "Cerrar"),
+        ]),
+      ]);
+      document.body.appendChild(backdrop);
+    } catch (e) {
+      toast("No se pudo cargar rompehielo.");
+    }
+  }
+
+  // V545 · Panel de stickers (Oro+)
+  async function openStickersPanel() {
+    if (!state_.convId) return;
+    try {
+      const resp = await fetch("/api/my/stickers", { headers: chatApi.headers(), cache: "no-store" });
+      const data = await resp.json();
+      const packs = data.packs || [];
+      const stickers = data.stickers || [];
+      if (packs.every((p) => p.locked)) {
+        openPlanLockModal("gold", "Stickers");
+        return;
+      }
+      const backdrop = el("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) backdrop.remove(); } }, [
+        el("div", { class: "modal-card stickers-card" }, [
+          el("h3", {}, "🎨 Stickers"),
+          el("div", { class: "sticker-packs" }, packs.map((p) => {
+            const packStickers = stickers.filter((s) => s.pack_id === p.id);
+            return el("div", { class: "sticker-pack " + (p.locked ? "locked" : "") }, [
+              el("h4", {}, (p.locked ? "🔒 " : "") + p.name),
+              el("div", { class: "sticker-grid" }, packStickers.length ? packStickers.map((s) =>
+                el("button", { class: "sticker-btn", onclick: async () => {
+                  if (p.locked) { openPlanLockModal(p.min_plan, "Stickers " + p.name); return; }
+                  backdrop.remove();
+                  const useEphemeral = ephemeralState.on;
+                  const endpoint = useEphemeral ? "/api/my/messages/ephemeral" : "/api/my/messages/sticker";
+                  const body = useEphemeral
+                    ? { conversation_id: state_.convId, media_type: "photo", media_url: s.url, sticker_id: s.id }
+                    : { conversation_id: state_.convId, sticker_id: s.id };
+                  try {
+                    const r = await fetch(endpoint, {
+                      method: "POST",
+                      headers: { ...chatApi.headers(), "Content-Type": "application/json" },
+                      body: JSON.stringify(body),
+                    });
+                    const j = await r.json();
+                    if (!r.ok) {
+                      if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Stickers"); return; }
+                      throw new Error();
+                    }
+                    msgs.appendChild(photoBubble("out", s.url));
+                    msgs.scrollTop = msgs.scrollHeight;
+                  } catch { toast("No se pudo enviar sticker."); }
+                } }, [ el("img", { src: s.url, alt: s.slug, style: "width:64px;height:64px;object-fit:contain;" }) ])
+              ) : [ el("div", { class: "muted" }, "Sin stickers") ]),
+            ]);
+          })),
+          el("button", { class: "btn secondary", onclick: () => backdrop.remove() }, "Cerrar"),
+        ]),
+      ]);
+      document.body.appendChild(backdrop);
+    } catch (e) {
+      toast("No se pudo cargar stickers.");
+    }
+  }
+
+  // V545 · Grabación de audio (Oro+). MediaRecorder → blob → upload → send.
+  async function sendAudioMsg() {
+    if (!state_.convId) return;
+    if (!navigator.mediaDevices?.getUserMedia) { toast("Micrófono no soportado."); return; }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const chunks = [];
+      rec.ondataavailable = (e) => chunks.push(e.data);
+      const recBackdrop = el("div", { class: "modal-backdrop" }, [
+        el("div", { class: "modal-card audio-rec-card" }, [
+          el("h3", {}, "🎤 Grabando…"),
+          el("div", { class: "rec-timer", id: "recTimer" }, "0:00"),
+          el("div", { class: "modal-actions" }, [
+            el("button", { class: "btn secondary", onclick: () => { try { rec.stop(); } catch{} stream.getTracks().forEach(t=>t.stop()); recBackdrop.remove(); } }, "Cancelar"),
+            el("button", { class: "btn primary", onclick: () => { rec.stop(); stream.getTracks().forEach(t=>t.stop()); } }, "Enviar"),
+          ]),
+        ]),
+      ]);
+      document.body.appendChild(recBackdrop);
+      const t0 = Date.now();
+      const ti = setInterval(() => {
+        const s = Math.floor((Date.now()-t0)/1000);
+        const el = document.getElementById("recTimer");
+        if (el) el.textContent = Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
+        if (s >= 60) rec.stop();
+      }, 300);
+      rec.onstop = async () => {
+        clearInterval(ti);
+        recBackdrop.remove();
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        // Upload: reutilizamos /api/upload si existe; si no, data-URL en el momento.
+        const fd = new FormData();
+        fd.append("file", blob, "audio.webm");
+        let audioUrl = null;
+        try {
+          const up = await fetch("/api/upload", { method: "POST", headers: chatApi.headers(), body: fd });
+          const j = await up.json();
+          audioUrl = j.url || j.location || null;
+        } catch {}
+        if (!audioUrl) {
+          // Fallback: convertimos a data-URL (para demo/desarrollo). En prod usar S3/cloud.
+          audioUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
+        }
+        const endpoint = ephemeralState.on ? "/api/my/messages/ephemeral" : "/api/my/messages/audio";
+        const body = ephemeralState.on
+          ? { conversation_id: state_.convId, media_type: "audio", media_url: audioUrl }
+          : { conversation_id: state_.convId, media_url: audioUrl };
+        try {
+          const r = await fetch(endpoint, {
+            method: "POST",
+            headers: { ...chatApi.headers(), "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const j = await r.json();
+          if (!r.ok) {
+            if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Audios de chat"); return; }
+            throw new Error();
+          }
+          const bub = el("div", { class: "bubble out audio-bubble" }, [ el("audio", { controls: true, src: audioUrl }) ]);
+          msgs.appendChild(bub);
+          msgs.scrollTop = msgs.scrollHeight;
+        } catch { toast("No se pudo enviar audio."); }
+      };
+      rec.start();
+    } catch (e) {
+      toast("Permiso de micrófono denegado.");
+    }
+  }
   window.__chatSend = sendMsg;
   window.__chatSendPhoto = sendPhoto;
 
