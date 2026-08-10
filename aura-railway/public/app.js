@@ -1464,13 +1464,13 @@ function applyDesign() {
   r.setProperty("--text-hero-title", heroT || defTitle);
   r.setProperty("--text-hero-sub", heroS || defSub);
 
-  // Logo tokens — defaults marca Aura: logo circular transparente
+  // Logo tokens — defaults marca Aura: logo circular con anillo gradiente
   const logoSize = parseInt(g("content.design.logo_size","88"),10) || 88;
   const logoRad = parseInt(g("content.design.logo_radius","50"),10) || 50;
   r.setProperty("--logo-size", logoSize + "px");
   r.setProperty("--logo-radius", logoRad + "px");
   r.setProperty("--logo-color", g("content.design.logo_color","#ffffff"));
-  const lbg = g("content.design.logo_bg","transparent");
+  const lbg = g("content.design.logo_bg","gradient");
   const lbgVal = lbg === "solid" ? "rgba(255,255,255,.18)"
     : lbg === "transparent" ? "transparent"
     : `linear-gradient(135deg, ${b1}, ${b2})`;

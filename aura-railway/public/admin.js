@@ -8583,12 +8583,12 @@ const DESIGN_DEFAULTS = {
   text_welcome:"", text_discover:"", text_search:"", text_likes:"",
   text_chats:"", text_profile:"", text_tabbar:"",
   text_muted:"", text_hero_title:"", text_hero_sub:"",
-  // Logo customization — por defecto usar el logo Aura (imagen circular)
+  // Logo customization — por defecto usar el logo Aura (imagen circular con anillo gradiente)
   logo_mode:"image",
   logo_image:"assets/aura-logo.png?v=3",
   logo_image_light:"assets/aura-logo-light.png?v=3",
   logo_emoji:"💘",
-  logo_bg:"transparent", logo_color:"#ffffff",
+  logo_bg:"gradient", logo_color:"#ffffff",
   logo_size:"88", logo_radius:"50",
   // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
   welc_logo_size:"90",       // Diámetro del logo en la pantalla de bienvenida
