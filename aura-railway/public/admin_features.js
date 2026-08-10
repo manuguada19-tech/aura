@@ -1108,28 +1108,97 @@
 
     // ---- Video-llamadas --------------------------------------------
     async function view_video(container) {
+      const DEPT_LABEL = { safety: "🛡️ Seguridad", quality: "⚙️ Calidad", legal: "⚖️ Legal", support: "🎧 Soporte", none: "—" };
       DataView(container, {
-        title: "Video-llamadas", subtitle: "Historial de llamadas WebRTC (Oro+)", icon: "📹",
+        title: "Video-llamadas", subtitle: "Historial + grabaciones monitorizadas (V567)", icon: "📹",
         fetch: async () => (await api("/api/admin/video/calls")).data?.items || [],
         rowId: (r) => r.id,
         kpis: (rows) => [
           { label: "Total", value: rows.length, accent: "blue" },
-          { label: "Completadas", value: rows.filter((r) => r.status === "ended").length, accent: "green" },
-          { label: "Perdidas", value: rows.filter((r) => r.status === "missed").length, accent: "amber" },
-          { label: "En curso", value: rows.filter((r) => r.status === "active").length, accent: "purple" },
+          { label: "Con grabación", value: rows.filter((r) => r.recording_caller_url || r.recording_callee_url).length, accent: "green" },
+          { label: "Seguridad", value: rows.filter((r) => r.department === "safety").length, accent: "red" },
+          { label: "Calidad", value: rows.filter((r) => r.department === "quality").length, accent: "amber" },
+          { label: "Legal", value: rows.filter((r) => r.department === "legal").length, accent: "purple" },
+          { label: "Soporte", value: rows.filter((r) => r.department === "support").length, accent: "blue" },
         ],
         filters: [
-          { key: "status", label: "Estado", type: "select", options: [ { value: "active", label: "En curso" }, { value: "ended", label: "Finalizada" }, { value: "missed", label: "Perdida" } ] },
+          { key: "status", label: "Estado", type: "select", options: [ { value: "ringing", label: "Sonando" }, { value: "accepted", label: "Aceptada" }, { value: "ended", label: "Finalizada" }, { value: "missed", label: "Perdida" }, { value: "rejected", label: "Rechazada" } ] },
+          { key: "department", label: "Departamento", type: "select", options: [ { value: "safety", label: "Seguridad" }, { value: "quality", label: "Calidad" }, { value: "legal", label: "Legal" }, { value: "support", label: "Soporte" }, { value: "none", label: "Sin clasificar" } ] },
+          { key: "mode", label: "Tipo", type: "select", options: [ { value: "audio", label: "Voz" }, { value: "video", label: "Vídeo" } ] },
         ],
         columns: [
           { key: "id", label: "ID", sortable: true },
+          { key: "mode", label: "Tipo", render: (r) => r.mode === "audio" ? "📞 Voz" : "📹 Vídeo" },
           { key: "caller", label: "Llamante", render: (r) => r.caller_name || `#${r.caller_id}` },
           { key: "callee", label: "Receptor", render: (r) => r.callee_name || `#${r.callee_id}` },
           { key: "status", label: "Estado" },
+          { key: "department", label: "Depto.", render: (r) => DEPT_LABEL[r.department || "none"] },
+          { key: "recording", label: "Grabación", render: (r) => {
+            const parts = [];
+            if (r.recording_caller_url) parts.push(`<a href="${r.recording_caller_url}" target="_blank">Llamante</a>`);
+            if (r.recording_callee_url) parts.push(`<a href="${r.recording_callee_url}" target="_blank">Receptor</a>`);
+            return parts.length ? parts.join(" · ") : "—";
+          } },
           { key: "created_at", label: "Inicio", sortable: true, render: (r) => fmtDate(r.created_at) },
           { key: "ended_at", label: "Fin", render: (r) => fmtDate(r.ended_at) },
         ],
-        actions: [],
+        actions: [
+          { label: "Detalle", icon: "🔍", title: "Ver detalle", onClick: async (r) => {
+            const det = await api(`/api/admin/video/calls/${r.id}`);
+            const c = det.data?.call; const recs = det.data?.recordings || [];
+            const body = document.createElement("div");
+            body.innerHTML = `
+              <p><b>Llamada #${c.id}</b> · ${c.mode || "video"} · ${c.status}</p>
+              <p>Llamante: ${c.caller_name || c.caller_id} (${c.caller_email || ""})<br>
+                 Receptor: ${c.callee_name || c.callee_id} (${c.callee_email || ""})</p>
+              <p>Inicio: ${fmtDate(c.created_at)} · Fin: ${fmtDate(c.ended_at) || "—"}</p>
+              <p>Triage: <b>${DEPT_LABEL[c.department || "none"]}</b> · score ${c.triage_score || 0} · flags: ${c.triage_flags || "—"}</p>
+              <div style="margin:10px 0">
+                ${recs.map((rr) => `
+                  <div style="margin:6px 0;padding:6px;background:rgba(0,0,0,0.05);border-radius:8px">
+                    <div><b>${rr.role}</b> · ${(rr.bytes/1024|0)} KB · ${rr.duration_ms ? (rr.duration_ms/1000|0)+"s" : "?"}</div>
+                    ${rr.mime && rr.mime.startsWith("audio") ? `<audio src="${rr.url}" controls style="width:100%"></audio>` : `<video src="${rr.url}" controls style="width:100%;max-height:280px"></video>`}
+                  </div>
+                `).join("") || "<i>Sin grabaciones</i>"}
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+                <button data-d="safety" class="fx-btn">🛡️ Seguridad</button>
+                <button data-d="quality" class="fx-btn">⚙️ Calidad</button>
+                <button data-d="legal" class="fx-btn">⚖️ Legal</button>
+                <button data-d="support" class="fx-btn">🎧 Soporte</button>
+                <button data-d="none" class="fx-btn">— Sin clasificar</button>
+                <button data-retry class="fx-btn">🔄 Re-triage</button>
+                <button data-delrec class="fx-btn" style="background:#e53950;color:#fff">🗑️ Borrar grabaciones</button>
+              </div>`;
+            const back = document.createElement("div");
+            back.className = "fx-modal-back";
+            back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px";
+            const card = document.createElement("div");
+            card.style.cssText = "background:#1c1e2e;color:#fff;max-width:640px;width:100%;max-height:90vh;overflow:auto;padding:16px;border-radius:12px";
+            card.appendChild(body);
+            const close = document.createElement("button"); close.textContent = "Cerrar"; close.className = "fx-btn"; close.onclick = () => back.remove();
+            card.appendChild(close);
+            back.appendChild(card);
+            back.onclick = (e) => { if (e.target === back) back.remove(); };
+            document.body.appendChild(back);
+            body.querySelectorAll("button[data-d]").forEach((b) => b.onclick = async () => {
+              const dept = b.getAttribute("data-d");
+              await api(`/api/admin/video/calls/${r.id}/department`, { method: "PATCH", body: JSON.stringify({ department: dept }) });
+              toast("Departamento actualizado", "ok");
+              back.remove();
+            });
+            body.querySelector("[data-retry]").onclick = async () => {
+              await api(`/api/admin/video/calls/${r.id}/triage`, { method: "POST" });
+              toast("Triage recalculado", "ok"); back.remove();
+            };
+            body.querySelector("[data-delrec]").onclick = async () => {
+              const ok = await confirmDialog({ title: "Borrar grabaciones", message: `Se eliminarán todas las grabaciones de la llamada #${r.id}. No se puede deshacer.`, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              await api(`/api/admin/video/calls/${r.id}/recordings`, { method: "DELETE" });
+              toast("Grabaciones borradas", "ok"); back.remove();
+            };
+          } },
+        ],
         bulkEndpoint: "/api/admin/video/calls/bulk-delete",
       });
     }

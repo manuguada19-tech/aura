@@ -409,22 +409,51 @@
   async function joinCallAsCallee({ call_id, room_id, mode, ice_servers, peerName }) {
     const isAudio = mode === "audio";
     const headers = { "Content-Type": "application/json", ...authHeaders() };
-    let pc, localStream, sse, backdrop;
+    let pc, localStream, sse, backdrop, recorder;
+    const recChunks = [];
+    const recStartAt = Date.now();
     let ended = false;
     const endCall = () => {
       if (ended) return;
       ended = true;
+      const duration_ms = Date.now() - recStartAt;
+      // Detener y subir grabación local
+      const stopPromise = new Promise((resolve) => {
+        if (!recorder || recorder.state === "inactive") return resolve(null);
+        recorder.onstop = () => resolve(new Blob(recChunks, { type: recorder.mimeType || (isAudio ? "audio/webm" : "video/webm") }));
+        try { recorder.stop(); } catch { resolve(null); }
+      });
       try { pc && pc.close(); } catch {}
       try { localStream && localStream.getTracks().forEach((t) => t.stop()); } catch {}
       try { sse && sse.close(); } catch {}
       try { fetch(`/api/my/video/${call_id}/end`, { method: "POST", headers }).catch(()=>{}); } catch {}
       try { backdrop && backdrop.remove(); } catch {}
+      (async () => {
+        try {
+          const blob = await stopPromise;
+          if (!blob || blob.size < 500) return;
+          const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
+          await fetch(`/api/my/video/${call_id}/recording`, {
+            method: "POST", headers,
+            body: JSON.stringify({ data_url: dataUrl, duration_ms }),
+          });
+        } catch (e) { console.warn("[rec upload]", e); }
+      })();
     };
     try {
       pc = new RTCPeerConnection({ iceServers: ice_servers });
       const constraints = isAudio ? { audio: true } : { audio: true, video: true };
       localStream = await navigator.mediaDevices.getUserMedia(constraints);
       localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+      // V567 · Grabación local (banner "🔴 REC" visible siempre en el modal)
+      try {
+        const rMime = isAudio
+          ? (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm")
+          : (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm");
+        recorder = new MediaRecorder(localStream, { mimeType: rMime, bitsPerSecond: isAudio ? 96000 : 800000 });
+        recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recChunks.push(e.data); };
+        recorder.start(1000);
+      } catch (e) { console.warn("[rec] not started", e); }
 
       const remoteEl = isAudio
         ? h("audio", { autoplay: "", controls: "", style: "width:100%" })
@@ -465,11 +494,15 @@
         } catch {}
       };
 
+      const recBanner = h("div", { class: "call-rec-banner", style: "display:flex;align-items:center;gap:8px;background:#e53950;color:#fff;padding:6px 10px;border-radius:8px;font-size:13px;margin-bottom:8px;font-weight:600" }, [
+        h("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite" }, ""),
+        h("span", {}, "🔴 REC · Esta llamada se está grabando por motivos de seguridad."),
+      ]);
       const title = (isAudio ? "📞 Llamada con " : "📹 Videollamada con ") + peerName;
       const kids = isAudio
-        ? [ h("h3", {}, title), h("p", { class: "muted" }, "Conectando…"), remoteEl,
+        ? [ h("h3", {}, title), recBanner, h("p", { class: "muted" }, "Conectando…"), remoteEl,
             h("div", { class: "modal-actions" }, [ h("button", { class: "btn primary", style: "background:#c0392b", onclick: endCall }, "Colgar") ]) ]
-        : [ h("h3", {}, title),
+        : [ h("h3", {}, title), recBanner,
             h("div", { class: "video-call-wrap", style: "position:relative" }, [remoteEl, localEl]),
             h("div", { class: "modal-actions" }, [ h("button", { class: "btn primary", style: "background:#c0392b", onclick: endCall }, "Colgar") ]) ];
       backdrop = h("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) endCall(); } }, [
@@ -530,6 +563,13 @@
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", evaluateFAB);
   else evaluateFAB();
+
+  // V567 · Animación para el punto rojo del banner "🔴 REC"
+  try {
+    const s = document.createElement("style");
+    s.textContent = "@keyframes aura-blink{0%,100%{opacity:1}50%{opacity:0.3}}";
+    document.head.appendChild(s);
+  } catch {}
   // Reaccionar a login/logout en la misma pestaña y entre pestañas
   try {
     window.addEventListener("storage", (e) => { if (e.key === "aura-session") evaluateFAB(); });

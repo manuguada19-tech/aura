@@ -74,6 +74,32 @@ async function migrate(pool) {
     INDEX idx_callee (callee_id), INDEX idx_caller (caller_id)
   )`);
 
+  // V567 · Grabación de llamadas para monitorización y auditoría.
+  //   Cada participante sube su pista local (audio+video propio).
+  //   Legalmente, el usuario acepta al iniciar/aceptar la llamada con
+  //   el banner "🔴 REC" siempre visible + cláusula en términos.
+  await q(`ALTER TABLE video_calls ADD COLUMN recording_caller_url VARCHAR(500) NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN recording_callee_url VARCHAR(500) NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN recording_bytes INT NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN department ENUM('safety','quality','legal','support','none') DEFAULT 'none'`);
+  await q(`ALTER TABLE video_calls ADD COLUMN triage_flags TEXT NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN triage_score INT DEFAULT 0`);
+  await q(`ALTER TABLE video_calls ADD COLUMN notes TEXT NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN mode VARCHAR(10) DEFAULT 'video'`);
+
+  await q(`CREATE TABLE IF NOT EXISTS call_recordings (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    call_id INT NOT NULL,
+    user_id INT NOT NULL,
+    role ENUM('caller','callee') NOT NULL,
+    mime VARCHAR(64) NULL,
+    bytes INT NULL,
+    duration_ms INT NULL,
+    url VARCHAR(500) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_call (call_id), INDEX idx_user (user_id)
+  )`);
+
   await q(`CREATE TABLE IF NOT EXISTS push_context_events (
     id INT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -195,8 +221,8 @@ function register(app, pool, helpers) {
     if (!callee) return res.status(400).json({ error: "callee_required" });
     const roomId = `room_${me}_${callee}_${Date.now().toString(36)}`;
     const [r] = await pool.execute(
-      "INSERT INTO video_calls (caller_id,callee_id,room_id,status) VALUES (?,?,?, 'ringing')",
-      [me, callee, roomId]
+      "INSERT INTO video_calls (caller_id,callee_id,room_id,status,mode) VALUES (?,?,?, 'ringing', ?)",
+      [me, callee, roomId, mode]
     );
     // V565 · Nombre del caller para mostrar en el modal del callee
     let callerName = null;
@@ -232,6 +258,9 @@ function register(app, pool, helpers) {
     if (!c) return res.status(404).json({ error: "not_found" });
     await pool.execute("UPDATE video_calls SET status='ended', ended_at=NOW() WHERE id=?", [cid]);
     pushSignal(c.room_id, { type: "ended", by: me });
+    // V567 · triage inicial al cerrar (aunque las grabaciones aún no hayan subido).
+    // Se re-ejecuta al recibir cada grabación para refinar.
+    setTimeout(() => { autoTriageCall(pool, cid).catch(()=>{}); }, 500);
     res.json({ ok: true });
   }));
 
@@ -264,16 +293,140 @@ function register(app, pool, helpers) {
     res.json({ ok: true });
   }));
 
+  // V567 · Subir grabación local del participante al colgar.
+  // Body: { data_url: "data:video/webm;base64,...", duration_ms }
+  // Guarda archivo en /uploads/calls/YYYY/MM/callId_role_hash.webm
+  app.post("/api/my/video/:call_id/recording", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    const cid = parseInt(req.params.call_id, 10);
+    const [[c]] = await pool.query(
+      "SELECT * FROM video_calls WHERE id=? AND (caller_id=? OR callee_id=?)",
+      [cid, me, me]
+    ).then((rr)=>[rr[0]]);
+    if (!c) return res.status(404).json({ error: "not_found" });
+    const role = c.caller_id === me ? "caller" : "callee";
+    const dataUrl = String(req.body?.data_url || "");
+    const duration_ms = parseInt(req.body?.duration_ms, 10) || 0;
+    const m = /^data:(video\/[a-z0-9+.-]+|audio\/[a-z0-9+.-]+);base64,(.+)$/i.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: "invalid_data_url" });
+    const mime = m[1].toLowerCase();
+    const buf = Buffer.from(m[2], "base64");
+    // Máx 50 MB por participante (llamada corta). El caller/callee lo trocean si es larga.
+    if (buf.length > 50 * 1024 * 1024) return res.status(413).json({ error: "too_large" });
+    if (buf.length < 500) return res.status(400).json({ error: "empty" });
+    const ext = mime.includes("webm") ? "webm"
+              : mime.includes("mp4") ? "mp4"
+              : mime.includes("ogg") ? "ogg"
+              : mime.includes("mpeg") ? "mp3"
+              : "bin";
+    const fs = require("fs");
+    const path = require("path");
+    const crypto = require("crypto");
+    const hash = crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
+    const now = new Date();
+    const yyyy = String(now.getUTCFullYear());
+    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const dir = path.join(__dirname, "public", "uploads", "calls", yyyy, mm);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
+    const fname = `${cid}_${role}_${hash}.${ext}`;
+    const abs = path.join(dir, fname);
+    try { fs.writeFileSync(abs, buf); } catch (e) {
+      console.error("[call rec] write error", e);
+      return res.status(500).json({ error: "write_failed" });
+    }
+    const url = `/uploads/calls/${yyyy}/${mm}/${fname}`;
+    await pool.execute(
+      "INSERT INTO call_recordings (call_id,user_id,role,mime,bytes,duration_ms,url) VALUES (?,?,?,?,?,?,?)",
+      [cid, me, role, mime, buf.length, duration_ms, url]
+    );
+    const col = role === "caller" ? "recording_caller_url" : "recording_callee_url";
+    await pool.execute(
+      `UPDATE video_calls SET ${col}=?, recording_bytes=IFNULL(recording_bytes,0)+? WHERE id=?`,
+      [url, buf.length, cid]
+    );
+    // Auto-triage cuando ya tengamos las dos partes
+    try { await autoTriageCall(pool, cid); } catch {}
+    res.json({ ok: true, url, bytes: buf.length, role });
+  }));
+
   // Admin video-llamadas
   app.get("/api/admin/video/calls", requireAdmin, wrap(async (req, res) => {
+    const dept = String(req.query?.department || "").toLowerCase();
+    const params = [];
+    let where = "";
+    if (dept && ["safety","quality","legal","support","none"].includes(dept)) {
+      where = "WHERE v.department=?";
+      params.push(dept);
+    }
     const [rows] = await pool.query(
       `SELECT v.*, ca.name AS caller_name, ce.name AS callee_name
          FROM video_calls v
          LEFT JOIN users ca ON ca.id=v.caller_id
          LEFT JOIN users ce ON ce.id=v.callee_id
-        ORDER BY v.created_at DESC LIMIT 200`
+        ${where}
+        ORDER BY v.created_at DESC LIMIT 500`,
+      params
     );
     res.json({ ok: true, items: rows });
+  }));
+
+  // V567 · Detalle de una llamada + sus grabaciones.
+  app.get("/api/admin/video/calls/:id", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const [[c]] = await pool.query(
+      `SELECT v.*, ca.name AS caller_name, ca.email AS caller_email,
+              ce.name AS callee_name, ce.email AS callee_email
+         FROM video_calls v
+         LEFT JOIN users ca ON ca.id=v.caller_id
+         LEFT JOIN users ce ON ce.id=v.callee_id
+        WHERE v.id=? LIMIT 1`, [id]
+    ).then((rr)=>[rr[0]]);
+    if (!c) return res.status(404).json({ error: "not_found" });
+    const [recs] = await pool.query(
+      "SELECT * FROM call_recordings WHERE call_id=? ORDER BY id ASC", [id]
+    );
+    res.json({ ok: true, call: c, recordings: recs });
+  }));
+
+  // V567 · Asignar/actualizar departamento de una llamada.
+  app.patch("/api/admin/video/calls/:id/department", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const dept = String(req.body?.department || "").toLowerCase();
+    if (!["safety","quality","legal","support","none"].includes(dept)) {
+      return res.status(400).json({ error: "invalid_department" });
+    }
+    const notes = req.body?.notes != null ? String(req.body.notes).slice(0, 2000) : null;
+    await pool.execute(
+      "UPDATE video_calls SET department=?, notes=COALESCE(?, notes) WHERE id=?",
+      [dept, notes, id]
+    );
+    res.json({ ok: true });
+  }));
+
+  // V567 · Re-ejecutar triage manualmente.
+  app.post("/api/admin/video/calls/:id/triage", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const r = await autoTriageCall(pool, id);
+    res.json({ ok: true, ...r });
+  }));
+
+  // V567 · Borrar grabaciones de una llamada (retención / RGPD).
+  app.delete("/api/admin/video/calls/:id/recordings", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const [recs] = await pool.query("SELECT url FROM call_recordings WHERE call_id=?", [id]);
+    const fs = require("fs");
+    const path = require("path");
+    for (const r of recs) {
+      const abs = path.join(__dirname, "public", r.url.replace(/^\/+/, ""));
+      try { fs.unlinkSync(abs); } catch {}
+    }
+    await pool.execute("DELETE FROM call_recordings WHERE call_id=?", [id]);
+    await pool.execute(
+      "UPDATE video_calls SET recording_caller_url=NULL, recording_callee_url=NULL, recording_bytes=0 WHERE id=?",
+      [id]
+    );
+    res.json({ ok: true, deleted: recs.length });
   }));
 
   // ==== Push contextuales ========================================
@@ -344,6 +497,41 @@ function register(app, pool, helpers) {
   }));
 
   console.log("[phase4] endpoints registered");
+}
+
+// V567 · Auto-triage de una llamada al terminar (o cuando lo solicite admin).
+//   Reglas heurísticas ligeras (sin IA externa):
+//     - Duración < 3 s   → "quality" (posible fallo técnico)
+//     - Solo 1 grabación → "quality" (uno de los dos no envió su pista)
+//     - status='rejected' o 'missed' → "support"
+//     - Reportes activos entre esos usuarios → "safety"
+//     - Palabras clave en 'notes'/'triage_flags' previas → "safety" / "legal"
+//     - Todo OK y ambas partes grabadas → "none"
+async function autoTriageCall(pool, callId) {
+  const [[c]] = await pool.query("SELECT * FROM video_calls WHERE id=? LIMIT 1", [callId]).then((rr)=>[rr[0]]);
+  if (!c) return { skipped: true };
+  const [recs] = await pool.query("SELECT role, bytes, duration_ms FROM call_recordings WHERE call_id=?", [callId]);
+  const durMs = c.ended_at && c.created_at
+    ? (new Date(c.ended_at).getTime() - new Date(c.created_at).getTime()) : 0;
+  const flags = []; let dept = "none"; let score = 0;
+  if (c.status === "rejected" || c.status === "missed") { dept = "support"; flags.push("no_answer"); score += 10; }
+  else if (durMs > 0 && durMs < 3000) { dept = "quality"; flags.push("too_short"); score += 20; }
+  else if (recs.length === 0) { dept = "quality"; flags.push("no_recording"); score += 30; }
+  else if (recs.length === 1) { dept = "quality"; flags.push("one_side_only"); score += 20; }
+  // Reportes cruzados entre los dos usuarios (si existe la tabla).
+  try {
+    const [[rep]] = await pool.query(
+      `SELECT COUNT(*) c FROM reports
+       WHERE (reporter_id=? AND target_id=?) OR (reporter_id=? AND target_id=?)`,
+      [c.caller_id, c.callee_id, c.callee_id, c.caller_id]
+    ).then((rr)=>[rr[0]]);
+    if (rep && rep.c > 0) { dept = "safety"; flags.push("reported_between_users"); score += 50; }
+  } catch {}
+  await pool.execute(
+    "UPDATE video_calls SET department=?, triage_flags=?, triage_score=? WHERE id=?",
+    [dept, flags.join(","), score, callId]
+  );
+  return { department: dept, flags, score };
 }
 
 module.exports = { migrate, register, scoreMessage };

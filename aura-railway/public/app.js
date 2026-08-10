@@ -7659,6 +7659,20 @@ async function startCallFromChat(peer, mode) {
       ? null
       : el("video", { autoplay: true, playsinline: true, muted: true, style: "width:120px;position:absolute;bottom:12px;right:12px;border-radius:8px" });
     if (localEl) localEl.srcObject = localStream;
+    // V567 · Grabación de la pista local para monitorización y auditoría.
+    // El usuario ve un banner "🔴 REC" durante toda la llamada. Al colgar
+    // se sube el archivo al backend.
+    let recorder = null;
+    const recChunks = [];
+    const recStartAt = Date.now();
+    try {
+      const rMime = mode === "audio"
+        ? (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm")
+        : (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm");
+      recorder = new MediaRecorder(localStream, { mimeType: rMime, bitsPerSecond: mode === "audio" ? 96000 : 800000 });
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recChunks.push(e.data); };
+      recorder.start(1000);
+    } catch (e) { console.warn("[rec] not started", e); }
     pc.ontrack = (ev) => { remoteEl.srcObject = ev.streams[0]; };
     const tokenParam = (typeof chatApi !== "undefined" && chatApi.headers) ? (chatApi.headers().Authorization || "").replace(/^Bearer\s+/, "") : "";
     pc.onicecandidate = (ev) => {
@@ -7683,18 +7697,43 @@ async function startCallFromChat(peer, mode) {
       method: "POST", headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({ type: "offer", sdp: offer }),
     });
-    function endCall() {
+    let ending = false;
+    async function endCall() {
+      if (ending) return; ending = true;
+      const duration_ms = Date.now() - recStartAt;
+      // Parar recorder y subir el archivo
+      const stopPromise = new Promise((resolve) => {
+        if (!recorder || recorder.state === "inactive") return resolve(null);
+        recorder.onstop = () => resolve(new Blob(recChunks, { type: recorder.mimeType || (mode === "audio" ? "audio/webm" : "video/webm") }));
+        try { recorder.stop(); } catch { resolve(null); }
+      });
       try { pc.close(); } catch {}
       try { localStream.getTracks().forEach((t) => t.stop()); } catch {}
       try { sse.close(); } catch {}
       fetch(`/api/my/video/${call_id}/end`, { method: "POST", headers }).catch(()=>{});
       backdrop.remove();
+      // Sube en background (no bloquea al usuario)
+      (async () => {
+        try {
+          const blob = await stopPromise;
+          if (!blob || blob.size < 500) return;
+          const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
+          await fetch(`/api/my/video/${call_id}/recording`, {
+            method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ data_url: dataUrl, duration_ms }),
+          });
+        } catch (e) { console.warn("[rec upload]", e); }
+      })();
     }
+    const recBanner = el("div", { class: "call-rec-banner", style: "display:flex;align-items:center;gap:8px;background:#e53950;color:#fff;padding:6px 10px;border-radius:8px;font-size:13px;margin-bottom:8px;font-weight:600" }, [
+      el("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite" }, ""),
+      el("span", {}, "🔴 REC · Esta llamada se está grabando por motivos de seguridad."),
+    ]);
     const title = (mode === "audio" ? "📞 Llamada a " : "📹 Videollamada con ") + (peer.name || "usuario");
     const kids = mode === "audio"
-      ? [el("h3", {}, title), el("p", { class: "muted" }, "Llamando… (esperando a que acepte)"), remoteEl,
+      ? [el("h3", {}, title), recBanner, el("p", { class: "muted" }, "Llamando… (esperando a que acepte)"), remoteEl,
          el("div", { class: "modal-actions" }, [el("button", { class: "btn danger", onclick: endCall }, "Colgar")])]
-      : [el("h3", {}, title),
+      : [el("h3", {}, title), recBanner,
          el("div", { class: "video-call-wrap", style: "position:relative" }, [remoteEl, localEl]),
          el("div", { class: "modal-actions" }, [el("button", { class: "btn danger", onclick: endCall }, "Colgar")])];
     const backdrop = el("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) endCall(); } }, [
