@@ -5583,22 +5583,23 @@ async function seedContentDefaults() {
     "content.me.plan": "Mi plan",
     "content.me.zone_switch": "Cambiar zona",
     "content.me.logout": "Cerrar sesión",
-    // Design tokens (customizable from admin → Diseño)
+    // Design tokens (customizable from admin → Diseño) — Marca Aura por defecto
     "content.design.brand1": "#ff3b6b",
     "content.design.brand2": "#ff8a3b",
-    "content.design.bg": "#ffffff",
-    "content.design.text": "#111111",
+    "content.design.bg": "#0e0f14",
+    "content.design.text": "#f2f3f7",
     "content.design.radius": "18",
-    "content.design.hero_style": "gradient",
+    // Hero oscuro sólido (tema dark). El modo claro puede sobrescribir después.
+    "content.design.hero_style": "solid",
     "content.design.hero_image": "",
-    "content.design.hero_solid_color": "#ffffff",
+    "content.design.hero_solid_color": "#0e0f14",
     "content.design.font": "system",
     "content.design.btn_style": "pill",
     // Per-section design
     "content.design.card_radius": "16",
     "content.design.card_shadow": "medium",
-    "content.design.card_border": "#e5e7eb",
-    "content.design.tab_bg": "#ffffff",
+    "content.design.card_border": "#1f2130",
+    "content.design.tab_bg": "#0e0f14",
     "content.design.tab_active": "#ff3b6b",
     "content.design.tab_inactive": "#9ca3af",
     "content.design.avatar_shape": "circle",
@@ -5608,7 +5609,7 @@ async function seedContentDefaults() {
     "content.design.profile_accent": "#ff3b6b",
     "content.design.chat_bubble_style": "rounded",
     "content.design.chat_bubble_me": "#ff3b6b",
-    "content.design.chat_bubble_other": "#f1f2f5",
+    "content.design.chat_bubble_other": "#1a1c26",
     "content.design.discover_card_style": "photo-full",
     "content.design.likes_grid_cols": "2",
     // Desktop side panels
@@ -5634,21 +5635,84 @@ async function seedContentDefaults() {
     "content.design.text_muted": "",
     "content.design.text_hero_title": "",
     "content.design.text_hero_sub": "",
-    // Logo customization
-    "content.design.logo_mode": "heart",   // heart | image | emoji | initial
-    "content.design.logo_image": "",       // URL to custom image (used when mode=image, dark theme)
-    "content.design.logo_image_light": "", // URL to alt image for light theme (optional)
+    // Logo customization — Marca Aura por defecto (imagen circular con anillo gradiente)
+    "content.design.logo_mode": "image",   // heart | image | emoji | initial
+    "content.design.logo_image": "assets/aura-logo.png?v=3",       // URL to custom image (dark theme)
+    "content.design.logo_image_light": "assets/aura-logo-light.png?v=3", // URL to alt image for light theme
     "content.design.logo_emoji": "💘",     // used when mode=emoji
     "content.design.logo_bg": "gradient",  // gradient | solid | transparent
     "content.design.logo_color": "#ffffff",// stroke/fill color for heart & initial
     "content.design.logo_size": "88",      // px, welcome logo size
-    "content.design.logo_radius": "22",    // px, background radius
+    "content.design.logo_radius": "50",    // px, background radius (circular)
   };
   for (const [k, v] of Object.entries(defaults)) {
     await pool.execute(
       "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = v",
       [k, v]
     );
+  }
+
+  // V525: Restaurar diseño Aura (hero oscuro + logo circular con anillo).
+  // Migración one-shot: sobrescribe los valores de content.design.* aunque
+  // ya existan en la BD. Se aplica una única vez gracias al centinela.
+  try {
+    const [rows] = await pool.execute(
+      "SELECT v FROM settings WHERE k = 'content.design.restore.v525'"
+    );
+    if (!rows || rows.length === 0) {
+      const auraDesign = {
+        "content.design.brand1": "#ff3b6b",
+        "content.design.brand2": "#ff8a3b",
+        "content.design.bg": "#0e0f14",
+        "content.design.text": "#f2f3f7",
+        "content.design.radius": "18",
+        "content.design.hero_style": "solid",
+        "content.design.hero_image": "",
+        "content.design.hero_solid_color": "#0e0f14",
+        "content.design.font": "system",
+        "content.design.btn_style": "pill",
+        "content.design.card_radius": "16",
+        "content.design.card_shadow": "medium",
+        "content.design.card_border": "#1f2130",
+        "content.design.tab_bg": "#0e0f14",
+        "content.design.tab_active": "#ff3b6b",
+        "content.design.tab_inactive": "#9ca3af",
+        "content.design.avatar_shape": "circle",
+        "content.design.match_overlay": "gradient",
+        "content.design.match_badge_color": "#ff3b6b",
+        "content.design.profile_header_style": "cover",
+        "content.design.profile_accent": "#ff3b6b",
+        "content.design.chat_bubble_style": "rounded",
+        "content.design.chat_bubble_me": "#ff3b6b",
+        "content.design.chat_bubble_other": "#1a1c26",
+        "content.design.discover_card_style": "photo-full",
+        "content.design.likes_grid_cols": "2",
+        "content.design.side_left_bg": "none",
+        "content.design.side_right_bg": "none",
+        // Logo Aura: imagen circular con anillo gradiente rosa→azul
+        "content.design.logo_mode": "image",
+        "content.design.logo_image": "assets/aura-logo.png?v=3",
+        "content.design.logo_image_light": "assets/aura-logo-light.png?v=3",
+        "content.design.logo_emoji": "💘",
+        "content.design.logo_bg": "gradient",
+        "content.design.logo_color": "#ffffff",
+        "content.design.logo_size": "88",
+        "content.design.logo_radius": "50",
+      };
+      for (const [k, v] of Object.entries(auraDesign)) {
+        await pool.execute(
+          "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+          [k, v]
+        );
+      }
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+        ["content.design.restore.v525", "1"]
+      );
+      console.log("[migration V525] Aura design restored");
+    }
+  } catch (e) {
+    console.error("[migration V525] Failed to restore Aura design:", e && e.message);
   }
 
   // V381: Forzar registros CERRADOS una única vez para arrancar con waitlist
