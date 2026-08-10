@@ -8562,14 +8562,18 @@ function fileToResizedDataUrl(file, maxDim = 512, quality = 0.9) {
 }
 
 const DESIGN_DEFAULTS = {
-  brand1:"#ff3b6b", brand2:"#ff8a3b", bg:"#ffffff", text:"#111111",
-  radius:"18", hero_style:"gradient", hero_image:"", hero_solid_color:"#ffffff", font:"system", btn_style:"pill",
-  card_radius:"16", card_shadow:"medium", card_border:"#e5e7eb",
-  tab_bg:"#ffffff", tab_active:"#ff3b6b", tab_inactive:"#9ca3af",
+  // Marca Aura — colores y hero por defecto (aunque la BD esté vacía)
+  brand1:"#ff3b6b", brand2:"#ff8a3b", bg:"#0e0f14", text:"#f2f3f7",
+  radius:"18",
+  // Hero oscuro sólido para que resalte el logo Aura, no gradiente
+  hero_style:"solid", hero_image:"", hero_solid_color:"#0e0f14",
+  font:"system", btn_style:"pill",
+  card_radius:"16", card_shadow:"medium", card_border:"#1f2130",
+  tab_bg:"#0e0f14", tab_active:"#ff3b6b", tab_inactive:"#9ca3af",
   avatar_shape:"circle",
   match_overlay:"gradient", match_badge_color:"#ff3b6b",
   profile_header_style:"cover", profile_accent:"#ff3b6b",
-  chat_bubble_style:"rounded", chat_bubble_me:"#ff3b6b", chat_bubble_other:"#f1f2f5",
+  chat_bubble_style:"rounded", chat_bubble_me:"#ff3b6b", chat_bubble_other:"#1a1c26",
   discover_card_style:"photo-full", likes_grid_cols:"2",
   side_left_bg:"none", side_right_bg:"none",
   // Per-section fonts (empty = usar la fuente global)
@@ -8579,10 +8583,13 @@ const DESIGN_DEFAULTS = {
   text_welcome:"", text_discover:"", text_search:"", text_likes:"",
   text_chats:"", text_profile:"", text_tabbar:"",
   text_muted:"", text_hero_title:"", text_hero_sub:"",
-  // Logo customization
-  logo_mode:"heart", logo_image:"", logo_image_light:"", logo_emoji:"💘",
-  logo_bg:"gradient", logo_color:"#ffffff",
-  logo_size:"88", logo_radius:"22",
+  // Logo customization — por defecto usar el logo Aura (imagen circular)
+  logo_mode:"image",
+  logo_image:"assets/aura-logo.png?v=3",
+  logo_image_light:"assets/aura-logo-light.png?v=3",
+  logo_emoji:"💘",
+  logo_bg:"transparent", logo_color:"#ffffff",
+  logo_size:"88", logo_radius:"50",
   // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
   welc_logo_size:"90",       // Diámetro del logo en la pantalla de bienvenida
   welc_sub_size:"13",        // Tamaño del subtítulo

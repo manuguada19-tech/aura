@@ -1301,12 +1301,19 @@ function startLivePolling() {
 }
 function applyDesign() {
   const r = document.documentElement.style;
-  const g = (k, fb) => T(k) || fb;
+  // T(k) returns the key itself when no value exists in content/fallback.
+  // Treat that (or empty) as "unset" and fall back to the provided default.
+  const g = (k, fb) => {
+    const v = T(k);
+    if (v == null || v === "" || v === k) return fb;
+    return v;
+  };
   const isDark = (document.documentElement.dataset.theme === "dark");
   const b1 = g("content.design.brand1", "#ff3b6b");
   const b2 = g("content.design.brand2", "#ff8a3b");
-  const bg = g("content.design.bg", "");
-  const tx = g("content.design.text", "");
+  // Defaults marca Aura: fondo oscuro, texto claro (aunque la BD esté vacía)
+  const bg = g("content.design.bg", "#0e0f14");
+  const tx = g("content.design.text", "#f2f3f7");
   const rad = g("content.design.radius", "18");
   const font = g("content.design.font", "system");
   const btn = g("content.design.btn_style", "pill");
@@ -1361,7 +1368,7 @@ function applyDesign() {
 
   // Hero style
   const hero = document.querySelector(".screen-hero");
-  let heroStyle = g("content.design.hero_style","gradient");
+  let heroStyle = g("content.design.hero_style","solid");
   const heroImage = T("content.design.hero_image");
   const rawSolid = (T("content.design.hero_solid_color") || "").trim();
   // Helper: is a hex color visually "light" (luminance > 0.6)?
@@ -1377,7 +1384,7 @@ function applyDesign() {
     const lum = 0.2126*r + 0.7152*g + 0.0722*b;
     return lum > 0.6;
   };
-  const heroSolid = rawSolid || bg || "#ffffff";
+  const heroSolid = rawSolid || bg || "#0e0f14";
   if (hero) {
     hero.classList.remove("hero-gradient","hero-image","hero-solid","hero-radial","hero-light");
     hero.classList.add("hero-" + heroStyle);
@@ -1457,13 +1464,13 @@ function applyDesign() {
   r.setProperty("--text-hero-title", heroT || defTitle);
   r.setProperty("--text-hero-sub", heroS || defSub);
 
-  // Logo tokens
+  // Logo tokens — defaults marca Aura: logo circular transparente
   const logoSize = parseInt(g("content.design.logo_size","88"),10) || 88;
-  const logoRad = parseInt(g("content.design.logo_radius","22"),10) || 22;
+  const logoRad = parseInt(g("content.design.logo_radius","50"),10) || 50;
   r.setProperty("--logo-size", logoSize + "px");
   r.setProperty("--logo-radius", logoRad + "px");
   r.setProperty("--logo-color", g("content.design.logo_color","#ffffff"));
-  const lbg = g("content.design.logo_bg","gradient");
+  const lbg = g("content.design.logo_bg","transparent");
   const lbgVal = lbg === "solid" ? "rgba(255,255,255,.18)"
     : lbg === "transparent" ? "transparent"
     : `linear-gradient(135deg, ${b1}, ${b2})`;
@@ -1502,22 +1509,24 @@ function applyDesign() {
 
 /* Build the welcome logo inner HTML based on current settings. */
 function buildLogoInnerHTML() {
-  const mode = T("content.design.logo_mode") || "heart";
-  const color = T("content.design.logo_color") || "#ffffff";
+  // Default marca Aura: imagen circular usando aura-logo.png (dark) y aura-logo-light.png (light)
+  const _t = (k, fb) => { const v = T(k); return (v == null || v === "" || v === k) ? fb : v; };
+  const mode = _t("content.design.logo_mode", "image");
+  const color = _t("content.design.logo_color", "#ffffff");
   if (mode === "image") {
     // Choose a light-mode alternate if configured and current theme is light
     const theme = document.documentElement.dataset.theme || "dark";
-    const urlLight = T("content.design.logo_image_light") || "";
-    const urlDark = T("content.design.logo_image") || "";
+    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-light.png?v=3");
+    const urlDark = _t("content.design.logo_image", "assets/aura-logo.png?v=3");
     const url = (theme === "light" && urlLight) ? urlLight : urlDark;
     if (url) return `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
   }
   if (mode === "emoji") {
-    const em = T("content.design.logo_emoji") || "💘";
+    const em = _t("content.design.logo_emoji", "💘");
     return `<span style="font-size:calc(var(--logo-size,88px) * .55);line-height:1">${em}</span>`;
   }
   if (mode === "initial") {
-    const name = T("content.brand.name") || "A";
+    const name = _t("content.brand.name", "A");
     const init = String(name).trim().charAt(0).toUpperCase() || "A";
     return `<span style="font-size:calc(var(--logo-size,88px) * .5);font-weight:800;color:${color};line-height:1">${init}</span>`;
   }
@@ -1548,23 +1557,25 @@ function applyContent() {
   // Sync desktop sidebar logo with the same tokens used on the welcome hero
   const sideLogo = document.getElementById("sideBrandLogo");
   if (sideLogo) {
-    const mode = T("content.design.logo_mode") || "heart";
-    const color = T("content.design.logo_color") || "#ff3b6b";
-    const bgMode = T("content.design.logo_bg") || "gradient";
-    const b1c = T("content.design.brand1") || "#ff3b6b";
-    const b2c = T("content.design.brand2") || "#ff8a3b";
+    // Defaults marca Aura: modo imagen con aura-logo.png circular
+    const _t = (k, fb) => { const v = T(k); return (v == null || v === "" || v === k) ? fb : v; };
+    const mode = _t("content.design.logo_mode", "image");
+    const color = _t("content.design.logo_color", "#ff3b6b");
+    const bgMode = _t("content.design.logo_bg", "transparent");
+    const b1c = _t("content.design.brand1", "#ff3b6b");
+    const b2c = _t("content.design.brand2", "#ff8a3b");
     const bgVal = bgMode === "solid" ? "rgba(255,255,255,.18)"
       : bgMode === "transparent" ? "transparent"
       : `linear-gradient(135deg, ${b1c}, ${b2c})`;
     // Reuse the same size/radius as the welcome hero logo but scaled down for the sidebar
-    const rawSize = parseInt(T("content.design.logo_size") || "88", 10) || 88;
+    const rawSize = parseInt(_t("content.design.logo_size", "88"), 10) || 88;
     const size = Math.max(40, Math.round(rawSize * 0.7));
-    const radius = parseInt(T("content.design.logo_radius") || "22", 10) || 22;
+    const radius = parseInt(_t("content.design.logo_radius", "50"), 10) || 50;
     let inner = "";
-    if (mode === "image" && (T("content.design.logo_image") || T("content.design.logo_image_light"))) {
+    if (mode === "image") {
       const theme = document.documentElement.dataset.theme || "dark";
-      const urlLight = T("content.design.logo_image_light") || "";
-      const urlDark = T("content.design.logo_image") || "";
+      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-light.png?v=3");
+      const urlDark = _t("content.design.logo_image", "assets/aura-logo.png?v=3");
       const url = (theme === "light" && urlLight) ? urlLight : (urlDark || urlLight);
       inner = `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
     } else if (mode === "emoji") {
