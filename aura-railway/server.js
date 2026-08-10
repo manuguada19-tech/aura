@@ -433,6 +433,13 @@ app.use((req, res, next) => {
   if (!req.path.startsWith("/api/")) return next();
   const key = `${req.method} ${req.path}`;
   if (PUBLIC_API.has(key)) return next();
+  // V590 · Rutas de usuario final: cada handler se autentica por sí mismo con
+  // X-User-Id (readMyUserId) o su propia lógica (2FA), igual que las de chat
+  // listadas arriba en PUBLIC_API. Sin este bypass, todas las rutas /api/my/*
+  // añadidas por las fases (notificaciones, recompensas, historias, quedadas,
+  // push-subscribe…) y /api/2fa/* devolvían 401 a los usuarios porque el gate
+  // exigía token de admin. /api/admin/* NO pasa por aquí: sigue protegido.
+  if (req.path.startsWith("/api/my/") || req.path.startsWith("/api/2fa/")) return next();
   return requireAdmin(req, res, next);
 });
 
