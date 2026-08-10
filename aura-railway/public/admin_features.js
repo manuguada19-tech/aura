@@ -1544,16 +1544,22 @@
   .fx-kpi-value { font-size:26px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
   .fx-kpi-hint { font-size:11px; color: var(--fg-muted,#96a0b8); margin-top:2px; }
 
-  .fx-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 4px 0 12px; flex-wrap:wrap; }
+  .fx-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 4px 0 12px; flex-wrap:wrap; padding:10px 12px; background: rgba(15,20,32,0.55); border:1px solid rgba(255,255,255,0.06); border-radius:12px; }
   .fx-toolbar-left { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .fx-toolbar-right { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .fx-filters { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
   .fx-search { position:relative; display:flex; align-items:center; }
   .fx-search-ico { position:absolute; left:10px; opacity:0.5; }
   .fx-search-input { padding-left:32px !important; min-width:240px; }
-  .fx-input { padding:8px 12px; border-radius:9px; background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color: var(--fg,#e8ebf5); font-size:13px; outline:none; }
-  .fx-input:focus { border-color:#7a5cff; }
-  select.fx-input { padding-right: 24px; }
+  .fx-input { padding:8px 12px; border-radius:9px; background:#1b1f2e; border:1px solid rgba(255,255,255,0.14); color:#e8ebf5; font-size:13px; outline:none; }
+  .fx-input::placeholder { color:#96a0b8; }
+  .fx-input:focus { border-color:#7a5cff; background:#20263a; }
+  select.fx-input { padding-right: 24px; appearance:none; -webkit-appearance:none; background-image: linear-gradient(45deg, transparent 50%, #96a0b8 50%), linear-gradient(135deg, #96a0b8 50%, transparent 50%); background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
+  select.fx-input option, select.fx-input optgroup { background:#1b1f2e; color:#e8ebf5; }
   .fx-filter { display:flex; flex-direction:column; }
   .fx-filter label { font-size:10px; text-transform:uppercase; color: var(--fg-muted,#96a0b8); letter-spacing:0.5px; margin-bottom:3px; font-weight:600; }
+  /* Aseguramos legibilidad tambien si el panel tiene tema claro */
+  input.fx-input, textarea.fx-input { color-scheme: dark; }
 
   .fx-bulk { display:flex; justify-content:space-between; align-items:center; background: linear-gradient(90deg, rgba(255,59,107,0.15), rgba(120,86,255,0.12)); padding:10px 16px; border-radius:12px; margin-bottom:10px; border:1px solid rgba(255,59,107,0.25); animation: fx-slidein 0.2s ease; }
   @keyframes fx-slidein { from { transform: translateY(-4px); opacity:0; } to { transform:none; opacity:1; } }
