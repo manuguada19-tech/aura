@@ -63,22 +63,33 @@
 
   // Reengancha el clic en nav-links de novedades para bypass del router de admin.js
   function hookNav() {
-    document.addEventListener("click", (e) => {
-      const a = e.target.closest && e.target.closest("[data-view]");
-      if (!a) return;
-      const v = a.getAttribute("data-view");
+    const handler = function (e) {
+      let t = e.target;
+      // subir al elemento con data-view aunque se haga clic sobre un hijo
+      while (t && t !== document && !(t.getAttribute && t.getAttribute("data-view"))) t = t.parentNode;
+      if (!t || t === document) return;
+      const v = t.getAttribute("data-view");
       if (!FX_VIEWS.includes(v)) return;
       e.preventDefault();
       e.stopPropagation();
-      e.stopImmediatePropagation && e.stopImmediatePropagation();
+      if (e.stopImmediatePropagation) e.stopImmediatePropagation();
       // Marca activo visual
-      try {
-        document.querySelectorAll(".nav-link").forEach((l) => l.classList.toggle("active", l === a));
-      } catch {}
-      // Cierra sidebar si aplica
+      try { document.querySelectorAll(".nav-link").forEach((l) => l.classList.toggle("active", l === t)); } catch {}
       if (typeof window.__closeSidebar === "function") try { window.__closeSidebar(); } catch {}
       renderView(v);
-    }, true); // capture=true para adelantarnos al listener de admin.js
+    };
+    // Registrar en ambas fases para máxima cobertura
+    document.addEventListener("click", handler, true);
+    // También hook directo por si acaso
+    setInterval(() => {
+      document.querySelectorAll("[data-view]").forEach((a) => {
+        const v = a.getAttribute("data-view");
+        if (FX_VIEWS.includes(v) && !a.__fxHooked) {
+          a.__fxHooked = true;
+          a.addEventListener("click", handler, true);
+        }
+      });
+    }, 1000);
   }
 
   function renderView(v) {

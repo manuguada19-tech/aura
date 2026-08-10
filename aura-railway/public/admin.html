@@ -287,12 +287,12 @@
       if (!tok) return;
       var s = document.createElement("script");
       s.src = "admin.js?v=" + Date.now() + "&adminToken=" + encodeURIComponent(tok);
-      s.onload = function(){
-        var s2 = document.createElement("script");
-        s2.src = "admin_features.js?v=" + Date.now() + "&adminToken=" + encodeURIComponent(tok);
-        document.body.appendChild(s2);
-      };
       document.body.appendChild(s);
+      // V551 · Cargar admin_features.js SIEMPRE (independiente del onload de admin.js)
+      var s2 = document.createElement("script");
+      s2.src = "admin_features.js?v=" + Date.now() + "&adminToken=" + encodeURIComponent(tok);
+      s2.onerror = function(){ console.error("[admin_features] no cargó – intentando de nuevo"); setTimeout(function(){ var r = document.createElement("script"); r.src = "admin_features.js?v=" + Date.now() + "&adminToken=" + encodeURIComponent(tok); document.body.appendChild(r); }, 500); };
+      document.body.appendChild(s2);
     })();
   </script>
 </body>
