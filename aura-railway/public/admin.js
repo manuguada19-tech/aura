@@ -2473,12 +2473,18 @@ async function viewUsers(root){
     st.id = "usersBulkCss";
     st.textContent = `
       .adv-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin:8px 0}
-      .bulk-bar{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#5b9bff,#c26bff);color:#fff;padding:10px 14px;border-radius:12px;display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;box-shadow:0 6px 18px rgba(0,0,0,.2)}
+      /* V584 · Bulk-bar más oscura y contrastada. El gradiente claro anterior
+         (#5b9bff → #c26bff) volvía ilegibles los textos de los botones. */
+      .bulk-bar{position:sticky;top:0;z-index:5;background:linear-gradient(135deg,#1e2749,#3a1e5b);color:#fff;padding:10px 14px;border-radius:12px;display:none;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;box-shadow:0 6px 18px rgba(0,0,0,.35);border:1px solid rgba(124,58,237,.25)}
       .bulk-bar.on{display:flex}
-      .bulk-bar .count{font-weight:700;font-size:15px}
-      .bulk-bar .btn{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#fff}
-      .bulk-bar .btn:hover{background:rgba(255,255,255,.28)}
-      .bulk-bar .btn.danger{background:rgba(255,80,80,.35);border-color:rgba(255,80,80,.6)}
+      .bulk-bar .count{font-weight:700;font-size:15px;color:#fff}
+      .bulk-bar .btn{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.22);color:#fff;font-weight:600;text-shadow:0 1px 0 rgba(0,0,0,.35)}
+      .bulk-bar .btn:hover{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.35)}
+      .bulk-bar .btn.danger{background:rgba(239,68,68,.28);border-color:rgba(239,68,68,.55);color:#ffe4e4}
+      .bulk-bar .btn.danger:hover{background:rgba(239,68,68,.42)}
+      /* Tema claro del panel: variante más discreta pero legible */
+      [data-theme="light"] .bulk-bar{background:linear-gradient(135deg,#2d3557,#4b2a72);color:#fff}
+      [data-theme="light"] .bulk-bar .btn{color:#fff}
       .user-tag-badge{display:inline-block;background:rgba(91,155,255,.15);color:#5b9bff;font-size:10.5px;padding:2px 7px;border-radius:999px;margin-right:4px}
     `;
     document.head.appendChild(st);
