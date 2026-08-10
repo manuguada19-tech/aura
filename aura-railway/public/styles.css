@@ -5197,12 +5197,23 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
     isolation: auto !important;
   }
   .phone-notch, .phone-status, .phone-home { display: none !important; }
-  /* app-viewport ocupa todo el phone y permite scroll interno. */
+  /* V581 · app-viewport usa flex-grow (NO 100dvh) para que la tabbar
+     hermana sea visible dentro del .phone (que tiene overflow:hidden).
+     Antes: height:100dvh empujaba la tabbar fuera del área visible. */
   .app-viewport {
-    height: 100dvh !important;
-    max-height: 100dvh !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch;
+  }
+  /* V581 · Tabbar SIEMPRE visible al pie del .phone en móvil fullscreen. */
+  .phone .tabbar:not([hidden]) {
+    flex: 0 0 auto !important;
+    display: grid !important;
+    position: relative !important;
+    z-index: 6 !important;
   }
   /* Pantallas que pueden tener contenido largo (modo invite,
      welcome extendido, etc.): permitimos scroll dentro del
@@ -5460,7 +5471,10 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
    ============================================================ */
 @media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
   html, body { overflow: hidden !important; height: 100dvh !important; }
-  .app-viewport {
+  /* V581 · Solo aplicamos 100dvh cuando la tabbar NO está visible
+     (pantalla welcome/hero). Cuando la tabbar está visible, dejamos
+     que flex reparta el espacio entre .app-viewport y .tabbar. */
+  body:not(:has(#tabbar:not([hidden]))) .app-viewport {
     overflow: hidden !important;
     height: 100dvh !important;
     max-height: 100dvh !important;
@@ -5979,7 +5993,8 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
     height: 100dvh !important;
     flex: 1 1 100% !important;
   }
-  .app-viewport {
+  /* V581 · Solo 100dvh cuando la tabbar NO está visible (welcome/hero). */
+  body:not(:has(#tabbar:not([hidden]))) .app-viewport {
     height: 100dvh !important;
     max-height: 100dvh !important;
   }
@@ -6074,7 +6089,8 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
     flex: 1 1 100% !important;
   }
   .phone-notch, .phone-status, .phone-home { display: none !important; }
-  .app-viewport {
+  /* V581 · Solo 100dvh cuando la tabbar NO está visible (welcome/hero). */
+  body:not(:has(#tabbar:not([hidden]))) .app-viewport {
     height: 100dvh !important;
     max-height: 100dvh !important;
   }
@@ -6310,7 +6326,8 @@ body:not(.app-open) #twofaReminder {
     min-height: 100dvh !important;
     max-height: 100dvh !important;
   }
-  .app-viewport {
+  /* V581 · Solo 100dvh cuando la tabbar NO está visible (welcome/hero). */
+  body:not(:has(#tabbar:not([hidden]))) .app-viewport {
     overflow: hidden !important;
     height: 100dvh !important;
     min-height: 100dvh !important;
@@ -6864,20 +6881,25 @@ body:not(.app-open) #twofaReminder {
     flex: 1 1 100% !important;
   }
   .phone-notch, .phone-status, .phone-home { display: none !important; }
-  .app-viewport {
+  /* V581 · Solo 100dvh cuando la tabbar NO está visible. */
+  body:not(:has(#tabbar:not([hidden]))) .app-viewport {
     height: 100dvh !important;
     max-height: 100dvh !important;
   }
-  /* V578 · Cuando el usuario está dentro de la app (tabbar visible) en
-     landscape corto, reservamos el alto de la tabbar para que la barra
-     inferior de navegación NO quede tapada/oculta por overflow del .phone. */
+  /* V581 · Cuando la tabbar está visible, usamos flex-grow y dejamos
+     que la tabbar hermana reserve su espacio propio (más robusto que
+     restar var(--tab-height) del height, que dependía del cálculo). */
   body:has(#tabbar:not([hidden])) .app-viewport {
-    height: calc(100dvh - var(--tab-height, 62px) - env(safe-area-inset-bottom, 0px)) !important;
-    max-height: calc(100dvh - var(--tab-height, 62px) - env(safe-area-inset-bottom, 0px)) !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: auto !important;
   }
   body:has(#tabbar:not([hidden])) .phone .tabbar {
     flex: 0 0 auto !important;
     display: grid !important;
+    position: relative !important;
     z-index: 6 !important;
   }
   .app-viewport .screen.screen-hero,
