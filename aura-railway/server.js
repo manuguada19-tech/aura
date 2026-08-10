@@ -9529,7 +9529,13 @@ async function ensureSuperadminAccessSettings() {
 
 // V545 · Fase 1 de features (rompehielo, stickers, audios, mensajes efímeros)
 const phase1 = require("./features_phase1");
+const phase2 = require("./features_phase2");
+const phase3 = require("./features_phase3");
+const phase4 = require("./features_phase4");
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
 
 (async () => {
   try {
@@ -9546,8 +9552,12 @@ phase1.register(app, pool, { readMyUserId, wrap, requireAdmin });
     try {
       await phase1.migrate(pool);
       phase1.startExpiryJob(pool);
+      await phase2.migrate(pool);
+      phase2.startCleanupJob(pool);
+      await phase3.migrate(pool);
+      await phase4.migrate(pool);
     } catch (e) {
-      console.error("[phase1] init error:", e);
+      console.error("[phases] init error:", e);
     }
     const PORT = process.env.PORT || 3000;
     app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT));
