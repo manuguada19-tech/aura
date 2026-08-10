@@ -285,6 +285,46 @@ function register(app, pool, helpers) {
     res.json({ ok: true, items: rows });
   }));
 
+  // ---- ADMIN: bulk delete ----
+  app.post("/api/admin/moderation/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM moderation_flags");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM moderation_flags WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.delete("/api/admin/moderation/:id", requireAdmin, wrap(async (req, res) => {
+    // borrado individual definitivo (además del PUT que sólo cambia status)
+    if (req.query?.hard === "1") {
+      await pool.execute("DELETE FROM moderation_flags WHERE id=?", [parseInt(req.params.id,10)]);
+      return res.json({ ok: true });
+    }
+    res.status(400).json({ error: "use hard=1 to delete" });
+  }));
+  app.post("/api/admin/video/calls/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM video_calls");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM video_calls WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.post("/api/admin/push/context/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM push_context_events");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM push_context_events WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+
   console.log("[phase4] endpoints registered");
 }
 

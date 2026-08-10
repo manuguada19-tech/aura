@@ -1,400 +1,1164 @@
 /* ================================================================
-   AURA · Admin extra views (Fases 1-4)
-   Se registran en window.__adminExtraViews y son invocadas por
-   route() de admin.js.
+   AURA · Admin Panel Premium (Novedades / Fases 1-4)   v548
+   ---------------------------------------------------------------
+   Vistas de administración avanzadas con:
+   - KPIs con tarjetas
+   - Buscador / filtros / ordenación / paginación
+   - Selección múltiple + bulk delete + "borrar todo"
+   - Confirmaciones seguras
+   - Toasts, modales, drawers propios (no interfieren con admin.js)
    ================================================================ */
 (function () {
-  function ready() {
-    if (!window.__adminApi || !window.__adminEl) { setTimeout(ready, 50); return; }
+  function boot() {
+    if (!window.__adminApi || !window.__adminEl) { setTimeout(boot, 50); return; }
+    inject();
+  }
+  boot();
+
+  function inject() {
     const api = window.__adminApi;
-    const el = window.__adminEl;
-    const authH = window.__adminAuthHeaders || (() => ({}));
+    const el  = window.__adminEl;
 
-    function h(tag, attrs, kids) { return el(tag, attrs || {}, kids || []); }
-    function btn(text, cls, onclick) {
-      return h("button", { class: "btn " + (cls || ""), onclick }, text);
+    // -----------------------------------------------------------------
+    // Estilos premium (una sola inyección)
+    // -----------------------------------------------------------------
+    if (!document.getElementById("aura-fx-css")) {
+      const st = document.createElement("style");
+      st.id = "aura-fx-css";
+      st.textContent = FX_CSS;
+      document.head.appendChild(st);
     }
-    function table(headers, rows) {
-      return h("table", { class: "data-table" }, [
-        h("thead", {}, [ h("tr", {}, headers.map((x) => h("th", {}, x))) ]),
-        h("tbody", {}, rows.map((r) => h("tr", {}, r.map((c) => h("td", {}, [ typeof c === "string" ? document.createTextNode(c) : c ]))))),
-      ]);
+
+    // -----------------------------------------------------------------
+    // Utilidades de DOM
+    // -----------------------------------------------------------------
+    const h = (t, a, k) => el(t, a || {}, k || []);
+    const $ = (sel, root) => (root || document).querySelector(sel);
+    function icon(svg, cls) { const s = document.createElement("span"); s.className = "fx-ico " + (cls||""); s.innerHTML = svg; return s; }
+    function btn(label, opts) {
+      opts = opts || {};
+      const b = document.createElement("button");
+      b.className = "fx-btn " + (opts.variant || "");
+      if (opts.icon) { const i = icon(opts.icon); b.appendChild(i); }
+      if (label) b.appendChild(document.createTextNode(label));
+      if (opts.onClick) b.addEventListener("click", opts.onClick);
+      if (opts.title) b.title = opts.title;
+      if (opts.disabled) b.disabled = true;
+      return b;
     }
-    function form(fields, onSubmit) {
-      const inputs = {};
-      const rows = fields.map((f) => {
-        let inp;
-        if (f.type === "select") {
-          inp = h("select", { id: "f_" + f.name }, f.options.map((o) => {
-            const opt = document.createElement("option");
-            opt.value = o.value; opt.textContent = o.label;
-            if (f.default === o.value) opt.selected = true;
-            return opt;
-          }));
-        } else if (f.type === "textarea") {
-          inp = h("textarea", { id: "f_" + f.name, placeholder: f.placeholder || "" });
-          if (f.default) inp.value = f.default;
-        } else {
-          inp = h("input", { id: "f_" + f.name, type: f.type || "text", placeholder: f.placeholder || "" });
-          if (f.default != null) inp.value = f.default;
+    function toast(msg, kind) {
+      let t = document.getElementById("fx-toast");
+      if (!t) { t = document.createElement("div"); t.id = "fx-toast"; document.body.appendChild(t); }
+      const line = document.createElement("div");
+      line.className = "fx-toast-line " + (kind || "info");
+      line.textContent = msg;
+      t.appendChild(line);
+      setTimeout(() => line.classList.add("show"), 10);
+      setTimeout(() => { line.classList.remove("show"); setTimeout(() => line.remove(), 300); }, 3200);
+    }
+    function confirmDialog({ title, message, danger, confirmLabel = "Confirmar" }) {
+      return new Promise((resolve) => {
+        const back = document.createElement("div");
+        back.className = "fx-modal-back";
+        const card = document.createElement("div");
+        card.className = "fx-modal-card";
+        card.innerHTML = `
+          <div class="fx-modal-head ${danger ? 'danger':''}">
+            <h3>${escapeHtml(title || "¿Continuar?")}</h3>
+          </div>
+          <div class="fx-modal-body">${escapeHtml(message || "")}</div>
+          <div class="fx-modal-foot"></div>`;
+        const foot = card.querySelector(".fx-modal-foot");
+        const cancel = btn("Cancelar", { variant: "ghost", onClick: () => close(false) });
+        const ok = btn(confirmLabel, { variant: danger ? "danger" : "primary", onClick: () => close(true) });
+        foot.appendChild(cancel); foot.appendChild(ok);
+        back.appendChild(card);
+        document.body.appendChild(back);
+        function close(v) { back.remove(); resolve(v); }
+        back.addEventListener("click", (e) => { if (e.target === back) close(false); });
+      });
+    }
+    function prompt2({ title, fields = [], submitLabel = "Guardar" }) {
+      return new Promise((resolve) => {
+        const back = document.createElement("div");
+        back.className = "fx-modal-back";
+        const card = document.createElement("div");
+        card.className = "fx-modal-card wide";
+        card.innerHTML = `<div class="fx-modal-head"><h3>${escapeHtml(title || "")}</h3></div><div class="fx-modal-body"></div><div class="fx-modal-foot"></div>`;
+        const body = card.querySelector(".fx-modal-body");
+        const inputs = {};
+        for (const f of fields) {
+          const row = document.createElement("div"); row.className = "fx-field";
+          const lab = document.createElement("label"); lab.textContent = f.label; row.appendChild(lab);
+          let inp;
+          if (f.type === "select") {
+            inp = document.createElement("select");
+            (f.options || []).forEach((o) => { const opt = document.createElement("option"); opt.value = o.value; opt.textContent = o.label; if (f.default === o.value) opt.selected = true; inp.appendChild(opt); });
+          } else if (f.type === "textarea") {
+            inp = document.createElement("textarea");
+            inp.rows = f.rows || 3;
+            if (f.default != null) inp.value = f.default;
+          } else {
+            inp = document.createElement("input");
+            inp.type = f.type || "text";
+            if (f.default != null) inp.value = f.default;
+            if (f.placeholder) inp.placeholder = f.placeholder;
+          }
+          inp.className = "fx-input";
+          row.appendChild(inp);
+          inputs[f.name] = inp;
+          body.appendChild(row);
         }
-        inputs[f.name] = inp;
-        return h("div", { class: "field" }, [ h("label", {}, f.label), inp ]);
+        const foot = card.querySelector(".fx-modal-foot");
+        foot.appendChild(btn("Cancelar", { variant: "ghost", onClick: () => close(null) }));
+        foot.appendChild(btn(submitLabel, { variant: "primary", onClick: () => {
+          const out = {};
+          for (const [k, v] of Object.entries(inputs)) out[k] = v.value;
+          close(out);
+        } }));
+        back.appendChild(card);
+        document.body.appendChild(back);
+        function close(v) { back.remove(); resolve(v); }
+        back.addEventListener("click", (e) => { if (e.target === back) close(null); });
       });
-      const submit = btn("Guardar", "primary", () => {
-        const data = {};
-        for (const [name, inp] of Object.entries(inputs)) data[name] = inp.value;
-        onSubmit(data);
-      });
-      return h("div", { class: "admin-form" }, [ ...rows, submit ]);
     }
+    function escapeHtml(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+    function fmtDate(d) { if (!d) return "—"; try { return new Date(d).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" }); } catch (e) { return String(d); } }
+    function planBadge(p) { const b = document.createElement("span"); b.className = "fx-plan fx-plan-" + p; b.textContent = ({ free:"Free", premium:"Premium", gold:"Oro", platinum:"Platino" }[p]) || p; return b; }
 
-    // Header con título + descripción + botón acción
-    function header(title, subtitle, actionText, onAction) {
-      const wrap = h("div", { class: "view-header" }, [
-        h("div", {}, [ h("h1", {}, title), h("p", { class: "muted" }, subtitle) ]),
-      ]);
-      if (actionText) wrap.appendChild(btn(actionText, "primary", onAction));
-      return wrap;
-    }
-
-    // ============ ROMPEHIELO ==================================
-    async function view_icebreakers(container) {
-      const { data } = await api("/api/admin/icebreakers");
-      const items = (data && data.items) || [];
+    // -----------------------------------------------------------------
+    // Componente: DataView (tabla premium con filtros, selección, bulk)
+    // -----------------------------------------------------------------
+    /**
+     * @param {object} cfg
+     *   title, subtitle, icon (emoji), columns:[{key,label,render,sortable}],
+     *   fetch: async () => rows,
+     *   rowId: (r)=>id, kpis: [{label,value,accent}],
+     *   actions: [{label,icon,onClick(row),variant}],
+     *   bulkEndpoint: path to POST bulk-delete ({ids,all}),
+     *   filters:[{key,label,type,options?}],
+     *   headerActions:[{label,onClick,variant,icon}],
+     *   pageSize: 25
+     */
+    function DataView(container, cfg) {
       container.innerHTML = "";
-      container.appendChild(header("❄️ Preguntas rompehielo", `${items.length} preguntas · Se muestran a usuarios Premium+`, "＋ Nueva", () => showNewIce(container)));
-      container.appendChild(table(
-        ["ID", "Texto", "Categoría", "Plan mín.", "Activo", "Acciones"],
-        items.map((i) => [
-          String(i.id),
-          i.text,
-          i.category || "-",
-          i.min_plan,
-          i.active ? "✅" : "❌",
-          h("div", {}, [
-            btn("Editar", "ghost sm", () => showEditIce(container, i)),
-            btn("Borrar", "danger sm", async () => {
-              if (!confirm("¿Borrar?")) return;
-              await api(`/api/admin/icebreakers/${i.id}`, { method: "DELETE" });
-              view_icebreakers(container);
-            }),
-          ]),
-        ])
-      ));
-    }
-    function showNewIce(container) {
-      container.appendChild(h("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) e.currentTarget.remove(); } }, [
-        h("div", { class: "modal-card" }, [
-          h("h3", {}, "Nuevo rompehielo"),
-          form([
-            { name: "text", label: "Texto", placeholder: "¿Cuál es tu plan de domingo ideal?" },
-            { name: "category", label: "Categoría", default: "general" },
-            { name: "min_plan", label: "Plan mínimo", type: "select", options: [
-              { value: "free", label: "Free" }, { value: "premium", label: "Premium" }, { value: "gold", label: "Oro" }, { value: "platinum", label: "Platino" }
-            ], default: "premium" },
-          ], async (d) => {
-            if (!d.text) { alert("Texto requerido"); return; }
-            await api("/api/admin/icebreakers", { method: "POST", body: d });
-            view_icebreakers(container);
-          }),
-        ]),
-      ]));
-    }
-    function showEditIce(container, i) {
-      container.appendChild(h("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) e.currentTarget.remove(); } }, [
-        h("div", { class: "modal-card" }, [
-          h("h3", {}, "Editar rompehielo #" + i.id),
-          form([
-            { name: "text", label: "Texto", default: i.text },
-            { name: "category", label: "Categoría", default: i.category || "general" },
-            { name: "min_plan", label: "Plan mínimo", type: "select", options: [
-              { value: "free", label: "Free" }, { value: "premium", label: "Premium" }, { value: "gold", label: "Oro" }, { value: "platinum", label: "Platino" }
-            ], default: i.min_plan },
-            { name: "active", label: "Activo (1/0)", default: String(i.active) },
-          ], async (d) => {
-            d.active = parseInt(d.active, 10) ? 1 : 0;
-            await api(`/api/admin/icebreakers/${i.id}`, { method: "PUT", body: d });
-            view_icebreakers(container);
-          }),
-        ]),
-      ]));
+      const state = {
+        rows: [],
+        filtered: [],
+        selected: new Set(),
+        page: 1,
+        pageSize: cfg.pageSize || 25,
+        sort: { key: null, dir: "desc" },
+        filters: {},
+        search: "",
+      };
+
+      const root = document.createElement("div"); root.className = "fx-view";
+      container.appendChild(root);
+
+      // Header
+      const head = document.createElement("div"); head.className = "fx-view-head";
+      head.innerHTML = `
+        <div class="fx-view-title">
+          <div class="fx-view-emoji">${cfg.icon || "✨"}</div>
+          <div>
+            <h1>${escapeHtml(cfg.title)}</h1>
+            <p class="fx-muted">${escapeHtml(cfg.subtitle || "")}</p>
+          </div>
+        </div>
+        <div class="fx-view-actions"></div>`;
+      const headActions = head.querySelector(".fx-view-actions");
+      (cfg.headerActions || []).forEach((a) => headActions.appendChild(btn(a.label, { variant: a.variant || "primary", icon: a.icon, onClick: a.onClick })));
+      // Botón de refrescar
+      headActions.appendChild(btn("", { variant: "ghost", title: "Refrescar", icon: "&#x21bb;", onClick: () => reload() }));
+      root.appendChild(head);
+
+      // KPIs
+      const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis";
+      root.appendChild(kpiRow);
+
+      // Toolbar (search, filters, bulk)
+      const toolbar = document.createElement("div"); toolbar.className = "fx-toolbar";
+      toolbar.innerHTML = `
+        <div class="fx-toolbar-left">
+          <div class="fx-search">
+            <span class="fx-search-ico">&#x1f50d;</span>
+            <input type="text" placeholder="Buscar..." class="fx-input fx-search-input"/>
+          </div>
+          <div class="fx-filters"></div>
+        </div>
+        <div class="fx-toolbar-right">
+          <span class="fx-count fx-muted">0 registros</span>
+        </div>`;
+      const searchInput = toolbar.querySelector(".fx-search-input");
+      searchInput.addEventListener("input", () => { state.search = searchInput.value.toLowerCase(); state.page = 1; refresh(); });
+      const filtersDiv = toolbar.querySelector(".fx-filters");
+      (cfg.filters || []).forEach((f) => {
+        const wrap = document.createElement("div"); wrap.className = "fx-filter";
+        const lab = document.createElement("label"); lab.textContent = f.label;
+        let sel;
+        if (f.type === "select") {
+          sel = document.createElement("select"); sel.className = "fx-input";
+          const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = "Todos"; sel.appendChild(optAll);
+          (f.options || []).forEach((o) => { const op = document.createElement("option"); op.value = o.value; op.textContent = o.label; sel.appendChild(op); });
+          sel.addEventListener("change", () => { state.filters[f.key] = sel.value; state.page = 1; refresh(); });
+        } else {
+          sel = document.createElement("input"); sel.type = f.type || "text"; sel.className = "fx-input"; sel.placeholder = f.placeholder || "";
+          sel.addEventListener("input", () => { state.filters[f.key] = sel.value; state.page = 1; refresh(); });
+        }
+        wrap.appendChild(lab); wrap.appendChild(sel);
+        filtersDiv.appendChild(wrap);
+      });
+      root.appendChild(toolbar);
+
+      // Bulk toolbar
+      const bulk = document.createElement("div"); bulk.className = "fx-bulk hidden";
+      bulk.innerHTML = `<span class="fx-bulk-count">0 seleccionados</span><div class="fx-bulk-actions"></div>`;
+      const bulkActs = bulk.querySelector(".fx-bulk-actions");
+      if (cfg.bulkEndpoint) {
+        bulkActs.appendChild(btn("Borrar selección", { variant: "danger", icon: "&#x1f5d1;", onClick: async () => {
+          const ids = Array.from(state.selected);
+          if (!ids.length) return;
+          const ok = await confirmDialog({ title: `Borrar ${ids.length} registros`, message: "Esta acción no se puede deshacer.", danger: true, confirmLabel: "Borrar" });
+          if (!ok) return;
+          try {
+            const r = await api(cfg.bulkEndpoint, { method: "POST", body: { ids } });
+            toast(`${(r.data && r.data.deleted) || ids.length} borrados`, "ok");
+            state.selected.clear();
+            reload();
+          } catch (e) { toast("Error borrando", "err"); }
+        } }));
+        bulkActs.appendChild(btn("Borrar TODO", { variant: "danger-outline", icon: "&#x2620;", onClick: async () => {
+          const ok = await confirmDialog({ title: "Borrar TODOS los registros", message: `Se eliminarán TODOS los ${state.filtered.length} registros filtrados y sus datos vinculados. Escribe SÍ para confirmar.`, danger: true, confirmLabel: "Borrar todo" });
+          if (!ok) return;
+          const typed = window.prompt('Escribe "SI" para confirmar:');
+          if (typed !== "SI" && typed !== "SÍ") { toast("Cancelado", "info"); return; }
+          try {
+            const r = await api(cfg.bulkEndpoint, { method: "POST", body: { all: true } });
+            toast(`${(r.data && r.data.deleted) || "?"} registros borrados`, "ok");
+            state.selected.clear();
+            reload();
+          } catch (e) { toast("Error borrando", "err"); }
+        } }));
+      }
+      root.appendChild(bulk);
+
+      // Tabla
+      const tableWrap = document.createElement("div"); tableWrap.className = "fx-table-wrap";
+      const tbl = document.createElement("table"); tbl.className = "fx-table";
+      tbl.innerHTML = "<thead></thead><tbody></tbody>";
+      tableWrap.appendChild(tbl);
+      root.appendChild(tableWrap);
+
+      // Pager
+      const pager = document.createElement("div"); pager.className = "fx-pager";
+      root.appendChild(pager);
+
+      // Empty state
+      const empty = document.createElement("div"); empty.className = "fx-empty hidden";
+      empty.innerHTML = `<div class="fx-empty-icon">${cfg.icon || "✨"}</div><h3>Sin datos</h3><p class="fx-muted">No hay registros que coincidan con los filtros.</p>`;
+      root.appendChild(empty);
+
+      async function reload() {
+        try {
+          tableWrap.classList.add("loading");
+          state.rows = await cfg.fetch();
+          state.selected.clear();
+          state.page = 1;
+          refresh();
+        } catch (e) {
+          console.error(e);
+          toast("Error cargando datos", "err");
+        } finally {
+          tableWrap.classList.remove("loading");
+        }
+      }
+
+      function applyFiltersAndSort() {
+        let list = state.rows.slice();
+        const s = state.search;
+        if (s) list = list.filter((r) => JSON.stringify(r).toLowerCase().includes(s));
+        for (const [k, v] of Object.entries(state.filters)) {
+          if (v == null || v === "") continue;
+          const spec = (cfg.filters || []).find((f) => f.key === k);
+          if (spec && spec.apply) { list = list.filter((r) => spec.apply(r, v)); }
+          else { list = list.filter((r) => String(r[k] ?? "").toLowerCase().includes(String(v).toLowerCase())); }
+        }
+        if (state.sort.key) {
+          const k = state.sort.key, dir = state.sort.dir === "asc" ? 1 : -1;
+          list.sort((a, b) => {
+            const av = a[k], bv = b[k];
+            if (av == null) return 1; if (bv == null) return -1;
+            if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+            return String(av).localeCompare(String(bv)) * dir;
+          });
+        }
+        state.filtered = list;
+      }
+
+      function renderKpis() {
+        kpiRow.innerHTML = "";
+        const kpis = typeof cfg.kpis === "function" ? cfg.kpis(state.rows) : (cfg.kpis || []);
+        (kpis || []).forEach((k) => {
+          const card = document.createElement("div"); card.className = "fx-kpi " + (k.accent || "");
+          card.innerHTML = `<div class="fx-kpi-label">${escapeHtml(k.label)}</div><div class="fx-kpi-value">${escapeHtml(String(k.value))}</div>${k.hint ? `<div class="fx-kpi-hint">${escapeHtml(k.hint)}</div>` : ""}`;
+          kpiRow.appendChild(card);
+        });
+      }
+
+      function refresh() {
+        applyFiltersAndSort();
+        renderKpis();
+        // Header select-all
+        const thead = tbl.querySelector("thead");
+        thead.innerHTML = "";
+        const trh = document.createElement("tr");
+        const thCk = document.createElement("th"); thCk.className = "fx-th-check";
+        const ckAll = document.createElement("input"); ckAll.type = "checkbox";
+        ckAll.addEventListener("change", () => {
+          if (ckAll.checked) pageRows().forEach((r) => state.selected.add(cfg.rowId(r)));
+          else pageRows().forEach((r) => state.selected.delete(cfg.rowId(r)));
+          refresh();
+        });
+        thCk.appendChild(ckAll); trh.appendChild(thCk);
+        cfg.columns.forEach((c) => {
+          const th = document.createElement("th");
+          th.textContent = c.label;
+          if (c.sortable) {
+            th.classList.add("sortable");
+            if (state.sort.key === c.key) th.classList.add("sort-" + state.sort.dir);
+            th.addEventListener("click", () => {
+              if (state.sort.key === c.key) state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+              else { state.sort.key = c.key; state.sort.dir = "asc"; }
+              refresh();
+            });
+          }
+          trh.appendChild(th);
+        });
+        if (cfg.actions && cfg.actions.length) { const th = document.createElement("th"); th.textContent = "Acciones"; trh.appendChild(th); }
+        thead.appendChild(trh);
+        // Body
+        const tbody = tbl.querySelector("tbody"); tbody.innerHTML = "";
+        const rows = pageRows();
+        rows.forEach((r) => {
+          const id = cfg.rowId(r);
+          const tr = document.createElement("tr");
+          if (state.selected.has(id)) tr.classList.add("selected");
+          const tdCk = document.createElement("td"); tdCk.className = "fx-td-check";
+          const ck = document.createElement("input"); ck.type = "checkbox"; ck.checked = state.selected.has(id);
+          ck.addEventListener("change", () => { ck.checked ? state.selected.add(id) : state.selected.delete(id); refresh(); });
+          tdCk.appendChild(ck); tr.appendChild(tdCk);
+          cfg.columns.forEach((c) => {
+            const td = document.createElement("td");
+            const v = c.render ? c.render(r) : (r[c.key] ?? "—");
+            if (v instanceof Node) td.appendChild(v);
+            else if (typeof v === "string" || typeof v === "number") td.textContent = String(v);
+            else if (v == null) td.textContent = "—";
+            else td.appendChild(v);
+            tr.appendChild(td);
+          });
+          if (cfg.actions && cfg.actions.length) {
+            const td = document.createElement("td"); td.className = "fx-td-actions";
+            cfg.actions.forEach((a) => {
+              if (a.visible && !a.visible(r)) return;
+              td.appendChild(btn(a.label || "", { variant: a.variant || "ghost", icon: a.icon, title: a.title, onClick: () => a.onClick(r, reload) }));
+            });
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        });
+        empty.classList.toggle("hidden", state.filtered.length > 0);
+        tableWrap.classList.toggle("hidden", state.filtered.length === 0);
+        // Bulk bar visibility
+        bulk.classList.toggle("hidden", state.selected.size === 0 && !cfg.alwaysShowBulk);
+        bulk.querySelector(".fx-bulk-count").textContent = `${state.selected.size} seleccionados`;
+        // Count
+        toolbar.querySelector(".fx-count").textContent = `${state.filtered.length} de ${state.rows.length} registros`;
+        // Pager
+        renderPager();
+      }
+
+      function pageRows() {
+        const start = (state.page - 1) * state.pageSize;
+        return state.filtered.slice(start, start + state.pageSize);
+      }
+
+      function renderPager() {
+        pager.innerHTML = "";
+        const total = state.filtered.length;
+        const pages = Math.max(1, Math.ceil(total / state.pageSize));
+        if (pages <= 1 && total <= state.pageSize) return;
+        const info = document.createElement("span"); info.className = "fx-muted";
+        info.textContent = `Página ${state.page} / ${pages}`;
+        pager.appendChild(btn("‹", { variant: "ghost", disabled: state.page <= 1, onClick: () => { state.page--; refresh(); } }));
+        pager.appendChild(info);
+        pager.appendChild(btn("›", { variant: "ghost", disabled: state.page >= pages, onClick: () => { state.page++; refresh(); } }));
+        // page size
+        const psSel = document.createElement("select"); psSel.className = "fx-input fx-page-size";
+        [10, 25, 50, 100, 250].forEach((n) => { const o = document.createElement("option"); o.value = n; o.textContent = n + "/pág"; if (n === state.pageSize) o.selected = true; psSel.appendChild(o); });
+        psSel.addEventListener("change", () => { state.pageSize = parseInt(psSel.value, 10) || 25; state.page = 1; refresh(); });
+        pager.appendChild(psSel);
+      }
+
+      reload();
+      return { reload };
     }
 
-    // ============ STICKERS ====================================
+    // =================================================================
+    // Vistas
+    // =================================================================
+    const PLAN_OPTS = [
+      { value: "free", label: "Free" }, { value: "premium", label: "Premium" }, { value: "gold", label: "Oro" }, { value: "platinum", label: "Platino" }
+    ];
+
+    // ---- Rompehielo -------------------------------------------------
+    async function view_icebreakers(container) {
+      DataView(container, {
+        title: "Rompehielo", subtitle: "Preguntas mostradas a usuarios (Premium+)", icon: "❄️",
+        fetch: async () => (await api("/api/admin/icebreakers")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total preguntas", value: rows.length, accent: "blue" },
+          { label: "Activas", value: rows.filter((r) => r.active).length, accent: "green" },
+          { label: "Categorías", value: new Set(rows.map((r) => r.category)).size, accent: "purple" },
+          { label: "Sólo Oro/Platino", value: rows.filter((r) => r.min_plan === "gold" || r.min_plan === "platinum").length, accent: "amber" },
+        ],
+        filters: [
+          { key: "min_plan", label: "Plan", type: "select", options: PLAN_OPTS },
+          { key: "category", label: "Categoría", type: "text", placeholder: "general..." },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "text", label: "Texto", render: (r) => { const s = document.createElement("span"); s.className="fx-text"; s.textContent = r.text; return s; } },
+          { key: "category", label: "Categoría", sortable: true },
+          { key: "min_plan", label: "Plan", render: (r) => planBadge(r.min_plan) },
+          { key: "active", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.active ? "ok":"off"); b.textContent = r.active ? "Activo":"Inactivo"; return b; } },
+        ],
+        actions: [
+          { label: "Editar", icon: "&#x270e;", variant: "ghost", onClick: async (r, reload) => {
+            const data = await prompt2({ title: `Editar rompehielo #${r.id}`, fields: [
+              { name: "text", label: "Texto", default: r.text, type: "textarea" },
+              { name: "category", label: "Categoría", default: r.category || "general" },
+              { name: "min_plan", label: "Plan mínimo", type: "select", options: PLAN_OPTS, default: r.min_plan },
+              { name: "active", label: "Activo (1 / 0)", default: String(r.active) },
+            ]});
+            if (!data) return;
+            data.active = parseInt(data.active,10) ? 1 : 0;
+            await api(`/api/admin/icebreakers/${r.id}`, { method: "PUT", body: data });
+            toast("Guardado", "ok"); reload();
+          } },
+          { label: "", icon: "&#x1f5d1;", title: "Borrar", variant: "danger-icon", onClick: async (r, reload) => {
+            const ok = await confirmDialog({ title: "Borrar rompehielo", message: r.text, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
+            await api(`/api/admin/icebreakers/${r.id}`, { method: "DELETE" });
+            toast("Borrado", "ok"); reload();
+          } },
+        ],
+        headerActions: [
+          { label: "Nuevo", icon: "＋", variant: "primary", onClick: async () => {
+            const data = await prompt2({ title: "Nuevo rompehielo", fields: [
+              { name: "text", label: "Texto", type: "textarea", placeholder: "¿Cuál es tu plan de domingo ideal?" },
+              { name: "category", label: "Categoría", default: "general" },
+              { name: "min_plan", label: "Plan mínimo", type: "select", options: PLAN_OPTS, default: "premium" },
+            ]});
+            if (!data || !data.text) return;
+            await api("/api/admin/icebreakers", { method: "POST", body: data });
+            toast("Creado", "ok"); rerender();
+          } },
+        ],
+        bulkEndpoint: "/api/admin/icebreakers/bulk-delete",
+      });
+    }
+
+    // ---- Stickers ---------------------------------------------------
     async function view_stickers(container) {
+      container.innerHTML = "";
+      const wrap = document.createElement("div"); wrap.className = "fx-view";
+      container.appendChild(wrap);
+      const head = document.createElement("div"); head.className = "fx-view-head";
+      head.innerHTML = `<div class="fx-view-title"><div class="fx-view-emoji">🎨</div><div><h1>Stickers</h1><p class="fx-muted">Packs y stickers disponibles (por defecto Oro+)</p></div></div><div class="fx-view-actions"></div>`;
+      wrap.appendChild(head);
+      const actsHead = head.querySelector(".fx-view-actions");
+      actsHead.appendChild(btn("Nuevo pack", { variant: "primary", icon: "＋", onClick: async () => {
+        const d = await prompt2({ title: "Nuevo pack", fields: [
+          { name: "slug", label: "Slug (sin espacios)" },
+          { name: "name", label: "Nombre" },
+          { name: "min_plan", label: "Plan mínimo", type: "select", options: PLAN_OPTS, default: "gold" },
+        ]});
+        if (!d || !d.slug || !d.name) return;
+        await api("/api/admin/sticker-packs", { method: "POST", body: d });
+        toast("Pack creado", "ok"); rerender();
+      } }));
+      actsHead.appendChild(btn("Borrar TODOS los packs", { variant: "danger-outline", icon: "&#x2620;", onClick: async () => {
+        const ok = await confirmDialog({ title: "Borrar TODOS los packs y stickers", message: "Se eliminarán todos los packs y sus stickers. Acción irreversible.", danger: true, confirmLabel: "Borrar todo" });
+        if (!ok) return;
+        const typed = window.prompt('Escribe "SI" para confirmar:');
+        if (typed !== "SI" && typed !== "SÍ") return;
+        await api("/api/admin/sticker-packs/bulk-delete", { method: "POST", body: { all: true } });
+        toast("Todo borrado", "ok"); rerender();
+      } }));
+
+      const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis"; wrap.appendChild(kpiRow);
+      const packsWrap = document.createElement("div"); packsWrap.className = "fx-packs-grid"; wrap.appendChild(packsWrap);
+
       const { data } = await api("/api/admin/sticker-packs");
       const packs = (data && data.packs) || [];
       const stickers = (data && data.stickers) || [];
-      container.innerHTML = "";
-      container.appendChild(header("🎨 Stickers", `${packs.length} paquetes · ${stickers.length} stickers`, "＋ Nuevo pack", () => {
-        const slug = prompt("Slug del pack (sin espacios):"); if (!slug) return;
-        const name = prompt("Nombre visible:"); if (!name) return;
-        const min_plan = prompt("Plan mínimo (free/premium/gold/platinum):", "gold") || "gold";
-        api("/api/admin/sticker-packs", { method: "POST", body: { slug, name, min_plan } }).then(() => view_stickers(container));
-      }));
+      // KPIs
+      [
+        { label: "Packs", value: packs.length, accent: "blue" },
+        { label: "Stickers totales", value: stickers.length, accent: "purple" },
+        { label: "Packs activos", value: packs.filter((p) => p.active).length, accent: "green" },
+        { label: "Oro/Platino", value: packs.filter((p) => p.min_plan === "gold" || p.min_plan === "platinum").length, accent: "amber" },
+      ].forEach((k) => {
+        const c = document.createElement("div"); c.className = "fx-kpi " + k.accent;
+        c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`;
+        kpiRow.appendChild(c);
+      });
+
+      if (!packs.length) {
+        const empty = document.createElement("div"); empty.className = "fx-empty";
+        empty.innerHTML = `<div class="fx-empty-icon">🎨</div><h3>Sin packs todavía</h3><p class="fx-muted">Crea tu primer pack de stickers.</p>`;
+        wrap.appendChild(empty);
+        return;
+      }
+
       packs.forEach((p) => {
         const packStickers = stickers.filter((s) => s.pack_id === p.id);
-        container.appendChild(h("div", { class: "card pack-card" }, [
-          h("h3", {}, `${p.name} — ${packStickers.length} stickers · Plan ${p.min_plan} · ${p.active ? "activo" : "inactivo"}`),
-          h("div", { class: "sticker-preview-grid", style: "display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;margin:10px 0;" },
-            packStickers.map((s) => h("div", { style: "text-align:center;font-size:11px;" }, [
-              h("img", { src: s.url, alt: s.slug, style: "width:60px;height:60px;object-fit:contain;background:#f4f5fa;border-radius:8px;" }),
-              document.createTextNode(s.slug),
-            ]))
-          ),
-          h("div", {}, [
-            btn("＋ Añadir sticker", "primary sm", () => {
-              const slug = prompt("Slug único:"); if (!slug) return;
-              const url = prompt("URL de la imagen:"); if (!url) return;
-              api("/api/admin/stickers", { method: "POST", body: { pack_id: p.id, slug, url } }).then(() => view_stickers(container));
-            }),
-            btn("Borrar pack", "danger sm", async () => {
-              if (!confirm(`¿Borrar pack "${p.name}" y sus ${packStickers.length} stickers?`)) return;
-              await api(`/api/admin/sticker-packs/${p.id}`, { method: "DELETE" });
-              view_stickers(container);
-            }),
-          ]),
-        ]));
+        const card = document.createElement("div"); card.className = "fx-pack-card";
+        card.innerHTML = `
+          <div class="fx-pack-head">
+            <div>
+              <h3>${escapeHtml(p.name)}</h3>
+              <div class="fx-pack-meta">
+                <span class="fx-badge blue">${packStickers.length} stickers</span>
+                <span class="fx-plan fx-plan-${p.min_plan}">${p.min_plan}</span>
+                <span class="fx-badge ${p.active ? 'ok':'off'}">${p.active ? 'Activo':'Inactivo'}</span>
+              </div>
+            </div>
+            <div class="fx-pack-actions"></div>
+          </div>
+          <div class="fx-sticker-grid"></div>`;
+        const pActs = card.querySelector(".fx-pack-actions");
+        pActs.appendChild(btn("＋ Sticker", { variant: "primary", onClick: async () => {
+          const d = await prompt2({ title: "Nuevo sticker", fields: [
+            { name: "slug", label: "Slug único" },
+            { name: "url", label: "URL de la imagen" },
+          ]});
+          if (!d || !d.slug || !d.url) return;
+          await api("/api/admin/stickers", { method: "POST", body: { pack_id: p.id, slug: d.slug, url: d.url } });
+          toast("Sticker añadido", "ok"); rerender();
+        } }));
+        pActs.appendChild(btn("Borrar pack", { variant: "danger", icon: "&#x1f5d1;", onClick: async () => {
+          const ok = await confirmDialog({ title: `Borrar pack "${p.name}"`, message: `Se eliminarán el pack y sus ${packStickers.length} stickers.`, danger: true, confirmLabel: "Borrar" });
+          if (!ok) return;
+          await api(`/api/admin/sticker-packs/${p.id}`, { method: "DELETE" });
+          toast("Pack borrado", "ok"); rerender();
+        } }));
+
+        const grid = card.querySelector(".fx-sticker-grid");
+        if (!packStickers.length) {
+          const empty = document.createElement("div"); empty.className = "fx-muted"; empty.textContent = "Sin stickers en este pack.";
+          grid.appendChild(empty);
+        } else {
+          packStickers.forEach((s) => {
+            const it = document.createElement("div"); it.className = "fx-sticker-item";
+            it.innerHTML = `<img src="${escapeHtml(s.url)}" alt="${escapeHtml(s.slug)}"/><span>${escapeHtml(s.slug)}</span>`;
+            const rm = btn("×", { variant: "danger-icon", title: "Borrar sticker", onClick: async () => {
+              const ok = await confirmDialog({ title: "Borrar sticker", message: s.slug, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              await api(`/api/admin/stickers/${s.id}`, { method: "DELETE" });
+              toast("Borrado", "ok"); rerender();
+            } });
+            rm.classList.add("fx-sticker-del");
+            it.appendChild(rm);
+            grid.appendChild(it);
+          });
+        }
+        packsWrap.appendChild(card);
       });
     }
 
-    // ============ ACHIEVEMENTS ================================
+    // ---- Logros / XP ------------------------------------------------
     async function view_achievements(container) {
-      const { data } = await api("/api/admin/achievements");
-      const items = (data && data.items) || [];
-      const stats = await api("/api/admin/gamification/stats").then((r) => r.data).catch(() => null);
       container.innerHTML = "";
-      container.appendChild(header("🏆 Logros / XP", `${items.length} logros configurados`, "＋ Nuevo", () => {
-        const slug = prompt("Slug:"); if (!slug) return;
-        const name = prompt("Nombre:"); if (!name) return;
-        const description = prompt("Descripción:", "") || "";
-        const icon = prompt("Icono (emoji):", "🏆") || "🏆";
-        const xp_reward = parseInt(prompt("XP al desbloquear:", "50"), 10) || 50;
-        api("/api/admin/achievements", { method: "POST", body: { slug, name, description, icon, xp_reward } }).then(() => view_achievements(container));
-      }));
+      const outer = document.createElement("div"); outer.className = "fx-view";
+      container.appendChild(outer);
+      const statsResp = await api("/api/admin/gamification/stats").catch(() => ({ data: null }));
+      const stats = statsResp.data;
+      // Cabecera con KPI antes de tabla
       if (stats && stats.totals) {
-        container.appendChild(h("div", { class: "card" }, [
-          h("h3", {}, "Estadísticas globales"),
-          h("p", {}, `Usuarios con stats: ${stats.totals.c || 0} · XP medio: ${Math.round(stats.totals.avg_xp || 0)} · Nivel medio: ${Math.round((stats.totals.avg_level || 1) * 10) / 10} · Racha máxima: ${stats.totals.max_streak || 0}`),
-        ]));
-        if (stats.top?.length) {
-          container.appendChild(h("h3", {}, "Top 20 XP"));
-          container.appendChild(table(["#", "Usuario", "Nivel", "XP", "Racha"], stats.top.map((u, i) => [String(i+1), u.name || `#${u.user_id}`, String(u.level), String(u.xp), String(u.streak_days)])));
+        const head = document.createElement("div"); head.className = "fx-view-head";
+        head.innerHTML = `<div class="fx-view-title"><div class="fx-view-emoji">🏆</div><div><h1>Logros / XP</h1><p class="fx-muted">Sistema de gamificación</p></div></div>`;
+        outer.appendChild(head);
+        const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis";
+        [
+          { label: "Usuarios con stats", value: stats.totals.c || 0, accent: "blue" },
+          { label: "XP medio", value: Math.round(stats.totals.avg_xp || 0), accent: "purple" },
+          { label: "Nivel medio", value: Math.round((stats.totals.avg_level || 1) * 10) / 10, accent: "green" },
+          { label: "Racha máxima", value: stats.totals.max_streak || 0, accent: "amber" },
+        ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
+        outer.appendChild(kpiRow);
+        if (stats.top && stats.top.length) {
+          const topWrap = document.createElement("div"); topWrap.className = "fx-panel";
+          topWrap.innerHTML = `<h3>Top 20 usuarios por XP</h3>`;
+          const t = document.createElement("table"); t.className = "fx-table compact";
+          t.innerHTML = `<thead><tr><th>#</th><th>Usuario</th><th>Nivel</th><th>XP</th><th>Racha</th></tr></thead><tbody></tbody>`;
+          const tb = t.querySelector("tbody");
+          stats.top.forEach((u, i) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td>${i+1}</td><td>${escapeHtml(u.name || `#${u.user_id}`)}</td><td>${u.level}</td><td>${u.xp}</td><td>${u.streak_days}</td>`;
+            tb.appendChild(tr);
+          });
+          topWrap.appendChild(t);
+          outer.appendChild(topWrap);
         }
       }
-      container.appendChild(h("h3", {}, "Logros"));
-      container.appendChild(table(
-        ["Icono", "Slug", "Nombre", "Descripción", "XP", "Acciones"],
-        items.map((a) => [
-          a.icon, a.slug, a.name, a.description || "-", String(a.xp_reward),
-          h("div", {}, [
-            btn("Editar", "ghost sm", async () => {
-              const name = prompt("Nombre:", a.name); if (!name) return;
-              const description = prompt("Descripción:", a.description || "") || "";
-              const xp_reward = parseInt(prompt("XP:", String(a.xp_reward)), 10) || 50;
-              await api(`/api/admin/achievements/${a.id}`, { method: "PUT", body: { name, description, xp_reward } });
-              view_achievements(container);
-            }),
-            btn("Borrar", "danger sm", async () => {
-              if (!confirm("¿Borrar?")) return;
-              await api(`/api/admin/achievements/${a.id}`, { method: "DELETE" });
-              view_achievements(container);
-            }),
-          ]),
-        ])
-      ));
+      // Lista de logros como DataView
+      const listContainer = document.createElement("div");
+      outer.appendChild(listContainer);
+      DataView(listContainer, {
+        title: "Definición de logros", subtitle: "Objetivos que otorgan XP a los usuarios", icon: "🏆",
+        fetch: async () => (await api("/api/admin/achievements")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: null,
+        columns: [
+          { key: "icon", label: "" , render: (r) => { const s = document.createElement("span"); s.className = "fx-emoji-big"; s.textContent = r.icon || "🏆"; return s; } },
+          { key: "slug", label: "Slug", sortable: true },
+          { key: "name", label: "Nombre", sortable: true },
+          { key: "description", label: "Descripción" },
+          { key: "xp_reward", label: "XP", sortable: true, render: (r) => { const b = document.createElement("span"); b.className = "fx-badge purple"; b.textContent = "+" + r.xp_reward; return b; } },
+        ],
+        actions: [
+          { label: "Editar", icon: "&#x270e;", variant: "ghost", onClick: async (r, reload) => {
+            const d = await prompt2({ title: "Editar logro", fields: [
+              { name: "name", label: "Nombre", default: r.name },
+              { name: "description", label: "Descripción", type: "textarea", default: r.description || "" },
+              { name: "icon", label: "Icono (emoji)", default: r.icon || "🏆" },
+              { name: "xp_reward", label: "XP recompensa", type: "number", default: r.xp_reward },
+            ]});
+            if (!d) return;
+            d.xp_reward = parseInt(d.xp_reward,10) || 50;
+            await api(`/api/admin/achievements/${r.id}`, { method: "PUT", body: d });
+            toast("Guardado", "ok"); reload();
+          } },
+          { label: "", icon: "&#x1f5d1;", title: "Borrar", variant: "danger-icon", onClick: async (r, reload) => {
+            const ok = await confirmDialog({ title: "Borrar logro", message: r.name, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
+            await api(`/api/admin/achievements/${r.id}`, { method: "DELETE" });
+            toast("Borrado", "ok"); reload();
+          } },
+        ],
+        headerActions: [
+          { label: "Nuevo", icon: "＋", variant: "primary", onClick: async () => {
+            const d = await prompt2({ title: "Nuevo logro", fields: [
+              { name: "slug", label: "Slug" },
+              { name: "name", label: "Nombre" },
+              { name: "description", label: "Descripción", type: "textarea" },
+              { name: "icon", label: "Icono", default: "🏆" },
+              { name: "xp_reward", label: "XP", type: "number", default: "50" },
+            ]});
+            if (!d || !d.slug || !d.name) return;
+            d.xp_reward = parseInt(d.xp_reward,10) || 50;
+            await api("/api/admin/achievements", { method: "POST", body: d });
+            toast("Creado", "ok"); rerender();
+          } },
+        ],
+        bulkEndpoint: "/api/admin/achievements/bulk-delete",
+      });
     }
 
-    // ============ EVENTS ======================================
+    // ---- Quedadas / Eventos -----------------------------------------
     async function view_events(container) {
-      const { data } = await api("/api/admin/events");
-      const items = (data && data.items) || [];
-      container.innerHTML = "";
-      container.appendChild(header("📅 Quedadas", `${items.length} eventos creados por usuarios`, null, null));
-      container.appendChild(table(
-        ["ID", "Título", "Fecha", "Estado", "Categoría", "Acciones"],
-        items.map((e) => [
-          String(e.id),
-          e.title,
-          new Date(e.starts_at).toLocaleString(),
-          e.status,
-          e.category || "-",
-          h("div", {}, [
-            btn("Cerrar", "ghost sm", async () => { await api(`/api/admin/events/${e.id}`, { method: "PUT", body: { status: "closed" } }); view_events(container); }),
-            btn("Cancelar", "ghost sm", async () => { await api(`/api/admin/events/${e.id}`, { method: "PUT", body: { status: "cancelled" } }); view_events(container); }),
-            btn("Borrar", "danger sm", async () => { if (!confirm("¿Borrar?")) return; await api(`/api/admin/events/${e.id}`, { method: "DELETE" }); view_events(container); }),
-          ]),
-        ])
-      ));
+      DataView(container, {
+        title: "Quedadas / Eventos", subtitle: "Eventos creados por usuarios (Oro+ para crear)", icon: "📅",
+        fetch: async () => (await api("/api/admin/events")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total eventos", value: rows.length, accent: "blue" },
+          { label: "Abiertos", value: rows.filter((r) => r.status === "open").length, accent: "green" },
+          { label: "Cerrados", value: rows.filter((r) => r.status === "closed").length, accent: "amber" },
+          { label: "Cancelados", value: rows.filter((r) => r.status === "cancelled").length, accent: "red" },
+        ],
+        filters: [
+          { key: "status", label: "Estado", type: "select", options: [
+            { value: "open", label: "Abiertos" }, { value: "closed", label: "Cerrados" }, { value: "cancelled", label: "Cancelados" }
+          ] },
+          { key: "category", label: "Categoría", type: "text" },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "title", label: "Título" },
+          { key: "starts_at", label: "Fecha", sortable: true, render: (r) => fmtDate(r.starts_at) },
+          { key: "category", label: "Categoría" },
+          { key: "status", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + ({ open:"ok", closed:"amber", cancelled:"off" }[r.status]||""); b.textContent = r.status; return b; } },
+        ],
+        actions: [
+          { label: "Cerrar", variant: "ghost", visible: (r) => r.status === "open", onClick: async (r, reload) => { await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "closed" } }); toast("Cerrado","ok"); reload(); } },
+          { label: "Cancelar", variant: "ghost", visible: (r) => r.status === "open", onClick: async (r, reload) => { await api(`/api/admin/events/${r.id}`, { method: "PUT", body: { status: "cancelled" } }); toast("Cancelado","ok"); reload(); } },
+          { label: "", icon: "&#x1f5d1;", title: "Borrar", variant: "danger-icon", onClick: async (r, reload) => {
+            const ok = await confirmDialog({ title: "Borrar evento", message: r.title, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
+            await api(`/api/admin/events/${r.id}`, { method: "DELETE" });
+            toast("Borrado", "ok"); reload();
+          } },
+        ],
+        bulkEndpoint: "/api/admin/events/bulk-delete",
+      });
     }
 
-    // ============ A/B TESTING =================================
+    // ---- A/B Testing ------------------------------------------------
     async function view_ab(container) {
+      container.innerHTML = "";
+      const outer = document.createElement("div"); outer.className = "fx-view";
+      container.appendChild(outer);
+      const head = document.createElement("div"); head.className = "fx-view-head";
+      head.innerHTML = `<div class="fx-view-title"><div class="fx-view-emoji">🧪</div><div><h1>A/B Testing</h1><p class="fx-muted">Experimentos y variantes</p></div></div><div class="fx-view-actions"></div>`;
+      const acts = head.querySelector(".fx-view-actions");
+      acts.appendChild(btn("Nuevo test", { variant: "primary", icon: "＋", onClick: async () => {
+        const d = await prompt2({ title: "Nuevo test", fields: [
+          { name: "slug", label: "Slug (ej. login-cta-color)" },
+          { name: "name", label: "Nombre" },
+          { name: "variants", label: "Variantes (separadas por coma)", default: "A,B" },
+        ]});
+        if (!d || !d.slug || !d.name) return;
+        const variants = d.variants.split(",").map((s) => s.trim()).filter(Boolean);
+        await api("/api/admin/ab/tests", { method: "POST", body: { slug: d.slug, name: d.name, variants, active: 1 } });
+        toast("Test creado", "ok"); rerender();
+      } }));
+      acts.appendChild(btn("Borrar TODOS", { variant: "danger-outline", icon: "&#x2620;", onClick: async () => {
+        const ok = await confirmDialog({ title: "Borrar TODOS los tests", message: "Se borrarán tests, asignaciones y eventos. Irreversible.", danger: true, confirmLabel: "Borrar todo" });
+        if (!ok) return;
+        const typed = window.prompt('Escribe "SI" para confirmar:');
+        if (typed !== "SI" && typed !== "SÍ") return;
+        await api("/api/admin/ab/tests/bulk-delete", { method: "POST", body: { all: true } });
+        toast("Todo borrado", "ok"); rerender();
+      } }));
+      outer.appendChild(head);
+
       const { data } = await api("/api/admin/ab/tests");
       const items = (data && data.items) || [];
-      container.innerHTML = "";
-      container.appendChild(header("🧪 A/B Testing", `${items.length} experimentos`, "＋ Nuevo test", () => {
-        const slug = prompt("Slug (ej. login-cta-color):"); if (!slug) return;
-        const name = prompt("Nombre:"); if (!name) return;
-        const variantsStr = prompt("Variantes separadas por coma:", "A,B") || "A,B";
-        const variants = variantsStr.split(",").map((s) => s.trim());
-        api("/api/admin/ab/tests", { method: "POST", body: { slug, name, variants, active: 1 } }).then(() => view_ab(container));
-      }));
+      const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis";
+      [
+        { label: "Total tests", value: items.length, accent: "blue" },
+        { label: "Activos", value: items.filter((t) => t.active).length, accent: "green" },
+        { label: "Pausados", value: items.filter((t) => !t.active).length, accent: "amber" },
+      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
+      outer.appendChild(kpiRow);
+
+      if (!items.length) {
+        const empty = document.createElement("div"); empty.className = "fx-empty";
+        empty.innerHTML = `<div class="fx-empty-icon">🧪</div><h3>Sin experimentos</h3><p class="fx-muted">Crea tu primer test A/B.</p>`;
+        outer.appendChild(empty);
+        return;
+      }
+
       for (const t of items) {
         const results = await api(`/api/admin/ab/tests/${t.id}/results`).then((r) => r.data).catch(() => null);
-        container.appendChild(h("div", { class: "card" }, [
-          h("h3", {}, `${t.name} (${t.slug}) — ${t.active ? "activo" : "pausado"}`),
-          h("p", { class: "muted" }, t.description || ""),
-          results ? h("div", {}, [
-            h("h4", {}, "Asignaciones"),
-            table(["Variante", "Usuarios"], (results.assignments || []).map((a) => [a.variant, String(a.users)])),
-            h("h4", {}, "Eventos"),
-            table(["Variante", "Usuarios", "Conversiones", "Eventos"], (results.results || []).map((r) => [r.variant, String(r.users), String(r.conversions), String(r.events)])),
-          ]) : null,
-          h("div", {}, [
-            btn(t.active ? "Pausar" : "Activar", "ghost sm", async () => { await api(`/api/admin/ab/tests/${t.id}`, { method: "PUT", body: { active: t.active ? 0 : 1 } }); view_ab(container); }),
-          ]),
-        ]));
+        const card = document.createElement("div"); card.className = "fx-panel";
+        card.innerHTML = `
+          <div class="fx-panel-head">
+            <div>
+              <h3>${escapeHtml(t.name)} <span class="fx-muted">${escapeHtml(t.slug)}</span></h3>
+              <p class="fx-muted">${escapeHtml(t.description || "")}</p>
+              <span class="fx-badge ${t.active ? 'ok':'off'}">${t.active ? 'Activo':'Pausado'}</span>
+            </div>
+            <div class="fx-panel-actions"></div>
+          </div>
+          <div class="fx-panel-body"></div>`;
+        const pa = card.querySelector(".fx-panel-actions");
+        pa.appendChild(btn(t.active ? "Pausar" : "Activar", { variant: "ghost", onClick: async () => {
+          await api(`/api/admin/ab/tests/${t.id}`, { method: "PUT", body: { active: t.active ? 0 : 1 } });
+          rerender();
+        } }));
+        pa.appendChild(btn("Borrar", { variant: "danger", icon: "&#x1f5d1;", onClick: async () => {
+          const ok = await confirmDialog({ title: "Borrar test", message: t.name, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
+          await api(`/api/admin/ab/tests/${t.id}`, { method: "DELETE" });
+          toast("Borrado","ok"); rerender();
+        } }));
+        const body = card.querySelector(".fx-panel-body");
+        if (results) {
+          const grid = document.createElement("div"); grid.className = "fx-ab-grid";
+          grid.innerHTML = "<div><h4>Asignaciones</h4></div><div><h4>Eventos</h4></div>";
+          const t1 = document.createElement("table"); t1.className = "fx-table compact";
+          t1.innerHTML = "<thead><tr><th>Variante</th><th>Usuarios</th></tr></thead>";
+          const tb1 = document.createElement("tbody");
+          (results.assignments || []).forEach((a) => { const tr = document.createElement("tr"); tr.innerHTML = `<td><span class="fx-badge blue">${escapeHtml(a.variant)}</span></td><td>${a.users}</td>`; tb1.appendChild(tr); });
+          t1.appendChild(tb1);
+          const t2 = document.createElement("table"); t2.className = "fx-table compact";
+          t2.innerHTML = "<thead><tr><th>Variante</th><th>Usuarios</th><th>Conv.</th><th>Eventos</th></tr></thead>";
+          const tb2 = document.createElement("tbody");
+          (results.results || []).forEach((r) => { const tr = document.createElement("tr"); tr.innerHTML = `<td><span class="fx-badge purple">${escapeHtml(r.variant)}</span></td><td>${r.users}</td><td>${r.conversions}</td><td>${r.events}</td>`; tb2.appendChild(tr); });
+          t2.appendChild(tb2);
+          grid.children[0].appendChild(t1); grid.children[1].appendChild(t2);
+          body.appendChild(grid);
+        }
+        outer.appendChild(card);
       }
     }
 
-    // ============ GDPR ========================================
+    // ---- GDPR -------------------------------------------------------
     async function view_gdpr(container) {
-      const { data } = await api("/api/admin/gdpr/requests");
-      const items = (data && data.items) || [];
-      container.innerHTML = "";
-      container.appendChild(header("🔒 Solicitudes GDPR", `${items.length} solicitudes`, null, null));
-      container.appendChild(table(
-        ["ID", "Usuario", "Tipo", "Estado", "Solicitado", "Programado", "Completado"],
-        items.map((r) => [
-          String(r.id),
-          (r.name || r.email || `#${r.user_id}`),
-          r.type,
-          r.status,
-          r.requested_at ? new Date(r.requested_at).toLocaleDateString() : "-",
-          r.scheduled_for ? new Date(r.scheduled_for).toLocaleDateString() : "-",
-          r.completed_at ? new Date(r.completed_at).toLocaleDateString() : "-",
-        ])
-      ));
+      DataView(container, {
+        title: "Solicitudes GDPR", subtitle: "Exportaciones y borrados solicitados por usuarios", icon: "🔒",
+        fetch: async () => (await api("/api/admin/gdpr/requests")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total solicitudes", value: rows.length, accent: "blue" },
+          { label: "Pendientes borrado", value: rows.filter((r) => r.status === "scheduled" && r.type === "delete").length, accent: "amber" },
+          { label: "Completadas", value: rows.filter((r) => r.status === "done").length, accent: "green" },
+          { label: "Canceladas", value: rows.filter((r) => r.status === "cancelled").length, accent: "red" },
+        ],
+        filters: [
+          { key: "type", label: "Tipo", type: "select", options: [ { value: "export", label: "Export" }, { value: "delete", label: "Borrado" } ] },
+          { key: "status", label: "Estado", type: "select", options: [ { value: "pending", label: "Pendiente" }, { value: "scheduled", label: "Programada" }, { value: "done", label: "Completada" }, { value: "cancelled", label: "Cancelada" } ] },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "user", label: "Usuario", render: (r) => (r.name || r.email || `#${r.user_id}`) },
+          { key: "type", label: "Tipo", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.type === "delete" ? "red" : "blue"); b.textContent = r.type; return b; } },
+          { key: "status", label: "Estado" },
+          { key: "requested_at", label: "Solicitado", sortable: true, render: (r) => fmtDate(r.requested_at) },
+          { key: "scheduled_for", label: "Programado", render: (r) => fmtDate(r.scheduled_for) },
+          { key: "completed_at", label: "Completado", render: (r) => fmtDate(r.completed_at) },
+        ],
+        actions: [],
+        bulkEndpoint: "/api/admin/gdpr/requests/bulk-delete",
+      });
     }
 
-    // ============ HEATMAP GPS =================================
+    // ---- Heatmap GPS ------------------------------------------------
     async function view_heatmap(container) {
+      container.innerHTML = "";
+      const outer = document.createElement("div"); outer.className = "fx-view";
+      container.appendChild(outer);
+      const head = document.createElement("div"); head.className = "fx-view-head";
+      head.innerHTML = `<div class="fx-view-title"><div class="fx-view-emoji">🗺️</div><div><h1>Mapa de calor GPS</h1><p class="fx-muted">Densidad de usuarios por celdas de ~1 km</p></div></div><div class="fx-view-actions"></div>`;
+      const acts = head.querySelector(".fx-view-actions");
+      acts.appendChild(btn("Limpiar antiguos (30d)", { variant: "ghost", icon: "&#x1f9f9;", onClick: async () => {
+        const ok = await confirmDialog({ title: "Limpiar celdas antiguas", message: "Se borrarán celdas sin actividad en 30 días.", danger: false, confirmLabel: "Limpiar" });
+        if (!ok) return;
+        const r = await api("/api/admin/gps/heatmap/bulk-delete", { method: "POST", body: { older_than_days: 30 } });
+        toast(`${r.data?.deleted || 0} celdas borradas`, "ok"); rerender();
+      } }));
+      acts.appendChild(btn("Borrar TODO el heatmap", { variant: "danger-outline", icon: "&#x2620;", onClick: async () => {
+        const ok = await confirmDialog({ title: "Borrar TODO el heatmap", message: "Irreversible.", danger: true, confirmLabel: "Borrar todo" }); if (!ok) return;
+        const typed = window.prompt('Escribe "SI" para confirmar:'); if (typed !== "SI" && typed !== "SÍ") return;
+        const r = await api("/api/admin/gps/heatmap/bulk-delete", { method: "POST", body: { all: true } });
+        toast(`${r.data?.deleted || 0} celdas borradas`, "ok"); rerender();
+      } }));
+      outer.appendChild(head);
+
       const { data } = await api("/api/admin/gps/heatmap");
       const points = (data && data.points) || [];
-      container.innerHTML = "";
-      container.appendChild(header("🗺️ Mapa de calor GPS", `${points.length} celdas de 1 km`, null, null));
-      // Contenedor mapa (usa Leaflet si está disponible)
-      const mapDiv = h("div", { id: "adminHeatmap", style: "height:500px;width:100%;background:#111;border-radius:12px;margin:12px 0;" });
-      container.appendChild(mapDiv);
-      container.appendChild(h("h3", {}, "Puntos calientes (top 100)"));
-      const top = points.slice(0, 100);
-      container.appendChild(table(["Lat", "Lng", "Hits", "Última vez"], top.map((p) => [
-        String(p.lat), String(p.lng), String(p.hits), p.last_seen ? new Date(p.last_seen).toLocaleString() : "-"
-      ])));
-      // Cargar Leaflet dinámicamente
-      const loadLeaflet = () => new Promise((res, rej) => {
-        if (window.L) return res();
-        const css = document.createElement("link");
-        css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-        document.head.appendChild(css);
-        const s = document.createElement("script");
-        s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-        s.onload = res; s.onerror = rej;
-        document.head.appendChild(s);
+
+      const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis";
+      const totalHits = points.reduce((s, p) => s + (p.hits || 0), 0);
+      [
+        { label: "Celdas", value: points.length, accent: "blue" },
+        { label: "Pings totales", value: totalHits, accent: "purple" },
+        { label: "Máx. hits/celda", value: points[0]?.hits || 0, accent: "amber" },
+      ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
+      outer.appendChild(kpiRow);
+
+      const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;";
+      outer.appendChild(mapDiv);
+
+      // Tabla top 100 con checkbox (sólo lectura, no bulk aquí)
+      const listContainer = document.createElement("div");
+      outer.appendChild(listContainer);
+      DataView(listContainer, {
+        title: "Top 100 celdas", subtitle: "Ordenadas por número de pings", icon: "📍",
+        fetch: async () => points.slice(0, 100),
+        rowId: (r) => `${r.lat}_${r.lng}`,
+        kpis: null,
+        columns: [
+          { key: "lat", label: "Lat", sortable: true },
+          { key: "lng", label: "Lng", sortable: true },
+          { key: "hits", label: "Hits", sortable: true, render: (r) => { const b = document.createElement("span"); b.className = "fx-badge purple"; b.textContent = r.hits; return b; } },
+          { key: "last_seen", label: "Última vez", sortable: true, render: (r) => fmtDate(r.last_seen) },
+        ],
+        actions: [],
       });
+
+      // Leaflet
       try {
-        await loadLeaflet();
+        if (!window.L) {
+          await new Promise((res, rej) => {
+            const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css);
+            const s = document.createElement("script"); s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s);
+          });
+        }
         const L = window.L;
-        const map = L.map("adminHeatmap").setView([40.4, -3.7], 5);
+        const map = L.map("fx-adminHeatmap").setView([40.4, -3.7], 5);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap" }).addTo(map);
         points.forEach((p) => {
-          L.circle([p.lat, p.lng], { radius: 500 + Math.log2(p.hits || 1) * 300, color: "#ff3b6b", fillOpacity: 0.35 }).addTo(map)
-            .bindPopup(`${p.hits} pings`);
+          L.circle([p.lat, p.lng], { radius: 500 + Math.log2((p.hits||1)+1) * 300, color: "#ff3b6b", fillOpacity: 0.35, weight: 1 }).addTo(map).bindPopup(`<b>${p.hits}</b> pings<br/>Última: ${fmtDate(p.last_seen)}`);
         });
       } catch (e) {
         mapDiv.innerHTML = "<p style='color:#fff;padding:20px'>No se pudo cargar el mapa.</p>";
       }
     }
 
-    // ============ MODERACIÓN IA ===============================
+    // ---- Moderación IA ---------------------------------------------
     async function view_moderation_ai(container) {
-      const { data } = await api("/api/admin/moderation/queue");
-      const items = (data && data.items) || [];
-      const stats = await api("/api/admin/moderation/stats").then((r) => r.data).catch(() => null);
-      container.innerHTML = "";
-      container.appendChild(header("🛡️ Moderación IA", `Cola pendiente: ${items.length}`, null, null));
-      if (stats) {
-        container.appendChild(h("div", { class: "card" }, [
-          h("h3", {}, "Estadísticas"),
-          h("p", {}, (stats.by_status || []).map((s) => `${s.status}: ${s.c}`).join(" · ")),
-        ]));
-      }
-      container.appendChild(table(
-        ["ID", "Usuario", "Tipo", "Score", "Flags", "Acciones"],
-        items.map((m) => [
-          String(m.id),
-          m.name || m.email || `#${m.user_id}`,
-          m.kind,
-          String(m.score),
-          m.flags || "-",
-          h("div", {}, [
-            btn("OK", "ghost sm", async () => { await api(`/api/admin/moderation/${m.id}`, { method: "PUT", body: { status: "ok" } }); view_moderation_ai(container); }),
-            btn("Aviso", "ghost sm", async () => { await api(`/api/admin/moderation/${m.id}`, { method: "PUT", body: { status: "warned" } }); view_moderation_ai(container); }),
-            btn("Banear", "danger sm", async () => { if (!confirm("¿Banear al usuario?")) return; await api(`/api/admin/moderation/${m.id}`, { method: "PUT", body: { status: "banned" } }); view_moderation_ai(container); }),
-            btn("Ignorar", "ghost sm", async () => { await api(`/api/admin/moderation/${m.id}`, { method: "PUT", body: { status: "ignored" } }); view_moderation_ai(container); }),
-          ]),
-        ])
-      ));
+      DataView(container, {
+        title: "Moderación IA", subtitle: "Contenidos marcados por heurísticas y palabras", icon: "🛡️",
+        fetch: async () => (await api("/api/admin/moderation/queue")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Cola pendiente", value: rows.filter((r) => r.status === "pending").length, accent: "amber" },
+          { label: "Aprobadas", value: rows.filter((r) => r.status === "ok").length, accent: "green" },
+          { label: "Baneadas", value: rows.filter((r) => r.status === "banned").length, accent: "red" },
+          { label: "Total", value: rows.length, accent: "blue" },
+        ],
+        filters: [
+          { key: "status", label: "Estado", type: "select", options: [ { value: "pending", label: "Pendiente" }, { value: "ok", label: "OK" }, { value: "warned", label: "Avisado" }, { value: "banned", label: "Baneado" }, { value: "ignored", label: "Ignorado" } ] },
+          { key: "kind", label: "Tipo", type: "select", options: [ { value: "message", label: "Mensaje" }, { value: "photo", label: "Foto" }, { value: "profile", label: "Perfil" } ] },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "user", label: "Usuario", render: (r) => (r.name || r.email || `#${r.user_id}`) },
+          { key: "kind", label: "Tipo" },
+          { key: "score", label: "Score", sortable: true, render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.score >= 8 ? "red" : r.score >= 4 ? "amber" : "green"); b.textContent = r.score; return b; } },
+          { key: "flags", label: "Flags", render: (r) => { const s = document.createElement("span"); s.className = "fx-muted"; s.textContent = r.flags || "—"; return s; } },
+          { key: "status", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + ({ pending:"amber", ok:"ok", warned:"amber", banned:"red", ignored:"off" }[r.status]||""); b.textContent = r.status; return b; } },
+        ],
+        actions: [
+          { label: "OK", variant: "ghost", onClick: async (r, reload) => { await api(`/api/admin/moderation/${r.id}`, { method: "PUT", body: { status: "ok" } }); toast("OK","ok"); reload(); } },
+          { label: "Aviso", variant: "ghost", onClick: async (r, reload) => { await api(`/api/admin/moderation/${r.id}`, { method: "PUT", body: { status: "warned" } }); toast("Aviso","ok"); reload(); } },
+          { label: "Banear", variant: "danger", onClick: async (r, reload) => {
+            const ok = await confirmDialog({ title: "Banear usuario", message: `Se banea a ${r.name || r.user_id}`, danger: true, confirmLabel: "Banear" }); if (!ok) return;
+            await api(`/api/admin/moderation/${r.id}`, { method: "PUT", body: { status: "banned" } }); toast("Baneado","ok"); reload();
+          } },
+          { label: "", icon: "&#x1f5d1;", title: "Borrar registro", variant: "danger-icon", onClick: async (r, reload) => {
+            const ok = await confirmDialog({ title: "Borrar registro", message: `#${r.id}`, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
+            await api(`/api/admin/moderation/${r.id}?hard=1`, { method: "DELETE" }); toast("Borrado","ok"); reload();
+          } },
+        ],
+        bulkEndpoint: "/api/admin/moderation/bulk-delete",
+      });
     }
 
-    // ============ VIDEO CALLS =================================
+    // ---- Video-llamadas --------------------------------------------
     async function view_video(container) {
-      const { data } = await api("/api/admin/video/calls");
-      const items = (data && data.items) || [];
-      container.innerHTML = "";
-      container.appendChild(header("📹 Video-llamadas", `${items.length} llamadas registradas`, null, null));
-      container.appendChild(table(
-        ["ID", "Caller", "Callee", "Estado", "Inicio", "Fin"],
-        items.map((v) => [
-          String(v.id), v.caller_name || `#${v.caller_id}`, v.callee_name || `#${v.callee_id}`,
-          v.status, v.created_at ? new Date(v.created_at).toLocaleString() : "-",
-          v.ended_at ? new Date(v.ended_at).toLocaleString() : "-",
-        ])
-      ));
+      DataView(container, {
+        title: "Video-llamadas", subtitle: "Historial de llamadas WebRTC (Oro+)", icon: "📹",
+        fetch: async () => (await api("/api/admin/video/calls")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total", value: rows.length, accent: "blue" },
+          { label: "Completadas", value: rows.filter((r) => r.status === "ended").length, accent: "green" },
+          { label: "Perdidas", value: rows.filter((r) => r.status === "missed").length, accent: "amber" },
+          { label: "En curso", value: rows.filter((r) => r.status === "active").length, accent: "purple" },
+        ],
+        filters: [
+          { key: "status", label: "Estado", type: "select", options: [ { value: "active", label: "En curso" }, { value: "ended", label: "Finalizada" }, { value: "missed", label: "Perdida" } ] },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "caller", label: "Llamante", render: (r) => r.caller_name || `#${r.caller_id}` },
+          { key: "callee", label: "Receptor", render: (r) => r.callee_name || `#${r.callee_id}` },
+          { key: "status", label: "Estado" },
+          { key: "created_at", label: "Inicio", sortable: true, render: (r) => fmtDate(r.created_at) },
+          { key: "ended_at", label: "Fin", render: (r) => fmtDate(r.ended_at) },
+        ],
+        actions: [],
+        bulkEndpoint: "/api/admin/video/calls/bulk-delete",
+      });
     }
 
-    // ============ PUSH CONTEXTUALES ==========================
+    // ---- Push contextuales -----------------------------------------
     async function view_push_ctx(container) {
-      const { data } = await api("/api/admin/push/context");
-      const items = (data && data.items) || [];
-      container.innerHTML = "";
-      container.appendChild(header("🔔 Push contextuales", `${items.length} eventos`, null, null));
-      container.appendChild(table(
-        ["ID", "Usuario", "Tipo", "Entregado", "Fecha"],
-        items.slice(0, 200).map((p) => [
-          String(p.id), `#${p.user_id}`, p.kind, p.delivered ? "✅" : "⏳",
-          p.created_at ? new Date(p.created_at).toLocaleString() : "-",
-        ])
-      ));
+      DataView(container, {
+        title: "Push contextuales", subtitle: "Eventos disparados hacia usuarios", icon: "🔔",
+        fetch: async () => (await api("/api/admin/push/context")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total eventos", value: rows.length, accent: "blue" },
+          { label: "Entregados", value: rows.filter((r) => r.delivered).length, accent: "green" },
+          { label: "Pendientes", value: rows.filter((r) => !r.delivered).length, accent: "amber" },
+          { label: "Tipos únicos", value: new Set(rows.map((r) => r.kind)).size, accent: "purple" },
+        ],
+        filters: [
+          { key: "delivered", label: "Entrega", type: "select", options: [ { value: "1", label: "Entregado" }, { value: "0", label: "Pendiente" } ], apply: (r, v) => String(r.delivered) === v },
+          { key: "kind", label: "Tipo", type: "text" },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "user_id", label: "Usuario", render: (r) => `#${r.user_id}` },
+          { key: "kind", label: "Tipo" },
+          { key: "delivered", label: "Entregado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.delivered ? "ok" : "amber"); b.textContent = r.delivered ? "✓" : "⏳"; return b; } },
+          { key: "created_at", label: "Fecha", sortable: true, render: (r) => fmtDate(r.created_at) },
+        ],
+        actions: [],
+        bulkEndpoint: "/api/admin/push/context/bulk-delete",
+      });
     }
 
-    // Registrar todas las vistas
-    window.__adminExtraViews = {
-      fx_icebreakers: view_icebreakers,
-      fx_stickers: view_stickers,
-      fx_achievements: view_achievements,
-      fx_events: view_events,
-      fx_ab: view_ab,
-      fx_gdpr: view_gdpr,
-      fx_heatmap: view_heatmap,
-      fx_moderation_ai: view_moderation_ai,
-      fx_video: view_video,
-      fx_push_ctx: view_push_ctx,
-    };
-    console.log("[admin_features] 10 vistas registradas");
+    // -----------------------------------------------------------------
+    // Registro + helpers
+    // -----------------------------------------------------------------
+    let currentView = null, currentContainer = null;
+    function wrapView(fn) {
+      return function (container, ctx) {
+        currentView = fn; currentContainer = container;
+        return fn(container, ctx);
+      };
+    }
+    function rerender() {
+      if (currentView && currentContainer) currentView(currentContainer);
+    }
+
+    window.__adminExtraViews = Object.assign(window.__adminExtraViews || {}, {
+      fx_icebreakers: wrapView(view_icebreakers),
+      fx_stickers: wrapView(view_stickers),
+      fx_achievements: wrapView(view_achievements),
+      fx_events: wrapView(view_events),
+      fx_ab: wrapView(view_ab),
+      fx_gdpr: wrapView(view_gdpr),
+      fx_heatmap: wrapView(view_heatmap),
+      fx_moderation_ai: wrapView(view_moderation_ai),
+      fx_video: wrapView(view_video),
+      fx_push_ctx: wrapView(view_push_ctx),
+    });
+    console.log("[admin_features] v548 · 10 vistas premium registradas");
   }
 
-  ready();
+  // -------------------------------------------------------------------
+  // CSS (Premium look)
+  // -------------------------------------------------------------------
+  const FX_CSS = `
+  .fx-view { font-family: inherit; color: var(--fg, #e8ebf5); padding: 4px; }
+  .fx-view-head { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:18px; }
+  .fx-view-title { display:flex; align-items:center; gap:14px; }
+  .fx-view-emoji { font-size:38px; width:66px; height:66px; display:flex; align-items:center; justify-content:center; border-radius:18px; background: linear-gradient(135deg, rgba(255,59,107,0.16), rgba(120,86,255,0.16)); box-shadow: 0 4px 20px rgba(120,86,255,0.15); }
+  .fx-view-title h1 { margin:0; font-size:24px; font-weight:700; letter-spacing:-0.2px; }
+  .fx-muted { color: var(--fg-muted, #96a0b8); font-size:13px; }
+  .fx-view-actions { display:flex; gap:8px; flex-wrap:wrap; }
+
+  .fx-btn { display:inline-flex; align-items:center; gap:6px; padding:9px 14px; border-radius:10px; border:none; font-weight:600; font-size:13px; cursor:pointer; background: rgba(255,255,255,0.06); color: var(--fg,#e8ebf5); transition: all .15s ease; }
+  .fx-btn:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
+  .fx-btn:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
+  .fx-btn.primary { background: linear-gradient(135deg, #ff3b6b, #7a5cff); color:#fff; box-shadow: 0 6px 18px rgba(255,59,107,0.35); }
+  .fx-btn.primary:hover { box-shadow: 0 8px 22px rgba(255,59,107,0.45); }
+  .fx-btn.ghost { background: rgba(255,255,255,0.05); }
+  .fx-btn.danger { background: #e53950; color:#fff; box-shadow: 0 4px 12px rgba(229,57,80,0.35); }
+  .fx-btn.danger:hover { background:#c92e42; }
+  .fx-btn.danger-outline { background: transparent; color:#e53950; border: 1px solid rgba(229,57,80,0.55); }
+  .fx-btn.danger-outline:hover { background: rgba(229,57,80,0.1); }
+  .fx-btn.danger-icon { background: transparent; color:#e53950; padding:6px 9px; }
+  .fx-btn.danger-icon:hover { background: rgba(229,57,80,0.1); }
+  .fx-ico { display:inline-flex; align-items:center; }
+
+  .fx-kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:12px; margin: 6px 0 18px; }
+  .fx-kpi { background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:14px 16px; position:relative; overflow:hidden; }
+  .fx-kpi::before { content:""; position:absolute; top:0; left:0; right:0; height:3px; background: var(--kpi-accent,#7a5cff); }
+  .fx-kpi.blue::before { background:#3b82f6; }
+  .fx-kpi.green::before { background:#22c55e; }
+  .fx-kpi.purple::before { background:#a855f7; }
+  .fx-kpi.amber::before { background:#f59e0b; }
+  .fx-kpi.red::before { background:#ef4444; }
+  .fx-kpi-label { font-size:11px; text-transform:uppercase; letter-spacing:0.6px; color: var(--fg-muted,#96a0b8); font-weight:600; }
+  .fx-kpi-value { font-size:26px; font-weight:800; margin-top:4px; letter-spacing:-0.5px; }
+  .fx-kpi-hint { font-size:11px; color: var(--fg-muted,#96a0b8); margin-top:2px; }
+
+  .fx-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin: 4px 0 12px; flex-wrap:wrap; }
+  .fx-toolbar-left { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .fx-search { position:relative; display:flex; align-items:center; }
+  .fx-search-ico { position:absolute; left:10px; opacity:0.5; }
+  .fx-search-input { padding-left:32px !important; min-width:240px; }
+  .fx-input { padding:8px 12px; border-radius:9px; background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color: var(--fg,#e8ebf5); font-size:13px; outline:none; }
+  .fx-input:focus { border-color:#7a5cff; }
+  select.fx-input { padding-right: 24px; }
+  .fx-filter { display:flex; flex-direction:column; }
+  .fx-filter label { font-size:10px; text-transform:uppercase; color: var(--fg-muted,#96a0b8); letter-spacing:0.5px; margin-bottom:3px; font-weight:600; }
+
+  .fx-bulk { display:flex; justify-content:space-between; align-items:center; background: linear-gradient(90deg, rgba(255,59,107,0.15), rgba(120,86,255,0.12)); padding:10px 16px; border-radius:12px; margin-bottom:10px; border:1px solid rgba(255,59,107,0.25); animation: fx-slidein 0.2s ease; }
+  @keyframes fx-slidein { from { transform: translateY(-4px); opacity:0; } to { transform:none; opacity:1; } }
+  .fx-bulk-count { font-weight:600; }
+  .fx-bulk-actions { display:flex; gap:8px; }
+  .hidden { display:none !important; }
+
+  .fx-table-wrap { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; overflow:hidden; margin-bottom:12px; }
+  .fx-table-wrap.loading { opacity:0.5; pointer-events:none; }
+  .fx-table { width:100%; border-collapse: collapse; font-size:13.5px; }
+  .fx-table thead { background: rgba(255,255,255,0.04); }
+  .fx-table th { text-align:left; padding:11px 14px; font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:0.4px; color: var(--fg-muted,#96a0b8); border-bottom:1px solid rgba(255,255,255,0.08); }
+  .fx-table th.sortable { cursor:pointer; user-select:none; }
+  .fx-table th.sortable:hover { color: var(--fg,#e8ebf5); }
+  .fx-table th.sort-asc::after { content:" ▲"; font-size:9px; }
+  .fx-table th.sort-desc::after { content:" ▼"; font-size:9px; }
+  .fx-table td { padding:10px 14px; border-bottom:1px solid rgba(255,255,255,0.04); vertical-align: middle; }
+  .fx-table tbody tr:hover { background: rgba(255,255,255,0.04); }
+  .fx-table tbody tr.selected { background: rgba(255,59,107,0.10); }
+  .fx-table tbody tr.selected:hover { background: rgba(255,59,107,0.16); }
+  .fx-table.compact th, .fx-table.compact td { padding:7px 10px; font-size:12.5px; }
+  .fx-th-check, .fx-td-check { width:34px; padding-right:0 !important; }
+  .fx-th-check input, .fx-td-check input { transform: scale(1.15); accent-color: #ff3b6b; cursor:pointer; }
+  .fx-td-actions { text-align:right; white-space:nowrap; }
+  .fx-td-actions .fx-btn { padding:6px 10px; margin-left:4px; }
+  .fx-text { display:inline-block; max-width:340px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .fx-pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; padding: 4px 0 12px; }
+  .fx-page-size { padding:4px 6px; font-size:12px; }
+
+  .fx-badge { display:inline-block; padding:3px 8px; border-radius:6px; font-size:11px; font-weight:600; letter-spacing:0.3px; background: rgba(255,255,255,0.08); }
+  .fx-badge.ok { background: rgba(34,197,94,0.15); color:#4ade80; }
+  .fx-badge.off { background: rgba(148,163,184,0.15); color:#94a3b8; }
+  .fx-badge.amber { background: rgba(245,158,11,0.15); color:#fbbf24; }
+  .fx-badge.red { background: rgba(239,68,68,0.18); color:#f87171; }
+  .fx-badge.blue { background: rgba(59,130,246,0.15); color:#60a5fa; }
+  .fx-badge.purple { background: rgba(168,85,247,0.15); color:#c084fc; }
+
+  .fx-plan { display:inline-block; padding:3px 9px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+  .fx-plan-free { background: rgba(148,163,184,0.15); color:#94a3b8; }
+  .fx-plan-premium { background: rgba(59,130,246,0.18); color:#60a5fa; }
+  .fx-plan-gold { background: rgba(234,179,8,0.18); color:#facc15; }
+  .fx-plan-platinum { background: linear-gradient(135deg, rgba(216,180,254,0.25), rgba(96,165,250,0.25)); color:#e9d5ff; }
+
+  .fx-empty { text-align:center; padding:40px 20px; background: rgba(255,255,255,0.02); border:1px dashed rgba(255,255,255,0.1); border-radius:14px; }
+  .fx-empty-icon { font-size:48px; margin-bottom:8px; }
+  .fx-empty h3 { margin:0 0 4px; }
+
+  .fx-panel { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:16px; margin:12px 0; }
+  .fx-panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .fx-panel-head h3 { margin:0 0 4px; }
+  .fx-panel-actions { display:flex; gap:6px; }
+  .fx-panel-body { margin-top:12px; }
+  .fx-ab-grid { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  @media (max-width:768px) { .fx-ab-grid { grid-template-columns: 1fr; } }
+
+  .fx-packs-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap:14px; }
+  .fx-pack-card { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:14px; padding:14px; }
+  .fx-pack-head { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; }
+  .fx-pack-head h3 { margin:0 0 6px; }
+  .fx-pack-meta { display:flex; gap:6px; flex-wrap:wrap; }
+  .fx-pack-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .fx-sticker-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap:8px; margin-top:12px; }
+  .fx-sticker-item { position:relative; text-align:center; font-size:10px; background: rgba(255,255,255,0.04); border-radius:10px; padding:8px; }
+  .fx-sticker-item img { width:56px; height:56px; object-fit:contain; }
+  .fx-sticker-item span { display:block; margin-top:4px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fx-sticker-del { position:absolute; top:4px; right:4px; padding:0 6px !important; font-size:14px !important; line-height:1; }
+  .fx-emoji-big { font-size:22px; }
+
+  .fx-modal-back { position:fixed; inset:0; background: rgba(6,10,20,0.72); backdrop-filter: blur(6px); display:flex; align-items:center; justify-content:center; z-index:10000; animation: fx-fadein 0.15s ease; }
+  @keyframes fx-fadein { from { opacity:0; } to { opacity:1; } }
+  .fx-modal-card { background: #121729; color:#e8ebf5; border-radius:16px; padding:0; min-width:360px; max-width:520px; box-shadow: 0 30px 80px rgba(0,0,0,0.5); border:1px solid rgba(255,255,255,0.08); animation: fx-scalein 0.2s ease; }
+  .fx-modal-card.wide { max-width:640px; width: min(90vw, 640px); }
+  @keyframes fx-scalein { from { transform: scale(0.94); opacity:0; } to { transform:none; opacity:1; } }
+  .fx-modal-head { padding:16px 20px; border-bottom:1px solid rgba(255,255,255,0.06); }
+  .fx-modal-head.danger h3 { color:#f87171; }
+  .fx-modal-head h3 { margin:0; font-size:16px; }
+  .fx-modal-body { padding:16px 20px; }
+  .fx-modal-foot { padding:14px 20px; display:flex; justify-content:flex-end; gap:10px; border-top:1px solid rgba(255,255,255,0.06); }
+  .fx-field { margin-bottom:12px; }
+  .fx-field label { display:block; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#96a0b8; margin-bottom:4px; font-weight:600; }
+  .fx-field .fx-input, .fx-field textarea, .fx-field select { width:100%; box-sizing:border-box; padding:9px 12px; }
+  .fx-field textarea { min-height:80px; resize: vertical; font-family: inherit; }
+
+  #fx-toast { position:fixed; top:16px; right:16px; z-index:20000; display:flex; flex-direction:column; gap:8px; }
+  .fx-toast-line { background: #121729; color:#e8ebf5; padding:11px 16px; border-radius:10px; font-size:13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-left: 4px solid #7a5cff; transform: translateX(20px); opacity:0; transition: all .25s ease; }
+  .fx-toast-line.show { transform:none; opacity:1; }
+  .fx-toast-line.ok { border-left-color:#22c55e; }
+  .fx-toast-line.err { border-left-color:#ef4444; }
+  .fx-toast-line.info { border-left-color:#3b82f6; }
+  `;
 })();

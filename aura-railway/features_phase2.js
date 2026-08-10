@@ -245,6 +245,37 @@ function register(app, pool, helpers) {
     res.json({ ok: true, totals: tot, top });
   }));
 
+  // ---- ADMIN: bulk delete ----
+  app.post("/api/admin/achievements/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      await pool.execute("DELETE FROM user_achievements");
+      const [r] = await pool.execute("DELETE FROM achievements");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    await pool.query(`DELETE FROM user_achievements WHERE achievement_id IN (${ids.map(()=>"?").join(",")})`, ids);
+    const [r] = await pool.query(`DELETE FROM achievements WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.post("/api/admin/stories/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM stories");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM stories WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  // Admin stories list (útil para panel)
+  app.get("/api/admin/stories", requireAdmin, wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      "SELECT s.*, u.name FROM stories s LEFT JOIN users u ON u.id=s.user_id ORDER BY s.id DESC LIMIT 500"
+    );
+    res.json({ ok: true, items: rows });
+  }));
+
   console.log("[phase2] endpoints registered");
 }
 

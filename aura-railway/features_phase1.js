@@ -366,6 +366,40 @@ function register(app, pool, helpers) {
     res.json({ ok: true });
   }));
 
+  // ---- ADMIN: bulk delete ------------------------------------------
+  app.post("/api/admin/icebreakers/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM icebreakers");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM icebreakers WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.post("/api/admin/stickers/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM stickers");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM stickers WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.post("/api/admin/sticker-packs/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x, 10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      await pool.execute("DELETE FROM stickers");
+      const [r] = await pool.execute("DELETE FROM sticker_packs");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    await pool.query(`DELETE FROM stickers WHERE pack_id IN (${ids.map(()=>"?").join(",")})`, ids);
+    const [r] = await pool.query(`DELETE FROM sticker_packs WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+
   console.log("[phase1] endpoints registered");
 }
 

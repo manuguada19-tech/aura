@@ -354,6 +354,63 @@ function register(app, pool, helpers) {
     res.json({ ok: true, points: rows });
   }));
 
+  // ---- ADMIN: bulk delete ----
+  app.post("/api/admin/events/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      await pool.execute("DELETE FROM event_attendees");
+      const [r] = await pool.execute("DELETE FROM events");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    await pool.query(`DELETE FROM event_attendees WHERE event_id IN (${ids.map(()=>"?").join(",")})`, ids);
+    const [r] = await pool.query(`DELETE FROM events WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.post("/api/admin/gdpr/requests/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM gdpr_requests");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    const [r] = await pool.query(`DELETE FROM gdpr_requests WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.post("/api/admin/ab/tests/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.map((x) => parseInt(x,10)).filter(Number.isFinite) : [];
+    if (req.body?.all === true) {
+      await pool.execute("DELETE FROM ab_events");
+      await pool.execute("DELETE FROM ab_assignments");
+      const [r] = await pool.execute("DELETE FROM ab_tests");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    if (!ids.length) return res.json({ ok: true, deleted: 0 });
+    await pool.query(`DELETE FROM ab_events WHERE test_id IN (${ids.map(()=>"?").join(",")})`, ids);
+    await pool.query(`DELETE FROM ab_assignments WHERE test_id IN (${ids.map(()=>"?").join(",")})`, ids);
+    const [r] = await pool.query(`DELETE FROM ab_tests WHERE id IN (${ids.map(()=>"?").join(",")})`, ids);
+    res.json({ ok: true, deleted: r.affectedRows });
+  }));
+  app.delete("/api/admin/ab/tests/:id", requireAdmin, wrap(async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    await pool.execute("DELETE FROM ab_events WHERE test_id=?", [id]);
+    await pool.execute("DELETE FROM ab_assignments WHERE test_id=?", [id]);
+    await pool.execute("DELETE FROM ab_tests WHERE id=?", [id]);
+    res.json({ ok: true });
+  }));
+  app.post("/api/admin/gps/heatmap/bulk-delete", requireAdmin, wrap(async (req, res) => {
+    if (req.body?.all === true) {
+      const [r] = await pool.execute("DELETE FROM gps_heatmap");
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    const olderThan = parseInt(req.body?.older_than_days, 10);
+    if (Number.isFinite(olderThan)) {
+      const [r] = await pool.execute("DELETE FROM gps_heatmap WHERE last_seen < (NOW() - INTERVAL ? DAY)", [olderThan]);
+      return res.json({ ok: true, deleted: r.affectedRows });
+    }
+    res.json({ ok: true, deleted: 0 });
+  }));
+
   console.log("[phase3] endpoints registered");
 }
 
