@@ -38,6 +38,28 @@ async function migrate(pool) {
     INDEX idx_user (user_id),
     INDEX idx_type (type)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // V592 · Preferencias de notificaciones por usuario (todo activado por defecto).
+  // Sin fila = defaults. Los "mensajes del equipo" in-app no son desactivables
+  // (comunicación importante); su push sí.
+  await pool.query(`CREATE TABLE IF NOT EXISTS notification_prefs (
+    user_id INT PRIMARY KEY,
+    rewards_inapp TINYINT(1) NOT NULL DEFAULT 1,
+    rewards_push  TINYINT(1) NOT NULL DEFAULT 1,
+    admin_push    TINYINT(1) NOT NULL DEFAULT 1,
+    matches_inapp TINYINT(1) NOT NULL DEFAULT 1,
+    matches_push  TINYINT(1) NOT NULL DEFAULT 1,
+    chat_push     TINYINT(1) NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+}
+
+// V592 · Claves válidas de preferencias (y sus defaults)
+const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push"];
+function prefDefaults() {
+  const o = {};
+  for (const k of PREF_KEYS) o[k] = true;
+  return o;
 }
 
 function register(app, pool, helpers) {
@@ -95,6 +117,35 @@ function register(app, pool, helpers) {
     res.json({ ok: true, marked: r.affectedRows });
   }));
 
+  // ---------- Público: leer preferencias (V592) -------------------------
+  app.get("/api/my/notification-prefs", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ ok: false, error: "auth" });
+    const [rows] = await pool.query("SELECT * FROM notification_prefs WHERE user_id=? LIMIT 1", [me]);
+    const prefs = prefDefaults();
+    if (rows[0]) for (const k of PREF_KEYS) prefs[k] = !!rows[0][k];
+    res.json({ ok: true, prefs });
+  }));
+
+  // ---------- Público: guardar preferencias (V592) ----------------------
+  app.post("/api/my/notification-prefs", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ ok: false, error: "auth" });
+    const body = req.body || {};
+    const prefs = prefDefaults();
+    // Partimos de lo guardado (si existe) y aplicamos solo claves válidas
+    const [rows] = await pool.query("SELECT * FROM notification_prefs WHERE user_id=? LIMIT 1", [me]);
+    if (rows[0]) for (const k of PREF_KEYS) prefs[k] = !!rows[0][k];
+    for (const k of PREF_KEYS) if (k in body) prefs[k] = !!body[k];
+    await pool.query(
+      `INSERT INTO notification_prefs (user_id, ${PREF_KEYS.join(", ")})
+       VALUES (?, ${PREF_KEYS.map(() => "?").join(", ")})
+       ON DUPLICATE KEY UPDATE ${PREF_KEYS.map((k) => `${k}=VALUES(${k})`).join(", ")}`,
+      [me, ...PREF_KEYS.map((k) => (prefs[k] ? 1 : 0))]
+    );
+    res.json({ ok: true, prefs });
+  }));
+
   // ---------- Admin: historial global de enviadas ------------------------
   app.get("/api/admin/notifications/sent", requireAdmin, wrap(async (req, res) => {
     const [rows] = await pool.query(
@@ -127,11 +178,12 @@ function register(app, pool, helpers) {
       ]
     );
     // V589 · push web (best-effort): la notificación llega aunque la app esté cerrada
+    // V592 · respeta la preferencia admin_push del usuario
     const push = await pushToUser(Number(user_id), {
       title: String(title).slice(0, 200),
       body: body ? String(body) : "",
       tag: "admin_message",
-    });
+    }, "admin_push");
     res.json({ ok: true, id: ins.insertId, push_sent: push.sent || 0 });
   }));
 

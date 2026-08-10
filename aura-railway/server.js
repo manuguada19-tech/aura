@@ -3620,12 +3620,23 @@ async function sendPushToDevice(device, payload) {
   }
 }
 
+// V592 · ¿Permite el usuario este tipo de aviso? (sin fila = todo activado)
+async function notifPrefAllows(userId, key) {
+  try {
+    const [rows] = await pool.query("SELECT * FROM notification_prefs WHERE user_id=? LIMIT 1", [userId]);
+    if (!rows[0]) return true;
+    return rows[0][key] == null ? true : !!rows[0][key];
+  } catch (e) { return true; } // ante la duda (tabla aún no creada…), enviar
+}
+
 // V589 · Enviar push a todos los dispositivos activos de un usuario (best-effort).
 // Se pasa como helper a los módulos de fases para acompañar notificaciones in-app.
-async function pushToUser(userId, payload) {
+// V592 · prefKey opcional: si el usuario desactivó ese tipo de push, no se envía.
+async function pushToUser(userId, payload, prefKey) {
   if (!pushEnabled()) return { sent: 0, note: "push_disabled" };
   const uid = parseInt(userId, 10);
   if (!uid) return { sent: 0, note: "sin_usuario" };
+  if (prefKey && !(await notifPrefAllows(uid, prefKey))) return { sent: 0, note: "pref_off" };
   try {
     const [devs] = await pool.query(
       "SELECT id, endpoint, p256dh, auth_key FROM push_devices WHERE user_id=? AND active=1",
@@ -3677,7 +3688,7 @@ async function notifyNewMessage(senderId, cid, preview) {
       body: (preview || "Tienes un mensaje nuevo").slice(0, 120),
       url: "/",
       tag: `chat-${cid}`,
-    });
+    }, "chat_push"); // V592
   } catch (e) { /* best-effort */ }
 }
 
@@ -8807,19 +8818,21 @@ app.post("/api/my/conversations", wrap(async (req, res) => {
     try {
       const [[meRow]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
       const meName = meRow?.name || "Alguien";
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, data)
-         VALUES (?, 'new_match', ?, ?, '💘', ?)`,
-        [peer, "💘 ¡Nuevo match!",
-         `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
-         JSON.stringify({ conversation_id: r.insertId, peer_id: me })]
-      );
+      if (await notifPrefAllows(peer, "matches_inapp")) { // V592
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, data)
+           VALUES (?, 'new_match', ?, ?, '💘', ?)`,
+          [peer, "💘 ¡Nuevo match!",
+           `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
+           JSON.stringify({ conversation_id: r.insertId, peer_id: me })]
+        );
+      }
       await pushToUser(peer, {
         title: "💘 ¡Nuevo match!",
         body: `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
         url: "/",
         tag: `match-${r.insertId}`,
-      });
+      }, "matches_push"); // V592
     } catch (e) { /* best-effort */ }
   })().catch(() => {});
   res.json({ ok: true, id: r.insertId });
@@ -9647,8 +9660,8 @@ phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase5.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
-phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser }); // V589 · +pushToUser
-phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser }); // V589 · +pushToUser
+phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
+phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
 
 (async () => {
   try {

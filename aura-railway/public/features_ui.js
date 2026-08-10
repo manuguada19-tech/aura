@@ -748,18 +748,77 @@
       h("div", { class: "notif-list-wrap" }, [
         h("div", { class: "notif-head" }, [
           h("h3", {}, "🔔 Notificaciones"),
-          (data.unread || 0) > 0
-            ? h("button", { class: "btn ghost notif-readall", onclick: async () => {
-                await api("/api/my/notifications/read-all", { method: "POST" }).catch(() => {});
-                updateNotifBadge();
-                closeModal();
-                openNotifications();
-              } }, "Marcar todas leídas")
-            : null,
+          h("div", { style: "display:flex;gap:8px;align-items:center" }, [
+            (data.unread || 0) > 0
+              ? h("button", { class: "btn ghost notif-readall", onclick: async () => {
+                  await api("/api/my/notifications/read-all", { method: "POST" }).catch(() => {});
+                  updateNotifBadge();
+                  closeModal();
+                  openNotifications();
+                } }, "Marcar todas leídas")
+              : null,
+            h("button", { class: "btn ghost notif-prefs-btn", title: "Preferencias", onclick: () => { closeModal(); openNotifPrefs(); } }, "⚙️"),
+          ]),
         ]),
         h("div", { class: "notif-list" }, rows),
         h("div", { class: "modal-actions" }, [
           h("button", { class: "btn secondary", onclick: closeModal }, "Cerrar"),
+        ]),
+      ]),
+    ], "notif-modal");
+  }
+
+  // ============ PREFERENCIAS DE NOTIFICACIONES (V592) =============
+  // El usuario elige qué avisos recibir y por qué canal. Se guarda al
+  // instante con cada toggle (sin botón guardar).
+  const NOTIF_PREF_ROWS = [
+    { section: "💘 Matches" },
+    { key: "matches_inapp", label: "En la campanita", hint: "Aviso en la app cuando haces match" },
+    { key: "matches_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada" },
+    { section: "💬 Mensajes de chat" },
+    { key: "chat_push",     label: "Push en el móvil", hint: "Cuando te escriben y no estás en la app" },
+    { section: "🎁 Canjes y recompensas" },
+    { key: "rewards_inapp", label: "En la campanita", hint: "Canjes aprobados, rechazados y regalos" },
+    { key: "rewards_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada" },
+    { section: "📣 Mensajes del equipo" },
+    { key: "admin_push",    label: "Push en el móvil", hint: "Los avisos importantes siempre aparecen en la campanita" },
+  ];
+
+  async function openNotifPrefs() {
+    const { ok, data } = await api("/api/my/notification-prefs");
+    if (!ok) { toast("No se pudieron cargar las preferencias."); return; }
+    const prefs = data.prefs || {};
+    const children = NOTIF_PREF_ROWS.map((row) => {
+      if (row.section) return h("div", { class: "nprefs-section" }, row.section);
+      const on = prefs[row.key] !== false;
+      const sw = h("button", { class: "npref-switch" + (on ? " on" : ""), role: "switch", "aria-checked": String(on) }, [
+        h("span", { class: "npref-knob" }, ""),
+      ]);
+      sw.onclick = async () => {
+        const next = !sw.classList.contains("on");
+        sw.classList.toggle("on", next);
+        sw.setAttribute("aria-checked", String(next));
+        const r = await api("/api/my/notification-prefs", { method: "POST", body: JSON.stringify({ [row.key]: next }) }).catch(() => null);
+        if (!r || !r.ok) { // revertir si falló
+          sw.classList.toggle("on", !next);
+          sw.setAttribute("aria-checked", String(!next));
+          toast("No se pudo guardar. Inténtalo de nuevo.");
+        }
+      };
+      return h("div", { class: "npref-row" }, [
+        h("div", { class: "npref-info" }, [
+          h("strong", {}, row.label),
+          h("small", { class: "muted" }, row.hint),
+        ]),
+        sw,
+      ]);
+    });
+    modal([
+      h("div", { class: "notif-list-wrap" }, [
+        h("div", { class: "notif-head" }, [ h("h3", {}, "⚙️ Preferencias de avisos") ]),
+        h("div", { class: "nprefs-list" }, children),
+        h("div", { class: "modal-actions" }, [
+          h("button", { class: "btn secondary", onclick: () => { closeModal(); openNotifications(); } }, "Volver"),
         ]),
       ]),
     ], "notif-modal");
@@ -778,7 +837,7 @@
     openFilters,
     openGDPR,
     openRewardsShop, openMyRewards,
-    openNotifications, updateNotifBadge,
+    openNotifications, updateNotifBadge, openNotifPrefs,
     startVideoCall,
     translateMsg,
   };

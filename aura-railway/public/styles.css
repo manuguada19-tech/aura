@@ -7842,3 +7842,34 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
   background: transparent; border: 1px solid var(--border-strong);
   color: var(--text-soft); font-weight: 600; font-size: 12px;
 }
+
+/* V592 · Preferencias de notificaciones (toggles) */
+.nprefs-list { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; }
+.nprefs-section {
+  font-size: 11.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted); padding: 14px 2px 6px;
+}
+.nprefs-section:first-child { padding-top: 2px; }
+.npref-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border-strong);
+}
+.npref-row + .npref-row { margin-top: 6px; }
+.npref-info { flex: 1; min-width: 0; }
+.npref-info strong { display: block; font-size: 13.5px; }
+.npref-info small { display: block; font-size: 11.5px; margin-top: 2px; }
+.npref-switch {
+  position: relative; flex: 0 0 auto; width: 44px; height: 26px;
+  border-radius: 999px; border: 1px solid var(--border-strong);
+  background: var(--bg); cursor: pointer; padding: 0;
+  transition: background .2s ease, border-color .2s ease;
+}
+.npref-switch .npref-knob {
+  position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+  border-radius: 50%; background: var(--text-muted);
+  transition: transform .2s ease, background .2s ease;
+}
+.npref-switch.on { background: linear-gradient(135deg, #ff3b6b, #a855f7); border-color: transparent; }
+.npref-switch.on .npref-knob { transform: translateX(18px); background: #fff; }
+.notif-prefs-btn { font-size: 15px; padding: 4px 10px; }

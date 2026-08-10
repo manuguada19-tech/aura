@@ -177,6 +177,8 @@ function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
   // V589 · push web opcional acompañando a la notificación in-app (no-op si no está configurado)
   const pushToUser = typeof helpers.pushToUser === "function" ? helpers.pushToUser : async () => ({ sent: 0 });
+  // V592 · preferencias del usuario (sin helper = todo permitido)
+  const prefAllows = typeof helpers.notifPrefAllows === "function" ? helpers.notifPrefAllows : async () => true;
 
   // ---------- Público: catálogo visible ---------------------------------
   app.get("/api/my/rewards/shop", wrap(async (req, res) => {
@@ -556,23 +558,25 @@ function register(app, pool, helpers) {
           WHERE rr.id=? LIMIT 1`, [id]);
       if (rows[0]) {
         const rec = rows[0];
-        await pool.query(
-          `INSERT INTO notifications (user_id, type, title, body, icon, data)
-           VALUES (?, 'reward_approved', ?, ?, ?, ?)`,
-          [
-            rec.user_id,
-            "🎉 Canje aprobado",
-            `Tu canje de "${rec.reward_title}" fue aprobado. Ya puedes usar tu código.`,
-            rec.reward_icon || "🎁",
-            JSON.stringify({ redemption_id: id, code: rec.code }),
-          ]
-        );
+        if (await prefAllows(rec.user_id, "rewards_inapp")) { // V592
+          await pool.query(
+            `INSERT INTO notifications (user_id, type, title, body, icon, data)
+             VALUES (?, 'reward_approved', ?, ?, ?, ?)`,
+            [
+              rec.user_id,
+              "🎉 Canje aprobado",
+              `Tu canje de "${rec.reward_title}" fue aprobado. Ya puedes usar tu código.`,
+              rec.reward_icon || "🎁",
+              JSON.stringify({ redemption_id: id, code: rec.code }),
+            ]
+          );
+        }
         // V589 · push web (best-effort)
         await pushToUser(rec.user_id, {
           title: "🎉 Canje aprobado",
           body: `Tu canje de "${rec.reward_title}" fue aprobado. Ya puedes usar tu código.`,
           tag: "reward_approved",
-        });
+        }, "rewards_push"); // V592
       }
     } catch (e) { /* notificaciones son best-effort */ }
     res.json({ ok: true });
@@ -615,13 +619,15 @@ function register(app, pool, helpers) {
       const bodyMsg = refund && rec.xp_spent > 0
         ? `Tu canje de "${rewardTitle}" no fue aprobado. Te hemos devuelto ${rec.xp_spent} XP.${note ? " Motivo: " + note : ""}`
         : `Tu canje de "${rewardTitle}" no fue aprobado.${note ? " Motivo: " + note : ""}`;
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, data)
-         VALUES (?, 'reward_rejected', ?, ?, ?, ?)`,
-        [rec.user_id, "❌ Canje rechazado", bodyMsg, rewardIcon, JSON.stringify({ redemption_id: id, refunded_xp: refund ? rec.xp_spent : 0, note: note || null })]
-      );
+      if (await prefAllows(rec.user_id, "rewards_inapp")) { // V592
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, data)
+           VALUES (?, 'reward_rejected', ?, ?, ?, ?)`,
+          [rec.user_id, "❌ Canje rechazado", bodyMsg, rewardIcon, JSON.stringify({ redemption_id: id, refunded_xp: refund ? rec.xp_spent : 0, note: note || null })]
+        );
+      }
       // V589 · push web (best-effort)
-      await pushToUser(rec.user_id, { title: "❌ Canje rechazado", body: bodyMsg, tag: "reward_rejected" });
+      await pushToUser(rec.user_id, { title: "❌ Canje rechazado", body: bodyMsg, tag: "reward_rejected" }, "rewards_push"); // V592
     } catch (e) { /* best-effort */ }
     res.json({ ok: true, refunded_xp: refund ? rec.xp_spent : 0 });
   }));
@@ -642,20 +648,22 @@ function register(app, pool, helpers) {
     );
     // V586 · Notificar al usuario
     try {
-      await pool.query(
-        `INSERT INTO notifications (user_id, type, title, body, icon, data)
-         VALUES (?, 'reward_granted', ?, ?, ?, ?)`,
-        [uid, "🎁 Recompensa concedida",
-         `Un administrador te ha concedido "${r.title}". Ya puedes usar tu código.`,
-         r.icon || "🎁",
-         JSON.stringify({ code, reward_id: rid })]
-      );
+      if (await prefAllows(uid, "rewards_inapp")) { // V592
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, data)
+           VALUES (?, 'reward_granted', ?, ?, ?, ?)`,
+          [uid, "🎁 Recompensa concedida",
+           `Un administrador te ha concedido "${r.title}". Ya puedes usar tu código.`,
+           r.icon || "🎁",
+           JSON.stringify({ code, reward_id: rid })]
+        );
+      }
       // V589 · push web (best-effort)
       await pushToUser(uid, {
         title: "🎁 Recompensa concedida",
         body: `Un administrador te ha concedido "${r.title}". Ya puedes usar tu código.`,
         tag: "reward_granted",
-      });
+      }, "rewards_push"); // V592
     } catch (e) {}
     res.json({ ok: true, code });
   }));
