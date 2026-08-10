@@ -382,12 +382,105 @@
       back.remove();
     };
     back.querySelector("#callAccept").onclick = async () => {
-      try { await api(`/api/my/video/${payload.call_id}/accept`, { method: "POST" }); } catch {}
+      let acceptRes;
+      try {
+        acceptRes = await api(`/api/my/video/${payload.call_id}/accept`, { method: "POST" });
+      } catch {}
       back.remove();
-      // El caller ya inició WebRTC; el callee reproduce la sala.
-      // Se implementará el flujo completo del callee en una siguiente iteración.
-      toast(isAudio ? "Llamada aceptada. Establece la conexión…" : "Videollamada aceptada.");
+      if (!acceptRes || !acceptRes.ok || !acceptRes.data || !acceptRes.data.ok) {
+        toast("No se pudo aceptar la llamada.");
+        return;
+      }
+      const room_id = acceptRes.data.room_id || payload.room_id;
+      const ice_servers = acceptRes.data.ice_servers || [{ urls: "stun:stun.l.google.com:19302" }];
+      joinCallAsCallee({
+        call_id: payload.call_id,
+        room_id,
+        mode: isAudio ? "audio" : "video",
+        ice_servers,
+        peerName: payload.caller_name || payload.from_name || "usuario",
+      });
     };
+  }
+
+  // V565 · Flujo del callee: al aceptar, abre WebRTC, escucha SSE para la
+  // "offer" del caller, crea "answer", intercambia ICE, y muestra el modal
+  // de llamada con audio/vídeo local+remoto y botón Colgar.
+  async function joinCallAsCallee({ call_id, room_id, mode, ice_servers, peerName }) {
+    const isAudio = mode === "audio";
+    const headers = { "Content-Type": "application/json", ...authHeaders() };
+    let pc, localStream, sse, backdrop;
+    let ended = false;
+    const endCall = () => {
+      if (ended) return;
+      ended = true;
+      try { pc && pc.close(); } catch {}
+      try { localStream && localStream.getTracks().forEach((t) => t.stop()); } catch {}
+      try { sse && sse.close(); } catch {}
+      try { fetch(`/api/my/video/${call_id}/end`, { method: "POST", headers }).catch(()=>{}); } catch {}
+      try { backdrop && backdrop.remove(); } catch {}
+    };
+    try {
+      pc = new RTCPeerConnection({ iceServers: ice_servers });
+      const constraints = isAudio ? { audio: true } : { audio: true, video: true };
+      localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+
+      const remoteEl = isAudio
+        ? h("audio", { autoplay: "", controls: "", style: "width:100%" })
+        : h("video", { autoplay: "", playsinline: "", style: "width:100%;background:#000;border-radius:12px" });
+      const localEl = isAudio
+        ? null
+        : h("video", { autoplay: "", playsinline: "", muted: "", style: "width:120px;position:absolute;bottom:12px;right:12px;border-radius:8px" });
+      if (localEl) localEl.srcObject = localStream;
+      pc.ontrack = (ev) => { remoteEl.srcObject = ev.streams[0]; };
+      pc.onicecandidate = (ev) => {
+        if (ev.candidate) {
+          fetch(`/api/my/video/room/${room_id}/signal`, {
+            method: "POST", headers,
+            body: JSON.stringify({ type: "ice", candidate: ev.candidate }),
+          }).catch(()=>{});
+        }
+      };
+
+      const token = readToken();
+      const sseUrl = `/api/my/video/room/${room_id}/signal` + (token ? `?adminToken=${encodeURIComponent(token)}` : "");
+      sse = new EventSource(sseUrl);
+      sse.onmessage = async (m) => {
+        try {
+          const msg = JSON.parse(m.data);
+          if (msg.type === "offer" && msg.sdp) {
+            await pc.setRemoteDescription(msg.sdp);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            await fetch(`/api/my/video/room/${room_id}/signal`, {
+              method: "POST", headers,
+              body: JSON.stringify({ type: "answer", sdp: answer }),
+            });
+          } else if (msg.type === "ice" && msg.candidate) {
+            try { await pc.addIceCandidate(msg.candidate); } catch {}
+          } else if (msg.type === "ended") {
+            endCall();
+          }
+        } catch {}
+      };
+
+      const title = (isAudio ? "📞 Llamada con " : "📹 Videollamada con ") + peerName;
+      const kids = isAudio
+        ? [ h("h3", {}, title), h("p", { class: "muted" }, "Conectando…"), remoteEl,
+            h("div", { class: "modal-actions" }, [ h("button", { class: "btn primary", style: "background:#c0392b", onclick: endCall }, "Colgar") ]) ]
+        : [ h("h3", {}, title),
+            h("div", { class: "video-call-wrap", style: "position:relative" }, [remoteEl, localEl]),
+            h("div", { class: "modal-actions" }, [ h("button", { class: "btn primary", style: "background:#c0392b", onclick: endCall }, "Colgar") ]) ];
+      backdrop = h("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) endCall(); } }, [
+        h("div", { class: "modal-card call-modal" }, kids),
+      ]);
+      document.body.appendChild(backdrop);
+    } catch (e) {
+      console.error("[callee] error", e);
+      toast("No se pudo unir a la llamada.");
+      endCall();
+    }
   }
 
   window.aura2 = {
