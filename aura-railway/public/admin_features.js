@@ -16,7 +16,13 @@
   boot();
 
   function inject() {
-    const api = window.__adminApi;
+    const rawApi = window.__adminApi;
+    // Normalizador: admin.js `api()` devuelve el JSON directamente, pero el
+    // resto de este archivo espera un envoltorio con `.data`. Envolvemos.
+    const api = async function (url, opts) {
+      const json = await rawApi(url, opts);
+      return { data: json || {}, ok: !json || json.ok !== false };
+    };
     const el  = window.__adminEl;
 
     // -----------------------------------------------------------------
