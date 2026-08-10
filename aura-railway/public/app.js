@@ -1322,8 +1322,20 @@ function applyDesign() {
   r.setProperty("--grad-brand", `linear-gradient(135deg, ${b1}, ${b2})`);
   r.setProperty("--shadow-brand", `0 10px 30px ${b1}55`);
   if (!isDark) {
-    if (bg) r.setProperty("--surface", bg);
-    if (tx) r.setProperty("--text", tx);
+    // Only override --surface/--text if the design bg is actually light,
+    // otherwise the light-theme tokens win. This prevents a dark hero bg
+    // (e.g. #14060b) from darkening side cards in light mode.
+    const isLightColor = (hex) => {
+      if (!hex) return false;
+      const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+      if (!m) return false;
+      const n = parseInt(m[1], 16);
+      const r_ = (n >> 16) & 255, g_ = (n >> 8) & 255, b_ = n & 255;
+      // Rec.709 luma
+      return (0.2126 * r_ + 0.7152 * g_ + 0.0722 * b_) > 200;
+    };
+    if (bg && isLightColor(bg)) r.setProperty("--surface", bg); else r.removeProperty("--surface");
+    if (tx && !isLightColor(tx)) r.setProperty("--text", tx); else r.removeProperty("--text");
   } else {
     // In dark mode, clear light overrides so [data-theme="dark"] tokens win
     r.removeProperty("--surface");
@@ -1465,7 +1477,7 @@ function applyDesign() {
   r.setProperty("--text-hero-sub", heroS || defSub);
 
   // Logo tokens — defaults marca Aura: logo circular con anillo arcoíris CSS
-  const logoSize = parseInt(g("content.design.logo_size","200"),10) || 200;
+  const logoSize = parseInt(g("content.design.logo_size","115"),10) || 115;
   const logoRad = parseInt(g("content.design.logo_radius","50"),10) || 50;
   r.setProperty("--logo-size", logoSize + "px");
   r.setProperty("--logo-radius", logoRad + "px");
@@ -1481,7 +1493,7 @@ function applyDesign() {
     const v = parseFloat(g("content.design." + key, def)) || parseFloat(def);
     r.setProperty(name, v + "px");
   };
-  setPx("--welc-logo-size", "welc_logo_size", "200");
+  setPx("--welc-logo-size", "welc_logo_size", "115");
   setPx("--welc-sub-size", "welc_sub_size", "13");
   setPx("--welc-card-pad", "welc_card_pad", "8");
   setPx("--welc-input-h", "welc_input_h", "40");
@@ -1516,8 +1528,8 @@ function buildLogoInnerHTML() {
   if (mode === "image") {
     // Choose a light-mode alternate if configured and current theme is light
     const theme = document.documentElement.dataset.theme || "dark";
-    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round.png?v=5");
-    const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=5");
+    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=6");
+    const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=6");
     const url = (theme === "light" && urlLight) ? urlLight : urlDark;
     if (url) return `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
   }
@@ -1568,14 +1580,14 @@ function applyContent() {
       : bgMode === "transparent" ? "transparent"
       : `linear-gradient(135deg, ${b1c}, ${b2c})`;
     // Reuse the same size/radius as the welcome hero logo but scaled down for the sidebar
-    const rawSize = parseInt(_t("content.design.logo_size", "88"), 10) || 88;
+    const rawSize = parseInt(_t("content.design.logo_size", "115"), 10) || 115;
     const size = Math.max(40, Math.round(rawSize * 0.7));
     const radius = parseInt(_t("content.design.logo_radius", "50"), 10) || 50;
     let inner = "";
     if (mode === "image") {
       const theme = document.documentElement.dataset.theme || "dark";
-      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round.png?v=5");
-      const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=5");
+      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=6");
+      const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=6");
       const url = (theme === "light" && urlLight) ? urlLight : (urlDark || urlLight);
       inner = `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
     } else if (mode === "emoji") {
@@ -5543,7 +5555,7 @@ function screenDiscover(root) {
       el("span", {
         class: "brand-logo-mini brand-logo-crop",
         "aria-label": "Aura",
-        html: `<img src="assets/aura-logo-round.png?v=5" alt="Aura" />`,
+        html: `<img src="assets/aura-logo-round.png?v=6" alt="Aura" />`,
       }),
       el("button", { class: "chip", onclick: openFilters }, [
         el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),

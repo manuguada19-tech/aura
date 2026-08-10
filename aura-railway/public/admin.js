@@ -8586,13 +8586,13 @@ const DESIGN_DEFAULTS = {
   // Logo customization — Marca Aura: imagen PNG completa (ya incluye anillo gradiente).
   // Fondo transparente y tamaño grande para respetar la referencia oficial.
   logo_mode:"image",
-  logo_image:"assets/aura-logo-round.png?v=5",
-  logo_image_light:"assets/aura-logo-round.png?v=5",
+  logo_image:"assets/aura-logo-round.png?v=6",
+  logo_image_light:"assets/aura-logo-round-light.png?v=6",
   logo_emoji:"💘",
   logo_bg:"transparent", logo_color:"#ffffff",
-  logo_size:"200", logo_radius:"50",
+  logo_size:"115", logo_radius:"50",
   // Bienvenida — tamaños por bloque (px). Vacío = usar por defecto.
-  welc_logo_size:"200",      // Diámetro del logo en la pantalla de bienvenida
+  welc_logo_size:"115",      // Diámetro del logo en la pantalla de bienvenida
   welc_sub_size:"13",        // Tamaño del subtítulo
   welc_card_pad:"8",         // Padding de la tarjeta "pruebas privadas"
   welc_input_h:"40",         // Altura del input de código de invitación

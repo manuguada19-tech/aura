@@ -7056,17 +7056,17 @@ body:not(.app-open) #twofaReminder {
    pequeñas. En escritorio (marco .phone) usa el valor exacto configurado. */
 .app-viewport .screen.screen-hero .welcome-heart,
 .app-viewport .screen.screen-hero .welcome-heart.logo-transparent {
-  width: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
-  height: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
-  max-width: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
-  max-height: min(var(--welc-logo-size, 200px), 26vh, 220px) !important;
+  width: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
+  height: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
+  max-width: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
+  max-height: min(var(--welc-logo-size, 115px), 16vh, 130px) !important;
 }
 .phone .screen-hero .welcome-heart,
 .phone .screen-hero .welcome-heart.logo-transparent {
-  width: var(--welc-logo-size, 200px) !important;
-  height: var(--welc-logo-size, 200px) !important;
-  max-width: var(--welc-logo-size, 200px) !important;
-  max-height: var(--welc-logo-size, 200px) !important;
+  width: var(--welc-logo-size, 115px) !important;
+  height: var(--welc-logo-size, 115px) !important;
+  max-width: var(--welc-logo-size, 115px) !important;
+  max-height: var(--welc-logo-size, 115px) !important;
 }
 /* Subtítulo: móvil cap por vh, escritorio valor exacto */
 .app-viewport .screen.screen-hero .welcome-sub {
@@ -7359,42 +7359,59 @@ body:not(.app-open) #twofaReminder {
 }
 
 /* ============================================================
-   V530 — Logo Aura circular con anillo arcoíris (recuperado de la
-   copia de seguridad v265). El PNG muestra personajes + heart +
-   "Aura" + "CONECTA TU ESENCIA" y el anillo lo dibuja CSS con
-   conic-gradient rosa→naranja→amarillo→verde→azul→morado.
+   V532 — Logo Aura: PNG oficial (el anillo arcoíris ya está en la
+   propia imagen, no dibujamos ring CSS). Solo garantizamos que se
+   muestre completo sin recortar, sin fondo extra, en cuadrado.
    ============================================================ */
 .welcome-heart:has(> img),
 .welcome-heart.logo-transparent {
   position: relative;
   overflow: visible !important;
-  border-radius: 50% !important;
-  background:
-    conic-gradient(from 210deg,
-      #ff3b6b 0%, #ff8a3b 15%, #f9d423 30%,
-      #34d399 50%, #38bdf8 70%, #a855f7 85%, #ff3b6b 100%) !important;
-  backdrop-filter: none !important;
-  padding: 3px !important;
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
   aspect-ratio: 1 / 1 !important;
-  box-shadow:
-    0 0 0 1px rgba(255,255,255,.06),
-    0 12px 30px rgba(0,0,0,.4),
-    0 0 30px rgba(255,59,107,.18);
 }
 .welcome-heart:has(> img) > img,
 .welcome-heart.logo-transparent > img {
   width: 100% !important;
   height: 100% !important;
   object-fit: contain !important;
-  background: #14060b !important;
-  border-radius: 50% !important;
+  background: transparent !important;
+  border-radius: 0 !important;
   display: block;
-  padding: 8% !important;
+  padding: 0 !important;
   box-sizing: border-box !important;
 }
-:root[data-theme="light"] .welcome-heart:has(> img) > img,
-:root[data-theme="light"] .welcome-heart.logo-transparent > img {
-  background: #ffffff !important;
+
+/* V533 — Subir el logo. El logo queda inmediatamente debajo del
+   selector de idioma (welcome-lang) con margen negativo para
+   compensar el padding del hero y el margin-top propio. */
+.app-viewport .screen.screen-hero,
+.phone .screen-hero,
+.screen-hero {
+  padding-top: 0 !important;
+  justify-content: flex-start !important;
+  gap: 2px !important;
+}
+.app-viewport .screen.screen-hero .welcome-lang,
+.phone .screen-hero .welcome-lang,
+.screen-hero .welcome-lang {
+  margin-top: 6px !important;
+}
+.app-viewport .screen.screen-hero .welcome-logo,
+.phone .screen-hero .welcome-logo,
+.screen-hero .welcome-logo {
+  margin-top: -40px !important;
+  margin-bottom: 0 !important;
+  padding-top: 0 !important;
+}
+.app-viewport .screen.screen-hero .welcome-sub,
+.phone .screen-hero .welcome-sub,
+.screen-hero .welcome-sub {
+  margin-top: 2px !important;
+  margin-bottom: 6px !important;
 }
 
 /* ============================================================
@@ -7407,11 +7424,12 @@ body:not(.app-open) #twofaReminder {
 :root[data-theme="dark"] .phone .screen-hero.hero-solid,
 :root[data-theme="dark"] .app-viewport .screen.screen-hero.hero-solid {
   background:
-    radial-gradient(120% 80% at 50% 0%,
-      #4a1a2b 0%,
-      #2e1018 40%,
-      #180a10 75%,
-      #0a0508 100%
+    linear-gradient(180deg,
+      #5b1e33 0%,
+      #43172a 22%,
+      #2c1220 45%,
+      #180b18 70%,
+      #0a0710 100%
     ) !important;
   color: #f2f3f7 !important;
 }
@@ -7475,4 +7493,27 @@ body:not(.app-open) #twofaReminder {
   background: #ffffff !important;
   color: #14161d !important;
   border-color: rgba(0,0,0,.08) !important;
+}
+
+/* V534 — Side cards must render in light mode when theme is light.
+   Prevents applyDesign() bg override from darkening the desktop side panels. */
+:root[data-theme="light"] .stage-side-left .brand-block,
+:root[data-theme="light"] .stage-side-left .theme-card,
+:root[data-theme="light"] .stage-side-right .mock-card {
+  background: #ffffff !important;
+  border-color: #ececf3 !important;
+  color: #14161d !important;
+  box-shadow: 0 6px 22px rgba(20, 22, 29, 0.06) !important;
+}
+:root[data-theme="light"] .stage-side-left .brand-block *,
+:root[data-theme="light"] .stage-side-left .theme-card *,
+:root[data-theme="light"] .stage-side-right .mock-card * {
+  color: inherit;
+}
+:root[data-theme="light"] .stage-side-left .brand-block small,
+:root[data-theme="light"] .stage-side-left .theme-card small,
+:root[data-theme="light"] .stage-side-right .mock-card small,
+:root[data-theme="light"] .stage-side-left .brand-block .muted,
+:root[data-theme="light"] .stage-side-right .mock-card .muted {
+  color: #5b6270 !important;
 }

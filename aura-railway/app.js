@@ -1229,7 +1229,11 @@ let _lastConfigHash = "";
 async function loadPublicConfig() {
   try {
     const r = await fetch("/api/public-config", { cache: "no-store" });
-    if (r.ok) publicConfig = await r.json();
+    if (r.ok) {
+      publicConfig = await r.json();
+      // Expose VAPID public key globally so the push-subscribe flow finds it.
+      try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
+    }
   } catch {}
 }
 async function loadContent() {
@@ -1282,6 +1286,7 @@ async function pollLiveConfig() {
         if (sig !== _lastConfigHash) {
           _lastConfigHash = sig;
           publicConfig = data;
+          try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
           if (typeof _rerender === "function") _rerender();
         }
       } catch {}
@@ -1296,12 +1301,19 @@ function startLivePolling() {
 }
 function applyDesign() {
   const r = document.documentElement.style;
-  const g = (k, fb) => T(k) || fb;
+  // T(k) returns the key itself when no value exists in content/fallback.
+  // Treat that (or empty) as "unset" and fall back to the provided default.
+  const g = (k, fb) => {
+    const v = T(k);
+    if (v == null || v === "" || v === k) return fb;
+    return v;
+  };
   const isDark = (document.documentElement.dataset.theme === "dark");
   const b1 = g("content.design.brand1", "#ff3b6b");
   const b2 = g("content.design.brand2", "#ff8a3b");
-  const bg = g("content.design.bg", "");
-  const tx = g("content.design.text", "");
+  // Defaults marca Aura: fondo oscuro, texto claro (aunque la BD esté vacía)
+  const bg = g("content.design.bg", "#0e0f14");
+  const tx = g("content.design.text", "#f2f3f7");
   const rad = g("content.design.radius", "18");
   const font = g("content.design.font", "system");
   const btn = g("content.design.btn_style", "pill");
@@ -1310,8 +1322,20 @@ function applyDesign() {
   r.setProperty("--grad-brand", `linear-gradient(135deg, ${b1}, ${b2})`);
   r.setProperty("--shadow-brand", `0 10px 30px ${b1}55`);
   if (!isDark) {
-    if (bg) r.setProperty("--surface", bg);
-    if (tx) r.setProperty("--text", tx);
+    // Only override --surface/--text if the design bg is actually light,
+    // otherwise the light-theme tokens win. This prevents a dark hero bg
+    // (e.g. #14060b) from darkening side cards in light mode.
+    const isLightColor = (hex) => {
+      if (!hex) return false;
+      const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+      if (!m) return false;
+      const n = parseInt(m[1], 16);
+      const r_ = (n >> 16) & 255, g_ = (n >> 8) & 255, b_ = n & 255;
+      // Rec.709 luma
+      return (0.2126 * r_ + 0.7152 * g_ + 0.0722 * b_) > 200;
+    };
+    if (bg && isLightColor(bg)) r.setProperty("--surface", bg); else r.removeProperty("--surface");
+    if (tx && !isLightColor(tx)) r.setProperty("--text", tx); else r.removeProperty("--text");
   } else {
     // In dark mode, clear light overrides so [data-theme="dark"] tokens win
     r.removeProperty("--surface");
@@ -1356,7 +1380,7 @@ function applyDesign() {
 
   // Hero style
   const hero = document.querySelector(".screen-hero");
-  let heroStyle = g("content.design.hero_style","gradient");
+  let heroStyle = g("content.design.hero_style","solid");
   const heroImage = T("content.design.hero_image");
   const rawSolid = (T("content.design.hero_solid_color") || "").trim();
   // Helper: is a hex color visually "light" (luminance > 0.6)?
@@ -1372,7 +1396,7 @@ function applyDesign() {
     const lum = 0.2126*r + 0.7152*g + 0.0722*b;
     return lum > 0.6;
   };
-  const heroSolid = rawSolid || bg || "#ffffff";
+  const heroSolid = rawSolid || bg || "#0e0f14";
   if (hero) {
     hero.classList.remove("hero-gradient","hero-image","hero-solid","hero-radial","hero-light");
     hero.classList.add("hero-" + heroStyle);
@@ -1452,37 +1476,69 @@ function applyDesign() {
   r.setProperty("--text-hero-title", heroT || defTitle);
   r.setProperty("--text-hero-sub", heroS || defSub);
 
-  // Logo tokens
-  const logoSize = parseInt(g("content.design.logo_size","88"),10) || 88;
-  const logoRad = parseInt(g("content.design.logo_radius","22"),10) || 22;
+  // Logo tokens — defaults marca Aura: logo circular con anillo arcoíris CSS
+  const logoSize = parseInt(g("content.design.logo_size","115"),10) || 115;
+  const logoRad = parseInt(g("content.design.logo_radius","50"),10) || 50;
   r.setProperty("--logo-size", logoSize + "px");
   r.setProperty("--logo-radius", logoRad + "px");
   r.setProperty("--logo-color", g("content.design.logo_color","#ffffff"));
-  const lbg = g("content.design.logo_bg","gradient");
+  const lbg = g("content.design.logo_bg","transparent");
   const lbgVal = lbg === "solid" ? "rgba(255,255,255,.18)"
     : lbg === "transparent" ? "transparent"
     : `linear-gradient(135deg, ${b1}, ${b2})`;
   r.setProperty("--logo-bg", lbgVal);
+
+  // Welcome — tamaños por bloque (px). Se aplican vía variables CSS.
+  const setPx = (name, key, def) => {
+    const v = parseFloat(g("content.design." + key, def)) || parseFloat(def);
+    r.setProperty(name, v + "px");
+  };
+  setPx("--welc-logo-size", "welc_logo_size", "115");
+  setPx("--welc-sub-size", "welc_sub_size", "13");
+  setPx("--welc-card-pad", "welc_card_pad", "8");
+  setPx("--welc-input-h", "welc_input_h", "40");
+  setPx("--welc-btn-h", "welc_btn_h", "42");
+  setPx("--welc-beta-h", "welc_beta_h", "38");
+  setPx("--welc-steps-pad", "welc_steps_pad", "6");
+  setPx("--welc-step-ic", "welc_step_ic", "24");
+  setPx("--welc-step-h-size", "welc_step_h_size", "13");
+  setPx("--welc-step-p-size", "welc_step_p_size", "11.5");
+  setPx("--welc-chip-h", "welc_chip_h", "28");
+  setPx("--welc-chip-font", "welc_chip_font", "10.5");
+  setPx("--welc-foot-size", "welc_foot_size", "10.5");
+  setPx("--welc-title-size", "welc_title_size", "20");
+  setPx("--welc-closed-title", "welc_closed_title", "14");
+  setPx("--welc-closed-p", "welc_closed_p", "11.5");
+  setPx("--welc-terms-size", "welc_terms_size", "10.5");
+  setPx("--welc-steps-title", "welc_steps_title", "11.5");
+  setPx("--welc-or-size", "welc_or_size", "9.5");
+  setPx("--welc-oauth-h", "welc_oauth_h", "32");
+  setPx("--welc-gap", "welc_gap", "6");
+  setPx("--welc-below-gap", "welc_below_gap", "4");
+  setPx("--welc-pad-top", "welc_pad_top", "20");
+  setPx("--welc-pad-bot", "welc_pad_bot", "8");
 }
 
 /* Build the welcome logo inner HTML based on current settings. */
 function buildLogoInnerHTML() {
-  const mode = T("content.design.logo_mode") || "heart";
-  const color = T("content.design.logo_color") || "#ffffff";
+  // Default marca Aura: imagen circular usando aura-logo.png (dark) y aura-logo-light.png (light)
+  const _t = (k, fb) => { const v = T(k); return (v == null || v === "" || v === k) ? fb : v; };
+  const mode = _t("content.design.logo_mode", "image");
+  const color = _t("content.design.logo_color", "#ffffff");
   if (mode === "image") {
     // Choose a light-mode alternate if configured and current theme is light
     const theme = document.documentElement.dataset.theme || "dark";
-    const urlLight = T("content.design.logo_image_light") || "";
-    const urlDark = T("content.design.logo_image") || "";
+    const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=6");
+    const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=6");
     const url = (theme === "light" && urlLight) ? urlLight : urlDark;
     if (url) return `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
   }
   if (mode === "emoji") {
-    const em = T("content.design.logo_emoji") || "💘";
+    const em = _t("content.design.logo_emoji", "💘");
     return `<span style="font-size:calc(var(--logo-size,88px) * .55);line-height:1">${em}</span>`;
   }
   if (mode === "initial") {
-    const name = T("content.brand.name") || "A";
+    const name = _t("content.brand.name", "A");
     const init = String(name).trim().charAt(0).toUpperCase() || "A";
     return `<span style="font-size:calc(var(--logo-size,88px) * .5);font-weight:800;color:${color};line-height:1">${init}</span>`;
   }
@@ -1513,23 +1569,25 @@ function applyContent() {
   // Sync desktop sidebar logo with the same tokens used on the welcome hero
   const sideLogo = document.getElementById("sideBrandLogo");
   if (sideLogo) {
-    const mode = T("content.design.logo_mode") || "heart";
-    const color = T("content.design.logo_color") || "#ff3b6b";
-    const bgMode = T("content.design.logo_bg") || "gradient";
-    const b1c = T("content.design.brand1") || "#ff3b6b";
-    const b2c = T("content.design.brand2") || "#ff8a3b";
+    // Defaults marca Aura: modo imagen con aura-logo.png circular
+    const _t = (k, fb) => { const v = T(k); return (v == null || v === "" || v === k) ? fb : v; };
+    const mode = _t("content.design.logo_mode", "image");
+    const color = _t("content.design.logo_color", "#ff3b6b");
+    const bgMode = _t("content.design.logo_bg", "transparent");
+    const b1c = _t("content.design.brand1", "#ff3b6b");
+    const b2c = _t("content.design.brand2", "#ff8a3b");
     const bgVal = bgMode === "solid" ? "rgba(255,255,255,.18)"
       : bgMode === "transparent" ? "transparent"
       : `linear-gradient(135deg, ${b1c}, ${b2c})`;
     // Reuse the same size/radius as the welcome hero logo but scaled down for the sidebar
-    const rawSize = parseInt(T("content.design.logo_size") || "88", 10) || 88;
+    const rawSize = parseInt(_t("content.design.logo_size", "115"), 10) || 115;
     const size = Math.max(40, Math.round(rawSize * 0.7));
-    const radius = parseInt(T("content.design.logo_radius") || "22", 10) || 22;
+    const radius = parseInt(_t("content.design.logo_radius", "50"), 10) || 50;
     let inner = "";
-    if (mode === "image" && (T("content.design.logo_image") || T("content.design.logo_image_light"))) {
+    if (mode === "image") {
       const theme = document.documentElement.dataset.theme || "dark";
-      const urlLight = T("content.design.logo_image_light") || "";
-      const urlDark = T("content.design.logo_image") || "";
+      const urlLight = _t("content.design.logo_image_light", "assets/aura-logo-round-light.png?v=6");
+      const urlDark = _t("content.design.logo_image", "assets/aura-logo-round.png?v=6");
       const url = (theme === "light" && urlLight) ? urlLight : (urlDark || urlLight);
       inner = `<img src="${url}" alt="logo" style="width:100%;height:100%;object-fit:contain;border-radius:inherit"/>`;
     } else if (mode === "emoji") {
@@ -1823,6 +1881,49 @@ const GPS = {
         },
         { enableHighAccuracy: true, maximumAge: 30_000, timeout: 20_000 }
       );
+      // Envía una posición al minimizar/cerrar la pestaña, para que en admin
+      // aparezca la última posición conocida aunque el usuario cierre la app.
+      // Los navegadores móviles pausan watchPosition en background — con este
+      // "flush" al pasar a hidden capturamos la posición final antes de perder
+      // el evento. Fetch usa keepalive para que sobreviva al unload.
+      if (!this._visListenerBound) {
+        this._visListenerBound = true;
+        const flush = () => {
+          if (!("geolocation" in navigator) || !state.user?.id) return;
+          if (document.visibilityState !== "hidden") return;
+          try {
+            navigator.geolocation.getCurrentPosition(
+              (pos) => this._reportKeepalive(pos),
+              () => {},
+              { enableHighAccuracy: false, maximumAge: 60_000, timeout: 5_000 }
+            );
+          } catch {}
+        };
+        document.addEventListener("visibilitychange", flush);
+        window.addEventListener("pagehide", flush);
+      }
+    } catch {}
+  },
+  async _reportKeepalive(pos) {
+    if (!state.user?.id || !pos?.coords) return;
+    try {
+      // fetch keepalive permite que la petición termine aunque la pestaña se
+      // esté descargando (unload). Máx 64 KB — suficiente para un JSON GPS.
+      await fetch("/api/my/gps/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        body: JSON.stringify({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          accuracy: pos.coords.accuracy || null,
+          heading: pos.coords.heading || null,
+          speed: pos.coords.speed || null,
+          bg: true,
+        }),
+        keepalive: true,
+      });
+      this._lastSent = Date.now();
+      this._lastCoords = pos.coords;
     } catch {}
   },
   stopWatching() {
@@ -2066,6 +2167,65 @@ const GPS = {
 };
 try { window.GPS = GPS; } catch {}
 
+/* ------------------------------------------------------------------
+   Service Worker: registro y comunicación bidireccional.
+   - Instala sw.js para permitir PWA e ubicación en background (Android).
+   - Envía el user_id al SW para que pueda hacer heartbeats con auth.
+   - Solicita Periodic Background Sync si el navegador lo soporta.
+   - Escucha mensajes del SW (por ejemplo, cuando el SW pide una
+     posición GPS al despertar): la app la manda si tiene watcher activo.
+   ------------------------------------------------------------------ */
+let _swReg = null;
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    _swReg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    // Enviar el user_id al SW para heartbeats en background
+    const sendUser = () => {
+      if (!state.user?.id) return;
+      const send = (target) => target && target.postMessage({ type: "set-user", user_id: state.user.id });
+      send(navigator.serviceWorker.controller);
+      if (_swReg && _swReg.active) send(_swReg.active);
+    };
+    // Cuando el SW ya esté activo, enviamos user
+    if (_swReg.active) sendUser();
+    if (navigator.serviceWorker.controller) sendUser();
+    navigator.serviceWorker.addEventListener("controllerchange", sendUser);
+
+    // Escuchar peticiones del SW (por ejemplo, pedirnos una posición GPS)
+    navigator.serviceWorker.addEventListener("message", (event) => {
+      const data = event.data || {};
+      if (data.type === "sw-request-gps") {
+        // El SW se ha despertado y quiere una posición. Si hay permiso, la mandamos.
+        if (!("geolocation" in navigator) || !state.user?.id) return;
+        try {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => { try { GPS._reportKeepalive(pos); } catch {} },
+            () => {},
+            { enableHighAccuracy: false, maximumAge: 60_000, timeout: 8_000 }
+          );
+        } catch {}
+      }
+    });
+
+    // Periodic Background Sync (solo Chrome/Android con PWA instalada)
+    if ("periodicSync" in _swReg) {
+      try {
+        const status = await navigator.permissions.query({ name: "periodic-background-sync" });
+        if (status.state === "granted") {
+          await _swReg.periodicSync.register("gps-tick", {
+            // El navegador decide la frecuencia real (mínima ~12 h en muchos casos).
+            minInterval: 60 * 60 * 1000, // 1 h ideal, Chrome lo escala si no le da
+          });
+        }
+      } catch {}
+    }
+  } catch (err) {
+    // SW no soportado o bloqueado; no es crítico.
+    try { console.log("[SW] register failed", err && err.message); } catch {}
+  }
+}
+
 // Global heartbeat loop: keeps the current user "online" for the admin panel.
 let _heartbeatTimer = null;
 let _restrictionTimer = null;
@@ -2079,6 +2239,8 @@ function startHeartbeat() {
   refreshRestrictions();
   // GPS: dispara el modal de consentimiento la 1ª vez tras login
   try { GPS.boot(); } catch {}
+  // Registro del Service Worker para PWA + Periodic Background Sync (Android)
+  try { registerServiceWorker(); } catch {}
   // Push en tiempo real vía Server-Sent Events. Al recibir un evento,
   // refresca inmediatamente y el banner desaparece/aparece al instante.
   try {
@@ -2499,7 +2661,8 @@ const SECTION_MAP = {
   screenMyPhotos: "profile", screenVerifyAccount: "profile",
   screenInvisibleMode: "profile", screenSecurity: "profile",
   screenBlockedUsers: "profile", screenDataExport: "profile",
-  screenAbout: "profile", screenOffers: "profile",
+  screenAbout: "profile", screenOffers: "profile", screenAccountStatus: "profile",
+  screenNotificationSettings: "profile",
   // V437: Info screens usan sección propia para NO heredar el color de
   // texto del hero de bienvenida (que es blanco) sobre fondo claro. Sin
   // este mapeo, el contenido de Términos/Privacidad/Normas quedaba
@@ -2669,6 +2832,8 @@ function showApp() {
   document.body.classList.add("app-open");
   // Ensure the current user is registered in DB for real chat + start heartbeat
   (async () => { try { await chatApi.ensure(); startHeartbeat(); } catch {} })();
+  // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
+  setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
   // Aplica el deep-link pendiente si existe (viene de la URL al arrancar o
   // se guardó en sessionStorage antes del login).
   let dl = state.pendingDeepLink;
@@ -2767,6 +2932,10 @@ function applyDeepLink(dl) {
     preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
     preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
     notificaciones: typeof screenNotifications === "function" ? screenNotifications : null,
+    seguridad:      typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    security:       typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    dispositivo:    typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    "dispositivo-perdido": typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
   };
   const sv = subViews[dl.section];
   if (sv) { try { render(sv); } catch {} }
@@ -3025,15 +3194,128 @@ function buildWelcomeLangSelector() {
   return wrap;
 }
 
+/* Popup informativo del modo pruebas privadas. Configurable desde admin:
+   - content.beta_bots.enabled: "1"/"0" (default "1")
+   - content.beta_bots.frequency: "always" | "session" | "once" | "daily" | "weekly" (default "session")
+   - content.beta_bots.badge, title, body_1, body_2, cta: textos personalizables
+   - content.beta_bots.icon: emoji del icono
+*/
+function _betaNoticeShouldShow() {
+  const enabled = T("content.design.beta_notice_enabled");
+  if (enabled === "0" || enabled === "false") return false;
+  const freq = T("content.design.beta_notice_freq") || "session";
+  const KEY = "aura-beta-bots-notice";
+  try {
+    if (freq === "always") return true;
+    if (freq === "session") {
+      if (sessionStorage.getItem(KEY) === "1") return false;
+      sessionStorage.setItem(KEY, "1"); return true;
+    }
+    if (freq === "once") {
+      if (localStorage.getItem(KEY) === "1") return false;
+      localStorage.setItem(KEY, "1"); return true;
+    }
+    const now = Date.now();
+    const prev = parseInt(localStorage.getItem(KEY + "-ts") || "0", 10);
+    const wait = freq === "weekly" ? 7*24*3600*1000 : 24*3600*1000; // daily default
+    if (prev && (now - prev) < wait) return false;
+    localStorage.setItem(KEY + "-ts", String(now)); return true;
+  } catch { return true; }
+}
+function showBetaBotsNotice() {
+  if (document.querySelector(".beta-bots-notice-overlay")) return;
+  if (!_betaNoticeShouldShow()) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "beta-bots-notice-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.style.cssText = [
+    "position:fixed", "inset:0", "z-index:99999",
+    "background:rgba(6,4,20,.72)", "backdrop-filter:blur(6px)",
+    "-webkit-backdrop-filter:blur(6px)",
+    "display:flex", "align-items:center", "justify-content:center",
+    "padding:20px", "animation:fadeIn .25s ease-out",
+  ].join(";");
+
+  const card = document.createElement("div");
+  card.style.cssText = [
+    "max-width:420px", "width:100%",
+    "background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%)",
+    "border:1px solid rgba(255,255,255,.14)",
+    "border-radius:20px", "padding:22px 22px 18px",
+    "box-shadow:0 30px 80px rgba(0,0,0,.6)",
+    "color:#fff", "text-align:center",
+    "animation:popIn .35s cubic-bezier(.2,.9,.2,1)",
+  ].join(";");
+
+  const _bIcon  = T("content.design.beta_notice_icon")  || "🤖";
+  const _bBadge = T("content.design.beta_notice_badge") || "🧪 Modo pruebas";
+  const _bTitle = T("content.design.beta_notice_title") || "Aviso importante";
+  const _bBody1 = T("content.design.beta_notice_body1") || "Los perfiles que verás en la app son <strong>bots creados para la fase beta</strong>.";
+  const _bBody2 = T("content.design.beta_notice_body2") || "Ninguno es una persona real todavía. Sirven para que puedas probar todas las funciones (matches, chats, filtros, etc.) antes del lanzamiento público.";
+  const _bCta   = T("content.design.beta_notice_cta")   || "Entendido";
+  const _esc = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  // Body admits limited HTML (strong/em/br); do not escape those admin-authored strings.
+  card.innerHTML = `
+    <div style="width:64px;height:64px;margin:0 auto 12px;border-radius:16px;
+                background:linear-gradient(135deg,#ff3b6b,#ff8a3b,#a855f7);
+                display:grid;place-items:center;font-size:32px;
+                box-shadow:0 10px 30px rgba(168,85,247,.35)">${_esc(_bIcon)}</div>
+    <div style="display:inline-block;padding:6px 14px;border-radius:999px;
+                background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.16);
+                font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;
+                color:#f2e8ff;margin-bottom:10px">${_esc(_bBadge)}</div>
+    <h3 style="margin:0 0 10px;font-size:20px;font-weight:800;line-height:1.2">
+      ${_esc(_bTitle)}
+    </h3>
+    <p style="margin:0 0 8px;font-size:15px;line-height:1.45;color:#e6d9ff">
+      ${_bBody1}
+    </p>
+    <p style="margin:0 0 18px;font-size:14px;line-height:1.45;color:#c9bce4">
+      ${_bBody2}
+    </p>
+    <button type="button" class="beta-bots-notice-ok"
+      style="width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;
+             background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);
+             color:#fff;font-weight:800;font-size:15px;letter-spacing:.3px;
+             box-shadow:0 10px 24px rgba(255,90,150,.35)">
+      ${_esc(_bCta)}
+    </button>
+  `;
+
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => {
+    try { overlay.remove(); } catch {}
+  };
+  card.querySelector(".beta-bots-notice-ok").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  const onKey = (e) => { if (e.key === "Escape") { close(); document.removeEventListener("keydown", onKey); } };
+  document.addEventListener("keydown", onKey);
+}
+
 function screenWelcome(root) {
   root.classList.add("screen-hero");
+  const _welcomeTestMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (_welcomeTestMode) root.classList.add("screen-hero-beta");
+
+  // En modo pruebas privadas mostramos un aviso emergente cada vez que se
+  // entra a la pantalla de bienvenida, aclarando que los perfiles visibles
+  // son bots para la fase de pruebas y no personas reales.
+  if (_welcomeTestMode) {
+    setTimeout(() => {
+      try { showBetaBotsNotice(); } catch {}
+    }, 350);
+  }
 
   // Language flag selector (top-right of the welcome screen)
   root.appendChild(buildWelcomeLangSelector());
 
   const logoBg = T("content.design.logo_bg") || "gradient";
   const heartCls = "welcome-heart" + (logoBg === "transparent" ? " logo-transparent" : "");
-  root.appendChild(el("div", { class: "welcome-logo" }, [
+  root.appendChild(el("div", { class: "welcome-logo" + (_welcomeTestMode ? " welcome-logo-compact" : "") }, [
     el("div", { class: heartCls, html: buildLogoInnerHTML() })
   ]));
   root.appendChild(el("p", { class: "welcome-sub" }, T("content.welcome.subtitle")));
@@ -3041,7 +3323,10 @@ function screenWelcome(root) {
   const cta = el("div", { class: "welcome-cta" });
   const regOpen = publicConfig?.app?.registrations_open !== false;
   const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
-  if (regOpen) {
+  // Cuando la app está en modo pruebas (access_locked / private_beta),
+  // ocultamos los botones normales y forzamos el flujo de invitación con
+  // código de tester, aunque `registrations_open` siga true.
+  if (regOpen && !testMode) {
     cta.appendChild(el("button", { class: "btn btn-primary btn-block", onclick: () => render(screenRegisterEmail) }, T("content.welcome.cta_register")));
     cta.appendChild(el("button", { class: "btn btn-ghost btn-block", onclick: () => render(screenLogin) }, T("content.welcome.cta_login")));
   } else {
@@ -3096,27 +3381,40 @@ function screenWelcome(root) {
     }, T("content.welcome.invite_cta")));
   }
 
-  const orSep = el("div", { class: "welcome-or" }, [
-    el("span", { class: "welcome-or-line" }),
-    el("span", { class: "welcome-or-text" }, "o continúa con"),
-    el("span", { class: "welcome-or-line" }),
-  ]);
-  cta.appendChild(orSep);
+  // En modo pruebas ocultamos las opciones "o continúa con" (Google/Apple/
+  // Facebook) porque el acceso solo es válido con código de tester o
+  // desde la pantalla beta (waitlist / superadmin).
+  if (!testMode) {
+    const orSep = el("div", { class: "welcome-or" }, [
+      el("span", { class: "welcome-or-line" }),
+      el("span", { class: "welcome-or-text" }, "o continúa con"),
+      el("span", { class: "welcome-or-line" }),
+    ]);
+    cta.appendChild(orSep);
 
-  cta.appendChild(el("div", { class: "welcome-oauth" }, [
-    el("button", { class: "oauth-btn oauth-google", title: "Continuar con Google", onclick: () => quickLogin("Google") }, [
-      svgIcon(`<path fill="#EA4335" d="M12 10.4v3.4h4.7c-.2 1.2-1.5 3.6-4.7 3.6-2.8 0-5.1-2.3-5.1-5.2s2.3-5.2 5.1-5.2c1.6 0 2.7.7 3.3 1.3l2.3-2.2C16.1 4.7 14.3 4 12 4c-4.4 0-8 3.6-8 8s3.6 8 8 8c4.6 0 7.7-3.3 7.7-7.9 0-.5-.1-.9-.1-1.3H12z"/><path fill="#34A853" d="M3.5 7.6l2.8 2c.8-1.9 2.6-3.2 4.7-3.2 1.3 0 2.5.5 3.4 1.3l2.5-2.5C15.4 3.6 13.8 3 12 3 8.5 3 5.5 5 3.5 7.6z"/><path fill="#FBBC05" d="M12 21c2.3 0 4.3-.8 5.7-2.1l-2.6-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8l-2.8 2.2C5.4 19.1 8.4 21 12 21z"/><path fill="#4285F4" d="M20.7 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h4.9c-.2 1.1-.9 2.1-1.9 2.7l2.6 2.2c1.5-1.4 2.6-3.5 2.6-6.6z"/>`),
-      el("span", {}, "Google"),
-    ]),
-    el("button", { class: "oauth-btn oauth-apple", title: "Continuar con Apple", onclick: () => quickLogin("Apple") }, [
-      svgIcon(`<path fill="#fff" d="M16.4 12.7c0-2.5 2-3.7 2.1-3.7-1.1-1.7-2.9-2-3.5-2-1.5-.2-2.9.9-3.6.9-.7 0-1.9-.9-3.2-.9-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.1 1.2 9.5.8 1.1 1.7 2.4 3 2.3 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.1 3-2.2.9-1.3 1.3-2.5 1.3-2.6-.1-.1-2.8-1.1-2.8-4.7zM14.3 5.4c.7-.9 1.2-2.1 1-3.4-1.1.1-2.4.7-3.1 1.6-.6.8-1.2 2.1-1 3.3 1.2.1 2.4-.6 3.1-1.5z"/>`),
-      el("span", {}, "Apple"),
-    ]),
-    el("button", { class: "oauth-btn oauth-facebook", title: "Continuar con Facebook", onclick: () => quickLogin("Facebook") }, [
-      svgIcon(`<path fill="#fff" d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.3v7c4.7-.8 8.4-4.9 8.4-9.9z"/>`),
-      el("span", {}, "Facebook"),
-    ]),
-  ]));
+    cta.appendChild(el("div", { class: "welcome-oauth" }, [
+      el("button", { class: "oauth-btn oauth-google", title: "Continuar con Google", onclick: () => quickLogin("Google") }, [
+        svgIcon(`<path fill="#EA4335" d="M12 10.4v3.4h4.7c-.2 1.2-1.5 3.6-4.7 3.6-2.8 0-5.1-2.3-5.1-5.2s2.3-5.2 5.1-5.2c1.6 0 2.7.7 3.3 1.3l2.3-2.2C16.1 4.7 14.3 4 12 4c-4.4 0-8 3.6-8 8s3.6 8 8 8c4.6 0 7.7-3.3 7.7-7.9 0-.5-.1-.9-.1-1.3H12z"/><path fill="#34A853" d="M3.5 7.6l2.8 2c.8-1.9 2.6-3.2 4.7-3.2 1.3 0 2.5.5 3.4 1.3l2.5-2.5C15.4 3.6 13.8 3 12 3 8.5 3 5.5 5 3.5 7.6z"/><path fill="#FBBC05" d="M12 21c2.3 0 4.3-.8 5.7-2.1l-2.6-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8l-2.8 2.2C5.4 19.1 8.4 21 12 21z"/><path fill="#4285F4" d="M20.7 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h4.9c-.2 1.1-.9 2.1-1.9 2.7l2.6 2.2c1.5-1.4 2.6-3.5 2.6-6.6z"/>`),
+        el("span", {}, "Google"),
+      ]),
+      el("button", { class: "oauth-btn oauth-apple", title: "Continuar con Apple", onclick: () => quickLogin("Apple") }, [
+        svgIcon(`<path fill="#fff" d="M16.4 12.7c0-2.5 2-3.7 2.1-3.7-1.1-1.7-2.9-2-3.5-2-1.5-.2-2.9.9-3.6.9-.7 0-1.9-.9-3.2-.9-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.1 1.2 9.5.8 1.1 1.7 2.4 3 2.3 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.1 3-2.2.9-1.3 1.3-2.5 1.3-2.6-.1-.1-2.8-1.1-2.8-4.7zM14.3 5.4c.7-.9 1.2-2.1 1-3.4-1.1.1-2.4.7-3.1 1.6-.6.8-1.2 2.1-1 3.3 1.2.1 2.4-.6 3.1-1.5z"/>`),
+        el("span", {}, "Apple"),
+      ]),
+      el("button", { class: "oauth-btn oauth-facebook", title: "Continuar con Facebook", onclick: () => quickLogin("Facebook") }, [
+        svgIcon(`<path fill="#fff" d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.3v7c4.7-.8 8.4-4.9 8.4-9.9z"/>`),
+        el("span", {}, "Facebook"),
+      ]),
+    ]));
+  } else {
+    // En modo pruebas, botón discreto de "¿Eres tester? Ver estado" que
+    // lleva a la pantalla beta con waitlist + acceso superadmin.
+    cta.appendChild(el("button", {
+      class: "btn btn-ghost btn-block",
+      style: "margin-top:8px;font-size:13px;opacity:.85",
+      onclick: () => { try { showPrivateBetaScreen({}); } catch {} }
+    }, "🧪 Ver estado de la beta / Soy superadmin"));
+  }
   // Terms text with clickable links to the Terms and Privacy screens.
   const termsText = T("content.welcome.terms") || "";
   // Words to linkify per language. First entry = link to Terms, second = Privacy.
@@ -3299,8 +3597,8 @@ async function quickLogin(provider) {
       }
       if (data && data.error === "not_registered") {
         // Cuenta social sin usuario real en la BD. No es beta: solo no existe.
-        toast("Esta cuenta no está registrada. Regístrate primero.", 3800);
-        try { render(screenWelcome); } catch {}
+        try { showNotRegisteredScreen({ email, provider }); }
+        catch { toast("Esta cuenta no está registrada. Regístrate primero.", 3800); try { render(screenWelcome); } catch {} }
         return;
       }
       if (data && data.user_id) {
@@ -3746,6 +4044,104 @@ function showPrivateBetaScreen(opts) {
   requestAnimationFrame(() => wrap.classList.add("beta-in"));
 }
 
+// Pantalla bonita "Esta cuenta no está registrada" cuando el usuario intenta
+// entrar por Google/Apple/Facebook con un email que no existe en la BD.
+// Reutiliza los estilos beta-* para mantener consistencia visual.
+function showNotRegisteredScreen(opts) {
+  const email = (opts && opts.email) || "";
+  const provider = (opts && opts.provider) || "";
+  try { localStorage.removeItem("aura-session"); } catch {}
+  state.user = null;
+
+  const root = document.getElementById("viewport");
+  if (!root) { toast("Esta cuenta no está registrada. Regístrate primero.", 4200); return; }
+  hideApp();
+  root.innerHTML = "";
+
+  const wrap = el("div", { class: "beta-screen" });
+
+  // Hero
+  const hero = el("div", { class: "beta-hero" });
+  const badge = el("div", { class: "beta-badge" });
+  badge.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 21c0-4 4-6 8-6s8 2 8 6"/>
+      <line x1="18" y1="4" x2="22" y2="8"/>
+      <line x1="22" y1="4" x2="18" y2="8"/>
+    </svg>`;
+  hero.appendChild(badge);
+  hero.appendChild(el("div", { class: "beta-pill" }, "👤 Cuenta no encontrada"));
+  hero.appendChild(el("h2", { class: "beta-title" }, "Aún no tienes cuenta en Aura"));
+  hero.appendChild(el("p", { class: "beta-sub" },
+    "El email de tu cuenta " + (provider ? provider.charAt(0).toUpperCase()+provider.slice(1) : "social") +
+    " no está registrado en Aura. Crea tu cuenta en unos pasos y podrás iniciar sesión."
+  ));
+  wrap.appendChild(hero);
+
+  // Card informativa
+  const card = el("div", { class: "beta-card" });
+  const points = [
+    { ic: "📝", h: "Registro rápido", p: "Solo necesitamos tu email, un código de verificación y tus datos básicos." },
+    { ic: "🛡️", h: "Verificación de identidad", p: "Un paso corto con tu DNI y un selfie para que la comunidad sea segura." },
+    { ic: "💖", h: "Empieza a conocer gente", p: "Configura tu perfil y descubre personas afines cerca de ti." },
+  ];
+  points.forEach(pt => {
+    const row = el("div", { class: "beta-point" });
+    row.appendChild(el("div", { class: "beta-point-ic" }, pt.ic));
+    const txt = el("div", { class: "beta-point-txt" });
+    txt.appendChild(el("div", { class: "beta-point-h" }, pt.h));
+    txt.appendChild(el("div", { class: "beta-point-p" }, pt.p));
+    row.appendChild(txt);
+    card.appendChild(row);
+  });
+  wrap.appendChild(card);
+
+  // Solo mostramos el email si es real (no email demo de @aura.app).
+  const _isDemoEmailBox = !email || /@aura\.app$/i.test(email) || /^sofia@/i.test(email);
+  if (email && !_isDemoEmailBox) {
+    const emailBox = el("div", { class: "beta-form" });
+    emailBox.appendChild(el("label", { class: "beta-label" }, "Cuenta social usada"));
+    emailBox.appendChild(el("div", { class: "beta-input", style: "opacity:.75; cursor:default;" }, email));
+    wrap.appendChild(emailBox);
+  }
+
+  // Acciones
+  const actions = el("div", { class: "beta-actions" });
+  const registerBtn = el("button", { class: "btn btn-primary btn-block beta-cta" }, "✨ Crear cuenta ahora");
+  registerBtn.addEventListener("click", () => {
+    // Pre-rellena el email si venía de una cuenta social, PERO ignoramos
+    // los emails demo de @aura.app (Google/Apple/Facebook devuelven emails
+    // demo en modo dev que no son del usuario real).
+    try {
+      const isDemoEmail = !email || /@aura\.app$/i.test(email) || /^sofia@/i.test(email);
+      if (email && !isDemoEmail) {
+        state.registration = state.registration || {};
+        state.registration.email = email;
+      } else {
+        // Limpiar el email pre-rellenado si hubiera basura de intentos previos
+        if (state.registration) state.registration.email = "";
+      }
+    } catch {}
+    try { render(screenRegisterEmail); } catch { try { render(screenWelcome); } catch {} }
+  });
+  actions.appendChild(registerBtn);
+
+  const backBtn = el("button", { class: "btn btn-ghost btn-block" }, "← Volver al inicio");
+  backBtn.addEventListener("click", () => { try { render(screenWelcome); } catch {} });
+  actions.appendChild(backBtn);
+  wrap.appendChild(actions);
+
+  // Footer
+  wrap.appendChild(el("p", { class: "beta-foot" }, [
+    "¿Problemas? Escribe a ",
+    el("a", { href: "mailto:soporte@citasaura.es" }, "soporte@citasaura.es"),
+  ]));
+
+  root.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add("beta-in"));
+}
+
 // Confetti visual muy simple para el momento de la suscripción a waitlist.
 function spawnBetaConfetti(container) {
   if (!container) return;
@@ -3901,6 +4297,14 @@ function showAppealForm(prefEmail, prefReason, kind, prefOpts) {
 
 /* ---- Register: email ---- */
 function screenRegisterEmail(root) {
+  // En modo pruebas privadas exigimos que exista un `invite_code` validado
+  // (setteado por el flujo del welcome cuando el tester introduce su código).
+  // Sin código, no permitimos entrar al registro y devolvemos a la beta screen.
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  const hasInvite = !!(state.registration && state.registration.invite_code);
+  if (testMode && !hasInvite) {
+    try { showPrivateBetaScreen({}); return; } catch {}
+  }
   root.classList.add("screen-register-email");
   root.appendChild(topbar(T("content.register.email.topbar_title") || "Crear cuenta", () => render(screenWelcome)));
   root.appendChild(stepper(1, 6));
@@ -3993,13 +4397,17 @@ function screenRegisterEmail(root) {
       kyc_version:     "2026-08-03",
     };
     state.registration.email = emailInput.value.trim().toLowerCase();
+    // Huella de dispositivo para el sistema anti-duplicados
+    let _regFp = null;
+    try { _regFp = await computeDeviceFingerprint(); state.registration.fingerprint = _regFp; } catch {}
     try {
       const r = await fetch("/api/verify/send", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...(_regFp ? { "X-Fingerprint": _regFp } : {}) },
         body: JSON.stringify({
           email: state.registration.email,
           invite_code: state.registration.invite_code || null,
           lang: currentLang,
+          fingerprint: _regFp,
         }),
       });
       const data = await r.json();
@@ -4039,6 +4447,10 @@ function screenRegisterEmail(root) {
         state.registration.demoCode = data.demoCode;
         toast(`Modo demo — código: ${data.demoCode}`, 5000);
       }
+      // Guardar la fecha de expiración del código para pintar la cuenta atrás
+      // en la pantalla OTP (10 min desde el envío).
+      state.registration.otpExpiresAt = data.expires_at
+        || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
       render(screenRegisterOTP);
     } catch (err) {
       toast("Error enviando el código");
@@ -4058,6 +4470,19 @@ function screenRegisterOTP(root) {
     el("h2", {}, T("content.register.otp.title")),
     el("p", { html: `Enviado a <b>${state.registration.email}</b>` }),
   ]));
+
+  // Badge de cuenta atrás. El código dura 10 min desde que se envió.
+  // Formato: "⏱ Expira en 09:42". En los últimos 60s se vuelve rojo. Al llegar
+  // a 00:00 se convierte en aviso y desactiva los inputs hasta que el usuario
+  // pida un código nuevo.
+  const countdownBadge = el("div", {
+    class: "otp-countdown",
+    style: "display:flex;align-items:center;justify-content:center;gap:8px;margin:10px auto 6px;padding:8px 14px;border-radius:999px;border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.04);font-size:14px;font-weight:600;max-width:max-content;transition:all .2s ease;",
+  }, [
+    el("span", { class: "otp-cd-ico", style: "font-size:16px;" }, "⏱"),
+    el("span", { class: "otp-cd-txt" }, "Calculando…"),
+  ]);
+  form.appendChild(countdownBadge);
 
   const otpWrap = el("div", { class: "otp" });
   const inputs = [];
@@ -4151,6 +4576,10 @@ function screenRegisterOTP(root) {
       const data = await r.json();
       if (data.sent) toast("Nuevo código enviado ✉️");
       else { state.registration.demoCode = data.demoCode; toast(`Modo demo — código: ${data.demoCode}`, 5000); }
+      // Nuevo código = nueva expiración. Actualizamos y reiniciamos la cuenta atrás.
+      state.registration.otpExpiresAt = data.expires_at
+        || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+      if (typeof restartOtpCountdown === "function") restartOtpCountdown();
     } catch (e) { toast("Error al reenviar"); return; }
     cooldown = 30;
     btnEl.disabled = true;
@@ -4163,6 +4592,118 @@ function screenRegisterOTP(root) {
 
   root.appendChild(form);
   setTimeout(() => inputs[0].focus(), 100);
+
+  // ==== Cuenta atrás de expiración del OTP (10 min por defecto) ============
+  // Se actualiza cada segundo. Si no tenemos otpExpiresAt (p. ej. porque el
+  // usuario aterrizó aquí sin pasar por el flujo normal), asumimos 10 min a
+  // partir del render actual.
+  let _cdTimer = null;
+  const cdTxt = countdownBadge.querySelector(".otp-cd-txt");
+  const cdIco = countdownBadge.querySelector(".otp-cd-ico");
+  function mmss(s) {
+    const m = Math.floor(s / 60), r = s % 60;
+    return `${String(m).padStart(2,"0")}:${String(r).padStart(2,"0")}`;
+  }
+  function setExpiredUI() {
+    inputs.forEach(i => { i.disabled = true; });
+    btn.disabled = true;
+    countdownBadge.style.background = "rgba(255,68,68,0.12)";
+    countdownBadge.style.borderColor = "rgba(255,68,68,0.4)";
+    countdownBadge.style.color = "#ff9a9a";
+    cdIco.textContent = "⌛";
+    cdTxt.textContent = "Este código ha expirado";
+    // Si no existe ya el aviso, lo añadimos: botón grande para pedir uno nuevo.
+    if (!form.querySelector(".otp-expired-box")) {
+      const box = el("div", {
+        class: "otp-expired-box",
+        style: "margin-top:12px;padding:14px;border:1px solid rgba(255,68,68,0.35);border-radius:12px;background:rgba(255,68,68,0.06);text-align:center;",
+      }, [
+        el("p", { style: "margin:0 0 10px;color:#ffb4b4;font-size:14px;" },
+          "El código dejó de ser válido. Solicita uno nuevo para continuar."),
+        el("button", {
+          class: "btn btn-brand btn-sm",
+          type: "button",
+          onclick: async (e) => {
+            const b = e.currentTarget;
+            b.disabled = true;
+            b.textContent = "Enviando…";
+            try {
+              const r = await fetch("/api/verify/send", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: state.registration.email, lang: currentLang }),
+              });
+              const data = await r.json();
+              if (data.sent) toast("Nuevo código enviado ✉️");
+              else if (data.demoCode) {
+                state.registration.demoCode = data.demoCode;
+                toast(`Modo demo — código: ${data.demoCode}`, 5000);
+              }
+              state.registration.otpExpiresAt = data.expires_at
+                || new Date(Date.now() + (data.ttl_seconds ? data.ttl_seconds * 1000 : 10 * 60 * 1000)).toISOString();
+              // Reiniciar UI: rehabilitamos inputs, quitamos el aviso, reinicia el tick.
+              inputs.forEach(i => { i.disabled = false; i.value = ""; });
+              box.remove();
+              countdownBadge.style.background = "rgba(255,255,255,0.04)";
+              countdownBadge.style.borderColor = "rgba(255,255,255,0.14)";
+              countdownBadge.style.color = "";
+              cdIco.textContent = "⏱";
+              inputs[0].focus();
+              restartOtpCountdown();
+            } catch {
+              toast("Error al pedir un nuevo código");
+              b.disabled = false;
+              b.textContent = "Solicitar nuevo código";
+            }
+          },
+        }, "Solicitar nuevo código"),
+      ]);
+      form.appendChild(box);
+    }
+  }
+  function tick() {
+    if (!state.registration.otpExpiresAt) {
+      state.registration.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+    }
+    const left = Math.max(0, Math.round((new Date(state.registration.otpExpiresAt).getTime() - Date.now()) / 1000));
+    if (left <= 0) {
+      if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+      setExpiredUI();
+      return;
+    }
+    cdTxt.textContent = `Expira en ${mmss(left)}`;
+    // Últimos 60 s en rojo, 60–180 s en ámbar.
+    if (left < 60) {
+      countdownBadge.style.borderColor = "rgba(255,68,68,0.45)";
+      countdownBadge.style.background = "rgba(255,68,68,0.10)";
+      countdownBadge.style.color = "#ffb4b4";
+    } else if (left < 180) {
+      countdownBadge.style.borderColor = "rgba(255,180,60,0.45)";
+      countdownBadge.style.background = "rgba(255,180,60,0.10)";
+      countdownBadge.style.color = "#ffd899";
+    } else {
+      countdownBadge.style.borderColor = "rgba(255,255,255,0.14)";
+      countdownBadge.style.background = "rgba(255,255,255,0.04)";
+      countdownBadge.style.color = "";
+    }
+  }
+  // Expuesta a nivel de función para que `resend()` pueda reiniciarla.
+  function restartOtpCountdown() {
+    if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+    tick();
+    _cdTimer = setInterval(tick, 1000);
+  }
+  // Cerrar el intervalo si la pantalla se desmonta (evita fugas).
+  const _cleanupObs = new MutationObserver(() => {
+    if (!document.body.contains(form)) {
+      if (_cdTimer) { clearInterval(_cdTimer); _cdTimer = null; }
+      _cleanupObs.disconnect();
+    }
+  });
+  _cleanupObs.observe(document.body, { childList: true, subtree: true });
+  restartOtpCountdown();
+  // Guardamos la referencia para que `resend()` (definido fuera) pueda llamar
+  // a restart. Al estar en la misma closure ya la usa; nada más que hacer.
+
   hideApp();
 }
 
@@ -4172,23 +4713,72 @@ function screenRegisterOTP(root) {
      1) Documento    2) Selfie con reconocimiento facial    3) Video
    Si falla → 2 intentos de revisión manual → suspensión.
 ================================================================ */
+/* Huella de dispositivo enriquecida usada para el sistema anti-duplicados.
+   Combina múltiples señales del dispositivo para producir un hash estable
+   por dispositivo/navegador. Se envía al backend en registro + KYC + login
+   para que server.js pueda comparar contra otras cuentas y detectar
+   duplicados con el sistema de scoring. */
+async function computeDeviceFingerprint() {
+  const parts = [];
+  try { parts.push("ua:" + navigator.userAgent); } catch {}
+  try { parts.push("lang:" + (navigator.language || "")); } catch {}
+  try { parts.push("langs:" + ((navigator.languages || []).join(","))); } catch {}
+  try { parts.push("res:" + screen.width + "x" + screen.height + "x" + (screen.colorDepth || 0)); } catch {}
+  try { parts.push("avail:" + (screen.availWidth||0) + "x" + (screen.availHeight||0)); } catch {}
+  try { parts.push("dpr:" + (window.devicePixelRatio || 1)); } catch {}
+  try { parts.push("tz:" + new Date().getTimezoneOffset()); } catch {}
+  try { parts.push("tzname:" + (Intl.DateTimeFormat().resolvedOptions().timeZone || "")); } catch {}
+  try { parts.push("cores:" + (navigator.hardwareConcurrency || 0)); } catch {}
+  try { parts.push("mem:" + (navigator.deviceMemory || 0)); } catch {}
+  try { parts.push("touch:" + (navigator.maxTouchPoints || 0)); } catch {}
+  try { parts.push("plat:" + (navigator.platform || "")); } catch {}
+  // Canvas fingerprint
+  try {
+    const c = document.createElement("canvas");
+    c.width = 240; c.height = 60;
+    const ctx = c.getContext("2d");
+    ctx.textBaseline = "top";
+    ctx.font = "14px 'Arial'";
+    ctx.fillStyle = "#f60"; ctx.fillRect(0, 0, 100, 40);
+    ctx.fillStyle = "#069"; ctx.fillText("aura-fp-🔒", 2, 15);
+    ctx.strokeStyle = "rgba(102,204,0,.7)"; ctx.beginPath();
+    ctx.arc(50, 30, 20, 0, Math.PI * 2); ctx.stroke();
+    parts.push("canvas:" + c.toDataURL().slice(-100));
+  } catch {}
+  // WebGL fingerprint (vendor+renderer del GPU)
+  try {
+    const c = document.createElement("canvas");
+    const gl = c.getContext("webgl") || c.getContext("experimental-webgl");
+    if (gl) {
+      const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+      if (dbg) {
+        parts.push("gpu:" + gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) + "|" + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+      }
+      parts.push("glver:" + gl.getParameter(gl.VERSION));
+    }
+  } catch {}
+  const seed = parts.join("‖");
+  try {
+    const buf = new TextEncoder().encode(seed);
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    let h = 0; for (let i = 0; i < seed.length; i++) { h = ((h<<5)-h) + seed.charCodeAt(i); h |= 0; }
+    return "fp_" + Math.abs(h).toString(36);
+  }
+}
+
 async function kycFingerprint() {
   try {
     if (state.kyc && state.kyc.fingerprint) return state.kyc.fingerprint;
-    const seed = [
-      navigator.userAgent, navigator.language, screen.width + "x" + screen.height,
-      new Date().getTimezoneOffset(), navigator.hardwareConcurrency || 0,
-      navigator.deviceMemory || 0,
-    ].join("|");
-    const buf = new TextEncoder().encode(seed);
-    const digest = await crypto.subtle.digest("SHA-256", buf);
-    const hex = Array.from(new Uint8Array(digest))
-      .map(b => b.toString(16).padStart(2, "0")).join("");
+    const hex = await computeDeviceFingerprint();
     state.kyc = state.kyc || {};
     state.kyc.fingerprint = hex;
     return hex;
   } catch { return "fp_" + Date.now().toString(36); }
 }
+try { window.computeDeviceFingerprint = computeDeviceFingerprint; } catch {}
 
 async function kycFetch(path, body) {
   const fp = await kycFingerprint();
@@ -4692,8 +5282,11 @@ function screenRegisterProfile(root) {
   fDesc.value = state.registration.description;
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Descripción"), fDesc ]));
 
-  const fPhone = el("input", { type: "tel", placeholder: "Opcional", value: state.registration.phone });
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Teléfono"), fPhone, el("small", { class: "hint" }, "Opcional — no se mostrará en tu perfil.") ]));
+  // TODO: reactivar campo Teléfono cuando se integre verificación real por SMS
+  // (Firebase Phone Auth gratis hasta 10.000 verificaciones/mes es la opción
+  // recomendada). Mientras tanto se oculta para no pedir datos sin usar.
+  // const fPhone = el("input", { type: "tel", placeholder: "Opcional", value: state.registration.phone });
+  // form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Teléfono"), fPhone, el("small", { class: "hint" }, "Opcional — no se mostrará en tu perfil.") ]));
 
   form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Continuar"));
   form.addEventListener("submit", (e) => {
@@ -4703,7 +5296,7 @@ function screenRegisterProfile(root) {
       gender: fGender.value, orientation: fOrient.value,
       city: fCity.value, province: fProv.value, country: fCountry.value,
       height: +fHeight.value, weight: +fWeight.value, ethnicity: fEth.value,
-      description: fDesc.value, phone: fPhone.value,
+      description: fDesc.value, phone: "",
     });
     render(screenRegisterPhotos);
   });
@@ -4762,6 +5355,15 @@ function screenRegisterPhotos(root) {
 
 /* ---- Login ---- */
 function screenLogin(root) {
+  // Si la app está en modo pruebas (access_locked / private_beta) y el
+  // usuario intenta abrir la pantalla de login "a pelo", enseñamos la
+  // pantalla beta con waitlist + acceso superadmin. El login normal
+  // solo está disponible para testers autorizados con código o para
+  // cuentas verificadas por el backend.
+  const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
+  if (testMode) {
+    try { showPrivateBetaScreen({}); return; } catch {}
+  }
   root.appendChild(topbar("Iniciar sesión", () => render(screenWelcome)));
 
   const form = el("form", { class: "form" });
@@ -4829,6 +5431,13 @@ function screenLogin(root) {
         });
         return;
       }
+      // El backend nos indica que este usuario tiene 2FA activo: no
+      // completamos el login aún, abrimos el modal pidiendo el código TOTP
+      // (o un código de recuperación).
+      if (r.ok && data && data.needs_2fa) {
+        openTwoFactorLoginPrompt(data.email || email);
+        return;
+      }
       if (!r.ok || !data.ok) {
         toast(r.status === 404 ? "Cuenta no encontrada. Regístrate primero." : "Error al iniciar sesión");
         return;
@@ -4844,6 +5453,72 @@ function screenLogin(root) {
   });
   root.appendChild(form);
   hideApp();
+}
+
+/* Modal que aparece durante el login cuando el usuario tiene 2FA activo.
+   Acepta un código TOTP de 6 dígitos o un código de recuperación (con guión). */
+function openTwoFactorLoginPrompt(email) {
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <div style="text-align:center;font-size:36px;margin-bottom:6px">🔐</div>
+    <h3 style="margin:0 0 6px;font-size:19px;font-weight:800;text-align:center">Verificación en 2 pasos</h3>
+    <p style="margin:0 0 14px;font-size:14px;color:#e6d9ff;text-align:center;line-height:1.4">
+      Introduce el código de 6 dígitos de tu app autenticadora.<br>
+      <small style="color:#c9bce4">También puedes usar un código de recuperación.</small>
+    </p>
+    <input class="twofa-token" type="text" inputmode="numeric" maxlength="12" placeholder="123456"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:22px;text-align:center;font-family:monospace;letter-spacing:4px">
+    <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none;text-align:center"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="twofa-cancel" type="button" style="flex:0 0 auto;height:46px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="twofa-ok" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Verificar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const tokenI = card.querySelector(".twofa-token");
+  const errEl  = card.querySelector(".twofa-err");
+  const okBtn  = card.querySelector(".twofa-ok");
+  setTimeout(() => { try { tokenI.focus(); } catch {} }, 100);
+  const close = () => { try { overlay.remove(); } catch {} };
+  card.querySelector(".twofa-cancel").addEventListener("click", close);
+  tokenI.addEventListener("keydown", (e) => { if (e.key === "Enter") okBtn.click(); });
+
+  async function submit() {
+    const token = tokenI.value.trim();
+    if (!token) { errEl.textContent = "Introduce el código"; errEl.style.display = "block"; return; }
+    okBtn.disabled = true; okBtn.textContent = "Verificando…";
+    try {
+      const r = await fetch("/api/2fa/login-verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, token }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) {
+        errEl.textContent = data.error === "invalid_code" ? "Código incorrecto" : "No se pudo verificar";
+        errEl.style.display = "block";
+        okBtn.disabled = false; okBtn.textContent = "Verificar";
+        return;
+      }
+      state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
+      state.zone = data.user.zone || state.zone || "hetero";
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      close();
+      toast(data.used_recovery ? "Has iniciado sesión con un código de recuperación" : `Bienvenido, ${data.user.name.split(" ")[0]}`);
+      setTimeout(() => showApp(), 400);
+    } catch {
+      errEl.textContent = "Error de red";
+      errEl.style.display = "block";
+      okBtn.disabled = false; okBtn.textContent = "Verificar";
+    }
+  }
+  okBtn.addEventListener("click", submit);
 }
 
 /* ---- Forgot ---- */
@@ -4880,7 +5555,7 @@ function screenDiscover(root) {
       el("span", {
         class: "brand-logo-mini brand-logo-crop",
         "aria-label": "Aura",
-        html: `<img src="assets/aura-logo.png?v=3" alt="Aura" />`,
+        html: `<img src="assets/aura-logo-round.png?v=6" alt="Aura" />`,
       }),
       el("button", { class: "chip", onclick: openFilters }, [
         el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
@@ -5756,126 +6431,182 @@ function openPremiumLockModal() {
   modal.open(sheet);
 }
 
-/* ---- Read receipts paywall ---- */
+/* ---- Read receipts paywall ----------------------------------------------
+   Modal rediseñado v2:
+   - Layout compacto pensado para caber sin scroll en móvil normal.
+   - Header con gradiente, icono y estado (chips) todo en una fila.
+   - Packs en fila horizontal (grid auto-fit) con destacado del pack "popular".
+   - Cupón y CTA Premium en la misma sección de acciones, no ocupan alto extra.
+   - Cierre visible con "X" arriba a la derecha.
+--------------------------------------------------------------------------- */
 async function openReadsPaywall(prefStatus) {
-  const sheet = el("div", { class: "reads-paywall" });
-  sheet.appendChild(el("div", { class: "rp-hero" }, [
-    el("div", { class: "rp-hero-ic" }, "🔒"),
-    el("h3", { class: "rp-h" }, "Ver lecturas de chat"),
-    el("p", { class: "rp-p" }, "Descubre cuándo tus mensajes son leídos. Tienes lecturas gratuitas mensuales y puedes ampliar con packs o pasarte a Premium para tenerlas ilimitadas."),
+  // Estilos inline por si el CSS no incluye .reads-paywall-v2. Usamos
+  // variables de tema si existen; si no, colores por defecto.
+  const styleTag = document.getElementById("readsPaywallV2Style") || (() => {
+    const s = document.createElement("style");
+    s.id = "readsPaywallV2Style";
+    s.textContent = `
+      .reads-paywall-v2 { position:relative; padding:0; overflow:hidden; border-radius:20px; max-width:560px; }
+      .rp2-close { position:absolute; top:10px; right:10px; z-index:3; width:34px; height:34px; border-radius:50%; border:none; background:rgba(0,0,0,0.45); color:#fff; font-size:20px; cursor:pointer; display:grid; place-items:center; }
+      .rp2-hero { padding:18px 20px 14px; background:linear-gradient(135deg,#ff3b6b 0%,#ff8a3b 100%); color:#fff; text-align:center; }
+      .rp2-hero-ic { font-size:32px; margin-bottom:4px; filter:drop-shadow(0 2px 8px rgba(0,0,0,0.25)); }
+      .rp2-hero h3 { margin:0; font-size:19px; font-weight:800; letter-spacing:-.01em; }
+      .rp2-hero p  { margin:4px 0 0; font-size:12.5px; opacity:.94; line-height:1.35; }
+      .rp2-chips { display:flex; gap:6px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
+      .rp2-chip { background:rgba(255,255,255,0.18); border-radius:999px; padding:4px 10px; font-size:11.5px; font-weight:600; backdrop-filter:blur(6px); }
+      .rp2-chip b { font-weight:800; }
+      .rp2-body { padding:14px 16px 16px; background:var(--bg,#0f1116); color:var(--text,#e6e6ea); }
+      .rp2-camp { display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:10px; border-radius:10px; background:rgba(255,60,110,0.10); border:1px solid rgba(255,60,110,0.28); font-size:12px; }
+      .rp2-camp b { color:#ffb4b4; }
+      .rp2-camp .rp2-camp-chip { margin-left:auto; padding:4px 10px; border-radius:999px; background:#ff3b6b; color:#fff; border:none; font-size:11px; font-weight:700; cursor:pointer; }
+      .rp2-packs { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
+      .rp2-pack { position:relative; padding:14px 10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:14px; background:rgba(255,255,255,0.04); text-align:center; transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
+      .rp2-pack:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,0.28); border-color:rgba(255,60,110,0.5); }
+      .rp2-pack.is-popular { border-color:#ff3b6b; background:linear-gradient(180deg,rgba(255,60,110,0.14),rgba(255,60,110,0.03)); }
+      .rp2-pack.is-popular::before { content:"⭐ Más elegido"; position:absolute; top:-10px; left:50%; transform:translateX(-50%); background:#ff3b6b; color:#fff; padding:3px 9px; font-size:10.5px; font-weight:800; border-radius:999px; white-space:nowrap; box-shadow:0 4px 10px rgba(255,60,110,0.4); }
+      .rp2-pack-credits { font-size:22px; font-weight:800; color:#fff; line-height:1; }
+      .rp2-pack-credits small { display:block; font-size:11px; font-weight:600; opacity:.7; margin-top:3px; letter-spacing:.02em; text-transform:uppercase; }
+      .rp2-pack-price { margin:8px 0 10px; font-size:15px; font-weight:700; color:#ffd899; }
+      .rp2-pack-price s { color:rgba(255,255,255,0.5); font-weight:500; font-size:12px; margin-right:4px; }
+      .rp2-pack-save { display:inline-block; margin-top:2px; padding:2px 8px; border-radius:999px; background:rgba(46,204,113,0.15); color:#7ee0a3; font-size:10.5px; font-weight:700; }
+      .rp2-pack-btn { width:100%; padding:9px; border-radius:10px; border:none; background:linear-gradient(135deg,#ff3b6b,#ff8a3b); color:#fff; font-weight:700; font-size:13px; cursor:pointer; transition:opacity .15s; }
+      .rp2-pack-btn:hover { opacity:.92; }
+      .rp2-pack-btn:disabled { opacity:.5; cursor:not-allowed; }
+      .rp2-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
+      .rp2-promo { display:flex; gap:6px; margin-top:10px; }
+      .rp2-promo input { flex:1; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:inherit; font-size:12.5px; }
+      .rp2-promo button { padding:8px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.06); color:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+      .rp2-promo-msg { font-size:11.5px; margin-top:4px; min-height:14px; }
+      .rp2-promo-msg.is-ok { color:#7ee0a3; }
+      .rp2-promo-msg.is-err { color:#ffb4b4; }
+      .rp2-cta-premium { padding:10px; border-radius:10px; border:none; background:linear-gradient(135deg,#6a2eff,#3b0f99); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
+      .rp2-cta-close   { padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:transparent; color:inherit; font-size:13px; cursor:pointer; }
+      @media (max-width:400px) {
+        .rp2-hero h3 { font-size:17px; }
+        .rp2-packs { grid-template-columns:repeat(3,1fr); gap:8px; }
+        .rp2-pack { padding:12px 6px 10px; }
+        .rp2-pack-credits { font-size:19px; }
+        .rp2-pack-price { font-size:13px; }
+        .rp2-pack-btn { font-size:12px; padding:8px 4px; }
+      }
+    `;
+    document.head.appendChild(s);
+    return s;
+  })();
+  void styleTag;
+
+  const sheet = el("div", { class: "reads-paywall-v2" });
+
+  // Botón X flotante para cerrar sin depender del botón inferior.
+  sheet.appendChild(el("button", {
+    class: "rp2-close",
+    type: "button",
+    title: "Cerrar",
+    "aria-label": "Cerrar",
+    "data-close": true,
+  }, "×"));
+
+  // Hero con gradiente y chips de estado. Los chips leerán datos reales
+  // cuando refreshStatus() se ejecute.
+  sheet.appendChild(el("div", { class: "rp2-hero" }, [
+    el("div", { class: "rp2-hero-ic" }, "💬✨"),
+    el("h3", {}, "Amplía tus lecturas de chat"),
+    el("p", {}, "Ve cuándo se leen tus mensajes. Elige un pack o pasa a Premium para tenerlas ilimitadas."),
+    el("div", { class: "rp2-chips" }, [
+      el("span", { class: "rp2-chip" }, [ "Gratis: ", el("b", { id: "rpFree" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ "Créditos: ", el("b", { id: "rpCredits" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ "Plan: ", el("b", { id: "rpPlan" }, "…") ]),
+    ]),
   ]));
 
-  const summary = el("div", { class: "rp-summary" }, [
-    el("div", { class: "rp-s-item" }, [
-      el("small", {}, "Gratis mensuales"),
-      el("b", { id: "rpFree" }, "…"),
-    ]),
-    el("div", { class: "rp-s-item" }, [
-      el("small", {}, "Créditos"),
-      el("b", { id: "rpCredits" }, "…"),
-    ]),
-    el("div", { class: "rp-s-item" }, [
-      el("small", {}, "Plan"),
-      el("b", { id: "rpPlan" }, "…"),
-    ]),
-  ]);
-  sheet.appendChild(summary);
+  const body = el("div", { class: "rp2-body" });
+  sheet.appendChild(body);
 
-  // Campaigns banner — shows a compact strip of active campaigns so the user
-  // can tap to auto-apply the code, or view all offers.
-  const campaignsBanner = el("div", { class: "rp-campaigns", id: "rpCampaigns" });
-  sheet.appendChild(campaignsBanner);
+  // Banner compacto de campaña activa (una sola tira, no ocupa mucho).
+  const campaignsBanner = el("div", { class: "rp2-camp", id: "rpCampaigns", style: "display:none;" });
+  body.appendChild(campaignsBanner);
   (async () => {
     try {
       const r = await fetch("/api/promotions/public", { cache: "no-store" });
       const data = r.ok ? await r.json() : [];
-      const active = data.filter(x => x.is_active_now).slice(0, 3);
-      if (!active.length) { campaignsBanner.remove(); return; }
+      const active = data.filter(x => x.is_active_now);
+      if (!active.length) return;
+      const top = active[0];
+      campaignsBanner.style.display = "flex";
       campaignsBanner.innerHTML = "";
-      campaignsBanner.appendChild(el("div", { class: "rp-camp-head" }, [
-        el("span", { class: "rp-camp-title" }, "🎉 Campañas activas"),
-        el("button", {
-          class: "rp-camp-all",
-          type: "button",
-          onclick: () => { modal.close(); render(screenOffers); },
-        }, "Ver todas →"),
-      ]));
-      const strip = el("div", { class: "rp-camp-strip" });
-      active.forEach(p => {
-        const chip = el("button", {
-          type: "button",
-          class: "rp-camp-chip",
-          title: `Aplicar ${p.code}`,
-          onclick: () => {
-            const inp = document.getElementById("rpPromoInput");
-            const btn2 = document.getElementById("rpPromoBtn");
-            if (inp) inp.value = p.code;
-            if (btn2) btn2.click();
-          },
-        }, [
-          el("span", { class: "rp-camp-disc" }, `-${p.discount_percent}%`),
-          el("span", { class: "rp-camp-code" }, p.code),
-        ]);
-        strip.appendChild(chip);
-      });
-      campaignsBanner.appendChild(strip);
-    } catch { campaignsBanner.remove(); }
+      campaignsBanner.appendChild(el("span", {}, [ "🎉 Campaña activa · ", el("b", {}, `-${top.discount_percent}% con ${top.code}`) ]));
+      campaignsBanner.appendChild(el("button", {
+        class: "rp2-camp-chip",
+        type: "button",
+        onclick: () => {
+          const inp = document.getElementById("rpPromoInput");
+          const btn2 = document.getElementById("rpPromoBtn");
+          if (inp) inp.value = top.code;
+          if (btn2) btn2.click();
+        },
+      }, "Aplicar"));
+    } catch {}
   })();
 
-  const packsRow = el("div", { class: "rp-packs", id: "rpPacksRow" }, [
-    el("div", { class: "rp-loading" }, "Cargando packs…"),
+  // Grid de packs — auto-fit para que quepan en fila sin scroll.
+  const packsRow = el("div", { class: "rp2-packs", id: "rpPacksRow" }, [
+    el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Cargando packs…"),
   ]);
-  sheet.appendChild(packsRow);
+  body.appendChild(packsRow);
 
-  // Promo / coupon code input — validates against /api/promotions/validate
-  // and applies a % discount to all packs shown above.
-  const promoBox = el("div", { class: "rp-promo" }, [
-    el("div", { class: "rp-promo-row" }, [
-      el("input", {
-        id: "rpPromoInput",
-        class: "input rp-promo-input",
-        type: "text",
-        placeholder: "Código promocional",
-        autocomplete: "off",
-        spellcheck: false,
-      }),
-      el("button", {
-        id: "rpPromoBtn",
-        class: "btn btn-ghost btn-sm",
-        type: "button",
-        onclick: async () => {
-          const inp = document.getElementById("rpPromoInput");
-          const msg = document.getElementById("rpPromoMsg");
-          const val = (inp?.value || "").trim();
-          if (!val) { window.__auraPromo = null; refreshPackPrices(); if (msg) { msg.textContent = ""; msg.className = "rp-promo-msg"; } return; }
-          try {
-            const r = await fetch("/api/promotions/validate", {
-              method: "POST", headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ code: val }),
-            });
-            const data = await r.json();
-            if (!r.ok) {
-              window.__auraPromo = null;
-              if (msg) { msg.textContent = "✕ " + (data.reason || "Cupón no válido"); msg.className = "rp-promo-msg is-err"; }
-              refreshPackPrices();
-              return;
-            }
-            window.__auraPromo = { code: data.code, discount: data.discount_percent };
-            if (msg) { msg.textContent = `✓ Cupón aplicado · -${data.discount_percent}%`; msg.className = "rp-promo-msg is-ok"; }
+  // Promo (una sola línea).
+  const promoBox = el("div", { class: "rp2-promo" }, [
+    el("input", {
+      id: "rpPromoInput",
+      type: "text",
+      placeholder: "Código promocional (opcional)",
+      autocomplete: "off",
+      spellcheck: false,
+    }),
+    el("button", {
+      id: "rpPromoBtn",
+      type: "button",
+      onclick: async () => {
+        const inp = document.getElementById("rpPromoInput");
+        const msg = document.getElementById("rpPromoMsg");
+        const val = (inp?.value || "").trim();
+        if (!val) { window.__auraPromo = null; refreshPackPrices(); if (msg) { msg.textContent = ""; msg.className = "rp2-promo-msg"; } return; }
+        try {
+          const r = await fetch("/api/promotions/validate", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: val }),
+          });
+          const data = await r.json();
+          if (!r.ok) {
+            window.__auraPromo = null;
+            if (msg) { msg.textContent = "✕ " + (data.reason || "Cupón no válido"); msg.className = "rp2-promo-msg is-err"; }
             refreshPackPrices();
-          } catch {
-            if (msg) { msg.textContent = "Error validando el cupón"; msg.className = "rp-promo-msg is-err"; }
+            return;
           }
-        },
-      }, "Aplicar"),
-    ]),
-    el("div", { id: "rpPromoMsg", class: "rp-promo-msg" }),
+          window.__auraPromo = { code: data.code, discount: data.discount_percent };
+          if (msg) { msg.textContent = `✓ Cupón aplicado · -${data.discount_percent}%`; msg.className = "rp2-promo-msg is-ok"; }
+          refreshPackPrices();
+        } catch {
+          if (msg) { msg.textContent = "Error validando el cupón"; msg.className = "rp2-promo-msg is-err"; }
+        }
+      },
+    }, "Aplicar"),
   ]);
-  sheet.appendChild(promoBox);
+  body.appendChild(promoBox);
+  body.appendChild(el("div", { id: "rpPromoMsg", class: "rp2-promo-msg" }));
 
-  sheet.appendChild(el("div", { class: "rp-actions" }, [
-    el("button", { class: "btn btn-brand btn-block", onclick: () => { modal.close(); render(screenSubscriptions); } }, "Ver Aura Premium (ilimitado)"),
-    el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cerrar"),
+  // Acciones inferiores en dos columnas: Premium (destacado) + Cerrar.
+  body.appendChild(el("div", { class: "rp2-actions" }, [
+    el("button", {
+      class: "rp2-cta-premium",
+      type: "button",
+      onclick: () => { modal.close(); render(screenSubscriptions); },
+    }, "👑 Pasar a Premium"),
+    el("button", {
+      class: "rp2-cta-close",
+      type: "button",
+      "data-close": true,
+    }, "Cerrar"),
   ]));
 
   // Símbolo de moneda: EUR→€, USD→$, GBP→£, etc. Cualquier otro se muestra tal cual.
@@ -5895,10 +6626,10 @@ async function openReadsPaywall(prefStatus) {
   // Re-renders the pack prices whenever a promo is applied/cleared.
   function refreshPackPrices() {
     const promo = window.__auraPromo;
-    document.querySelectorAll(".rp-pack").forEach(card => {
+    document.querySelectorAll(".rp2-pack").forEach(card => {
       const orig = Number(card.dataset.origPrice);
       const cur  = card.dataset.currency || "EUR";
-      const priceEl = card.querySelector(".rp-pack-price");
+      const priceEl = card.querySelector(".rp2-pack-price");
       if (!priceEl || !Number.isFinite(orig)) return;
       if (promo && promo.discount) {
         const disc = Math.max(0, Number((orig * (1 - promo.discount/100)).toFixed(2)));
@@ -5935,50 +6666,75 @@ async function openReadsPaywall(prefStatus) {
     const row = document.getElementById("rpPacksRow");
     if (!row) return;
     row.innerHTML = "";
-    (data.packs || []).forEach(p => {
+    const packs = data.packs || [];
+    // Determinar el pack "popular": el central si hay 3, o el de mejor
+    // ratio créditos/precio para orientar al usuario.
+    let popularIdx = -1;
+    if (packs.length === 3) popularIdx = 1;
+    else if (packs.length >= 2) {
+      let best = -Infinity, bi = 0;
+      packs.forEach((p, i) => {
+        const ratio = (Number(p.credits) || 0) / Math.max(0.01, Number(p.price) || 0.01);
+        if (ratio > best) { best = ratio; bi = i; }
+      });
+      popularIdx = bi;
+    }
+    // Calcular el precio por lectura del pack más pequeño para pintar ahorros.
+    const basePricePerRead = packs.length ? (Number(packs[0].price) || 0) / Math.max(1, Number(packs[0].credits) || 1) : 0;
+
+    packs.forEach((p, i) => {
+      const isPopular = i === popularIdx && packs.length >= 2;
+      const perRead = (Number(p.price) || 0) / Math.max(1, Number(p.credits) || 1);
+      const savePct = basePricePerRead > 0 ? Math.round((1 - perRead / basePricePerRead) * 100) : 0;
       const card = el("div", {
-        class: "rp-pack",
+        class: "rp2-pack" + (isPopular ? " is-popular" : ""),
         "data-orig-price": String(p.price ?? 0),
         "data-currency": p.currency || "EUR",
       }, [
-        el("div", { class: "rp-pack-title" }, p.label || ("Pack " + (p.id || "").toUpperCase())),
-        el("div", { class: "rp-pack-credits" }, (p.credits || 0) + " lecturas"),
-        el("div", { class: "rp-pack-price" }, fmtPrice(p.price, p.currency)),
-        el("button", { class: "btn btn-brand btn-sm", onclick: async () => {
-          const btn = card.querySelector("button");
-          if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
-          try {
-            const promo = window.__auraPromo;
-            const resp = await fetch("/api/my/reads/purchase", {
-              method: "POST", headers: chatApi.headers(),
-              body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
-            });
-            if (!resp.ok) {
-              const err = await resp.json().catch(() => ({}));
-              toast(err.reason || "No se pudo completar la compra");
+        el("div", { class: "rp2-pack-credits" }, [
+          String(p.credits || 0),
+          el("small", {}, "lecturas"),
+        ]),
+        el("div", { class: "rp2-pack-price" }, fmtPrice(p.price, p.currency)),
+        savePct > 0 ? el("div", { class: "rp2-pack-save" }, `Ahorra ${savePct}%`) : el("span", {}),
+        el("button", {
+          class: "rp2-pack-btn",
+          type: "button",
+          onclick: async () => {
+            const btn = card.querySelector(".rp2-pack-btn");
+            if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
+            try {
+              const promo = window.__auraPromo;
+              const resp = await fetch("/api/my/reads/purchase", {
+                method: "POST", headers: chatApi.headers(),
+                body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
+              });
+              if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                toast(err.reason || "No se pudo completar la compra");
+                if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
+                return;
+              }
+              const done = await resp.json();
+              refreshStatus(done.status);
+              const priceTxt = done.discount_percent
+                ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
+                : "";
+              toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
               if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-              return;
-            }
-            const done = await resp.json();
-            refreshStatus(done.status);
-            const priceTxt = done.discount_percent
-              ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
-              : "";
-            toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
-            if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-          } catch { toast("Error en la compra"); if (btn) { btn.disabled = false; btn.textContent = "Comprar"; } }
-        } }, "Comprar"),
+            } catch { toast("Error en la compra"); if (btn) { btn.disabled = false; btn.textContent = "Comprar"; } }
+          },
+        }, "Comprar"),
       ]);
       row.appendChild(card);
     });
-    // If a promo was previously applied in this session, refresh prices now.
     if (window.__auraPromo) refreshPackPrices();
-    if (!(data.packs || []).length) {
-      row.appendChild(el("div", { class: "rp-empty" }, "No hay packs disponibles en este momento."));
+    if (!packs.length) {
+      row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "No hay packs disponibles en este momento."));
     }
   } catch {
     const row = document.getElementById("rpPacksRow");
-    if (row) { row.innerHTML = ""; row.appendChild(el("div", { class: "rp-empty" }, "Error cargando packs.")); }
+    if (row) { row.innerHTML = ""; row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Error cargando packs.")); }
   }
 }
 
@@ -6687,6 +7443,42 @@ function screenMe(root) {
     el("button", { class: "me-edit", onclick: () => render(screenEditProfile) }, T("content.me.edit_button") || "Editar"),
   ]));
 
+  // Banner "Mi cuenta y estado" — solo se muestra si hay algo activo
+  // (KYC pendiente, apelaciones abiertas, infracciones sin resolver).
+  const statusBanner = el("div", { id: "meStatusBanner" });
+  root.appendChild(statusBanner);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/account-status", {
+        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      const flags = [];
+      if (d.kyc_status && d.kyc_status !== "verified" && d.kyc_status !== "none")
+        flags.push({ tone: "warn", icon: "🛡️", text: "Verificación de edad " + d.kyc_status });
+      if ((d.appeals_open || 0) > 0)
+        flags.push({ tone: "info", icon: "📮", text: `${d.appeals_open} apelación(es) pendiente(s)` });
+      if ((d.infractions_open || 0) > 0)
+        flags.push({ tone: "no", icon: "⚠️", text: `${d.infractions_open} infracción(es) sin resolver` });
+      if (!flags.length) return;
+      statusBanner.innerHTML = "";
+      const box = el("div", {
+        class: "me-status-banner",
+        style: "margin:10px 12px;padding:12px 14px;border-radius:12px;background:linear-gradient(135deg,#fef3c7,#fde68a);color:#92400e;display:flex;align-items:center;gap:10px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.08);",
+        onclick: () => render(screenAccountStatus),
+      }, [
+        el("div", { style: "font-size:22px;" }, flags[0].icon),
+        el("div", { style: "flex:1;" }, [
+          el("strong", { style: "display:block;font-size:14px;" }, "Tu cuenta necesita atención"),
+          el("small", { style: "display:block;font-size:12px;opacity:.85;" }, flags.map(f => f.text).join(" · ")),
+        ]),
+        el("span", { style: "font-size:18px;opacity:.7;" }, "›"),
+      ]);
+      statusBanner.appendChild(box);
+    } catch {}
+  })();
+
   const list = el("div", { class: "settings-list" });
   const zoneSub = state.zone === "lgtb"
     ? (T("content.zone.lgtb.title") || "Zona LGTB+")
@@ -6700,6 +7492,7 @@ function screenMe(root) {
       { icon: "👤", title: T("content.me.item_edit_profile") || "Editar perfil", onClick: () => render(screenEditProfile) },
       { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
       { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
+      { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
       { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: T("content.me.item_subs_sub") || "Premium · renueva 12 dic", onClick: () => render(screenSubscriptions) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
@@ -6707,12 +7500,77 @@ function screenMe(root) {
     { title: T("content.me.group_prefs") || "Preferencias", items: [
       { icon: "🎛️", title: T("content.me.item_filters") || "Filtros de descubrimiento", onClick: openFilters },
       { icon: "🌈", title: T("content.me.item_zone") || "Cambiar zona", sub: zoneSub, onClick: openZoneSwitch },
-      { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", onClick: () => openNotifSheet() },
+      { icon: "🔔", title: T("content.me.item_notif") || "Notificaciones", sub: "Push, email y qué tipos recibes", onClick: () => render(screenNotificationSettings) },
       { icon: "🌙", title: T("content.me.item_theme") || "Tema", sub: themeSub, onClick: () => { $("#themeToggle").click(); render(screenMe); } },
       { icon: "🌍", title: T("content.me.item_lang") || "Idioma", sub: ({ es: "Español", en: "English", fr: "Français", de: "Deutsch", it: "Italiano", pt: "Português" }[currentLang] || "Español"), onClick: () => openLanguageSheet() },
+      // Instalar Aura como PWA. Aparece SIEMPRE salvo que ya esté instalada.
+      // Si tenemos prompt nativo (Android/Chrome/Edge) lo usamos; si no,
+      // mostramos instrucciones específicas para el navegador del usuario.
+      ...(function(){
+        try {
+          const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+          if (standalone) return [];
+          const ua = navigator.userAgent || "";
+          const isIOS = /iPhone|iPad|iPod/i.test(ua) && !window.MSStream;
+          const isAndroid = /Android/i.test(ua);
+          const isFirefox = /Firefox/i.test(ua);
+          const isSamsung = /SamsungBrowser/i.test(ua);
+          const isEdge = /Edg\//i.test(ua);
+          const isChrome = /Chrome/i.test(ua) && !isEdge && !isSamsung;
+          const isSafariDesktop = /Safari/i.test(ua) && !/Chrome|Chromium|Edg/i.test(ua) && !isIOS;
+          const hasPrompt = !!window.__auraDeferredInstall;
+          let sub = "Añadir a la pantalla de inicio";
+          if (isIOS) sub = "Toca Compartir → Añadir a pantalla de inicio";
+          else if (!hasPrompt && isFirefox) sub = "Menú ⋮ → Instalar";
+          else if (!hasPrompt && isSafariDesktop) sub = "Archivo → Añadir al Dock";
+          return [{
+            icon: "📲",
+            title: "Instalar Aura como app",
+            sub,
+            onClick: async () => {
+              // 1) Prompt nativo si está disponible
+              if (window.__auraDeferredInstall) {
+                try {
+                  window.__auraDeferredInstall.prompt();
+                  const { outcome } = await window.__auraDeferredInstall.userChoice;
+                  if (outcome === "accepted") {
+                    window.__auraDeferredInstall = null;
+                    toast("Aura instalada");
+                    render(screenMe);
+                  }
+                } catch(e) { toast("No se pudo instalar"); }
+                return;
+              }
+              // 2) Instrucciones por navegador
+              let msg;
+              if (isIOS) {
+                msg = "Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.";
+              } else if (isAndroid && isFirefox) {
+                msg = "En Firefox Android:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar' o 'Añadir a pantalla de inicio'.";
+              } else if (isAndroid && isSamsung) {
+                msg = "En Samsung Internet:\n\n1) Menú ☰ (abajo).\n2) 'Añadir página a' → 'Pantalla de inicio'.";
+              } else if (isAndroid) {
+                msg = "En Chrome Android:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar aplicación' o 'Añadir a pantalla de inicio'.\n\nSi no aparece, actualiza Chrome o reinicia la página.";
+              } else if (isFirefox) {
+                msg = "En Firefox de escritorio:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar' (icono +).";
+              } else if (isSafariDesktop) {
+                msg = "En Safari Mac:\n\n1) Menú 'Archivo'.\n2) 'Añadir al Dock…'.";
+              } else if (isEdge) {
+                msg = "En Edge:\n\n1) Menú ⋯ (arriba derecha).\n2) 'Aplicaciones' → 'Instalar este sitio como aplicación'.";
+              } else if (isChrome) {
+                msg = "En Chrome:\n\n1) Menú ⋮ (arriba derecha).\n2) 'Instalar Aura…' o 'Enviar, guardar y compartir' → 'Instalar página como aplicación'.";
+              } else {
+                msg = "Busca en el menú de tu navegador la opción 'Instalar aplicación' o 'Añadir a pantalla de inicio'.";
+              }
+              alert(msg);
+            }
+          }];
+        } catch { return []; }
+      })(),
     ]},
     { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
       { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: T("content.me.item_invisible_sub") || "Solo Premium", onClick: () => render(screenInvisibleMode) },
+      { icon: "🛡", title: "Dispositivo perdido o robado", sub: "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
       { icon: "🔒", title: T("content.me.item_security") || "Contraseña y 2FA", onClick: () => render(screenSecurity) },
       { icon: "🚫", title: T("content.me.item_blocked") || "Usuarios bloqueados", onClick: () => render(screenBlockedUsers) },
       { icon: "📱", title: T("content.me.item_devices") || "Dispositivos activos", onClick: () => openDevicesSheet() },
@@ -6766,6 +7624,169 @@ function screenMe(root) {
 function meSubHeader(root, title) {
   root.classList.add("screen-me-sub");
   root.appendChild(topbar(title, () => routeTab("me")));
+}
+
+/* — Mi cuenta y estado —
+   Muestra al usuario el estado actual de:
+     · Verificación de edad (KYC)
+     · Apelaciones enviadas + estado
+     · Infracciones registradas en la cuenta
+   Todo se pinta desde el endpoint /api/my/account-status. */
+function screenAccountStatus(root) {
+  meSubHeader(root, "Mi cuenta y estado");
+  const wrap = el("div", { class: "info-wrap", style: "padding:14px;" });
+  wrap.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 14px;" },
+    "Aquí puedes ver el estado de tu verificación, apelaciones enviadas y cualquier infracción registrada en tu cuenta."));
+
+  const boxKyc      = el("div", { class: "acc-status-box" });
+  const boxAppeals  = el("div", { class: "acc-status-box" });
+  const boxInfract  = el("div", { class: "acc-status-box" });
+  wrap.appendChild(boxKyc);
+  wrap.appendChild(boxAppeals);
+  wrap.appendChild(boxInfract);
+  root.appendChild(wrap);
+
+  // CSS inline (idempotente).
+  if (!document.getElementById("accStatusStyle")) {
+    const st = document.createElement("style");
+    st.id = "accStatusStyle";
+    st.textContent = `
+      .acc-status-box{background:var(--card,#fff);color:var(--text,#111);
+        border:1px solid var(--border,rgba(0,0,0,.06));border-radius:14px;
+        padding:14px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(0,0,0,.06);}
+      .acc-status-title{display:flex;align-items:center;gap:8px;
+        font-size:15px;font-weight:600;margin:0 0 8px;color:var(--text,#111);}
+      .acc-status-item{padding:8px 0;border-top:1px solid var(--border,rgba(0,0,0,.06));
+        font-size:13.5px;display:flex;justify-content:space-between;align-items:center;gap:8px;
+        color:var(--text,#111);}
+      .acc-status-item:first-child{border-top:none;}
+      .acc-status-item small{color:var(--text-soft,#666) !important;}
+      .acc-badge{padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600;}
+      .acc-badge.ok{background:#dcfce7;color:#166534;}
+      .acc-badge.warn{background:#fef3c7;color:#92400e;}
+      .acc-badge.no{background:#fee2e2;color:#991b1b;}
+      .acc-badge.info{background:#dbeafe;color:#1e40af;}
+      .acc-badge.muted{background:#f3f4f6;color:#4b5563;}
+      /* Dark mode: usar tarjeta oscura si el tema define --card, si no forzar */
+      @media (prefers-color-scheme: dark){
+        .acc-status-box{background:var(--card,#1a1d2b);color:var(--text,#e6e9f2);
+          border-color:var(--border,#2a2f45);}
+        .acc-status-item{border-top-color:var(--border,#2a2f45);color:var(--text,#e6e9f2);}
+        .acc-status-item small{color:var(--text-soft,#9aa4bf) !important;}
+        .acc-badge.ok{background:#064e3b;color:#a7f3d0;}
+        .acc-badge.warn{background:#78350f;color:#fde68a;}
+        .acc-badge.no{background:#7f1d1d;color:#fecaca;}
+        .acc-badge.info{background:#1e3a8a;color:#bfdbfe;}
+        .acc-badge.muted{background:#2a2f45;color:#c1c7d8;}
+      }
+      /* Soporte de tema por clase (algunos temas alternan .theme-dark) */
+      body.theme-dark .acc-status-box,body.dark .acc-status-box,html.dark .acc-status-box{
+        background:var(--card,#1a1d2b);color:var(--text,#e6e9f2);
+        border-color:var(--border,#2a2f45);}
+      body.theme-dark .acc-status-item,body.dark .acc-status-item,html.dark .acc-status-item{
+        border-top-color:var(--border,#2a2f45);color:var(--text,#e6e9f2);}
+      body.theme-dark .acc-status-item small,body.dark .acc-status-item small,html.dark .acc-status-item small{
+        color:var(--text-soft,#9aa4bf) !important;}
+    `;
+    document.head.appendChild(st);
+  }
+
+  function badge(tone, text) {
+    return `<span class="acc-badge ${tone}">${text}</span>`;
+  }
+
+  (async () => {
+    boxKyc.innerHTML     = "<div class='muted' style='padding:8px;'>Cargando…</div>";
+    boxAppeals.innerHTML = "";
+    boxInfract.innerHTML = "";
+    try {
+      const r = await fetch("/api/my/account-status", {
+        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+      });
+      const d = await r.json();
+
+      // KYC
+      const kycMap = {
+        verified:      { t: "ok",   l: "Verificado" },
+        manual_review: { t: "warn", l: "En revisión manual" },
+        pending:       { t: "muted",l: "Pendiente" },
+        rejected:      { t: "no",   l: "Rechazado" },
+        suspended:     { t: "no",   l: "Suspendido" },
+        none:          { t: "muted",l: "No iniciado" },
+      };
+      const kb = kycMap[d.kyc_status] || kycMap.none;
+      boxKyc.innerHTML = `
+        <div class="acc-status-title">🛡️ Verificación de edad</div>
+        <div class="acc-status-item">
+          <span>Estado actual</span>${badge(kb.t, kb.l)}
+        </div>
+        ${d.kyc_reason ? `<div class="acc-status-item"><span>Motivo</span><span style="text-align:right;font-size:12.5px;">${d.kyc_reason}</span></div>` : ""}
+        ${d.kyc_updated_at ? `<div class="acc-status-item"><span>Última actualización</span><span style="font-size:12.5px;">${new Date(d.kyc_updated_at).toLocaleString()}</span></div>` : ""}
+      `;
+
+      // Apelaciones
+      const appeals = d.appeals || [];
+      boxAppeals.innerHTML = `<div class="acc-status-title">📮 Mis apelaciones</div>`;
+      if (!appeals.length) {
+        boxAppeals.appendChild(el("div", { class: "acc-status-item" }, [
+          el("span", { class: "muted" }, "No has enviado apelaciones."),
+        ]));
+      } else {
+        appeals.forEach(a => {
+          const stMap = {
+            open:      { t: "warn", l: "En revisión" },
+            reviewed:  { t: "info", l: "Revisada" },
+            accepted:  { t: "ok",   l: "Aceptada" },
+            rejected:  { t: "no",   l: "Rechazada" },
+          };
+          const sb = stMap[a.status] || { t: "muted", l: a.status };
+          const row = document.createElement("div");
+          row.className = "acc-status-item";
+          row.innerHTML = `
+            <div>
+              <div style="font-weight:600;">${a.subject || "Apelación #" + a.id}</div>
+              <small>${a.created_at ? new Date(a.created_at).toLocaleString() : ""}</small>
+            </div>
+            ${badge(sb.t, sb.l)}`;
+          boxAppeals.appendChild(row);
+        });
+      }
+
+      // Infracciones
+      const infr = d.infractions || [];
+      boxInfract.innerHTML = `<div class="acc-status-title">⚠️ Infracciones y avisos</div>`;
+      if (!infr.length) {
+        boxInfract.appendChild(el("div", { class: "acc-status-item" }, [
+          el("span", { class: "muted" }, "Tu cuenta no tiene infracciones. ¡Bien hecho!"),
+        ]));
+      } else {
+        infr.forEach(i => {
+          const sev = i.severity === "high" ? "no" : (i.severity === "medium" ? "warn" : "muted");
+          const row = document.createElement("div");
+          row.className = "acc-status-item";
+          row.innerHTML = `
+            <div>
+              <div style="font-weight:600;">${i.title || i.type || "Infracción"}</div>
+              <small>${i.detail || ""}</small>
+              <small style="display:block;opacity:.75;">${i.created_at ? new Date(i.created_at).toLocaleString() : ""}</small>
+            </div>
+            ${badge(sev, i.status === "resolved" ? "Resuelta" : (i.severity || "aviso"))}`;
+          boxInfract.appendChild(row);
+        });
+      }
+
+      // Acción rápida
+      if (d.kyc_status === "rejected" || d.kyc_status === "suspended" || infr.length) {
+        wrap.appendChild(el("button", {
+          class: "btn primary block",
+          style: "margin-top:8px;width:100%;",
+          onclick: () => render(screenSupportTicket),
+        }, "Abrir un ticket de soporte"));
+      }
+    } catch (e) {
+      boxKyc.innerHTML = "<div class='muted' style='padding:8px;'>No se pudo cargar el estado.</div>";
+    }
+  })();
 }
 
 /* — Editar perfil — */
@@ -7052,12 +8073,252 @@ function screenSecurity(root) {
 
   wrap.appendChild(el("h3", { class: "info-section" }, T("content.me.sec_2fa") || "Verificación en 2 pasos"));
   const c2 = el("div", { class: "info-card" });
-  c2.appendChild(switchRow(T("content.me.sec_2fa_sms") || "SMS al móvil (+34 ••• ••• 342)", true, () => toast(T("content.me.saved_short") || "Guardado")));
-  c2.appendChild(switchRow(T("content.me.sec_2fa_app") || "App autenticadora", false, () => toast(T("content.me.saved_short") || "Guardado")));
-  c2.appendChild(switchRow(T("content.me.sec_2fa_email") || "Código por email", false, () => toast(T("content.me.saved_short") || "Guardado")));
+
+  // Fila real de App autenticadora — se conecta con /api/2fa/*
+  const authRow = el("div", { class: "switch-row" });
+  const authLabel = el("div", { style: "display:flex;flex-direction:column;gap:2px;flex:1;min-width:0" }, [
+    el("span", { style: "font-size:14px;font-weight:600" }, T("content.me.sec_2fa_app") || "App autenticadora"),
+    el("small", { class: "sec-2fa-status", style: "font-size:12px;color:var(--text-muted,#8f95a3)" }, "Comprobando…"),
+  ]);
+  const authInp = el("input", { type: "checkbox" });
+  const authSwitch = el("label", { class: "switch" }, [authInp, el("span")]);
+  authRow.appendChild(authLabel);
+  authRow.appendChild(authSwitch);
+  c2.appendChild(authRow);
+
+  // TODO: reactivar 2FA SMS cuando se integre Firebase Phone Auth (gratis 10k/mes).
+  // TODO: reactivar 2FA por email cuando el sistema de emails transaccionales
+  // esté probado en producción. De momento solo mostramos App autenticadora.
   wrap.appendChild(c2);
+
+  // Estado inicial + conexión con endpoints.
+  const statusEl = authLabel.querySelector(".sec-2fa-status");
+  async function refresh2FAStatus() {
+    try {
+      const r = await fetch("/api/2fa/status", {
+        headers: { "X-User-Id": String(state.user?.id || "") },
+        cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d && d.ok) {
+        authInp.checked = !!d.enabled;
+        statusEl.textContent = d.enabled
+          ? `Activada · ${d.recovery_remaining} códigos de recuperación disponibles`
+          : "Recomendado. Añade una capa extra de seguridad a tu cuenta.";
+      } else {
+        statusEl.textContent = "No se pudo cargar el estado.";
+      }
+    } catch { statusEl.textContent = "No se pudo cargar el estado."; }
+  }
+  refresh2FAStatus();
+
+  authInp.addEventListener("change", () => {
+    if (authInp.checked) {
+      authInp.checked = false; // se marcará al confirmar el setup
+      openTwoFactorSetup(refresh2FAStatus);
+    } else {
+      openTwoFactorDisable(refresh2FAStatus);
+    }
+  });
+
   root.appendChild(wrap);
   hideApp();
+}
+
+/* ------------------------------------------------------------
+   Flujo de alta 2FA (TOTP) — modal profesional
+   1. GET secret + otpauth desde /api/2fa/setup
+   2. Muestra QR + código manual
+   3. Pide primer código de 6 dígitos → /api/2fa/verify
+   4. Muestra los 8 códigos de recuperación en claro
+   ------------------------------------------------------------ */
+function openTwoFactorSetup(onDone) {
+  const uid = state.user?.id;
+  if (!uid) { toast("Inicia sesión primero"); return; }
+  const overlay = el("div", { class: "twofa-overlay", style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px;overflow-y:auto"
+  });
+  const card = el("div", { style:
+    "max-width:460px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px 22px 18px;color:#fff;" +
+    "box-shadow:0 30px 80px rgba(0,0,0,.6);max-height:calc(100vh - 32px);overflow-y:auto"
+  });
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <h3 style="margin:0;font-size:19px;font-weight:800">🔐 Activar verificación en 2 pasos</h3>
+      <button class="twofa-close" type="button" aria-label="Cerrar"
+        style="background:rgba(255,255,255,.08);border:0;color:#fff;width:32px;height:32px;border-radius:10px;cursor:pointer;font-size:16px">✕</button>
+    </div>
+    <div class="twofa-step-1">
+      <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
+        Instala una app autenticadora (<strong>Google Authenticator</strong>, <strong>Authy</strong>, <strong>Aegis</strong>…) y escanea el código QR.
+      </p>
+      <div class="twofa-qr" style="background:#fff;padding:14px;border-radius:14px;display:grid;place-items:center;min-height:220px"></div>
+      <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px">
+        <small style="display:block;color:#c9bce4;margin-bottom:6px">¿No puedes escanear? Introduce esta clave manualmente:</small>
+        <code class="twofa-secret" style="display:block;font-family:monospace;font-size:14px;letter-spacing:1.5px;word-break:break-all;color:#ffb37a"></code>
+      </div>
+      <label style="display:block;margin:16px 0 6px;font-size:13px;font-weight:700">Introduce el código de 6 dígitos:</label>
+      <input class="twofa-token" type="text" inputmode="numeric" maxlength="6" placeholder="123 456"
+        style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:20px;letter-spacing:6px;text-align:center;font-family:monospace">
+      <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none"></div>
+      <button class="twofa-verify" type="button" style="margin-top:14px;width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;font-size:15px">
+        Verificar y activar
+      </button>
+    </div>
+    <div class="twofa-step-2" style="display:none">
+      <div style="text-align:center;font-size:34px;margin-bottom:6px">✅</div>
+      <h4 style="margin:0 0 8px;font-size:17px;text-align:center">¡2FA activado!</h4>
+      <p style="margin:0 0 12px;font-size:13.5px;color:#e6d9ff;line-height:1.4">
+        Guarda estos <strong>8 códigos de recuperación</strong> en un sitio seguro. Cada uno se puede usar una sola vez si pierdes acceso a tu app autenticadora.
+      </p>
+      <pre class="twofa-recovery" style="background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.16);border-radius:10px;padding:14px;font-family:monospace;font-size:15px;letter-spacing:1.5px;line-height:1.7;color:#ffb37a;white-space:pre-wrap;text-align:center"></pre>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="twofa-copy" type="button" style="flex:1;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">📋 Copiar códigos</button>
+        <button class="twofa-download" type="button" style="flex:1;height:44px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;font-size:13.5px;cursor:pointer">💾 Descargar .txt</button>
+      </div>
+      <button class="twofa-done" type="button" style="margin-top:14px;width:100%;height:48px;border:0;border-radius:14px;cursor:pointer;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;font-size:15px">
+        Los he guardado, terminar
+      </button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+
+  const close = () => { try { overlay.remove(); } catch {}; if (typeof onDone === "function") onDone(); };
+  card.querySelector(".twofa-close").addEventListener("click", close);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+
+  // 1. Setup
+  fetch("/api/2fa/setup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+    body: "{}",
+  }).then(r => r.json()).then(d => {
+    if (!d || !d.ok) { toast("No se pudo iniciar el 2FA"); close(); return; }
+    card.querySelector(".twofa-secret").textContent = d.secret;
+    // QR con librería externa cargada bajo demanda.
+    renderTwoFactorQR(card.querySelector(".twofa-qr"), d.otpauth);
+  }).catch(() => { toast("Error de red"); close(); });
+
+  // 2. Verify
+  const tokenI = card.querySelector(".twofa-token");
+  const errEl = card.querySelector(".twofa-err");
+  tokenI.addEventListener("input", () => {
+    tokenI.value = tokenI.value.replace(/\D/g, "").slice(0, 6);
+    errEl.style.display = "none";
+  });
+  card.querySelector(".twofa-verify").addEventListener("click", async () => {
+    const token = tokenI.value.trim();
+    if (token.length !== 6) { errEl.textContent = "Introduce los 6 dígitos"; errEl.style.display = "block"; return; }
+    try {
+      const r = await fetch("/api/2fa/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        body: JSON.stringify({ token }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        errEl.textContent = d.error === "invalid_code" ? "Código incorrecto. Prueba de nuevo." : "No se pudo verificar";
+        errEl.style.display = "block";
+        return;
+      }
+      // Mostrar códigos de recuperación
+      const codes = d.recovery_codes || [];
+      card.querySelector(".twofa-step-1").style.display = "none";
+      card.querySelector(".twofa-step-2").style.display = "block";
+      card.querySelector(".twofa-recovery").textContent = codes.join("\n");
+      card.querySelector(".twofa-copy").addEventListener("click", () => {
+        try { navigator.clipboard.writeText(codes.join("\n")); toast("Códigos copiados"); } catch { toast("No se pudo copiar"); }
+      });
+      card.querySelector(".twofa-download").addEventListener("click", () => {
+        try {
+          const blob = new Blob([`Aura · Códigos de recuperación 2FA\nGuárdalos en un sitio seguro.\n\n${codes.join("\n")}\n`], { type: "text/plain" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = "aura-2fa-recovery.txt";
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch { toast("No se pudo descargar"); }
+      });
+      card.querySelector(".twofa-done").addEventListener("click", close);
+    } catch { errEl.textContent = "Error de red"; errEl.style.display = "block"; }
+  });
+}
+
+/* Modal para desactivar 2FA. Requiere un código TOTP válido. */
+function openTwoFactorDisable(onDone) {
+  const uid = state.user?.id;
+  if (!uid) return;
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <h3 style="margin:0 0 8px;font-size:18px;font-weight:800">Desactivar 2FA</h3>
+    <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
+      Introduce un código de tu app autenticadora (o uno de recuperación) para confirmar.
+    </p>
+    <input class="twofa-token" type="text" inputmode="numeric" maxlength="12" placeholder="123456 o CÓDIGO-RECUP"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:18px;text-align:center;font-family:monospace;letter-spacing:2px">
+    <div class="twofa-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="twofa-cancel" type="button" style="flex:1;height:46px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="twofa-off" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Desactivar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const close = () => { try { overlay.remove(); } catch {}; if (typeof onDone === "function") onDone(); };
+  card.querySelector(".twofa-cancel").addEventListener("click", close);
+  card.querySelector(".twofa-off").addEventListener("click", async () => {
+    const token = card.querySelector(".twofa-token").value.trim();
+    const errEl = card.querySelector(".twofa-err");
+    if (!token) { errEl.textContent = "Introduce un código"; errEl.style.display = "block"; return; }
+    try {
+      const r = await fetch("/api/2fa/disable", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        body: JSON.stringify({ token }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        errEl.textContent = d.error === "invalid_code" ? "Código incorrecto" : "No se pudo desactivar";
+        errEl.style.display = "block"; return;
+      }
+      toast("Verificación en 2 pasos desactivada");
+      close();
+    } catch { errEl.textContent = "Error de red"; errEl.style.display = "block"; }
+  });
+}
+
+/* Renderiza el QR usando qrcode.js cargado bajo demanda (CDN).
+   Si no hay red muestra el fallback manual (código base32). */
+function renderTwoFactorQR(container, otpauth) {
+  container.innerHTML = "";
+  const doRender = () => {
+    try {
+      const size = 220;
+      const cnv = document.createElement("canvas");
+      cnv.width = size; cnv.height = size;
+      container.appendChild(cnv);
+      // eslint-disable-next-line no-undef
+      QRCode.toCanvas(cnv, otpauth, { width: size, margin: 1 }, (err) => {
+        if (err) container.textContent = "No se pudo generar el QR";
+      });
+    } catch {
+      container.textContent = "QR no disponible";
+    }
+  };
+  if (typeof window.QRCode !== "undefined") { doRender(); return; }
+  const s = document.createElement("script");
+  s.src = "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js";
+  s.onload = doRender;
+  s.onerror = () => { container.textContent = "QR no disponible"; };
+  document.head.appendChild(s);
 }
 
 /* — Usuarios bloqueados — */
@@ -8893,6 +10154,10 @@ async function boot() {
       }
     }
   } catch {}
+  // Modo pruebas privadas: al arrancar mostramos la pantalla de bienvenida
+  // (con input de código de invitación de tester). Desde ahí el usuario
+  // puede pulsar "🧪 Ver estado de la beta / Soy superadmin" para ir a la
+  // pantalla beta (waitlist + acceso superadmin) si lo necesita.
   render(publicInfoScreen || screenWelcome);
   // Deep-link para apelaciones desde el email de moderación:
   // /?appeal=1&email=xxx  → siempre muestra primero la pantalla de aviso con
@@ -8978,5 +10243,684 @@ function openAdminLogin() {
   ]);
   document.body.appendChild(modal);
 }
+
+/* ================================================================
+   V450+ · Pantalla de preferencias de notificación
+   ================================================================ */
+function screenNotificationSettings(root) {
+  root.appendChild(topbar("Notificaciones", () => render(screenMe)));
+
+  const wrap = el("div", { class: "container", style: "padding:16px;max-width:640px;margin:0 auto" });
+  root.appendChild(wrap);
+
+  wrap.appendChild(el("p", { class: "muted" }, "Elige qué avisos quieres recibir y en qué dispositivos."));
+
+  const loading = el("p", { class: "muted" }, "Cargando…");
+  wrap.appendChild(loading);
+
+  const TYPES = [
+    ["matches","💘 Nuevos matches"],
+    ["likes","❤️ Nuevos likes"],
+    ["chats","💬 Mensajes de chat"],
+    ["visits","👀 Visitas a tu perfil"],
+    ["nearby","📍 Alguien cerca de ti"],
+    ["promos","🎁 Ofertas y promociones"],
+    ["news","📰 Novedades de la app"],
+    ["security","🔒 Seguridad de la cuenta"],
+  ];
+
+  (async () => {
+    try {
+      const prefs = await fetch("/api/my/notification-prefs", { headers: authHeaders() }).then(r => r.json());
+      const cur = prefs.prefs || {};
+      loading.remove();
+
+      const CARD_STYLE = "background:var(--panel,#14171f);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:14px;padding:14px;margin:12px 0";
+      const H4_STYLE = "margin:0 0 8px;color:var(--text,#ecedf3);font-size:15px;font-weight:700";
+      const chanBox = el("div", { style: CARD_STYLE });
+      chanBox.appendChild(el("h4", { style: H4_STYLE }, "¿Dónde quieres recibir avisos?"));
+      const channels = [
+        ["push","🔔 Solo push"],
+        ["email","✉️ Solo email"],
+        ["both","🔔 + ✉️ Ambos"],
+        ["none","🔕 Ninguno"],
+      ];
+      const chanSel = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px" });
+      channels.forEach(([v,l]) => {
+        const b = el("button", { type: "button", class: "btn " + ((cur.channel || "both") === v ? "btn-brand" : "btn-ghost") }, l);
+        b.addEventListener("click", async () => {
+          try {
+            await fetch("/api/my/notification-prefs", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ channel: v }),
+            });
+            render(screenNotificationSettings);
+          } catch(e){ toast("Error"); }
+        });
+        chanSel.appendChild(b);
+      });
+      chanBox.appendChild(chanSel);
+      wrap.appendChild(chanBox);
+
+      const pushBox = el("div", { style: CARD_STYLE });
+      pushBox.appendChild(el("h4", { style: H4_STYLE }, "Push en este dispositivo"));
+      const pushInfo = el("p", { class: "muted", style: "margin:0 0 8px;font-size:13px" }, "");
+      pushBox.appendChild(pushInfo);
+      const pushBtn = el("button", { class: "btn btn-brand", type: "button" }, "Cargando…");
+      pushBox.appendChild(pushBtn);
+
+      async function refreshPushState() {
+        if (!("Notification" in window) || !("serviceWorker" in navigator)) {
+          pushInfo.textContent = "Tu navegador no soporta notificaciones push.";
+          pushBtn.style.display = "none";
+          return;
+        }
+        const perm = Notification.permission;
+        const reg = await navigator.serviceWorker.getRegistration();
+        const sub = reg && reg.pushManager ? await reg.pushManager.getSubscription() : null;
+        if (perm === "denied") {
+          pushInfo.textContent = "Notificaciones bloqueadas en el navegador. Actívalas en ajustes del sistema.";
+          pushBtn.style.display = "none";
+          return;
+        }
+        if (sub) {
+          pushInfo.textContent = "Push activadas en este dispositivo.";
+          pushBtn.textContent = "🔕 Desactivar push aquí";
+          pushBtn.onclick = async () => {
+            try {
+              await sub.unsubscribe();
+              await fetch("/api/my/push-unsubscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+              });
+              toast("Push desactivadas");
+              refreshPushState();
+            } catch(e){ toast("Error: " + e.message); }
+          };
+        } else {
+          pushInfo.textContent = "Recibe avisos incluso cuando la app esté cerrada.";
+          pushBtn.textContent = "🔔 Activar push en este dispositivo";
+          pushBtn.onclick = async () => {
+            try {
+              const p = await Notification.requestPermission();
+              if (p !== "granted") { toast("Permiso denegado"); return; }
+              const reg2 = await navigator.serviceWorker.ready;
+              const vapid = window.__vapidPublicKey || null;
+              const subOpts = { userVisibleOnly: true };
+              if (vapid) subOpts.applicationServerKey = urlBase64ToUint8Array(vapid);
+              const newSub = await reg2.pushManager.subscribe(subOpts);
+              const raw = newSub.toJSON();
+              await fetch("/api/my/push-subscribe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ endpoint: raw.endpoint, p256dh: raw.keys?.p256dh, auth: raw.keys?.auth, ua: navigator.userAgent }),
+              });
+              toast("Push activadas");
+              refreshPushState();
+            } catch(e){ toast("Error: " + e.message); }
+          };
+        }
+      }
+      refreshPushState();
+      wrap.appendChild(pushBox);
+
+      const typesBox = el("div", { style: CARD_STYLE });
+      typesBox.appendChild(el("h4", { style: H4_STYLE }, "¿Qué avisos quieres recibir?"));
+      const types = cur.types || {};
+      TYPES.forEach(([k, label]) => {
+        const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border,#262a36);cursor:pointer;color:var(--text,#ecedf3)" });
+        row.appendChild(el("span", { style: "color:var(--text,#ecedf3);font-size:14px" }, label));
+        const cb = el("input", { type: "checkbox" });
+        cb.checked = types[k] !== false;
+        cb.addEventListener("change", async () => {
+          try {
+            await fetch("/api/my/notification-prefs", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json", ...authHeaders() },
+              body: JSON.stringify({ type: k, enabled: cb.checked }),
+            });
+          } catch(e) { toast("Error"); }
+        });
+        row.appendChild(cb);
+        typesBox.appendChild(row);
+      });
+      wrap.appendChild(typesBox);
+
+      const quietBox = el("div", { style: CARD_STYLE });
+      quietBox.appendChild(el("h4", { style: H4_STYLE }, "🌙 No molestar"));
+      quietBox.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "Silencia todos los avisos entre estas horas."));
+      const from = el("input", { type: "time", value: cur.quiet_from || "" });
+      const to = el("input", { type: "time", value: cur.quiet_to || "" });
+      const rowQ = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
+      rowQ.appendChild(el("span", {}, "De"));
+      rowQ.appendChild(from);
+      rowQ.appendChild(el("span", {}, "a"));
+      rowQ.appendChild(to);
+      const saveQ = el("button", { class: "btn btn-brand", type: "button" }, "Guardar");
+      saveQ.addEventListener("click", async () => {
+        try {
+          await fetch("/api/my/notification-prefs", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ quiet_from: from.value || null, quiet_to: to.value || null }),
+          });
+          toast("Guardado");
+        } catch(e) { toast("Error"); }
+      });
+      rowQ.appendChild(saveQ);
+      quietBox.appendChild(rowQ);
+      wrap.appendChild(quietBox);
+
+    } catch (e) {
+      loading.remove();
+      wrap.appendChild(el("p", { class: "err" }, "Error cargando preferencias: " + e.message));
+    }
+  })();
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
+
+// Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
+// Se llama tras showApp() (login/registro OK). No molesta si ya está permitido
+// o si el usuario ya lo denegó.
+async function maybePromptForPush() {
+  try {
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (Notification.permission === "denied") return;
+    const vapid = window.__vapidPublicKey || null;
+    if (!vapid) return; // backend sin VAPID configurado
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      if (Notification.permission === "default") {
+        // Guardamos flag para no volver a pedir cada login si el usuario cierra el prompt.
+        try {
+          const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
+          if (Date.now() - lastAsk < 3 * 24 * 3600 * 1000) return; // no más de 1 vez cada 3 días
+          localStorage.setItem("aura_push_last_ask", String(Date.now()));
+        } catch {}
+        const p = await Notification.requestPermission();
+        if (p !== "granted") return;
+      }
+      try {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapid),
+        });
+      } catch (e) { return; }
+    }
+    const raw = sub.toJSON();
+    let lang = ""; try { lang = (navigator.language || "").slice(0, 8); } catch {}
+    await fetch("/api/my/push-subscribe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        endpoint: raw.endpoint,
+        p256dh: raw.keys?.p256dh,
+        auth: raw.keys?.auth,
+        ua: navigator.userAgent,
+        lang,
+      }),
+    }).catch(()=>{});
+  } catch {}
+}
+
+function authHeaders() {
+  const h = {};
+  try { if (state && state.user && state.user.id) h["X-User-Id"] = String(state.user.id); } catch {}
+  return h;
+}
+
+/* ================================================================
+   V450+ · Popup in-app activo
+   ================================================================ */
+async function checkActivePopup() {
+  if (!state || !state.user || !state.user.id) return;
+  try {
+    const r = await fetch("/api/my/popup-active", { headers: authHeaders() });
+    if (!r.ok) return;
+    const p = await r.json();
+    if (!p || !p.id) return;
+    renderPopup(p);
+  } catch {}
+}
+
+function renderPopup(p) {
+  if (document.getElementById("auraPopup")) return;
+  const themes = {
+    default:  { bg: "linear-gradient(160deg,#5b9bff,#c26bff)", fg: "#fff" },
+    pride:    { bg: "linear-gradient(90deg,#ff2b2b,#ff8a3b,#f7d02c,#4caf50,#2196f3,#9c27b0)", fg: "#fff" },
+    valentine:{ bg: "linear-gradient(160deg,#ff5c8a,#ff8fbf)", fg: "#fff" },
+    christmas:{ bg: "linear-gradient(160deg,#0f5132,#c00)", fg: "#fff" },
+    summer:   { bg: "linear-gradient(160deg,#ffd166,#ff6b6b)", fg: "#fff" },
+    premium:  { bg: "linear-gradient(160deg,#111,#333)", fg: "#ffd700" },
+  };
+  const th = themes[p.theme] || themes.default;
+  const overlay = el("div", { id: "auraPopup", style: "position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9998;display:flex;align-items:center;justify-content:center;padding:16px;animation:fadeIn .2s" });
+  const card = el("div", { style: "background:var(--panel,#fff);border-radius:20px;max-width:420px;width:100%;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.4);animation:popupIn .3s cubic-bezier(.34,1.56,.64,1)" });
+  overlay.appendChild(card);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) dismiss(); });
+
+  if (!document.getElementById("popupCss")) {
+    const st = document.createElement("style");
+    st.id = "popupCss";
+    st.textContent = "@keyframes fadeIn{from{opacity:0}to{opacity:1}}@keyframes popupIn{from{opacity:0;transform:scale(.85)}to{opacity:1;transform:scale(1)}}";
+    document.head.appendChild(st);
+  }
+
+  const hero = el("div", { style: `background:${th.bg};color:${th.fg};padding:32px 20px;text-align:center;position:relative` });
+  if (p.image_url) hero.style.backgroundImage = `linear-gradient(rgba(0,0,0,.2),rgba(0,0,0,.4)), url(${p.image_url})`;
+  hero.style.backgroundSize = "cover"; hero.style.backgroundPosition = "center";
+  const closeBtn = el("button", { style: "position:absolute;top:10px;right:10px;background:rgba(0,0,0,.3);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer", "aria-label": "Cerrar" }, "×");
+  closeBtn.addEventListener("click", dismiss);
+  hero.appendChild(closeBtn);
+  hero.appendChild(el("h2", { style: "margin:0 0 8px;font-size:24px;font-weight:800;line-height:1.2" }, p.title || ""));
+  if (p.body) hero.appendChild(el("p", { style: "margin:0;font-size:15px;opacity:.95;line-height:1.4" }, p.body));
+  card.appendChild(hero);
+
+  const foot = el("div", { style: "padding:16px 20px;display:flex;gap:8px;flex-direction:column" });
+  if (p.cta_text) {
+    const cta = el("button", { class: "btn btn-brand btn-block", style: "font-weight:700;padding:14px;font-size:15px;border-radius:12px" }, p.cta_text);
+    cta.addEventListener("click", () => {
+      trackEvent("click");
+      dismiss();
+      if (p.cta_url) {
+        if (p.cta_url.startsWith("http")) window.open(p.cta_url, "_blank");
+        else if (p.cta_url.startsWith("/")) location.href = p.cta_url;
+      }
+    });
+    foot.appendChild(cta);
+  }
+  const dismissBtn = el("button", { class: "btn btn-ghost btn-block", style: "font-size:13px" }, "Ahora no");
+  dismissBtn.addEventListener("click", dismiss);
+  foot.appendChild(dismissBtn);
+  card.appendChild(foot);
+  document.body.appendChild(overlay);
+
+  trackEvent("view");
+
+  function dismiss() { trackEvent("dismiss"); overlay.remove(); }
+  function trackEvent(kind) {
+    try {
+      fetch(`/api/my/popup/${p.id}/event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ event: kind }),
+      });
+    } catch {}
+  }
+}
+
+// Comprobar popups periódicamente cuando la app está visible
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") setTimeout(checkActivePopup, 800);
+});
+setTimeout(() => { try { checkActivePopup(); } catch {} }, 3500);
+
+/* ============================================================
+   V500+ · Seguridad del dispositivo — versión pro
+   ============================================================ */
+(function injectSecurityCss(){
+  if (document.getElementById("securityCss")) return;
+  const s = document.createElement("style"); s.id = "securityCss";
+  s.textContent = `
+  .screen-security{padding:16px;max-width:640px;margin:0 auto}
+  .sec-hero{background:linear-gradient(135deg,#7f1d1d,#450a0a);color:#fff;border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 10px 30px rgba(0,0,0,.3)}
+  .sec-hero h2{margin:0;font-size:22px}
+  .sec-hero p{margin:8px 0 0;opacity:.9;font-size:14px}
+  .sec-steps{display:flex;gap:8px;margin:16px 0;justify-content:space-between}
+  .sec-step{flex:1;text-align:center;padding:12px 6px;background:#1a1d2b;border-radius:10px;border:1px solid #2a2f45;font-size:11px;color:#9aa4bf}
+  .sec-step .n{display:inline-block;width:24px;height:24px;border-radius:50%;background:#3b82f6;color:#fff;font-weight:700;margin-bottom:6px;line-height:24px}
+  .sec-step.done .n{background:#10b981}
+  .sec-form-card{background:#12141c;border:1px solid #2a2f45;border-radius:14px;padding:16px;color:#e6e9f2;margin-top:12px}
+  .sec-form-card label{display:block;margin:12px 0 4px;font-size:12px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.3px}
+  .sec-form-card input,.sec-form-card select,.sec-form-card textarea{width:100%;padding:10px 12px;background:#0f1220;border:1px solid #2a2f45;border-radius:8px;color:#fff;font-size:14px;box-sizing:border-box}
+  .sec-form-card input:focus,.sec-form-card select:focus,.sec-form-card textarea:focus{outline:none;border-color:#3b82f6}
+  .sec-form-card small{color:#9aa4bf;font-size:11px}
+  .sec-btn-primary{background:linear-gradient(135deg,#dc2626,#991b1b);color:#fff;border:none;padding:14px;border-radius:10px;font-weight:600;font-size:15px;width:100%;cursor:pointer;margin-top:16px;box-shadow:0 6px 16px rgba(220,38,38,.4)}
+  .sec-btn-primary:hover{filter:brightness(1.1)}
+  .sec-case{background:#12141c;border:1px solid #2a2f45;border-radius:12px;padding:12px;margin-bottom:8px;color:#e6e9f2}
+  .sec-case .head{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+  .sec-case .status{padding:2px 8px;border-radius:12px;font-size:10px;background:#2a2f45}
+  .sec-case .status.active{background:#dc2626;color:#fff}
+  .sec-case .status.pending{background:#f59e0b;color:#111}
+  `;
+  document.head.appendChild(s);
+})();
+
+async function screenDeviceSecurity(container) {
+  const wrap = el("section", { class: "screen-security" });
+  // render() ya monta un <div class="screen"> y nos lo pasa como container.
+  // Debemos añadir nuestros nodos ahí (no devolverlos).
+  if (container && container.appendChild) container.appendChild(wrap);
+  wrap.appendChild(el("div", { class: "sec-hero" }, [
+    el("h2", {}, "🛡 Seguridad del dispositivo"),
+    el("p", {}, "¿Perdiste el móvil o te lo han robado? Solicita alarma sonora, mensaje remoto o bloqueo con verificación de identidad."),
+  ]));
+
+  // Steps
+  wrap.appendChild(el("div", { class: "sec-steps" }, [
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "1"), el("div", {}, "Rellenar formulario") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "2"), el("div", {}, "Adjuntar denuncia") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "3"), el("div", {}, "Selfie en vivo") ]),
+    el("div", { class: "sec-step" }, [ el("div", { class: "n" }, "4"), el("div", {}, "Admin verifica") ]),
+  ]));
+
+  const list = el("div", { class: "device-incidents-list" });
+  wrap.appendChild(el("h3", { style: "margin:16px 0 8px;font-size:14px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.4px" }, "Mis casos"));
+  wrap.appendChild(list);
+  async function loadMine() {
+    list.innerHTML = '<p class="muted">Cargando…</p>';
+    try {
+      const r = await fetch("/api/my/device-incidents", { headers: authHeaders() });
+      const j = await r.json();
+      list.innerHTML = "";
+      if (!j.items || !j.items.length) {
+        list.appendChild(el("p", { class: "muted" }, "No tienes casos abiertos."));
+      } else {
+        j.items.forEach(it => {
+          const statusCls = it.status === "active" ? "active" : (it.status === "pending_admin" || it.status === "pending_selfie" ? "pending" : "");
+          const c = el("div", { class: "sec-case" }, [
+            el("div", { class: "head" }, [
+              el("div", {}, [el("strong", {}, `Caso #${it.id}`), el("span", { style: "margin-left:8px;color:#9aa4bf" }, it.type)]),
+              el("span", { class: `status ${statusCls}` }, it.status),
+            ]),
+            it.reason ? el("p", { style: "margin:8px 0 0;font-size:13px;color:#c1c7d8;font-style:italic" }, `"${it.reason}"`) : null,
+            it.police_report_url ? el("a", { href: it.police_report_url, target: "_blank", style: "font-size:12px;color:#93c5fd" }, "📎 Ver denuncia") : null,
+          ].filter(Boolean));
+          list.appendChild(c);
+        });
+      }
+    } catch(e) { list.innerHTML = ""; list.appendChild(el("p", { class: "err" }, e.message || "Error")); }
+  }
+
+  // Formulario de nuevo caso
+  const form = el("form", { class: "sec-form-card" });
+  form.appendChild(el("h3", { style: "margin:0 0 8px;font-size:16px" }, "Nuevo reporte"));
+  const type = el("select", { name: "type" }, [
+    ["lost", "🔍 Perdido"], ["stolen", "🚨 Robado"], ["suspicious", "⚠️ Actividad sospechosa"], ["other", "Otro"]
+  ].map(([v, t]) => el("option", { value: v }, t)));
+  form.appendChild(el("label", {}, ["Tipo: ", type]));
+
+  const reason = el("textarea", { name: "reason", placeholder: "Cuenta qué ha pasado, cuándo y dónde…", rows: 3, style: "width:100%" });
+  form.appendChild(el("label", {}, ["Motivo: ", reason]));
+
+  const policeUrl = el("input", { name: "police_report_url", placeholder: "URL a la denuncia (obligatoria)", style: "width:100%" });
+  form.appendChild(el("label", {}, ["📎 Denuncia policial (URL): ", policeUrl]));
+  form.appendChild(el("small", { class: "muted" }, "Sube tu denuncia a Drive/Dropbox/imgur y pega aquí el enlace. Es obligatoria para activar la alarma o el bloqueo."));
+
+  const emeE = el("input", { name: "emergency_email", type: "email", placeholder: "email de emergencia (opcional)" });
+  const emeP = el("input", { name: "emergency_phone", placeholder: "teléfono de emergencia (opcional)" });
+  form.appendChild(el("label", {}, "Contacto de emergencia (email)"));
+  form.appendChild(emeE);
+  form.appendChild(el("label", {}, "Contacto de emergencia (teléfono)"));
+  form.appendChild(emeP);
+
+  const saveDefault = el("label", { style: "display:flex;align-items:center;gap:8px;font-size:12px;margin-top:8px;color:#c1c7d8;text-transform:none;letter-spacing:0" }, [
+    el("input", { type: "checkbox", id: "saveEmergencyDefault", checked: true, style: "width:auto" }),
+    "Guardar como contactos por defecto para futuros casos"
+  ]);
+  form.appendChild(saveDefault);
+
+  // Precargar contactos guardados
+  (async () => {
+    try {
+      const r = await fetch("/api/my/emergency-contacts", { headers: authHeaders() });
+      if (r.ok) {
+        const j = await r.json();
+        if (j.emergency_email) emeE.value = j.emergency_email;
+        if (j.emergency_phone) emeP.value = j.emergency_phone;
+      }
+    } catch {}
+  })();
+
+  const lockMsg = el("textarea", { name: "lock_screen_message", rows: 2, placeholder: "Mensaje que verá quien tenga el móvil (ej: 'Devolver al 600...')", style: "width:100%" });
+  form.appendChild(el("label", {}, ["Mensaje de pantalla bloqueada: ", lockMsg]));
+
+  const submit = el("button", { class: "sec-btn-primary", type: "submit" }, "🚨 Enviar solicitud y hacer selfie");
+  form.appendChild(submit);
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!policeUrl.value.trim()) { alert("La URL de la denuncia es obligatoria."); return; }
+    submit.disabled = true;
+    try {
+      const r = await fetch("/api/my/device-incidents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          type: type.value, reason: reason.value,
+          police_report_url: policeUrl.value.trim(),
+          emergency_contact_email: emeE.value.trim() || null,
+          emergency_contact_phone: emeP.value.trim() || null,
+          lock_screen_message: lockMsg.value.trim() || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "Error");
+      // Guardar contactos por defecto si el checkbox está marcado
+      const chk = document.getElementById("saveEmergencyDefault");
+      if (chk && chk.checked) {
+        try {
+          await fetch("/api/my/emergency-contacts", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ emergency_email: emeE.value.trim() || null, emergency_phone: emeP.value.trim() || null })
+          });
+        } catch {}
+      }
+      alert("Solicitud enviada. Ahora te pediremos un selfie en vivo para verificar tu identidad.");
+      await requestVerificationSelfie(j.incident_id);
+      loadMine();
+    } catch(err) { alert(err.message); }
+    finally { submit.disabled = false; }
+  });
+  wrap.appendChild(form);
+
+  async function requestVerificationSelfie(incidentId) {
+    // Captura simple desde la cámara web
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
+      const video = document.createElement("video");
+      video.srcObject = stream; video.autoplay = true;
+      const modal = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center" });
+      video.style.maxWidth = "80%"; video.style.borderRadius = "8px";
+      modal.appendChild(video);
+      const btnShot = el("button", { class: "btn btn-primary", style: "margin-top:16px" }, "📸 Capturar selfie");
+      modal.appendChild(btnShot);
+      document.body.appendChild(modal);
+      await new Promise(res => btnShot.addEventListener("click", res, { once: true }));
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
+      stream.getTracks().forEach(t => t.stop());
+      modal.remove();
+      // Se envía como URL data — en producción sube a S3/Cloudinary
+      await fetch(`/api/my/device-incidents/${incidentId}/selfie`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ selfie_url: dataUrl }),
+      });
+      alert("Selfie enviado. El administrador revisará tu caso.");
+    } catch(e) { alert("No se pudo abrir la cámara: " + e.message); }
+  }
+
+  loadMine();
+  return wrap;
+}
+
+/* ============================================================
+   V500 · Recepción de alarmas remotas (sound / message / lock)
+   ============================================================ */
+async function pollDeviceAlerts() {
+  try {
+    if (!state.user || !state.user.id) return;
+    const r = await fetch("/api/my/device-status", { headers: authHeaders() });
+    const j = await r.json();
+    if (j.locked) {
+      showLockScreen(j.reason || "Este dispositivo ha sido bloqueado.");
+      return;
+    }
+    // Buscar notificaciones tipo device_alert
+    const nr = await fetch("/api/my/notifications?type=device_alert&limit=5", { headers: authHeaders() });
+    if (nr.ok) {
+      const nj = await nr.json();
+      (nj.items || []).forEach(n => {
+        try {
+          const d = typeof n.data === "string" ? JSON.parse(n.data) : (n.data || {});
+          if (d.kind === "sound" && !n.__played) { playAlarm(d.duration_sec || 30, d.volume || 1.0); n.__played = true; }
+          if (d.kind === "message") showFullScreenMessage(d.message || n.body);
+        } catch {}
+      });
+    }
+    // Casos activos → enviar GPS live + preguntar confirmación
+    const mine = await fetch("/api/my/device-incidents", { headers: authHeaders() });
+    if (mine.ok) {
+      const j2 = await mine.json();
+      const openCase = (j2.items || []).find(x => ["active", "approved", "pending_admin"].includes(x.status));
+      if (openCase) {
+        // GPS live
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(async pos => {
+            try {
+              await fetch(`/api/my/device-incidents/${openCase.id}/gps-live`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json", ...authHeaders() },
+                body: JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) })
+              });
+            } catch {}
+          }, () => {}, { enableHighAccuracy: true, timeout: 8000 });
+        }
+        // Preguntar al usuario si es él quien está usando el móvil (una vez por sesión)
+        if (!window.__confirmAskedForCase || window.__confirmAskedForCase !== openCase.id) {
+          window.__confirmAskedForCase = openCase.id;
+          showUserConfirmationModal(openCase.id);
+        }
+      }
+    }
+  } catch {}
+}
+
+function showUserConfirmationModal(caseId) {
+  if (document.getElementById("__userConfirmModal")) return;
+  const modal = el("div", { id: "__userConfirmModal", style: "position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:99998;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center" });
+  modal.appendChild(el("div", { style: "font-size:64px" }, "🛡"));
+  modal.appendChild(el("h2", { style: "color:#fff;margin:12px 0 6px" }, "Tienes un reporte de dispositivo perdido abierto"));
+  modal.appendChild(el("p", { style: "color:#c1c7d8;max-width:400px" }, "Confirma si eres tú quien está usando este dispositivo ahora mismo. Si no confirmas, se bloqueará automáticamente."));
+  const btns = el("div", { style: "display:flex;gap:10px;margin-top:20px" });
+  const yes = el("button", { style: "padding:14px 24px;background:#10b981;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "✅ Soy yo, estoy a salvo");
+  yes.addEventListener("click", async () => {
+    try {
+      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ confirm_type: "its_me" })
+      });
+      modal.remove();
+      alert("Caso cerrado. Bienvenido de vuelta.");
+    } catch(e) { alert(e.message); }
+  });
+  const no = el("button", { style: "padding:14px 24px;background:#dc2626;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "🚨 No soy yo, bloquear");
+  no.addEventListener("click", async () => {
+    if (!confirm("Esto bloqueará la cuenta inmediatamente. ¿Confirmas?")) return;
+    try {
+      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ confirm_type: "not_me" })
+      });
+      // Se recargará → middleware 423 activará showLockScreen
+      location.reload();
+    } catch(e) { alert(e.message); }
+  });
+  btns.appendChild(yes); btns.appendChild(no);
+  modal.appendChild(btns);
+  document.body.appendChild(modal);
+}
+// Wake Lock para mantener la pantalla encendida
+let __wakeLock = null;
+async function requestWakeLock() {
+  try {
+    if ("wakeLock" in navigator) { __wakeLock = await navigator.wakeLock.request("screen"); }
+  } catch(e) { console.warn("wakeLock:", e); }
+}
+function releaseWakeLock() {
+  try { __wakeLock && __wakeLock.release(); __wakeLock = null; } catch {}
+}
+
+function playAlarm(seconds, volume) {
+  requestWakeLock();
+  // Intentar poner brillo al máximo simulando fondo blanco brillante intermitente
+  try {
+    // Vibración (Android)
+    if (navigator.vibrate) {
+      const pattern = [];
+      for (let i = 0; i < Math.min(30, seconds || 30); i++) pattern.push(400, 200);
+      navigator.vibrate(pattern);
+    }
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = volume || 1.0;
+    osc.type = "square"; osc2.type = "sine";
+    osc.frequency.value = 880; osc2.frequency.value = 1200;
+    osc.connect(gain); osc2.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc2.start();
+    let i = 0;
+    const beep = setInterval(() => {
+      osc.frequency.value = i % 2 ? 880 : 440;
+      osc2.frequency.value = i % 2 ? 1200 : 660;
+      // Modulación de volumen (efecto sirena)
+      gain.gain.setValueAtTime(i % 2 ? (volume || 1.0) : 0.3, ctx.currentTime);
+      i++;
+    }, 250);
+    // Banner visual mientras suena
+    const banner = el("div", { id: "__alarmBanner", style: "position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#dc2626,#991b1b);color:#fff;padding:12px;text-align:center;font-weight:700;z-index:100001;font-size:14px;animation:alarmPulse 1s infinite" }, "🔊 ALARMA REMOTA ACTIVA · Aura Seguridad");
+    const style = document.createElement("style");
+    style.textContent = "@keyframes alarmPulse{0%,100%{background:linear-gradient(90deg,#dc2626,#991b1b)}50%{background:linear-gradient(90deg,#fbbf24,#dc2626)}}";
+    document.head.appendChild(style);
+    document.body.appendChild(banner);
+    setTimeout(() => {
+      clearInterval(beep);
+      try { osc.stop(); osc2.stop(); ctx.close(); } catch {}
+      banner.remove(); style.remove();
+      if (navigator.vibrate) navigator.vibrate(0);
+      releaseWakeLock();
+    }, (seconds || 30) * 1000);
+  } catch(e) { console.warn("playAlarm:", e); }
+}
+function showFullScreenMessage(msg) {
+  const modal = el("div", { style: "position:fixed;inset:0;background:linear-gradient(180deg,#1e3a8a,#0f1220);color:#fff;z-index:99999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;animation:fadeIn .3s" });
+  modal.appendChild(el("div", { style: "font-size:64px;margin-bottom:16px" }, "📢"));
+  modal.appendChild(el("h1", { style: "font-size:28px;margin:0 0 12px" }, "Mensaje desde Aura"));
+  modal.appendChild(el("p", { style: "font-size:18px;max-width:80%;line-height:1.5;background:rgba(255,255,255,.1);padding:16px;border-radius:12px" }, msg));
+  const btn2 = el("button", { style: "margin-top:24px;padding:14px 40px;background:#fff;color:#1e3a8a;border:none;border-radius:10px;font-weight:700;cursor:pointer;font-size:15px" }, "He leído el mensaje");
+  btn2.addEventListener("click", () => modal.remove());
+  modal.appendChild(btn2);
+  document.body.appendChild(modal);
+}
+function showLockScreen(reason) {
+  if (document.getElementById("__deviceLockOverlay")) return;
+  const overlay = el("div", { id: "__deviceLockOverlay", style: "position:fixed;inset:0;background:linear-gradient(180deg,#7f1d1d,#450a0a,#000);color:#fff;z-index:100000;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center" });
+  overlay.appendChild(el("div", { style: "font-size:96px;margin-bottom:12px;filter:drop-shadow(0 8px 20px rgba(220,38,38,.6))" }, "🔒"));
+  overlay.appendChild(el("h1", { style: "font-size:32px;margin:0" }, "Dispositivo bloqueado"));
+  overlay.appendChild(el("div", { style: "width:60px;height:3px;background:#dc2626;margin:14px 0;border-radius:2px" }));
+  overlay.appendChild(el("p", { style: "max-width:80%;font-size:17px;line-height:1.5;background:rgba(0,0,0,.4);padding:16px 20px;border-radius:12px;border:1px solid rgba(255,255,255,.1)" }, reason));
+  const box = el("div", { style: "margin-top:32px;background:rgba(255,255,255,.05);padding:16px 20px;border-radius:12px;font-size:13px;color:#fca5a5;max-width:400px" });
+  box.appendChild(el("div", { style: "font-weight:600;margin-bottom:6px" }, "¿Es un error?"));
+  box.appendChild(el("div", {}, "Contacta con soporte@citasaura.es o al 900 000 000 desde otro dispositivo indicando el ID de tu cuenta."));
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+}
+setInterval(pollDeviceAlerts, 15 * 1000);
+setTimeout(pollDeviceAlerts, 4000);
 
 boot();

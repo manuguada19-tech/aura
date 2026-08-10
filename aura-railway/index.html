@@ -236,7 +236,22 @@
 
       function isDesktop() {
         try {
-          return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+          // Escritorio real: hover + pointer fino
+          var hoverFine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+          if (!hoverFine) return false;
+          // Excepción: tablets en portrait (768–1200px de ancho en vertical)
+          // deben mostrarse a pantalla completa, no dentro del marco phone.
+          var isTabletPortrait = window.matchMedia(
+            "(min-width: 601px) and (max-width: 1400px) and (orientation: portrait)"
+          ).matches;
+          if (isTabletPortrait) return false;
+          // Excepción: móvil/tablet en landscape con alto muy pequeño
+          // (ej: 844×390) tampoco debe usar marco phone.
+          var isShortLandscape = window.matchMedia(
+            "(max-height: 500px) and (orientation: landscape)"
+          ).matches;
+          if (isShortLandscape) return false;
+          return true;
         } catch (_) {
           return true;
         }
@@ -331,16 +346,21 @@
 
   <!-- ================== PWA INSTALL BANNER ================== -->
   <style>
-    #auraInstallBanner{position:fixed;left:50%;bottom:20px;transform:translateX(-50%) translateY(140%);z-index:9998;max-width:420px;width:calc(100% - 32px);background:linear-gradient(135deg,#1a1a2e,#2a1a4a);border:1px solid rgba(124,58,237,.45);border-radius:16px;padding:14px 16px;color:#fff;display:flex;align-items:center;gap:12px;box-shadow:0 20px 50px rgba(0,0,0,.5);transition:transform .35s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+    /* Píldora flotante arriba, discreta, no interfiere con la tabbar inferior. */
+    #auraInstallBanner{position:fixed;left:50%;top:12px;transform:translateX(-50%) translateY(-140%);z-index:9998;max-width:380px;width:calc(100% - 24px);background:linear-gradient(135deg,rgba(26,26,46,.96),rgba(42,26,74,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:10px 12px;color:#fff;display:flex;align-items:center;gap:10px;box-shadow:0 12px 36px rgba(0,0,0,.4);transition:transform .35s ease;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:13px}
     #auraInstallBanner.show{transform:translateX(-50%) translateY(0)}
-    #auraInstallBanner .ico{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;flex-shrink:0;font-size:22px}
+    #auraInstallBanner .ico{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;flex-shrink:0;font-size:16px}
     #auraInstallBanner .txt{flex:1;min-width:0}
-    #auraInstallBanner .txt b{display:block;font-size:14px;font-weight:700;margin-bottom:2px}
-    #auraInstallBanner .txt small{color:#aab;font-size:12px;line-height:1.3;display:block}
+    #auraInstallBanner .txt b{display:block;font-size:13px;font-weight:700;line-height:1.2}
+    #auraInstallBanner .txt small{color:#aab;font-size:11px;line-height:1.3;display:block;margin-top:1px}
     #auraInstallBanner button{border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
-    #auraInstallBanner .btn-install{padding:8px 14px;border-radius:999px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;font-size:13px;font-weight:700;box-shadow:0 6px 18px rgba(124,58,237,.35)}
-    #auraInstallBanner .btn-close{padding:6px;color:#888;font-size:18px;line-height:1}
+    #auraInstallBanner .btn-install{padding:6px 12px;border-radius:999px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+    #auraInstallBanner .btn-close{padding:4px 6px;color:#888;font-size:16px;line-height:1}
     #auraInstallBanner .btn-close:hover{color:#fff}
+    /* Respetar notch en móviles */
+    @supports (top: env(safe-area-inset-top)) {
+      #auraInstallBanner{top:calc(12px + env(safe-area-inset-top))}
+    }
   </style>
   <div id="auraInstallBanner" role="dialog" aria-label="Instalar Aura como aplicación">
     <div class="ico">📱</div>
@@ -355,7 +375,8 @@
   (function pwaInstall(){
     const STORAGE_KEY = "aura-install-banner-dismissed";
     const DAYS_HIDDEN = 30;
-    const SHOW_AFTER_MS = 30000; // 30s tras carga
+    const SHOW_AFTER_MS = 30000; // 30s tras login
+    const POLL_MS = 5000;         // reintentar cada 5s hasta que se cumplan condiciones
 
     const banner = document.getElementById("auraInstallBanner");
     const btnInstall = document.getElementById("auraInstallBtn");
@@ -382,15 +403,40 @@
     function markDismissed(){
       try { localStorage.setItem(STORAGE_KEY, String(Date.now())); } catch {}
     }
-    function showBanner(){
+    function isLogged(){
+      try {
+        const s = JSON.parse(localStorage.getItem("aura-session")||"null");
+        return !!(s && (s.id || s.user_id));
+      } catch { return false; }
+    }
+
+    let firstLoginAt = 0;
+    let shown = false;
+    function updateHint(){
+      if (isIOS()) {
+        hint.textContent = "Toca Compartir → 'Añadir a pantalla de inicio'";
+        btnInstall.textContent = "Cómo hacerlo";
+      } else if (window.__auraDeferredInstall) {
+        hint.textContent = "Acceso directo desde tu pantalla de inicio";
+        btnInstall.textContent = "Instalar";
+      } else {
+        hint.textContent = "Desde el menú del navegador: 'Instalar aplicación'";
+        btnInstall.textContent = "Cómo hacerlo";
+      }
+    }
+    function tryShow(){
+      if (shown) return;
       if (isStandalone() || wasRecentlyDismissed()) return;
-      // No mostrarlo si el usuario no está en la pantalla principal de la app
-      // (por ejemplo durante el login/registro). Se comprueba si hay
-      // aura-session guardada.
-      let logged = false;
-      try { logged = !!JSON.parse(localStorage.getItem("aura-session")||"null"); } catch {}
-      if (!logged) return;
+      if (!isLogged()) { firstLoginAt = 0; return; }
+      if (!firstLoginAt) firstLoginAt = Date.now();
+      const elapsed = Date.now() - firstLoginAt;
+      if (elapsed < SHOW_AFTER_MS) return;
+      // Mostrar sólo si podemos ofrecer instalación real (Chrome/Android con
+      // prompt, o iOS con instrucciones manuales). En otros navegadores
+      // ofrecemos instrucciones genéricas de todos modos.
+      updateHint();
       banner.classList.add("show");
+      shown = true;
     }
 
     // Chrome/Edge/Android: captura el evento y guárdalo para poder disparar
@@ -399,42 +445,47 @@
     window.addEventListener("beforeinstallprompt", (e) => {
       e.preventDefault();
       window.__auraDeferredInstall = e;
-      setTimeout(showBanner, SHOW_AFTER_MS);
+      updateHint();
     });
-
-    // iOS no soporta beforeinstallprompt. Mostramos banner con instrucciones.
-    if (isIOS() && !isStandalone()) {
-      hint.textContent = "Toca Compartir y luego 'Añadir a pantalla de inicio'";
-      btnInstall.textContent = "Cómo hacerlo";
-      setTimeout(showBanner, SHOW_AFTER_MS);
-    }
 
     // Ya instalada durante la sesión → oculta y limpia
     window.addEventListener("appinstalled", () => {
       banner.classList.remove("show");
       window.__auraDeferredInstall = null;
+      shown = true;
     });
 
     btnInstall.addEventListener("click", async () => {
-      if (isIOS()) {
-        alert("Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) abajo en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.\n\nLa app se instalará como un icono en tu pantalla.");
-        return;
-      }
       if (window.__auraDeferredInstall) {
         try {
           window.__auraDeferredInstall.prompt();
           const { outcome } = await window.__auraDeferredInstall.userChoice;
           if (outcome === "accepted") banner.classList.remove("show");
           window.__auraDeferredInstall = null;
+          updateHint();
+          return;
         } catch(e){}
+      }
+      if (isIOS()) {
+        alert("Para instalar Aura en iPhone/iPad:\n\n1) Toca el botón Compartir (□↑) abajo en Safari.\n2) Elige 'Añadir a pantalla de inicio'.\n3) Toca 'Añadir'.\n\nLa app se instalará como un icono en tu pantalla.");
       } else {
-        banner.classList.remove("show");
+        alert("Para instalar Aura:\n\n· Chrome/Edge (escritorio): menú ⋮ → 'Instalar Aura…'.\n· Chrome Android: menú ⋮ → 'Añadir a pantalla de inicio' o 'Instalar aplicación'.\n· Firefox Android: menú ⋮ → 'Instalar'.\n\nSi ya la has instalado, ábrela desde el icono en tu pantalla.");
       }
     });
     btnDismiss.addEventListener("click", () => {
       markDismissed();
       banner.classList.remove("show");
+      shown = true;
     });
+
+    // Bucle: cada 5s comprobamos condiciones (login + tiempo transcurrido).
+    // Así el banner aparece aunque el usuario se logue después de la carga.
+    setInterval(tryShow, POLL_MS);
+    // Intento inmediato tras el primer 5s.
+    setTimeout(tryShow, POLL_MS);
+    // Exponemos función global para que la app pueda forzar el banner desde
+    // Ajustes → Instalar como app.
+    window.__auraShowInstallBanner = () => { shown = false; firstLoginAt = 1; tryShow(); };
   })();
   </script>
 
@@ -456,46 +507,98 @@
       });
     }
 
-    // 2) Suscripción a Web Push
+    // 2) Suscripción a Web Push (registrada o anónima)
+    async function getPushSubscription(){
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;
+      let reg; try { reg = await navigator.serviceWorker.ready; } catch { return null; }
+      let existing = await reg.pushManager.getSubscription();
+      if (existing) return { reg, sub: existing };
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") return null;
+      const r = await fetch("/api/push/vapid-public-key");
+      const { key } = await r.json();
+      if (!key) return null;
+      const raw = atob(key.replace(/-/g,"+").replace(/_/g,"/"));
+      const arr = new Uint8Array(raw.length);
+      for (let i=0;i<raw.length;i++) arr[i] = raw.charCodeAt(i);
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: arr,
+      });
+      return { reg, sub };
+    }
+
     async function initPush(){
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
       const uid = getUserId();
-      if (!uid) return;
-      let reg; try { reg = await navigator.serviceWorker.ready; } catch { return; }
-      const existing = await reg.pushManager.getSubscription();
-      if (existing) return;
-
       window.activarNotificacionesPush = async function(){
         try {
-          const perm = await Notification.requestPermission();
-          if (perm !== "granted") return { ok:false, reason:"denied" };
-          const r = await fetch("/api/push/vapid-public-key");
-          const { key } = await r.json();
-          if (!key) return { ok:false, reason:"no_vapid" };
-          const raw = atob(key.replace(/-/g,"+").replace(/_/g,"/"));
-          const arr = new Uint8Array(raw.length);
-          for (let i=0;i<raw.length;i++) arr[i] = raw.charCodeAt(i);
-          const sub = await reg.pushManager.subscribe({
-            userVisibleOnly: true,
-            applicationServerKey: arr,
-          });
-          const payload = sub.toJSON();
-          await fetch("/api/my/push-subscribe", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-User-Id": uid },
-            body: JSON.stringify({
-              endpoint: payload.endpoint,
-              keys: payload.keys,
-              device_name: navigator.userAgent.slice(0, 120),
-            })
-          });
+          const got = await getPushSubscription();
+          if (!got) return { ok:false, reason:"denied" };
+          const payload = got.sub.toJSON();
+          const currentUid = getUserId();
+          if (currentUid) {
+            // Suscripción de usuario registrado
+            await fetch("/api/my/push-subscribe", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-User-Id": currentUid },
+              body: JSON.stringify({
+                endpoint: payload.endpoint,
+                keys: payload.keys,
+                device_name: navigator.userAgent.slice(0, 120),
+              })
+            });
+            // Reclamar suscripción anónima previa por si existía
+            fetch("/api/my/push-claim", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "X-User-Id": currentUid },
+              body: JSON.stringify({ endpoint: payload.endpoint })
+            }).catch(()=>{});
+          } else {
+            // Suscripción anónima
+            await fetch("/api/push-subscribe-anon", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                endpoint: payload.endpoint,
+                keys: payload.keys,
+                lang: navigator.language || "",
+                fingerprint: (navigator.userAgent || "").slice(0, 120),
+              })
+            });
+          }
           return { ok:true };
         } catch(e){ return { ok:false, reason:e.message }; }
       };
+      // Auto-suscribir si el permiso ya está concedido (retención)
       if (Notification.permission === "granted") {
         try { await window.activarNotificacionesPush(); } catch {}
       }
     }
+
+    // Cuando el usuario se logue después, reclamamos la suscripción anónima.
+    window.addEventListener("storage", async (ev) => {
+      if (ev.key !== "aura-session") return;
+      const uid = getUserId();
+      if (!uid) return;
+      try {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          const p = sub.toJSON();
+          fetch("/api/my/push-claim", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-User-Id": uid },
+            body: JSON.stringify({ endpoint: p.endpoint })
+          }).catch(()=>{});
+          fetch("/api/my/push-subscribe", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-User-Id": uid },
+            body: JSON.stringify({ endpoint: p.endpoint, keys: p.keys, device_name: navigator.userAgent.slice(0, 120) })
+          }).catch(()=>{});
+        }
+      } catch {}
+    });
 
     navigator.serviceWorker && navigator.serviceWorker.addEventListener("message", (ev) => {
       if (ev.data && ev.data.type === "push-click" && ev.data.url) {
@@ -503,9 +606,20 @@
       }
     });
 
-    // 3) Recordatorio de 2FA (cada 7 días si no lo tiene activo)
+    // 3) Recordatorio de 2FA — discreto, no bloqueante.
+    // Se muestra sólo como pequeño toast lateral abajo, dejando la app usable.
+    // Reglas:
+    //   · Usuario logueado
+    //   · 2FA no activo
+    //   · Han pasado ≥7 días desde el último aviso
+    //   · Al menos 3 aperturas de la app y ≥2 días desde el registro
+    //   · No mostrarlo dentro de los primeros 90s tras entrar a la app
     async function twofaReminder(){
       const uid = getUserId(); if (!uid) return;
+      // Contador de aperturas
+      let opens = 0;
+      try { opens = parseInt(localStorage.getItem("aura-app-opens") || "0", 10) || 0; } catch {}
+      if (opens < 3) return;
       try {
         const r = await fetch("/api/2fa/status", { headers: { "X-User-Id": uid } });
         const s = await r.json();
@@ -514,27 +628,79 @@
           const days = (Date.now() - new Date(s.last_reminder).getTime()) / 86400000;
           if (days < 7) return;
         }
-        const modal = document.getElementById("twofaReminder");
-        if (!modal) return;
-        modal.classList.add("show");
-        document.getElementById("twofaLater").addEventListener("click", async () => {
-          await fetch("/api/2fa/snooze-reminder", { method: "POST", headers: { "X-User-Id": uid } });
-          modal.classList.remove("show");
-        });
+        if (s.created_at) {
+          const daysAcc = (Date.now() - new Date(s.created_at).getTime()) / 86400000;
+          if (daysAcc < 2) return;
+        }
+        showTwofaToast(uid);
       } catch {}
     }
+    function showTwofaToast(uid){
+      if (document.getElementById("twofaToast")) return;
+      const t = document.createElement("div");
+      t.id = "twofaToast";
+      t.innerHTML = `
+        <div class="tf-ico">🔐</div>
+        <div class="tf-txt">
+          <b>Protege tu cuenta</b>
+          <small>Activa la verificación en 2 pasos.</small>
+        </div>
+        <button class="tf-cta" type="button">Activar</button>
+        <button class="tf-close" type="button" aria-label="Cerrar">×</button>`;
+      document.body.appendChild(t);
+      requestAnimationFrame(() => t.classList.add("show"));
+      t.querySelector(".tf-cta").addEventListener("click", () => {
+        location.href = "/settings/2fa";
+      });
+      t.querySelector(".tf-close").addEventListener("click", async () => {
+        try { await fetch("/api/2fa/snooze-reminder", { method: "POST", headers: { "X-User-Id": uid } }); } catch {}
+        t.classList.remove("show");
+        setTimeout(() => t.remove(), 350);
+      });
+      // Auto-oculta en 20s si el usuario no interactúa
+      setTimeout(() => {
+        if (!t.parentNode) return;
+        t.classList.remove("show");
+        setTimeout(() => t.remove(), 350);
+      }, 20000);
+    }
 
-    // Arranque tras login (esperamos a que aura-session esté disponible)
+    // Arranque: initPush se llama siempre (soporta anónimo), 2FA sólo con login.
+    setTimeout(() => { try { initPush(); } catch {} }, 3000);
+    // Incrementar contador de aperturas al arrancar con sesión.
+    function bumpOpens(){
+      try {
+        const n = parseInt(localStorage.getItem("aura-app-opens") || "0", 10) || 0;
+        localStorage.setItem("aura-app-opens", String(n + 1));
+      } catch {}
+    }
     function bootWhenLogged(){
-      if (getUserId()) { initPush(); twofaReminder(); return; }
+      if (getUserId()) {
+        bumpOpens();
+        // Esperar ≥90s antes de mostrar el aviso 2FA
+        setTimeout(twofaReminder, 90000);
+        return;
+      }
       setTimeout(bootWhenLogged, 2000);
     }
     setTimeout(bootWhenLogged, 3000);
   })();
   </script>
 
-  <!-- ================== MODAL RECORDATORIO 2FA ================== -->
+  <!-- ================== TOAST DISCRETO 2FA ================== -->
   <style>
+    #twofaToast{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom, 0px) + 74px);max-width:400px;margin:0 auto;z-index:9997;background:linear-gradient(135deg,rgba(26,26,46,.96),rgba(15,15,30,.96));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:10px 12px;color:#fff;display:flex;align-items:center;gap:10px;box-shadow:0 12px 36px rgba(0,0,0,.4);font-size:13px;transform:translateY(160%);transition:transform .35s ease}
+    #twofaToast.show{transform:translateY(0)}
+    #twofaToast .tf-ico{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,#7c3aed,#ec4899);display:grid;place-items:center;font-size:16px;flex-shrink:0}
+    #twofaToast .tf-txt{flex:1;min-width:0}
+    #twofaToast .tf-txt b{display:block;font-size:13px;font-weight:700;line-height:1.2}
+    #twofaToast .tf-txt small{color:#aab;font-size:11px;line-height:1.3;display:block;margin-top:1px}
+    #twofaToast button{border:0;background:transparent;color:inherit;cursor:pointer;font:inherit}
+    #twofaToast .tf-cta{padding:6px 12px;border-radius:999px;background:linear-gradient(135deg,#7c3aed,#ec4899);color:#fff;font-size:12px;font-weight:700;white-space:nowrap}
+    #twofaToast .tf-close{padding:4px 6px;color:#888;font-size:16px;line-height:1}
+    #twofaToast .tf-close:hover{color:#fff}
+
+    /* Modal antiguo — mantenemos por compatibilidad pero ya no se muestra por defecto */
     #twofaReminder{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:none;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(8px)}
     #twofaReminder.show{display:flex}
     #twofaReminder .rc{background:linear-gradient(135deg,#1a1a2e,#0f0f1e);border-radius:24px;max-width:420px;width:100%;padding:32px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6);border:1px solid rgba(124,58,237,.4);text-align:center;animation:pop2r .3s ease}

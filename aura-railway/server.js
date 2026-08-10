@@ -5637,12 +5637,12 @@ async function seedContentDefaults() {
     "content.design.text_hero_sub": "",
     // Logo customization — Marca Aura por defecto (imagen circular con anillo gradiente CSS)
     "content.design.logo_mode": "image",   // heart | image | emoji | initial
-    "content.design.logo_image": "assets/aura-logo-round.png?v=5",       // URL to custom image (dark theme)
-    "content.design.logo_image_light": "assets/aura-logo-round.png?v=5", // URL to alt image for light theme
+    "content.design.logo_image": "assets/aura-logo-round.png?v=6",       // URL to custom image (dark theme)
+    "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=6", // URL to alt image for light theme
     "content.design.logo_emoji": "💘",     // used when mode=emoji
     "content.design.logo_bg": "transparent",// gradient | solid | transparent (anillo es CSS)
     "content.design.logo_color": "#ffffff",// stroke/fill color for heart & initial
-    "content.design.logo_size": "200",     // px, welcome logo size
+    "content.design.logo_size": "115",     // px, welcome logo size
     "content.design.logo_radius": "50",    // px, background radius (circular)
   };
   for (const [k, v] of Object.entries(defaults)) {
@@ -5777,10 +5777,10 @@ async function seedContentDefaults() {
   // valores por defecto" del panel deje este diseño y NO el naranja anterior.
   try {
     const [rows] = await pool.execute(
-      "SELECT v FROM settings WHERE k = 'content.design.restore.v530'"
+      "SELECT v FROM settings WHERE k = 'content.design.restore.v532'"
     );
     if (!rows || rows.length === 0) {
-      const auraV530 = {
+      const auraV532 = {
         "content.design.brand1": "#ff3b6b",
         "content.design.brand2": "#a855f7",
         "content.design.bg": "#14060b",
@@ -5789,14 +5789,14 @@ async function seedContentDefaults() {
         "content.design.hero_image": "",
         "content.design.hero_solid_color": "#14060b",
         "content.design.logo_mode": "image",
-        "content.design.logo_image": "assets/aura-logo-round.png?v=5",
-        "content.design.logo_image_light": "assets/aura-logo-round.png?v=5",
+        "content.design.logo_image": "assets/aura-logo-round.png?v=6",
+        "content.design.logo_image_light": "assets/aura-logo-round-light.png?v=6",
         "content.design.logo_bg": "transparent",
-        "content.design.logo_size": "200",
-        "content.design.welc_logo_size": "200",
+        "content.design.logo_size": "115",
+        "content.design.welc_logo_size": "115",
         "content.design.logo_radius": "50",
       };
-      for (const [k, v] of Object.entries(auraV530)) {
+      for (const [k, v] of Object.entries(auraV532)) {
         await pool.execute(
           "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
           [k, v]
@@ -5804,9 +5804,9 @@ async function seedContentDefaults() {
       }
       await pool.execute(
         "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
-        ["content.design.restore.v530", "1"]
+        ["content.design.restore.v532", "1"]
       );
-      console.log("[migration V530] Aura wine theme + rainbow ring logo applied");
+      console.log("[migration V532] Aura wine theme + small round logo applied");
     }
   } catch (e) {
     console.error("[migration V530] Failed:", e && e.message);
