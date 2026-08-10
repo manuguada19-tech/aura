@@ -1812,11 +1812,27 @@
   .fx-search { position:relative; display:flex; align-items:center; }
   .fx-search-ico { position:absolute; left:10px; opacity:0.5; }
   .fx-search-input { padding-left:32px !important; min-width:240px; }
-  .fx-input { padding:8px 12px; border-radius:9px; background:#1b1f2e; border:1px solid rgba(255,255,255,0.14); color:#e8ebf5; font-size:13px; outline:none; }
-  .fx-input::placeholder { color:#96a0b8; }
-  .fx-input:focus { border-color:#7a5cff; background:#20263a; }
-  select.fx-input { padding-right: 24px; appearance:none; -webkit-appearance:none; background-image: linear-gradient(45deg, transparent 50%, #96a0b8 50%), linear-gradient(135deg, #96a0b8 50%, transparent 50%); background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; }
-  select.fx-input option, select.fx-input optgroup { background:#1b1f2e; color:#e8ebf5; }
+  /* V573 · Filtros de Novedades siempre en oscuro (incluso en tema claro del panel) */
+  .fx-view input.fx-input,
+  .fx-view select.fx-input,
+  .fx-view textarea.fx-input,
+  .fx-modal-card input.fx-input,
+  .fx-modal-card select.fx-input,
+  .fx-modal-card textarea.fx-input,
+  .fx-input {
+    padding:8px 12px !important;
+    border-radius:9px !important;
+    background:#1b1f2e !important;
+    border:1px solid rgba(255,255,255,0.18) !important;
+    color:#e8ebf5 !important;
+    font-size:13px !important;
+    outline:none !important;
+    color-scheme: dark !important;
+  }
+  .fx-input::placeholder { color:#96a0b8 !important; }
+  .fx-input:focus { border-color:#7a5cff !important; background:#20263a !important; }
+  select.fx-input { padding-right: 26px !important; appearance:none !important; -webkit-appearance:none !important; background-image: linear-gradient(45deg, transparent 50%, #96a0b8 50%), linear-gradient(135deg, #96a0b8 50%, transparent 50%) !important; background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55% !important; background-size: 5px 5px, 5px 5px !important; background-repeat: no-repeat !important; background-color:#1b1f2e !important; }
+  select.fx-input option, select.fx-input optgroup { background:#1b1f2e !important; color:#e8ebf5 !important; }
   .fx-filter { display:flex; flex-direction:column; }
   .fx-filter label { font-size:10px; text-transform:uppercase; color: var(--fg-muted,#96a0b8); letter-spacing:0.5px; margin-bottom:3px; font-weight:600; }
   .fx-form-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }

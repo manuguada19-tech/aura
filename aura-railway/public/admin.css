@@ -114,17 +114,39 @@ select:focus, textarea:focus {
   border-color: #7a5cff;
 }
 /* En modo claro dejamos que el CSS anterior siga controlando */
-[data-theme="light"] input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]):not([type=range]),
-[data-theme="light"] select,
-[data-theme="light"] textarea {
+[data-theme="light"] input:not([type=checkbox]):not([type=radio]):not([type=color]):not([type=file]):not([type=range]):not(.fx-input),
+[data-theme="light"] select:not(.fx-input),
+[data-theme="light"] textarea:not(.fx-input) {
   background-color: #fff;
   color: #111;
   color-scheme: light;
 }
-[data-theme="light"] select option,
-[data-theme="light"] select optgroup {
+[data-theme="light"] select:not(.fx-input) option,
+[data-theme="light"] select:not(.fx-input) optgroup {
   background: #fff !important;
   color: #111 !important;
+}
+/* V573 · En Novedades (fx-*) forzamos oscuro SIEMPRE, sea cual sea el tema */
+[data-theme="light"] .fx-view input,
+[data-theme="light"] .fx-view select,
+[data-theme="light"] .fx-view textarea,
+[data-theme="light"] .fx-modal-card input,
+[data-theme="light"] .fx-modal-card select,
+[data-theme="light"] .fx-modal-card textarea,
+[data-theme="light"] .fx-input {
+  background-color: #1b1f2e !important;
+  color: #e8ebf5 !important;
+  border-color: rgba(255,255,255,0.18) !important;
+  color-scheme: dark !important;
+}
+[data-theme="light"] .fx-view select option,
+[data-theme="light"] .fx-view select optgroup,
+[data-theme="light"] .fx-modal-card select option,
+[data-theme="light"] .fx-modal-card select optgroup,
+[data-theme="light"] select.fx-input option,
+[data-theme="light"] select.fx-input optgroup {
+  background: #1b1f2e !important;
+  color: #e8ebf5 !important;
 }
 a { color: inherit; text-decoration: none; }
 
