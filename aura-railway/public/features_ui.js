@@ -335,6 +335,14 @@
       const { ok, data } = await api("/api/my/push/context");
       if (ok && data.events?.length) {
         data.events.forEach((ev) => {
+          // V562/V563 · Llamada entrante con modal Aceptar/Rechazar
+          if (ev.kind === "video_call_incoming" && ev.payload) {
+            try {
+              const p = typeof ev.payload === "string" ? JSON.parse(ev.payload) : ev.payload;
+              showIncomingCallModal(p);
+              return;
+            } catch {}
+          }
           const map = {
             video_call_incoming: "📞 Llamada entrante",
             match_nearby: "💘 Match cerca de ti",
@@ -348,6 +356,38 @@
   }
   if (typeof window !== "undefined") {
     setInterval(pollContextEvents, 30000);
+  }
+
+  // V562/V563 · Modal de llamada entrante (audio o video)
+  function showIncomingCallModal(payload) {
+    if (document.getElementById("aura-incoming-call")) return;
+    const isAudio = payload.mode === "audio";
+    const back = document.createElement("div");
+    back.id = "aura-incoming-call";
+    back.className = "modal-backdrop";
+    back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;z-index:99999";
+    back.innerHTML = `
+      <div style="background:#1c1e2e;color:#fff;padding:24px 20px;border-radius:16px;max-width:340px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.5)">
+        <div style="font-size:48px;margin-bottom:8px">${isAudio ? "📞" : "📹"}</div>
+        <h3 style="margin:0 0 4px">${isAudio ? "Llamada de voz entrante" : "Videollamada entrante"}</h3>
+        <p style="opacity:0.7;margin:0 0 20px">Un usuario te está llamando…</p>
+        <div style="display:flex;gap:10px;justify-content:center">
+          <button id="callReject" style="padding:12px 20px;border-radius:10px;border:none;background:#e53950;color:#fff;font-weight:600;cursor:pointer">Rechazar</button>
+          <button id="callAccept" style="padding:12px 20px;border-radius:10px;border:none;background:#22c55e;color:#fff;font-weight:600;cursor:pointer">Aceptar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(back);
+    back.querySelector("#callReject").onclick = async () => {
+      try { await api(`/api/my/video/${payload.call_id}/end`, { method: "POST" }); } catch {}
+      back.remove();
+    };
+    back.querySelector("#callAccept").onclick = async () => {
+      try { await api(`/api/my/video/${payload.call_id}/accept`, { method: "POST" }); } catch {}
+      back.remove();
+      // El caller ya inició WebRTC; el callee reproduce la sala.
+      // Se implementará el flujo completo del callee en una siguiente iteración.
+      toast(isAudio ? "Llamada aceptada. Establece la conexión…" : "Videollamada aceptada.");
+    };
   }
 
   window.aura2 = {
