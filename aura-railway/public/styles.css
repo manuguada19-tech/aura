@@ -7717,5 +7717,22 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 /* V576 · FAB retirado. Las funciones ahora viven dentro de "Mi perfil". */
 .aura2-fab, .aura2-menu, #aura2Fab, #aura2Menu { display: none !important; }
 
+/* V576 · Tienda de recompensas / cupones XP */
+.rewards-shop { display: flex; flex-direction: column; gap: 14px; }
+.rewards-head h3 { margin: 0 0 4px; font-size: 20px; }
+.reward-list { display: flex; flex-direction: column; gap: 10px; max-height: 60vh; overflow-y: auto; }
+.reward-card { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.06); }
+:root[data-theme="light"] .reward-card { background: #fff; border-color: #e6e8ef; }
+.reward-icon { font-size: 30px; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; flex: 0 0 auto; }
+.reward-body { flex: 1; min-width: 0; }
+.reward-title { font-weight: 600; font-size: 14px; }
+.reward-desc { font-size: 12px; margin: 2px 0 4px; }
+.reward-meta { font-size: 11px; }
+.reward-action { flex: 0 0 auto; }
+.reward-flag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.reward-flag.ok { background: rgba(30,180,110,.18); color: #34d18a; }
+.reward-flag.warn { background: rgba(240,180,60,.18); color: #f5b830; }
+.reward-flag.off { background: rgba(200,80,80,.18); color: #ff7777; }
+
 
 

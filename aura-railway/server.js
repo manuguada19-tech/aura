@@ -9549,12 +9549,14 @@ const phase3 = require("./features_phase3");
 const phase4 = require("./features_phase4");
 const phase5 = require("./features_phase5"); // V558 · grants por función
 const phase6 = require("./features_phase6_vault"); // V569 · bóveda cifrada
+const phase7 = require("./features_phase7_rewards"); // V576 · recompensas/cupones XP
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase5.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase7.register(app, pool, { readMyUserId, wrap, requireAdmin });
 
 (async () => {
   try {
@@ -9577,6 +9579,7 @@ phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
       await phase4.migrate(pool);
       await phase5.migrate(pool); // V558
       await phase6.migrate(pool); // V569 · bóveda cifrada
+      await phase7.migrate(pool); // V576 · recompensas/cupones XP
     } catch (e) {
       console.error("[phases] init error:", e);
     }

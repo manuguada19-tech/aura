@@ -101,8 +101,15 @@ async function getUserPlan(pool, userId) {
 }
 
 // Suma XP y actualiza nivel; también aplica racha diaria.
+// V576 · si sube de nivel, dispara auto-grant de recompensas configuradas.
 async function addXP(pool, userId, amount) {
   if (!userId || !amount) return;
+  // Nivel previo (para detectar level-up)
+  let prevLevel = 0;
+  try {
+    const [pr] = await pool.query("SELECT level FROM user_stats WHERE user_id=?", [userId]);
+    prevLevel = pr[0]?.level || 0;
+  } catch {}
   await pool.query(
     `INSERT INTO user_stats (user_id, xp, level, streak_days, last_active)
      VALUES (?, ?, 1, 1, CURDATE())
@@ -115,6 +122,16 @@ async function addXP(pool, userId, amount) {
        last_active = CURDATE()`,
     [userId, amount]
   );
+  try {
+    const [nr] = await pool.query("SELECT level FROM user_stats WHERE user_id=?", [userId]);
+    const newLevel = nr[0]?.level || 1;
+    if (newLevel > prevLevel) {
+      try {
+        const phase7 = require("./features_phase7_rewards");
+        if (phase7 && phase7.grantAutoOnLevelUp) await phase7.grantAutoOnLevelUp(pool, userId, newLevel);
+      } catch {}
+    }
+  } catch {}
 }
 
 function register(app, pool, helpers) {

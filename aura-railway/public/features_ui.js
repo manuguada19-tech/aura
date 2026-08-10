@@ -530,12 +530,92 @@
     }
   }
 
+  // ============ RECOMPENSAS / TIENDA DE CUPONES XP (V576) ============
+  async function openRewardsShop() {
+    const { ok, data } = await api("/api/my/rewards/shop");
+    if (!ok) { toast("No se pudo cargar la tienda"); return; }
+    const items = data.items || [];
+    const rows = items.map((r) => {
+      const badge = r.can_redeem ? '<span class="reward-flag ok">Puedes canjear</span>'
+        : r.lock_reason === "level"  ? `<span class="reward-flag warn">Nivel ${r.min_level}+</span>`
+        : r.lock_reason === "plan"   ? `<span class="reward-flag warn">Plan ${r.plan_required}</span>`
+        : r.lock_reason === "xp"     ? `<span class="reward-flag warn">Faltan ${(r.xp_cost - (data.xp || 0))} XP</span>`
+        : r.lock_reason === "limit"  ? '<span class="reward-flag off">Ya canjeada</span>'
+        : r.lock_reason === "stock"  ? '<span class="reward-flag off">Agotada</span>'
+        : "";
+      const btnRedeem = r.can_redeem
+        ? `<button class="btn primary" data-redeem="${r.id}">Canjear · ${r.xp_cost} XP</button>`
+        : `<button class="btn secondary" disabled>Bloqueada</button>`;
+      return h("div", { class: "reward-card" }, [
+        h("div", { class: "reward-icon" }, r.icon || "🎁"),
+        h("div", { class: "reward-body" }, [
+          h("div", { class: "reward-title" }, r.title || ""),
+          h("div", { class: "reward-desc muted" }, r.description || ""),
+          h("div", { class: "reward-meta muted", html: badge }),
+        ]),
+        h("div", { class: "reward-action", html: btnRedeem }),
+      ]);
+    });
+    const shell = h("div", { class: "rewards-shop" }, [
+      h("div", { class: "rewards-head" }, [
+        h("h3", {}, "🎁 Tienda de recompensas"),
+        h("div", { class: "muted" }, `Tienes ${data.xp || 0} XP · Nivel ${data.level || 1}`),
+      ]),
+      h("div", { class: "reward-list" }, rows.length ? rows : [h("div", { class: "muted" }, "No hay recompensas disponibles ahora mismo.")]),
+      h("div", { class: "modal-actions" }, [
+        h("button", { class: "btn ghost", onclick: () => openMyRewards() }, "🎫 Mis códigos"),
+        h("button", { class: "btn secondary", onclick: closeModal }, "Cerrar"),
+      ]),
+    ]);
+    modal([shell], "wide");
+    shell.querySelectorAll("[data-redeem]").forEach((b) => {
+      b.onclick = async () => {
+        b.disabled = true;
+        const rsp = await api("/api/my/rewards/redeem", { method: "POST", body: JSON.stringify({ reward_id: Number(b.dataset.redeem) }) });
+        if (rsp.ok && rsp.data?.ok) {
+          toast("¡Canjeado! Código: " + rsp.data.code);
+          closeModal();
+          openMyRewards();
+        } else {
+          toast(rsp.data?.error || "No se pudo canjear");
+          b.disabled = false;
+        }
+      };
+    });
+  }
+
+  async function openMyRewards() {
+    const { ok, data } = await api("/api/my/rewards/mine");
+    if (!ok) { toast("No se pudieron cargar tus recompensas"); return; }
+    const items = data.items || [];
+    const rows = items.length ? items.map((r) => h("div", { class: "reward-card" }, [
+      h("div", { class: "reward-icon" }, r.icon || "🎁"),
+      h("div", { class: "reward-body" }, [
+        h("div", { class: "reward-title" }, r.title || ""),
+        h("div", { class: "muted", style: "font-size:12px" }, `Código: `),
+        h("div", { style: "font-family:monospace;font-weight:600;user-select:all" }, r.code),
+        h("div", { class: "muted", style: "font-size:11px;margin-top:4px" }, `Estado: ${r.status}`),
+      ]),
+    ])) : [h("div", { class: "muted" }, "Aún no has canjeado ninguna recompensa.")];
+    modal([
+      h("div", { class: "rewards-shop" }, [
+        h("h3", {}, "🎫 Mis recompensas"),
+        h("div", { class: "reward-list" }, rows),
+        h("div", { class: "modal-actions" }, [
+          h("button", { class: "btn secondary", onclick: () => openRewardsShop() }, "← Volver a la tienda"),
+          h("button", { class: "btn primary", onclick: closeModal }, "Cerrar"),
+        ]),
+      ]),
+    ], "wide");
+  }
+
   window.aura2 = {
     openStoriesFeed, openStoryCreate,
     openGamification,
     openEvents, openEventCreate,
     openFilters,
     openGDPR,
+    openRewardsShop, openMyRewards,
     startVideoCall,
     translateMsg,
   };

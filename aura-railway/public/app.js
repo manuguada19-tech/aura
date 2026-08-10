@@ -7911,6 +7911,8 @@ function screenMe(root) {
       { icon: "📸", title: "Historias 24h", sub: "Publica y descubre historias efímeras", onClick: () => { try { window.aura2 && window.aura2.openStoriesFeed && window.aura2.openStoriesFeed(); } catch {} } },
       { icon: "🎮", title: "Progreso y logros", sub: "XP, nivel y misiones diarias", onClick: () => { try { window.aura2 && window.aura2.openGamification && window.aura2.openGamification(); } catch {} } },
       { icon: "📅", title: "Quedadas", sub: "Eventos y planes con la comunidad", onClick: () => { try { window.aura2 && window.aura2.openEvents && window.aura2.openEvents(); } catch {} } },
+      { icon: "🎁", title: "Tienda de recompensas", sub: "Canjea tus XP por cupones y ventajas", onClick: () => { try { window.aura2 && window.aura2.openRewardsShop && window.aura2.openRewardsShop(); } catch {} } },
+      { icon: "🎫", title: "Mis cupones", sub: "Códigos y recompensas que has ganado", onClick: () => { try { window.aura2 && window.aura2.openMyRewards && window.aura2.openMyRewards(); } catch {} } },
       { icon: "🔒", title: "Mis datos (GDPR)", sub: "Exporta o elimina tus datos personales", onClick: () => { try { window.aura2 && window.aura2.openGDPR && window.aura2.openGDPR(); } catch {} } },
     ]},
     { title: T("content.me.group_prefs") || "Preferencias", items: [

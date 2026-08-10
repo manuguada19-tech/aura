@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards"];
 
   function readTok() {
     try {
@@ -1888,6 +1888,229 @@
       });
     }
 
+    // ---- Recompensas / cupones XP (V576) ---------------------------
+    async function view_rewards(container) {
+      const KIND = { coupon:{c:"blue",t:"🎟️ Cupón"}, discount:{c:"green",t:"💰 Descuento"}, perk:{c:"purple",t:"⚡ Ventaja"}, badge:{c:"amber",t:"🏅 Insignia"}, physical:{c:"off",t:"📦 Físico"} };
+      const PLAN = { free:"Free", premium:"Premium", gold:"Oro", platinum:"Platino" };
+      DataView(container, {
+        title: "Recompensas y cupones",
+        subtitle: "Tienda de canje con XP · entrega automática por nivel · gestión completa",
+        icon: "🎁",
+        fetch: async () => (await api("/api/admin/rewards")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total", value: rows.length, accent: "blue" },
+          { label: "Activas", value: rows.filter(r => r.active).length, accent: "green" },
+          { label: "Auto por nivel", value: rows.filter(r => r.auto_grant_level).length, accent: "purple" },
+          { label: "Canjes totales", value: rows.reduce((a,r) => a + (r.redemptions_count || 0), 0), accent: "amber" },
+        ],
+        filters: [
+          { key: "kind", label: "Tipo", type: "select", options: Object.keys(KIND).map(k => ({ value: k, label: KIND[k].t })) },
+          { key: "plan_required", label: "Plan requerido", type: "select", options: Object.keys(PLAN).map(k => ({ value: k, label: PLAN[k] })) },
+          { key: "active", label: "Estado", type: "select", options: [ { value: "1", label: "Activas" }, { value: "0", label: "Inactivas" } ], apply: (r,v) => String(r.active) === v },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "title", label: "Recompensa", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${r.icon || "🎁"} ${escapeHtml(r.title || "")}</div><div class="fx-muted" style="font-size:11px">${escapeHtml(r.slug || "")}</div>`;
+              return d;
+            } },
+          { key: "kind", label: "Tipo", render: (r) => { const it = KIND[r.kind] || KIND.coupon; const b = document.createElement("span"); b.className = "fx-badge " + it.c; b.textContent = it.t; return b; } },
+          { key: "value", label: "Valor", render: (r) => {
+              if (r.value_type === "percent") return document.createTextNode(`${r.value_amount || 0}%`);
+              if (r.value_type === "fixed")   return document.createTextNode(`${r.value_amount || 0}€`);
+              if (r.value_type === "free")    return document.createTextNode("Gratis");
+              return document.createTextNode("—");
+            } },
+          { key: "xp_cost", label: "Coste XP", sortable: true },
+          { key: "min_level", label: "Nivel mín.", sortable: true },
+          { key: "plan_required", label: "Plan", render: (r) => document.createTextNode(PLAN[r.plan_required] || "Free") },
+          { key: "stock", label: "Stock", render: (r) => document.createTextNode(r.stock == null ? "∞" : String(r.stock)) },
+          { key: "auto_grant_level", label: "Auto @ nivel", render: (r) => document.createTextNode(r.auto_grant_level ? String(r.auto_grant_level) : "—") },
+          { key: "redemptions_count", label: "Canjes", sortable: true },
+          { key: "active", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.active ? "ok" : "off"); b.textContent = r.active ? "Activa" : "Inactiva"; return b; } },
+        ],
+        actions: [
+          { label: "✏️", title: "Editar", variant: "ghost", onClick: async (r, reload) => { openRewardEditor(r, reload); } },
+          { label: "🔁", title: "Activar/Desactivar", variant: "ghost", onClick: async (r, reload) => {
+              await api(`/api/admin/rewards/${r.id}/toggle`, { method: "POST" });
+              toast(r.active ? "Desactivada" : "Activada", "ok"); reload();
+            } },
+          { label: "🎯", title: "Otorgar a usuario", variant: "ghost", onClick: async (r, reload) => {
+              const d = await prompt2({ title: "Otorgar recompensa manualmente", fields: [
+                { name: "user_id", label: "ID de usuario", type: "number" },
+                { name: "note", label: "Nota interna (opcional)" },
+              ]});
+              if (!d || !d.user_id) return;
+              const rsp = await api(`/api/admin/rewards/${r.id}/grant`, { method: "POST", body: { user_id: Number(d.user_id), note: d.note || null } });
+              if (rsp.ok) toast(`Otorgada. Código: ${rsp.data?.code}`, "ok"); else toast("No se pudo otorgar", "err");
+              reload();
+            } },
+          { label: "", icon: "&#x1f5d1;", title: "Borrar", variant: "danger-icon", onClick: async (r, reload) => {
+              const ok = await confirmDialog({ title: "Borrar recompensa", message: r.title, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              await api(`/api/admin/rewards/${r.id}`, { method: "DELETE" });
+              toast("Borrada", "ok"); reload();
+            } },
+        ],
+        headerActions: [
+          { label: "Nueva recompensa", icon: "＋", variant: "primary", onClick: () => openRewardEditor(null, () => { try { rerender(); } catch {} }) },
+          { label: "Ver canjes", icon: "📜", variant: "ghost", onClick: () => openRedemptionsDialog() },
+        ],
+      });
+    }
+
+    function openRewardEditor(row, onSaved) {
+      const isEdit = !!row;
+      const r = row || {};
+      const back = document.createElement("div"); back.className = "fx-modal-back";
+      const card = document.createElement("div"); card.className = "fx-modal-card wide";
+      card.innerHTML = `
+        <div class="fx-modal-head">
+          <h2>${isEdit ? "✏️ Editar" : "＋ Nueva"} recompensa</h2>
+          <button class="fx-icon-btn" data-close>✕</button>
+        </div>
+        <div class="fx-modal-body">
+          <div class="fx-form-section"><div class="fx-form-title">📌 Información básica</div>
+            <label>Slug <input class="fx-input" id="r_slug" value="${escapeHtml(r.slug || "")}" ${isEdit ? "disabled" : ""}></label>
+            <label>Título <input class="fx-input" id="r_title" value="${escapeHtml(r.title || "")}"></label>
+            <label>Descripción <textarea class="fx-input" id="r_desc" rows="2">${escapeHtml(r.description || "")}</textarea></label>
+            <label>Icono <input class="fx-input" id="r_icon" value="${escapeHtml(r.icon || "🎁")}" maxlength="4"></label>
+          </div>
+          <div class="fx-form-section"><div class="fx-form-title">🎁 Tipo y valor</div>
+            <label>Tipo
+              <select class="fx-input" id="r_kind">
+                <option value="coupon">🎟️ Cupón</option>
+                <option value="discount">💰 Descuento</option>
+                <option value="perk">⚡ Ventaja</option>
+                <option value="badge">🏅 Insignia</option>
+                <option value="physical">📦 Regalo físico</option>
+              </select>
+            </label>
+            <label>Tipo de valor
+              <select class="fx-input" id="r_vtype">
+                <option value="percent">Porcentaje %</option>
+                <option value="fixed">Fijo €</option>
+                <option value="free">Gratis</option>
+                <option value="custom">Personalizado</option>
+              </select>
+            </label>
+            <label>Cantidad <input class="fx-input" id="r_vamount" type="number" step="0.01" value="${r.value_amount || 0}"></label>
+          </div>
+          <div class="fx-form-section"><div class="fx-form-title">🎯 Requisitos y canje</div>
+            <label>Coste XP <input class="fx-input" id="r_xp" type="number" value="${r.xp_cost || 0}"></label>
+            <label>Nivel mínimo <input class="fx-input" id="r_lvl" type="number" value="${r.min_level || 1}"></label>
+            <label>Plan requerido
+              <select class="fx-input" id="r_plan">
+                <option value="free">Free</option><option value="premium">Premium</option>
+                <option value="gold">Oro</option><option value="platinum">Platino</option>
+              </select>
+            </label>
+            <label>Stock (vacío = ilimitado) <input class="fx-input" id="r_stock" type="number" value="${r.stock ?? ""}"></label>
+            <label>Límite por usuario <input class="fx-input" id="r_perlimit" type="number" value="${r.per_user_limit ?? 1}"></label>
+          </div>
+          <div class="fx-form-section"><div class="fx-form-title">⏱️ Vigencia</div>
+            <label>Desde <input class="fx-input" id="r_from" type="datetime-local" value="${(r.valid_from || "").slice(0,16)}"></label>
+            <label>Hasta <input class="fx-input" id="r_until" type="datetime-local" value="${(r.valid_until || "").slice(0,16)}"></label>
+          </div>
+          <div class="fx-form-section"><div class="fx-form-title">🤖 Entrega automática</div>
+            <label>Auto-otorgar al alcanzar nivel (vacío = no) <input class="fx-input" id="r_autolvl" type="number" value="${r.auto_grant_level ?? ""}"></label>
+            <label>Auto-otorgar al conseguir logro (slug) <input class="fx-input" id="r_autoach" value="${escapeHtml(r.auto_grant_achievement || "")}"></label>
+          </div>
+          <div class="fx-form-section"><div class="fx-form-title">🛠️ Detalles</div>
+            <label>Prefijo del código <input class="fx-input" id="r_prefix" value="${escapeHtml(r.code_prefix || "AURA")}" maxlength="16"></label>
+            <label>Condiciones (texto legal breve) <textarea class="fx-input" id="r_terms" rows="2">${escapeHtml(r.terms || "")}</textarea></label>
+            <label class="fx-checkbox-row"><input type="checkbox" id="r_active" ${(r.active == null || r.active) ? "checked" : ""}> Activa</label>
+          </div>
+        </div>
+        <div class="fx-modal-foot">
+          <button class="fx-btn ghost" data-close>Cancelar</button>
+          <button class="fx-btn primary" data-save>${isEdit ? "Guardar cambios" : "Crear recompensa"}</button>
+        </div>`;
+      back.appendChild(card);
+      document.body.appendChild(back);
+      // pre-seleccionar valores
+      card.querySelector("#r_kind").value = r.kind || "coupon";
+      card.querySelector("#r_vtype").value = r.value_type || "percent";
+      card.querySelector("#r_plan").value = r.plan_required || "free";
+      const close = () => back.remove();
+      card.querySelectorAll("[data-close]").forEach(b => b.onclick = close);
+      back.addEventListener("click", (e) => { if (e.target === back) close(); });
+      card.querySelector("[data-save]").onclick = async () => {
+        const body = {
+          slug: card.querySelector("#r_slug").value.trim(),
+          title: card.querySelector("#r_title").value.trim(),
+          description: card.querySelector("#r_desc").value,
+          icon: card.querySelector("#r_icon").value || "🎁",
+          kind: card.querySelector("#r_kind").value,
+          value_type: card.querySelector("#r_vtype").value,
+          value_amount: Number(card.querySelector("#r_vamount").value) || 0,
+          xp_cost: Number(card.querySelector("#r_xp").value) || 0,
+          min_level: Number(card.querySelector("#r_lvl").value) || 1,
+          plan_required: card.querySelector("#r_plan").value,
+          stock: card.querySelector("#r_stock").value === "" ? null : Number(card.querySelector("#r_stock").value),
+          per_user_limit: card.querySelector("#r_perlimit").value === "" ? null : Number(card.querySelector("#r_perlimit").value),
+          valid_from: card.querySelector("#r_from").value || null,
+          valid_until: card.querySelector("#r_until").value || null,
+          auto_grant_level: card.querySelector("#r_autolvl").value === "" ? null : Number(card.querySelector("#r_autolvl").value),
+          auto_grant_achievement: card.querySelector("#r_autoach").value.trim() || null,
+          code_prefix: card.querySelector("#r_prefix").value.trim() || "AURA",
+          terms: card.querySelector("#r_terms").value,
+          active: card.querySelector("#r_active").checked ? 1 : 0,
+        };
+        if (!body.title || (!isEdit && !body.slug)) { toast("Slug y título son obligatorios", "err"); return; }
+        const rsp = isEdit
+          ? await api(`/api/admin/rewards/${r.id}`, { method: "PUT", body })
+          : await api("/api/admin/rewards", { method: "POST", body });
+        if (rsp.ok) { toast(isEdit ? "Guardada" : "Creada", "ok"); close(); onSaved && onSaved(); }
+        else toast(rsp.data?.error || "Error al guardar", "err");
+      };
+    }
+
+    async function openRedemptionsDialog() {
+      const rsp = await api("/api/admin/rewards/redemptions");
+      const items = rsp.data?.items || [];
+      const back = document.createElement("div"); back.className = "fx-modal-back";
+      const card = document.createElement("div"); card.className = "fx-modal-card xwide";
+      const rowsHtml = items.map(it => `
+        <tr>
+          <td>#${it.id}</td>
+          <td>${it.reward_icon || "🎁"} ${escapeHtml(it.reward_title || "")}</td>
+          <td>${escapeHtml(it.user_name || "")} <span class="fx-muted">#${it.user_id}</span></td>
+          <td><code>${escapeHtml(it.code)}</code></td>
+          <td>${it.xp_spent || 0}</td>
+          <td>${escapeHtml(it.source)}</td>
+          <td><span class="fx-badge ${it.status === 'active' ? 'ok' : it.status === 'used' ? 'blue' : 'off'}">${it.status}</span></td>
+          <td>${fmtDate(it.created_at)}</td>
+          <td>
+            ${it.status === 'active' ? `<button class="fx-btn ghost small" data-used="${it.id}">Marcar usado</button>` : ""}
+            ${it.status !== 'revoked' ? `<button class="fx-btn ghost small" data-rev="${it.id}">Revocar</button>` : ""}
+          </td>
+        </tr>`).join("");
+      card.innerHTML = `
+        <div class="fx-modal-head"><h2>📜 Historial de canjes</h2><button class="fx-icon-btn" data-close>✕</button></div>
+        <div class="fx-modal-body">
+          <table class="fx-table"><thead><tr>
+            <th>ID</th><th>Recompensa</th><th>Usuario</th><th>Código</th><th>XP</th><th>Origen</th><th>Estado</th><th>Fecha</th><th>Acciones</th>
+          </tr></thead><tbody>${rowsHtml || `<tr><td colspan="9" class="fx-muted" style="text-align:center;padding:24px">Sin canjes todavía</td></tr>`}</tbody></table>
+        </div>
+        <div class="fx-modal-foot"><button class="fx-btn ghost" data-close>Cerrar</button></div>`;
+      back.appendChild(card);
+      document.body.appendChild(card.parentElement);
+      const close = () => back.remove();
+      card.querySelectorAll("[data-close]").forEach(b => b.onclick = close);
+      back.addEventListener("click", (e) => { if (e.target === back) close(); });
+      card.querySelectorAll("[data-used]").forEach(b => b.onclick = async () => {
+        await api(`/api/admin/rewards/redemptions/${b.dataset.used}/mark-used`, { method: "POST" });
+        toast("Marcada como usada", "ok"); close(); openRedemptionsDialog();
+      });
+      card.querySelectorAll("[data-rev]").forEach(b => b.onclick = async () => {
+        await api(`/api/admin/rewards/redemptions/${b.dataset.rev}/revoke`, { method: "POST" });
+        toast("Revocada", "ok"); close(); openRedemptionsDialog();
+      });
+    }
+
     // -----------------------------------------------------------------
     // Registro + helpers
     // -----------------------------------------------------------------
@@ -1916,8 +2139,9 @@
       fx_voice_notes: wrapView(view_voice_notes),
       fx_vault: wrapView(view_vault),
       fx_push_ctx: wrapView(view_push_ctx),
+      fx_rewards: wrapView(view_rewards),
     });
-    console.log("[admin_features] v569 · 11 vistas premium registradas (incluye bóveda cifrada)");
+    console.log("[admin_features] v576 · 14 vistas premium registradas (incluye recompensas XP)");
   }
 
   // -------------------------------------------------------------------
