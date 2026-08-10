@@ -7338,10 +7338,21 @@ function screenChat(root, u, isNew, opts = {}) {
     }
   }
 
-  // V566 · Burbuja de nota de voz con play/pause, tiempo y duración.
-  function renderAudioBubble(url, duration_ms, mine) {
+  // V566/V569 · Burbuja de nota de voz con play/pause, tiempo y duración.
+  //   Si se pasa messageId, se descarga el audio autenticado (para audios
+  //   cifrados en reposo) y se reproduce desde blob URL.
+  function renderAudioBubble(url, duration_ms, mine, messageId) {
     const bub = el("div", { class: "bubble " + (mine ? "out" : "in") + " audio-bubble", style: "display:flex;align-items:center;gap:10px;min-width:160px" });
-    const audio = new Audio(url);
+    const audio = new Audio();
+    if (messageId) {
+      // Fetch autenticado y blob url
+      fetch(`/api/my/audio/${messageId}`, { headers: chatApi.headers(), cache: "no-store" })
+        .then((r) => r.ok ? r.blob() : null)
+        .then((b) => { if (b) audio.src = URL.createObjectURL(b); })
+        .catch(()=>{});
+    } else {
+      audio.src = url;
+    }
     audio.preload = "metadata";
     const btn = el("button", { class: "icon-btn", style: "width:36px;height:36px;border-radius:50%;background:rgba(0,0,0,0.15);color:inherit;display:grid;place-items:center;flex-shrink:0", html: "▶" });
     const bar = el("div", { style: "flex:1;height:4px;background:rgba(0,0,0,0.15);border-radius:2px;position:relative;overflow:hidden" }, [
@@ -7417,6 +7428,7 @@ function screenChat(root, u, isNew, opts = {}) {
         // servido desde /uploads/audio/…). Sin fallback a data-URL en línea (peso).
         const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
         let audioUrl = null; let audioBytes = 0; let audioMime = "audio/webm";
+        let audioIv = null, audioTag = null, audioEncrypted = 0;
         try {
           const up = await fetch("/api/my/audio/upload", {
             method: "POST",
@@ -7430,6 +7442,8 @@ function screenChat(root, u, isNew, opts = {}) {
           }
           if (!up.ok || !j?.url) throw new Error(j?.error || "upload_failed");
           audioUrl = j.url; audioBytes = j.bytes || 0; audioMime = j.mime || audioMime;
+          audioEncrypted = j.encrypted ? 1 : 0;
+          audioIv = j._iv || null; audioTag = j._tag || null;
         } catch (e) {
           console.error("[audio upload]", e);
           toast("No se pudo subir el audio.");
@@ -7437,8 +7451,8 @@ function screenChat(root, u, isNew, opts = {}) {
         }
         const endpoint = ephemeralState.on ? "/api/my/messages/ephemeral" : "/api/my/messages/audio";
         const body = ephemeralState.on
-          ? { conversation_id: state_.convId, media_type: "audio", media_url: audioUrl, duration_ms, bytes: audioBytes, mime: audioMime }
-          : { conversation_id: state_.convId, media_url: audioUrl, duration_ms, bytes: audioBytes, mime: audioMime };
+          ? { conversation_id: state_.convId, media_type: "audio", media_url: audioUrl, duration_ms, bytes: audioBytes, mime: audioMime, encrypted: audioEncrypted, iv: audioIv, tag: audioTag }
+          : { conversation_id: state_.convId, media_url: audioUrl, duration_ms, bytes: audioBytes, mime: audioMime, encrypted: audioEncrypted, iv: audioIv, tag: audioTag };
         try {
           const r = await fetch(endpoint, {
             method: "POST",
@@ -7450,7 +7464,11 @@ function screenChat(root, u, isNew, opts = {}) {
             if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Notas de voz"); return; }
             throw new Error();
           }
-          const bub = renderAudioBubble(audioUrl, duration_ms, /*mine*/true);
+          // V569 · Si está cifrado, reproducir vía endpoint autenticado; si no,
+          // usar la URL directa.
+          const bub = audioEncrypted && j.id
+            ? renderAudioBubble(null, duration_ms, /*mine*/true, j.id)
+            : renderAudioBubble(audioUrl, duration_ms, /*mine*/true);
           msgs.appendChild(bub);
           msgs.scrollTop = msgs.scrollHeight;
         } catch { toast("No se pudo enviar audio."); }
@@ -7530,8 +7548,9 @@ function screenChat(root, u, isNew, opts = {}) {
       if (m.media_type === "photo" && m.media_url) {
         node = photoBubble(t, m.media_url, m.created_at);
       } else if (m.media_type === "audio") {
-        // V566 · nota de voz real cuando hay media_url; fallback dummy si no.
-        if (m.media_url) node = renderAudioBubble(m.media_url, 0, mine);
+        // V566/V569 · nota de voz real: si tiene media_url usar endpoint
+        // autenticado /api/my/audio/:id (soporta cifrado en reposo).
+        if (m.media_url) node = renderAudioBubble(null, m.audio_duration_ms || 0, mine, m.id);
         else node = audioBubble(t, 12);
       } else if (m.body) {
         node = bubble(t, m.body, m.created_at);
@@ -7725,9 +7744,9 @@ async function startCallFromChat(peer, mode) {
         } catch (e) { console.warn("[rec upload]", e); }
       })();
     }
-    const recBanner = el("div", { class: "call-rec-banner", style: "display:flex;align-items:center;gap:8px;background:#e53950;color:#fff;padding:6px 10px;border-radius:8px;font-size:13px;margin-bottom:8px;font-weight:600" }, [
-      el("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite" }, ""),
-      el("span", {}, "🔴 REC · Esta llamada se está grabando por motivos de seguridad."),
+    const recBanner = el("div", { class: "call-rec-banner", style: "display:flex;align-items:flex-start;gap:8px;background:#e53950;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px;font-weight:600;line-height:1.35" }, [
+      el("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite;margin-top:4px;flex-shrink:0" }, ""),
+      el("span", {}, "🔴 REC · Esta llamada se graba y almacena cifrada (AES-256). El equipo de Aura NO tiene acceso a la grabación salvo por denuncia de usuario o requerimiento de las autoridades, en cuyo caso se abrirá un plazo de revisión con acceso auditado."),
     ]);
     const title = (mode === "audio" ? "📞 Llamada a " : "📹 Videollamada con ") + (peer.name || "usuario");
     const kids = mode === "audio"

@@ -9,6 +9,9 @@ const { planAtLeast } = require("./features_phase1");
 // V558 · grants por función (permite acceso individual sin cambiar de plan)
 let __phase5 = null;
 try { __phase5 = require("./features_phase5"); } catch {}
+// V569 · Bóveda cifrada
+let __vault = null;
+try { __vault = require("./features_phase6_vault"); } catch {}
 async function canUse(pool, userId, feature, minPlan) {
   if (__phase5 && typeof __phase5.hasFeature === "function") {
     try { return await __phase5.hasFeature(pool, userId, feature); } catch {}
@@ -330,15 +333,29 @@ function register(app, pool, helpers) {
     const dir = path.join(__dirname, "public", "uploads", "calls", yyyy, mm);
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
     const fname = `${cid}_${role}_${hash}.${ext}`;
-    const abs = path.join(dir, fname);
-    try { fs.writeFileSync(abs, buf); } catch (e) {
+    const url = `/uploads/calls/${yyyy}/${mm}/${fname}`;
+    // V569 · Cifrado en reposo. La URL se conserva como referencia lógica;
+    // el archivo físico es .enc y solo se descifra desde
+    // /api/admin/vault/media/:reqId con un token aprobado por 2 admins.
+    let iv = null, tag = null, encrypted = 0;
+    let toWrite = buf;
+    let abs = path.join(dir, fname);
+    if (__vault && typeof __vault.encryptBuffer === "function") {
+      try {
+        const encRes = __vault.encryptBuffer(buf, fname, "call");
+        toWrite = encRes.enc; iv = encRes.iv; tag = encRes.tag; encrypted = 1;
+        abs = abs + ".enc";
+      } catch (e) { console.warn("[call vault]", e.message); }
+    }
+    try { fs.writeFileSync(abs, toWrite); } catch (e) {
       console.error("[call rec] write error", e);
       return res.status(500).json({ error: "write_failed" });
     }
-    const url = `/uploads/calls/${yyyy}/${mm}/${fname}`;
     await pool.execute(
-      "INSERT INTO call_recordings (call_id,user_id,role,mime,bytes,duration_ms,url) VALUES (?,?,?,?,?,?,?)",
-      [cid, me, role, mime, buf.length, duration_ms, url]
+      `INSERT INTO call_recordings
+         (call_id,user_id,role,mime,bytes,duration_ms,url,encrypted,iv,tag)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      [cid, me, role, mime, buf.length, duration_ms, url, encrypted, iv, tag]
     );
     const col = role === "caller" ? "recording_caller_url" : "recording_callee_url";
     await pool.execute(

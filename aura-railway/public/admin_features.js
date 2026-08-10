@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_push_ctx"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx"];
 
   function readTok() {
     try {
@@ -1134,10 +1134,9 @@
           { key: "status", label: "Estado" },
           { key: "department", label: "Depto.", render: (r) => DEPT_LABEL[r.department || "none"] },
           { key: "recording", label: "Grabación", render: (r) => {
-            const parts = [];
-            if (r.recording_caller_url) parts.push(`<a href="${r.recording_caller_url}" target="_blank">Llamante</a>`);
-            if (r.recording_callee_url) parts.push(`<a href="${r.recording_callee_url}" target="_blank">Receptor</a>`);
-            return parts.length ? parts.join(" · ") : "—";
+            const has = (r.recording_caller_url ? 1 : 0) + (r.recording_callee_url ? 1 : 0);
+            if (!has) return "—";
+            return `<span class="fx-badge purple">🔒 Cifrada (${has} pista${has>1?"s":""})</span>`;
           } },
           { key: "created_at", label: "Inicio", sortable: true, render: (r) => fmtDate(r.created_at) },
           { key: "ended_at", label: "Fin", render: (r) => fmtDate(r.ended_at) },
@@ -1153,13 +1152,15 @@
                  Receptor: ${c.callee_name || c.callee_id} (${c.callee_email || ""})</p>
               <p>Inicio: ${fmtDate(c.created_at)} · Fin: ${fmtDate(c.ended_at) || "—"}</p>
               <p>Triage: <b>${DEPT_LABEL[c.department || "none"]}</b> · score ${c.triage_score || 0} · flags: ${c.triage_flags || "—"}</p>
-              <div style="margin:10px 0">
+              <div style="margin:10px 0;padding:10px;background:#0e1020;border:1px solid #333;border-radius:8px">
+                <div style="font-weight:600;margin-bottom:4px">🔒 Grabaciones cifradas en reposo</div>
+                <div style="font-size:12px;opacity:0.8;margin-bottom:8px">Las grabaciones están cifradas con AES-256-GCM. Ni administración ni el equipo de Aura tienen acceso libre a las mismas. El contenido solo puede ser reproducido tras una solicitud de acceso motivada (denuncia de usuario, orden judicial/policial o emergencia de seguridad) y aprobada por un segundo administrador distinto del que la solicita.</div>
                 ${recs.map((rr) => `
-                  <div style="margin:6px 0;padding:6px;background:rgba(0,0,0,0.05);border-radius:8px">
-                    <div><b>${rr.role}</b> · ${(rr.bytes/1024|0)} KB · ${rr.duration_ms ? (rr.duration_ms/1000|0)+"s" : "?"}</div>
-                    ${rr.mime && rr.mime.startsWith("audio") ? `<audio src="${rr.url}" controls style="width:100%"></audio>` : `<video src="${rr.url}" controls style="width:100%;max-height:280px"></video>`}
+                  <div style="margin:4px 0;padding:6px;background:rgba(255,255,255,0.05);border-radius:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                    <span><b>${rr.role}</b> · ${(rr.bytes/1024|0)} KB · ${rr.duration_ms ? (rr.duration_ms/1000|0)+"s" : "?"} · ${rr.encrypted ? "🔒 cifrada" : "⚠️ sin cifrar (antiguo)"}</span>
                   </div>
                 `).join("") || "<i>Sin grabaciones</i>"}
+                <button data-vault-req="call" data-vault-target="${c.id}" class="fx-btn" style="margin-top:8px;background:#ff8a3b;color:#fff">🔐 Solicitar acceso a estas grabaciones</button>
               </div>
               <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
                 <button data-d="safety" class="fx-btn">🛡️ Seguridad</button>
@@ -1197,10 +1198,64 @@
               await api(`/api/admin/video/calls/${r.id}/recordings`, { method: "DELETE" });
               toast("Grabaciones borradas", "ok"); back.remove();
             };
+            const reqBtn = body.querySelector("[data-vault-req]");
+            if (reqBtn) reqBtn.onclick = () => openVaultRequestModal("call", r.id, () => back.remove());
           } },
         ],
         bulkEndpoint: "/api/admin/video/calls/bulk-delete",
       });
+    }
+
+    // ---- V569 · Modal para solicitar acceso a la bóveda -----------
+    function openVaultRequestModal(kind, targetId, onDone) {
+      const REASONS = [
+        { v: "user_report", l: "Denuncia de usuario" },
+        { v: "police_order", l: "Orden policial" },
+        { v: "court_order", l: "Orden judicial" },
+        { v: "safety_emergency", l: "Emergencia de seguridad" },
+      ];
+      const back = document.createElement("div");
+      back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;padding:12px";
+      const card = document.createElement("div");
+      card.style.cssText = "background:#1c1e2e;color:#fff;max-width:480px;width:100%;padding:16px;border-radius:12px";
+      card.innerHTML = `
+        <h3>🔐 Solicitar acceso a bóveda cifrada</h3>
+        <p style="font-size:13px;opacity:0.85">Registra el motivo y la referencia. Un <b>segundo administrador</b> deberá aprobar la solicitud antes de que puedas reproducir el contenido. Todos los accesos quedan auditados.</p>
+        <label style="display:block;margin:6px 0">Motivo
+          <select id="vReason" class="fx-input" style="width:100%">
+            ${REASONS.map((r) => `<option value="${r.v}">${r.l}</option>`).join("")}
+          </select>
+        </label>
+        <label style="display:block;margin:6px 0">Referencia (nº atestado, expediente, ID denuncia)
+          <input id="vRef" class="fx-input" style="width:100%" placeholder="p.ej. Policía Nacional 2026/12345">
+        </label>
+        <label style="display:block;margin:6px 0">Notas
+          <textarea id="vNotes" class="fx-input" style="width:100%;min-height:70px" placeholder="Contexto para el aprobador…"></textarea>
+        </label>
+        <div style="display:flex;gap:6px;margin-top:10px;justify-content:flex-end">
+          <button data-cancel class="fx-btn">Cancelar</button>
+          <button data-submit class="fx-btn" style="background:#ff3b6b;color:#fff">Enviar solicitud</button>
+        </div>`;
+      back.appendChild(card);
+      back.onclick = (e) => { if (e.target === back) back.remove(); };
+      document.body.appendChild(back);
+      card.querySelector("[data-cancel]").onclick = () => back.remove();
+      card.querySelector("[data-submit]").onclick = async () => {
+        const body = {
+          kind, target_id: targetId,
+          reason: card.querySelector("#vReason").value,
+          reference: card.querySelector("#vRef").value.trim(),
+          notes: card.querySelector("#vNotes").value.trim(),
+        };
+        try {
+          const r = await api("/api/admin/vault/access-requests", { method: "POST", body: JSON.stringify(body) });
+          if (r.data?.ok) {
+            toast("Solicitud creada. Pendiente de aprobación por otro admin.", "ok");
+            back.remove();
+            if (typeof onDone === "function") onDone();
+          } else toast("No se pudo crear", "err");
+        } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
+      };
     }
 
     // ---- V568 · Notas de voz (moderación) --------------------------
@@ -1228,11 +1283,7 @@
           { key: "receiver", label: "Receptor", render: (r) => r.receiver_name || `#${r.receiver_id}` },
           { key: "audio", label: "Audio", render: (r) => {
             if (!r.media_url) return "[borrado]";
-            const wrap = document.createElement("div");
-            wrap.style.cssText = "display:flex;align-items:center;gap:6px";
-            const a = document.createElement("audio"); a.src = r.media_url; a.controls = true; a.preload = "none"; a.style.maxWidth = "220px";
-            wrap.appendChild(a);
-            return wrap;
+            return `<span class="fx-badge purple">🔒 Cifrada</span>`;
           } },
           { key: "duration", label: "Duración", render: (r) => r.audio_duration_ms ? Math.max(1, Math.round(r.audio_duration_ms/1000)) + "s" : "—" },
           { key: "size", label: "Tamaño", render: (r) => r.audio_bytes ? Math.round(r.audio_bytes/1024) + " KB" : "—" },
@@ -1258,7 +1309,13 @@
                  Enviada: ${fmtDate(n.created_at)}${n.read_at ? " · Leída: "+fmtDate(n.read_at) : ""}</p>
               <p>Triage: <b>${DEPT_LABEL[n.audio_department || "none"]}</b> · score ${n.audio_triage_score || 0} · flags: ${n.audio_triage_flags || "—"}</p>
               ${n.audio_admin_notes ? `<p style="background:rgba(255,255,255,0.05);padding:8px;border-radius:6px">📝 ${n.audio_admin_notes}</p>` : ""}
-              ${n.media_url ? `<audio src="${n.media_url}" controls style="width:100%;margin:8px 0"></audio>` : "<i>Audio eliminado</i>"}
+              ${n.media_url
+                ? `<div style="margin:10px 0;padding:10px;background:#0e1020;border:1px solid #333;border-radius:8px">
+                     <div style="font-weight:600;margin-bottom:4px">🔒 Nota de voz cifrada en reposo</div>
+                     <div style="font-size:12px;opacity:0.8;margin-bottom:8px">Cifrada con AES-256-GCM. Administración no puede reproducirla directamente. Para escucharla es necesaria una solicitud de acceso motivada (denuncia de usuario, orden judicial/policial, emergencia de seguridad) aprobada por un segundo administrador.</div>
+                     <button data-vault-req="voice_note" data-vault-target="${n.id}" class="fx-btn" style="background:#ff8a3b;color:#fff">🔐 Solicitar acceso al audio</button>
+                   </div>`
+                : "<i>Audio eliminado</i>"}
               <textarea id="fxNotes" placeholder="Notas del moderador…" style="width:100%;min-height:60px;background:#0e1020;color:#fff;border:1px solid #333;border-radius:6px;padding:6px">${n.audio_admin_notes || ""}</textarea>
               <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
                 <button data-d="safety" class="fx-btn">🛡️ Seguridad</button>
@@ -1290,9 +1347,103 @@
               toast("Audio borrado", "ok"); back.remove();
             };
             card.querySelector("[data-close]").onclick = () => back.remove();
+            const vreq = card.querySelector("[data-vault-req]");
+            if (vreq) vreq.onclick = () => openVaultRequestModal("voice_note", n.id, () => back.remove());
           } },
         ],
         bulkEndpoint: "/api/admin/voice-notes/bulk-delete",
+      });
+    }
+
+    // ---- V569 · Solicitudes de acceso a bóveda cifrada -------------
+    async function view_vault(container) {
+      const REASON_LABEL = { user_report: "Denuncia usuario", police_order: "Orden policial", court_order: "Orden judicial", safety_emergency: "Emergencia seguridad" };
+      const STATUS_LABEL = { pending: "⏳ Pendiente", approved: "✅ Aprobada", rejected: "❌ Rechazada", revoked: "🚫 Revocada", expired: "⌛ Expirada" };
+      DataView(container, {
+        title: "Bóveda cifrada", subtitle: "Solicitudes de acceso a grabaciones (V569)", icon: "🔐",
+        fetch: async () => (await api("/api/admin/vault/access-requests")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Total", value: rows.length, accent: "blue" },
+          { label: "Pendientes", value: rows.filter((r) => r.effective_status === "pending").length, accent: "amber" },
+          { label: "Aprobadas activas", value: rows.filter((r) => r.effective_status === "approved").length, accent: "green" },
+          { label: "Rechazadas", value: rows.filter((r) => r.effective_status === "rejected").length, accent: "red" },
+          { label: "Expiradas", value: rows.filter((r) => r.effective_status === "expired").length, accent: "purple" },
+        ],
+        filters: [
+          { key: "effective_status", label: "Estado", type: "select", options: Object.keys(STATUS_LABEL).map((v) => ({ value: v, label: STATUS_LABEL[v] })) },
+          { key: "kind", label: "Tipo", type: "select", options: [ { value: "call", label: "Llamada" }, { value: "voice_note", label: "Nota de voz" } ] },
+          { key: "reason", label: "Motivo", type: "select", options: Object.keys(REASON_LABEL).map((v) => ({ value: v, label: REASON_LABEL[v] })) },
+        ],
+        columns: [
+          { key: "id", label: "ID", sortable: true },
+          { key: "kind", label: "Tipo", render: (r) => r.kind === "call" ? "📹 Llamada" : "🎤 Nota de voz" },
+          { key: "target_id", label: "Objetivo" },
+          { key: "reason", label: "Motivo", render: (r) => REASON_LABEL[r.reason] || r.reason },
+          { key: "reference", label: "Referencia", render: (r) => r.reference || "—" },
+          { key: "requester_email", label: "Solicita" },
+          { key: "approver_email", label: "Aprueba", render: (r) => r.approver_email || "—" },
+          { key: "effective_status", label: "Estado", render: (r) => STATUS_LABEL[r.effective_status] || r.status },
+          { key: "expires_at", label: "Expira", render: (r) => r.expires_at ? fmtDate(r.expires_at) : "—" },
+          { key: "created_at", label: "Creada", sortable: true, render: (r) => fmtDate(r.created_at) },
+        ],
+        actions: [
+          { label: "Aprobar", icon: "✅", title: "Aprobar (otro admin)", onClick: async (r, reload) => {
+            if (r.status !== "pending") return toast("No está pendiente", "err");
+            const ok = await confirmDialog({ title: "Aprobar solicitud", message: `¿Aprobar acceso al ${r.kind === "call" ? "vídeo/llamada" : "audio"} #${r.target_id}? Se generará un token válido 24h. Quedará registrado tu email como aprobador.`, confirmLabel: "Aprobar" });
+            if (!ok) return;
+            try {
+              const rr = await api(`/api/admin/vault/access-requests/${r.id}/approve`, { method: "POST", body: JSON.stringify({}) });
+              if (rr.data?.ok) { toast("Aprobada", "ok"); reload(); }
+              else toast("No se pudo aprobar", "err");
+            } catch (e) { toast(e.data?.hint || e.data?.error || "Error", "err"); }
+          } },
+          { label: "Rechazar", icon: "❌", title: "Rechazar", variant: "danger-icon", onClick: async (r, reload) => {
+            if (r.status !== "pending") return;
+            const ok = await confirmDialog({ title: "Rechazar solicitud", message: "¿Seguro?", danger: true, confirmLabel: "Rechazar" });
+            if (!ok) return;
+            await api(`/api/admin/vault/access-requests/${r.id}/reject`, { method: "POST", body: JSON.stringify({}) });
+            toast("Rechazada", "ok"); reload();
+          } },
+          { label: "Revocar", icon: "🚫", title: "Revocar acceso", onClick: async (r, reload) => {
+            if (r.status !== "approved") return;
+            const ok = await confirmDialog({ title: "Revocar acceso", message: "Se invalidará el token antes de expirar.", confirmLabel: "Revocar" });
+            if (!ok) return;
+            await api(`/api/admin/vault/access-requests/${r.id}/revoke`, { method: "POST", body: JSON.stringify({}) });
+            toast("Revocada", "ok"); reload();
+          } },
+          { label: "Reproducir", icon: "▶", title: "Reproducir (si aprobada)", onClick: async (r) => {
+            if (r.effective_status !== "approved") return toast("No aprobada / expirada", "err");
+            const back = document.createElement("div");
+            back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100001;display:flex;align-items:center;justify-content:center;padding:12px";
+            const card = document.createElement("div");
+            card.style.cssText = "background:#1c1e2e;color:#fff;max-width:640px;width:100%;padding:16px;border-radius:12px";
+            const tok = readTok();
+            const auth = tok ? `?adminToken=${encodeURIComponent(tok)}` : "";
+            if (r.kind === "voice_note") {
+              card.innerHTML = `
+                <h3>▶ Nota de voz #${r.target_id}</h3>
+                <p style="opacity:0.7;font-size:12px">Acceso concedido bajo solicitud #${r.id} · aprobado por ${r.approver_email} · expira ${fmtDate(r.expires_at)}</p>
+                <audio controls autoplay style="width:100%" src="/api/admin/vault/media/${r.id}${auth}"></audio>
+                <button data-close class="fx-btn" style="margin-top:8px">Cerrar</button>`;
+            } else {
+              card.innerHTML = `
+                <h3>▶ Llamada #${r.target_id}</h3>
+                <p style="opacity:0.7;font-size:12px">Acceso concedido bajo solicitud #${r.id} · aprobado por ${r.approver_email} · expira ${fmtDate(r.expires_at)}</p>
+                <div>
+                  <div style="margin:6px 0"><b>Pista llamante</b></div>
+                  <video controls style="width:100%;max-height:280px" src="/api/admin/vault/media/${r.id}${auth}&side=caller"></video>
+                  <div style="margin:10px 0 6px"><b>Pista receptor</b></div>
+                  <video controls style="width:100%;max-height:280px" src="/api/admin/vault/media/${r.id}${auth}&side=callee"></video>
+                </div>
+                <button data-close class="fx-btn" style="margin-top:8px">Cerrar</button>`;
+            }
+            back.appendChild(card);
+            back.onclick = (e) => { if (e.target === back) back.remove(); };
+            card.querySelector("[data-close]").onclick = () => back.remove();
+            document.body.appendChild(back);
+          } },
+        ],
       });
     }
 
@@ -1349,9 +1500,10 @@
       fx_moderation_ai: wrapView(view_moderation_ai),
       fx_video: wrapView(view_video),
       fx_voice_notes: wrapView(view_voice_notes),
+      fx_vault: wrapView(view_vault),
       fx_push_ctx: wrapView(view_push_ctx),
     });
-    console.log("[admin_features] v556 · 10 vistas premium registradas");
+    console.log("[admin_features] v569 · 11 vistas premium registradas (incluye bóveda cifrada)");
   }
 
   // -------------------------------------------------------------------

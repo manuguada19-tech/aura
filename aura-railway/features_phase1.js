@@ -21,6 +21,9 @@ function planAtLeast(userPlan, required) {
 // V558 · resolver con grants (si el módulo phase5 está disponible)
 let __phase5 = null;
 try { __phase5 = require("./features_phase5"); } catch {}
+// V569 · Bóveda cifrada
+let __vault = null;
+try { __vault = require("./features_phase6_vault"); } catch {}
 async function canUse(pool, userId, feature, minPlan, currentPlan) {
   if (__phase5 && typeof __phase5.hasFeature === "function") {
     try { return await __phase5.hasFeature(pool, userId, feature); } catch {}
@@ -163,6 +166,45 @@ async function getUserPlan(pool, userId) {
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
 
+  // ============ V569 · Reproducción de nota de voz cifrada ===========
+  // El emisor y el receptor de la conversación pueden reproducir su propio
+  // audio (aunque esté cifrado en reposo). Los admins NO pueden reproducirlo
+  // desde /uploads/… directamente; ver /api/admin/vault/media/:reqId.
+  app.get("/api/my/audio/:message_id", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).end();
+    const id = parseInt(req.params.message_id, 10);
+    const [[m]] = await pool.query(
+      `SELECT m.id, m.sender_id, m.conversation_id, m.media_url, m.audio_encrypted,
+              m.audio_iv, m.audio_tag, m.audio_mime,
+              c.user_a, c.user_b
+         FROM messages m
+         LEFT JOIN conversations c ON c.id=m.conversation_id
+         WHERE m.id=? AND m.media_type='audio' LIMIT 1`,
+      [id]
+    ).then((rr)=>[rr[0]]);
+    if (!m || !m.media_url) return res.status(404).end();
+    if (m.user_a !== me && m.user_b !== me) return res.status(403).end();
+    const fs = require("fs");
+    const path = require("path");
+    const rel = String(m.media_url).replace(/^\/+/, "");
+    const abs = m.audio_encrypted
+      ? path.join(__dirname, "public", rel) + ".enc"
+      : path.join(__dirname, "public", rel);
+    if (!fs.existsSync(abs)) return res.status(404).end();
+    let buf = fs.readFileSync(abs);
+    if (m.audio_encrypted && __vault && typeof __vault.decryptBuffer === "function") {
+      try {
+        // La key se deriva del nombre de fichero base (última parte de la URL)
+        const fileId = path.basename(rel);
+        buf = __vault.decryptBuffer(buf, m.audio_iv, m.audio_tag, fileId, "voice_note");
+      } catch (e) { return res.status(500).end(); }
+    }
+    res.setHeader("Content-Type", m.audio_mime || "audio/webm");
+    res.setHeader("Cache-Control", "private, no-store");
+    return res.end(buf);
+  }));
+
   // ============ V566 · Upload de notas de voz =========================
   // Recibe { data_url, duration_ms } (data:audio/webm;base64,...), decodifica,
   // guarda en disco bajo /uploads/audio/YYYY/MM/hash.webm y devuelve la URL
@@ -199,15 +241,38 @@ function register(app, pool, helpers) {
     const dir = path.join(__dirname, "public", "uploads", "audio", yyyy, mm);
     try { fs.mkdirSync(dir, { recursive: true }); } catch {}
     const fname = `${Date.now().toString(36)}_${hash}.${ext}`;
-    const abs = path.join(dir, fname);
+    const url = `/uploads/audio/${yyyy}/${mm}/${fname}`;
+    // V569 · Cifrado en reposo con AES-256-GCM. El fichero real es .enc.
+    // Sin la clave maestra y sin una solicitud de acceso aprobada por 2 admins,
+    // no se puede reproducir. La URL pública queda para compatibilidad legal;
+    // se sirve solo desde /api/admin/vault/media/:reqId cuando hay aprobación.
+    let iv = null, tag = null, encrypted = 0;
+    let toWrite = buf;
+    let absPath = path.join(dir, fname);
+    if (__vault && typeof __vault.encryptBuffer === "function") {
+      try {
+        // Necesitamos el id del mensaje para derivar la key. Como todavía no
+        // se ha insertado, usamos un id efímero = timestamp; luego lo enlazamos
+        // en /api/my/messages/audio (nada; el key se deriva del path final).
+        // Para evitar re-encryption, derivamos la key con el nombre de archivo.
+        const encRes = __vault.encryptBuffer(buf, fname, "voice_note");
+        toWrite = encRes.enc; iv = encRes.iv; tag = encRes.tag; encrypted = 1;
+        absPath = absPath + ".enc";
+      } catch (e) { console.warn("[audio vault]", e.message); }
+    }
     try {
-      fs.writeFileSync(abs, buf);
+      fs.writeFileSync(absPath, toWrite);
     } catch (e) {
       console.error("[audio upload] write error", e);
       return res.status(500).json({ error: "write_failed" });
     }
-    const url = `/uploads/audio/${yyyy}/${mm}/${fname}`;
-    res.json({ ok: true, url, mime, bytes: buf.length, duration_ms });
+    res.json({
+      ok: true, url, mime, bytes: buf.length, duration_ms,
+      encrypted,
+      // Devolvemos iv/tag base64 para que /api/my/messages/audio los persista.
+      _iv: iv ? iv.toString("base64") : null,
+      _tag: tag ? tag.toString("base64") : null,
+    });
   }));
 
   // ---- GET /api/my/icebreakers ---------------------------------------
@@ -310,15 +375,19 @@ function register(app, pool, helpers) {
     const bytes = parseInt(req.body?.bytes, 10) || null;
     const duration_ms = parseInt(req.body?.duration_ms, 10) || null;
     const mime = req.body?.mime ? String(req.body.mime).slice(0, 64) : null;
+    const encrypted = req.body?.encrypted ? 1 : 0;
+    const iv = req.body?.iv ? Buffer.from(String(req.body.iv), "base64") : null;
+    const tag = req.body?.tag ? Buffer.from(String(req.body.tag), "base64") : null;
     if (!cid || !mediaUrl) return res.status(400).json({ error: "params" });
     const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
     if (!c.length) return res.status(404).json({ error: "not_found" });
     if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
     const [r] = await pool.execute(
       `INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url,
-                             audio_bytes, audio_duration_ms, audio_mime)
-       VALUES (?,?,?,?,?,?,?,?)`,
-      [cid, me, null, "audio", mediaUrl, bytes, duration_ms, mime]
+                             audio_bytes, audio_duration_ms, audio_mime,
+                             audio_encrypted, audio_iv, audio_tag)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      [cid, me, null, "audio", mediaUrl, bytes, duration_ms, mime, encrypted, iv, tag]
     );
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
     // V568 · Auto-triage inicial

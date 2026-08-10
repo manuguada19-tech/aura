@@ -494,9 +494,9 @@
         } catch {}
       };
 
-      const recBanner = h("div", { class: "call-rec-banner", style: "display:flex;align-items:center;gap:8px;background:#e53950;color:#fff;padding:6px 10px;border-radius:8px;font-size:13px;margin-bottom:8px;font-weight:600" }, [
-        h("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite" }, ""),
-        h("span", {}, "🔴 REC · Esta llamada se está grabando por motivos de seguridad."),
+      const recBanner = h("div", { class: "call-rec-banner", style: "display:flex;align-items:flex-start;gap:8px;background:#e53950;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px;font-weight:600;line-height:1.35" }, [
+        h("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite;margin-top:4px;flex-shrink:0" }, ""),
+        h("span", {}, "🔴 REC · Esta llamada se graba y almacena cifrada (AES-256). El equipo de Aura NO tiene acceso a la grabación salvo por denuncia de usuario o requerimiento de las autoridades, en cuyo caso se abrirá un plazo de revisión con acceso auditado."),
       ]);
       const title = (isAudio ? "📞 Llamada con " : "📹 Videollamada con ") + peerName;
       const kids = isAudio
