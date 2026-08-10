@@ -9302,7 +9302,15 @@ app.get(["/admin.html", "/admin"], async (req, res, next) => {
 app.get("/admin.js", gateAdminAsset, (req, res) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "application/javascript; charset=utf-8");
-  res.sendFile(path.join(__dirname, "public", "admin.js"));
+  // V553 · Concatenamos admin.js + admin_features.js para garantizar que las
+  // vistas de "Novedades" estén disponibles antes del primer route().
+  try {
+    const a = require("fs").readFileSync(path.join(__dirname, "public", "admin.js"), "utf8");
+    const b = require("fs").readFileSync(path.join(__dirname, "public", "admin_features.js"), "utf8");
+    res.send(a + "\n\n// ==== admin_features.js embedded ====\n" + b);
+  } catch (e) {
+    res.sendFile(path.join(__dirname, "public", "admin.js"));
+  }
 });
 app.get("/admin.css", gateAdminAsset, (req, res) => {
   res.setHeader("Cache-Control", "no-store");
