@@ -204,6 +204,80 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+/* ============================================================
+   Sesión de usuario — token firmado HMAC (función 1)
+   ------------------------------------------------------------
+   Objetivo: que la identidad del usuario no dependa sólo de la
+   cabecera X-User-Id (que cualquiera puede falsificar), sino de
+   un token FIRMADO por el servidor y verificable sin tocar la BD
+   (readMyUserId es síncrona y se llama muchísimo).
+
+   Formato del token (base64url):  "<uid>.<exp>.<hmac>"
+     hmac = HMAC-SHA256(secreto, "<uid>.<exp>")
+   El secreto se persiste en settings (auth.session_secret) para
+   sobrevivir reinicios y ser común a todas las instancias.
+
+   COMPATIBILIDAD: por defecto el flag security.require_auth_token
+   está DESACTIVADO. Mientras esté off, readMyUserId sigue aceptando
+   X-User-Id igual que hoy (cero impacto para usuarios actuales).
+   Cuando el admin lo active, X-User-Id se ignora y sólo vale el
+   token firmado. La emisión del token ya ocurre desde el primer
+   despliegue, así los clientes lo van guardando de forma silenciosa
+   antes de exigirlo.
+   ============================================================ */
+let AUTH_SESSION_SECRET = null;
+const USER_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 días
+
+async function ensureAuthSecret() {
+  if (AUTH_SESSION_SECRET) return AUTH_SESSION_SECRET;
+  try {
+    const [rows] = await pool.query("SELECT v FROM settings WHERE k='auth.session_secret' LIMIT 1");
+    if (rows.length && rows[0].v) { AUTH_SESSION_SECRET = rows[0].v; return AUTH_SESSION_SECRET; }
+  } catch {}
+  // Genera y persiste un secreto nuevo (o usa el de entorno si se define).
+  const secret = process.env.AUTH_SESSION_SECRET || crypto.randomBytes(48).toString("hex");
+  try {
+    await pool.execute(
+      "INSERT INTO settings (k, v) VALUES ('auth.session_secret', ?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+      [secret]
+    );
+  } catch {}
+  AUTH_SESSION_SECRET = secret;
+  return AUTH_SESSION_SECRET;
+}
+
+function signUserToken(uid, ttlMs = USER_TOKEN_TTL_MS) {
+  if (!AUTH_SESSION_SECRET) return null; // aún no inicializado
+  const exp = Date.now() + ttlMs;
+  const body = `${uid}.${exp}`;
+  const mac = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
+  return Buffer.from(`${body}.${mac}`).toString("base64url");
+}
+
+// Devuelve el uid si el token es válido y no ha expirado; si no, null.
+// Usa comparación en tiempo constante para el HMAC.
+function verifyUserToken(token) {
+  if (!token || !AUTH_SESSION_SECRET) return null;
+  let decoded;
+  try { decoded = Buffer.from(String(token), "base64url").toString("utf8"); } catch { return null; }
+  const parts = decoded.split(".");
+  if (parts.length !== 3) return null;
+  const [uidStr, expStr, mac] = parts;
+  const body = `${uidStr}.${expStr}`;
+  const expected = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
+  const a = Buffer.from(mac); const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const uid = parseInt(uidStr, 10);
+  const exp = parseInt(expStr, 10);
+  if (!Number.isFinite(uid) || uid <= 0) return null;
+  if (!Number.isFinite(exp) || exp < Date.now()) return null;
+  return uid;
+}
+
+function readUserToken(req) {
+  return req.get("X-Auth-Token") || req.query.auth_token || req.body?.auth_token || null;
+}
+
 const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
 <html lang="es" data-theme="light">
 <head>
@@ -5769,14 +5843,56 @@ app.get("/api/discover", wrap(async (req, res) => {
     where.push("u.gender = ?"); params.push(String(f.gender));
   }
 
-  const [rows] = await pool.query(
-    `SELECT id, name, age, gender, orientation, city, lat, lng, height, weight, bio, photo_url, verified, online
-       FROM users u
-      WHERE ${where.join(" AND ")}
-      ORDER BY u.online DESC, u.verified DESC, RAND()
-      LIMIT ?`,
-    [...params, limit]
-  );
+  // ---- Geolocalización (función 4) ----
+  // Coordenadas del usuario actual (sólo si dio consentimiento GPS y hay
+  // una captura). Si no las hay, el comportamiento es EXACTO al anterior:
+  // no se calcula distancia ni se filtra por ella.
+  let myLat = null, myLng = null;
+  if (me) {
+    try {
+      const [[g]] = await pool.query(
+        "SELECT lat, lng FROM user_gps WHERE user_id=? AND consent_given=1 AND revoked_at IS NULL LIMIT 1",
+        [me]
+      );
+      if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
+    } catch { /* sin coords → seguimos sin distancia */ }
+  }
+  const hasGeo = Number.isFinite(myLat) && Number.isFinite(myLng);
+  const distanceKm = parseInt(f.distance_km, 10);
+
+  // Haversine en SQL (radio Tierra = 6371 km). LEAST(1,…) evita NaN por
+  // redondeo de coma flotante. La distancia sale del user_gps del candidato;
+  // si no tiene coords, es NULL (perfil sin GPS → sigue apareciendo).
+  const distExpr = hasGeo
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    : "NULL";
+  const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
+
+  let sql =
+    `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
+            u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
+            ${distExpr} AS distance
+       FROM users u`;
+  if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
+  sql += ` WHERE ${where.join(" AND ")}`;
+
+  // Filtro por distancia: sólo excluye a quien tiene distancia CONOCIDA y
+  // fuera de rango. Los perfiles sin GPS (distance NULL) siguen visibles
+  // para no vaciar el feed mientras se adopta el GPS.
+  let havingParam = null;
+  if (hasGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
+    sql += " HAVING distance IS NULL OR distance <= ?";
+    havingParam = distanceKm;
+  }
+  sql += " ORDER BY u.online DESC, u.verified DESC, RAND() LIMIT ?";
+
+  const finalParams = [...selectParams, ...params];
+  if (havingParam != null) finalParams.push(havingParam);
+  finalParams.push(limit);
+
+  const [rows] = await pool.query(sql, finalParams);
+  // Normaliza distance a número (o null) por si el driver la devuelve como string.
+  for (const r of rows) r.distance = (r.distance == null ? null : Number(r.distance));
   res.json(rows);
 }));
 
@@ -5930,6 +6046,114 @@ app.post("/api/my/favorites", wrap(async (req, res) => {
     "INSERT IGNORE INTO favorites (user_id, target_id) VALUES (?,?)", [me, target]
   );
   res.json({ ok: true, favorite: true });
+}));
+
+/* ============================================================
+   Denunciar / Bloquear  (función 3)
+   ------------------------------------------------------------
+   - blocks(user_id=quien bloquea, target_id=bloqueado): un usuario
+     puede bloquear a otro. El feed (/api/discover) y "mis likes"
+     ya excluyen bloqueos en ambos sentidos.
+   - reports(reporter_id, target_id, reason, details): denuncias
+     que llegan al panel de moderación. Un usuario no puede
+     denunciar a la misma persona por el mismo motivo dos veces
+     en 24 h (anti-spam suave).
+   Todo es aditivo: no altera datos existentes de otros usuarios.
+   ============================================================ */
+
+// Razones de denuncia válidas (deben coincidir con el frontend).
+const REPORT_REASONS = new Set([
+  "fake_profile", "inappropriate", "minor", "spam",
+  "harassment", "offensive", "scam", "other",
+]);
+
+// GET /api/my/blocks → lista de usuarios que YO he bloqueado
+app.get("/api/my/blocks", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, b.reason, b.created_at
+       FROM blocks b
+       JOIN users u ON u.id = b.target_id
+      WHERE b.user_id = ?
+      ORDER BY b.created_at DESC LIMIT 200`,
+    [me]
+  );
+  res.json(rows);
+}));
+
+// POST /api/my/block  { target_id, reason? }  → bloquea a un usuario
+app.post("/api/my/block", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  const [[peer]] = await pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [target]);
+  if (!peer) return res.status(404).json({ error: "target_not_found" });
+  const reason = (req.body?.reason ? String(req.body.reason) : "").slice(0, 200) || null;
+  await pool.execute(
+    "INSERT INTO blocks (user_id, target_id, reason) VALUES (?,?,?) " +
+    "ON DUPLICATE KEY UPDATE reason=VALUES(reason), created_at=NOW()",
+    [me, target, reason]
+  );
+  // Cierra cualquier conversación entre ambos (orden canónico a<b).
+  const a = Math.min(me, target), b = Math.max(me, target);
+  try {
+    await pool.execute(
+      "UPDATE conversations SET status='blocked' WHERE user_a=? AND user_b=?",
+      [a, b]
+    );
+  } catch {}
+  res.json({ ok: true, blocked: true });
+}));
+
+// POST /api/my/unblock  { target_id }  → deshace un bloqueo mío
+app.post("/api/my/unblock", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target) return res.status(400).json({ error: "invalid_target" });
+  await pool.execute("DELETE FROM blocks WHERE user_id=? AND target_id=?", [me, target]);
+  // Reabre la conversación sólo si el otro tampoco me tiene bloqueado.
+  const a = Math.min(me, target), b = Math.max(me, target);
+  const [[stillBlocked]] = await pool.query(
+    "SELECT 1 AS x FROM blocks WHERE (user_id=? AND target_id=?) OR (user_id=? AND target_id=?) LIMIT 1",
+    [me, target, target, me]
+  );
+  if (!stillBlocked) {
+    try {
+      await pool.execute(
+        "UPDATE conversations SET status='open' WHERE user_a=? AND user_b=? AND status='blocked'",
+        [a, b]
+      );
+    } catch {}
+  }
+  res.json({ ok: true, blocked: false });
+}));
+
+// POST /api/my/report  { target_id, reason, details? }  → denuncia a moderación
+app.post("/api/my/report", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  const reason = String(req.body?.reason || "other");
+  if (!REPORT_REASONS.has(reason)) return res.status(400).json({ error: "invalid_reason" });
+  const [[peer]] = await pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [target]);
+  if (!peer) return res.status(404).json({ error: "target_not_found" });
+  const details = (req.body?.details ? String(req.body.details) : "").slice(0, 1000) || null;
+  // Anti-spam suave: mismo reporter+target+motivo en las últimas 24 h → no duplica.
+  const [[dup]] = await pool.query(
+    "SELECT id FROM reports WHERE reporter_id=? AND target_id=? AND reason=? AND created_at > NOW()-INTERVAL 1 DAY LIMIT 1",
+    [me, target, reason]
+  );
+  if (!dup) {
+    await pool.execute(
+      "INSERT INTO reports (reporter_id, target_id, reason, details) VALUES (?,?,?,?)",
+      [me, target, reason, details]
+    );
+  }
+  res.json({ ok: true, reported: true });
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */
@@ -8092,7 +8316,7 @@ async function getUserFullContext(uid) {
         WHERE m.sender_id=? AND m.created_at > NOW()-INTERVAL 1 DAY`, [uid]),
       2500, null, "messages_24h"),
     _withTimeout(
-      pool.query(`SELECT COUNT(*) c FROM reports WHERE reported_user_id=?`, [uid]),
+      pool.query(`SELECT COUNT(*) c FROM reports WHERE target_id=?`, [uid]),
       2500, null, "reports_against"),
     _withTimeout(
       pool.query(`SELECT COUNT(*) c FROM activity_stream WHERE user_id=? AND event='login' AND created_at > NOW()-INTERVAL 1 DAY`, [uid]),
@@ -8301,8 +8525,8 @@ app.post("/api/admin/chats/:id/moderate", wrap(async (req, res) => {
       await pool.execute("DELETE FROM conversations WHERE id=?", [cid]);
       await logActivity("admin", `Chat #${cid} eliminado por ${admin} — ${reasonLabel}`);
     } else if (action === "block_pair") {
-      try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_a, user_b, reasonLabel]); } catch {}
-      try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_b, user_a, reasonLabel]); } catch {}
+      try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_a, user_b, reasonLabel]); } catch {}
+      try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_b, user_a, reasonLabel]); } catch {}
       await pool.execute("UPDATE conversations SET status='blocked' WHERE id=?", [cid]);
       await logActivity("admin", `Chat #${cid}: usuarios ${user_a}<->${user_b} bloqueados por ${admin} — ${reasonLabel}`);
     } else if (action === "restrict") {
@@ -8412,8 +8636,8 @@ app.post("/api/admin/chats/:id/block-pair", wrap(async (req, res) => {
   const [c] = await pool.query("SELECT user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
   if (!c.length) return res.status(404).json({ error: "not_found" });
   const { user_a, user_b } = c[0];
-  try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_a, user_b, "moderacion admin"]); } catch {}
-  try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_b, user_a, "moderacion admin"]); } catch {}
+  try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_a, user_b, "moderacion admin"]); } catch {}
+  try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_b, user_a, "moderacion admin"]); } catch {}
   await pool.execute("UPDATE conversations SET status='blocked' WHERE id=?", [cid]);
   await logActivity("admin", `Chat #${cid}: usuarios ${user_a} <-> ${user_b} bloqueados`);
   res.json({ ok: true });
@@ -8424,7 +8648,7 @@ app.post("/api/admin/chats/:id/unblock-pair", wrap(async (req, res) => {
   const [c] = await pool.query("SELECT user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
   if (!c.length) return res.status(404).json({ error: "not_found" });
   const { user_a, user_b } = c[0];
-  try { await pool.execute("DELETE FROM blocks WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)", [user_a, user_b, user_b, user_a]); } catch {}
+  try { await pool.execute("DELETE FROM blocks WHERE (user_id=? AND target_id=?) OR (user_id=? AND target_id=?)", [user_a, user_b, user_b, user_a]); } catch {}
   await pool.execute("UPDATE conversations SET status='open' WHERE id=?", [cid]);
   await logActivity("admin", `Chat #${cid}: prohibicion levantada`);
   res.json({ ok: true });
@@ -8543,7 +8767,7 @@ app.post("/api/login", wrap(async (req, res) => {
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
-  res.json({ ok: true, user: rows[0] });
+  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id) });
 }));
 
 /* ============================================================
@@ -8556,6 +8780,14 @@ app.post("/api/login", wrap(async (req, res) => {
    ============================================================ */
 
 function readMyUserId(req) {
+  // 1) Preferimos siempre el token firmado (no falsificable).
+  const fromToken = verifyUserToken(readUserToken(req));
+  if (fromToken) return fromToken;
+  // 2) Si el modo estricto está activo, NO se acepta X-User-Id sin token.
+  //    Por defecto está desactivado → compatibilidad total con clientes
+  //    actuales que todavía sólo mandan X-User-Id.
+  if (isTrue("security.require_auth_token", false)) return null;
+  // 3) Modo legacy (por defecto): confiamos en X-User-Id como hasta ahora.
   const raw = req.get("X-User-Id") || req.query.uid || req.body?.uid;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -8800,7 +9032,7 @@ app.post("/api/2fa/login-verify", wrap(async (req, res) => {
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
   await touchUserDevice(req, u.id);
   try { await logStream(u.id, usedRecovery ? "2fa_login_recovery" : "2fa_login_ok", { req }); } catch {}
-  res.json({ ok: true, user: u, used_recovery: usedRecovery });
+  res.json({ ok: true, user: u, used_recovery: usedRecovery, auth_token: signUserToken(u.id) });
 }));
 
 /* ============================================================
@@ -8868,6 +9100,15 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
     `UPDATE user_gps SET lat=?, lng=?, accuracy=?, heading=?, speed=?, captured_at=NOW() WHERE user_id=?`,
     [lat, lng, acc, heading, speed, uid]
   );
+  res.json({ ok: true });
+}));
+
+// POST /api/my/gps/heartbeat  → latido del service worker en segundo plano.
+// El SW no puede leer geolocation sin ventana; sólo avisa de que la app
+// sigue instalada. Devolvemos 200 (antes daba 404). No escribe coords.
+app.post("/api/my/gps/heartbeat", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
   res.json({ ok: true });
 }));
 
@@ -9127,7 +9368,7 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
       await pool.execute("UPDATE users SET online=1, last_login=NOW() WHERE id=?", [existing[0].id]);
     }
     await touchUserDevice(req, existing[0].id);
-    return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url } });
+    return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url }, auth_token: signUserToken(existing[0].id) });
   }
   // Auto-registro deshabilitado: los usuarios se crean únicamente desde el
   // panel de administrador (Usuarios → crear). Si el email no existe:
@@ -9137,6 +9378,20 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
     return res.status(403).json({ error: "access_locked" });
   }
   return res.status(403).json({ error: "not_registered" });
+}));
+
+// POST /api/my/session/token → emite (o renueva) el token de sesión firmado.
+// Sirve para que los clientes ya logueados (que sólo guardan X-User-Id de
+// antes) obtengan un token de forma silenciosa al reabrir la app, ANTES de
+// que el admin active el modo estricto. Verifica que el usuario existe y
+// está activo. Con el modo estricto ya activo sólo puede renovar (requiere
+// token válido), nunca crear uno desde un X-User-Id suelto.
+app.post("/api/my/session/token", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[u]] = await pool.query("SELECT id, status FROM users WHERE id=? LIMIT 1", [me]);
+  if (!u || u.status !== "active") return res.status(403).json({ error: "inactive" });
+  res.json({ ok: true, auth_token: signUserToken(me) });
 }));
 
 // GET /api/my/conversations  → list of conversations for X-User-Id
@@ -10042,6 +10297,7 @@ phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }
     await seedConversations();
     await ensureSuperadminAccessSettings();
     await loadRuntimeSettings();
+    await ensureAuthSecret(); // función 1 · secreto para firmar tokens de sesión
     try {
       await phase1.migrate(pool);
       phase1.startExpiryJob(pool);
