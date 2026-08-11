@@ -91,7 +91,7 @@ const contentFallback = {
   "content.login.subtitle": "Nos alegra verte otra vez.",
   "content.login.button": "Entrar",
   "content.login.forgot": "¿Olvidaste tu contraseña?",
-  "content.tabs.discover": "Descubrir",
+  "content.tabs.discover": "Explorar",
   "content.tabs.search": "Buscar",
   "content.tabs.likes": "Likes",
   "content.tabs.chats": "Chats",
@@ -3080,7 +3080,7 @@ const DEEP_LINK_TABS = {
   help: "me", support: "me", notifications: "me",
   safety: "me", boost: "me", premium: "me",
   // Español (canónico para emails nuevos y SEO).
-  descubrir: "discover", buscar: "search", cerca: "nearby",
+  explorar: "discover", descubrir: "discover", buscar: "search", cerca: "nearby",
   perfil: "me", ajustes: "me",
   suscripcion: "me", facturacion: "me", facturas: "me",
   ayuda: "me", soporte: "me", notificaciones: "me",
@@ -3170,6 +3170,34 @@ tabbar.addEventListener("click", (e) => {
   routeTab(state.currentTab);
 });
 
+// URLs por sección. Cada pestaña tiene una URL canónica en español para que la
+// barra de direcciones refleje dónde está el usuario y se puedan compartir/guardar
+// enlaces directos (/explorar, /buscar, /cerca, /likes, /chats, /perfil).
+// NO cambia la lógica interna: las claves de pestaña siguen siendo discover/…;
+// solo se actualizan la URL visible y el título del documento. Se usa
+// replaceState (no añade entradas al historial) para no interferir con el botón
+// atrás de chats, perfiles y modales, que ya gestionan su propio history.
+const TAB_URLS = {
+  discover: { path: "/explorar", title: "Explorar" },
+  search:   { path: "/buscar",   title: "Buscar" },
+  nearby:   { path: "/cerca",    title: "Cerca de ti" },
+  likes:    { path: "/likes",    title: "Likes" },
+  chats:    { path: "/chats",    title: "Chats" },
+  me:       { path: "/perfil",   title: "Perfil" },
+};
+function syncTabUrl(tab) {
+  const info = TAB_URLS[tab];
+  if (!info) return;
+  try {
+    // Solo tocamos la URL si no hay parámetros de flujo activos (pago/kyc/appeal)
+    // pendientes de limpiar y si realmente cambia, para evitar renders/parpadeos.
+    if (location.pathname !== info.path) {
+      history.replaceState({ auraTab: tab }, "", info.path);
+    }
+    document.title = `${info.title} · Aura`;
+  } catch {}
+}
+
 function routeTab(tab) {
   try { stopChatPolling(); } catch {}
   document.body.classList.remove("chat-open");
@@ -3186,6 +3214,8 @@ function routeTab(tab) {
     chats: screenChats,
     me: screenMe,
   };
+  // Refleja la sección en la barra de direcciones (URL amigable por sección).
+  try { syncTabUrl(map[tab] ? tab : "discover"); } catch {}
   render(map[tab] || screenDiscover);
   // Cuenta la navegación para posible intersticial
   try { maybeShowInterstitial(); } catch {}
