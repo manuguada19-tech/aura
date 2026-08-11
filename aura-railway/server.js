@@ -204,6 +204,80 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+/* ============================================================
+   Sesión de usuario — token firmado HMAC (función 1)
+   ------------------------------------------------------------
+   Objetivo: que la identidad del usuario no dependa sólo de la
+   cabecera X-User-Id (que cualquiera puede falsificar), sino de
+   un token FIRMADO por el servidor y verificable sin tocar la BD
+   (readMyUserId es síncrona y se llama muchísimo).
+
+   Formato del token (base64url):  "<uid>.<exp>.<hmac>"
+     hmac = HMAC-SHA256(secreto, "<uid>.<exp>")
+   El secreto se persiste en settings (auth.session_secret) para
+   sobrevivir reinicios y ser común a todas las instancias.
+
+   COMPATIBILIDAD: por defecto el flag security.require_auth_token
+   está DESACTIVADO. Mientras esté off, readMyUserId sigue aceptando
+   X-User-Id igual que hoy (cero impacto para usuarios actuales).
+   Cuando el admin lo active, X-User-Id se ignora y sólo vale el
+   token firmado. La emisión del token ya ocurre desde el primer
+   despliegue, así los clientes lo van guardando de forma silenciosa
+   antes de exigirlo.
+   ============================================================ */
+let AUTH_SESSION_SECRET = null;
+const USER_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 días
+
+async function ensureAuthSecret() {
+  if (AUTH_SESSION_SECRET) return AUTH_SESSION_SECRET;
+  try {
+    const [rows] = await pool.query("SELECT v FROM settings WHERE k='auth.session_secret' LIMIT 1");
+    if (rows.length && rows[0].v) { AUTH_SESSION_SECRET = rows[0].v; return AUTH_SESSION_SECRET; }
+  } catch {}
+  // Genera y persiste un secreto nuevo (o usa el de entorno si se define).
+  const secret = process.env.AUTH_SESSION_SECRET || crypto.randomBytes(48).toString("hex");
+  try {
+    await pool.execute(
+      "INSERT INTO settings (k, v) VALUES ('auth.session_secret', ?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+      [secret]
+    );
+  } catch {}
+  AUTH_SESSION_SECRET = secret;
+  return AUTH_SESSION_SECRET;
+}
+
+function signUserToken(uid, ttlMs = USER_TOKEN_TTL_MS) {
+  if (!AUTH_SESSION_SECRET) return null; // aún no inicializado
+  const exp = Date.now() + ttlMs;
+  const body = `${uid}.${exp}`;
+  const mac = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
+  return Buffer.from(`${body}.${mac}`).toString("base64url");
+}
+
+// Devuelve el uid si el token es válido y no ha expirado; si no, null.
+// Usa comparación en tiempo constante para el HMAC.
+function verifyUserToken(token) {
+  if (!token || !AUTH_SESSION_SECRET) return null;
+  let decoded;
+  try { decoded = Buffer.from(String(token), "base64url").toString("utf8"); } catch { return null; }
+  const parts = decoded.split(".");
+  if (parts.length !== 3) return null;
+  const [uidStr, expStr, mac] = parts;
+  const body = `${uidStr}.${expStr}`;
+  const expected = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
+  const a = Buffer.from(mac); const b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  const uid = parseInt(uidStr, 10);
+  const exp = parseInt(expStr, 10);
+  if (!Number.isFinite(uid) || uid <= 0) return null;
+  if (!Number.isFinite(exp) || exp < Date.now()) return null;
+  return uid;
+}
+
+function readUserToken(req) {
+  return req.get("X-Auth-Token") || req.query.auth_token || req.body?.auth_token || null;
+}
+
 const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
 <html lang="es" data-theme="light">
 <head>
@@ -8693,7 +8767,7 @@ app.post("/api/login", wrap(async (req, res) => {
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
-  res.json({ ok: true, user: rows[0] });
+  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id) });
 }));
 
 /* ============================================================
@@ -8706,6 +8780,14 @@ app.post("/api/login", wrap(async (req, res) => {
    ============================================================ */
 
 function readMyUserId(req) {
+  // 1) Preferimos siempre el token firmado (no falsificable).
+  const fromToken = verifyUserToken(readUserToken(req));
+  if (fromToken) return fromToken;
+  // 2) Si el modo estricto está activo, NO se acepta X-User-Id sin token.
+  //    Por defecto está desactivado → compatibilidad total con clientes
+  //    actuales que todavía sólo mandan X-User-Id.
+  if (isTrue("security.require_auth_token", false)) return null;
+  // 3) Modo legacy (por defecto): confiamos en X-User-Id como hasta ahora.
   const raw = req.get("X-User-Id") || req.query.uid || req.body?.uid;
   const n = parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -8950,7 +9032,7 @@ app.post("/api/2fa/login-verify", wrap(async (req, res) => {
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
   await touchUserDevice(req, u.id);
   try { await logStream(u.id, usedRecovery ? "2fa_login_recovery" : "2fa_login_ok", { req }); } catch {}
-  res.json({ ok: true, user: u, used_recovery: usedRecovery });
+  res.json({ ok: true, user: u, used_recovery: usedRecovery, auth_token: signUserToken(u.id) });
 }));
 
 /* ============================================================
@@ -9286,7 +9368,7 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
       await pool.execute("UPDATE users SET online=1, last_login=NOW() WHERE id=?", [existing[0].id]);
     }
     await touchUserDevice(req, existing[0].id);
-    return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url } });
+    return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url }, auth_token: signUserToken(existing[0].id) });
   }
   // Auto-registro deshabilitado: los usuarios se crean únicamente desde el
   // panel de administrador (Usuarios → crear). Si el email no existe:
@@ -9296,6 +9378,20 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
     return res.status(403).json({ error: "access_locked" });
   }
   return res.status(403).json({ error: "not_registered" });
+}));
+
+// POST /api/my/session/token → emite (o renueva) el token de sesión firmado.
+// Sirve para que los clientes ya logueados (que sólo guardan X-User-Id de
+// antes) obtengan un token de forma silenciosa al reabrir la app, ANTES de
+// que el admin active el modo estricto. Verifica que el usuario existe y
+// está activo. Con el modo estricto ya activo sólo puede renovar (requiere
+// token válido), nunca crear uno desde un X-User-Id suelto.
+app.post("/api/my/session/token", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[u]] = await pool.query("SELECT id, status FROM users WHERE id=? LIMIT 1", [me]);
+  if (!u || u.status !== "active") return res.status(403).json({ error: "inactive" });
+  res.json({ ok: true, auth_token: signUserToken(me) });
 }));
 
 // GET /api/my/conversations  → list of conversations for X-User-Id
@@ -10201,6 +10297,7 @@ phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }
     await seedConversations();
     await ensureSuperadminAccessSettings();
     await loadRuntimeSettings();
+    await ensureAuthSecret(); // función 1 · secreto para firmar tokens de sesión
     try {
       await phase1.migrate(pool);
       phase1.startExpiryJob(pool);

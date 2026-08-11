@@ -1212,7 +1212,7 @@ function setLanguage(lang) {
     if (state && state.user && state.user.id) {
       fetch("/api/my/lang", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
         body: JSON.stringify({ lang }),
       }).catch(() => {});
     }
@@ -1689,11 +1689,38 @@ const state = {
   },
 };
 
+/* ---------- Token de sesión firmado (función 1) ----------
+   Guarda el token HMAC que emite el backend en login/ensure y lo
+   adjunta en cada petición como X-Auth-Token. Mientras el backend no
+   exija el modo estricto, X-User-Id sigue funcionando igual, así que
+   esto es 100% compatible con sesiones antiguas. */
+const Auth = {
+  get() { try { return localStorage.getItem("aura-auth-token") || null; } catch { return null; } },
+  set(t) { try { if (t) localStorage.setItem("aura-auth-token", t); } catch {} },
+  clear() { try { localStorage.removeItem("aura-auth-token"); } catch {} },
+  // Añade la cabecera del token a un objeto de cabeceras existente.
+  apply(h) { const t = this.get(); if (t) h["X-Auth-Token"] = t; return h; },
+  // Extrae y guarda el token de una respuesta { auth_token } del backend.
+  capture(data) { if (data && data.auth_token) this.set(data.auth_token); return data; },
+  // Pide un token al backend usando la sesión actual (X-User-Id). Silencioso.
+  async refresh() {
+    if (!(state.user && state.user.id) || this.get()) return;
+    try {
+      const r = await fetch("/api/my/session/token", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
+      });
+      if (r.ok) this.capture(await r.json());
+    } catch {}
+  },
+};
+
 /* ---------- Real-chat API helper ---------- */
 const chatApi = {
   headers() {
     const h = { "Content-Type": "application/json" };
     if (state.user && state.user.id) h["X-User-Id"] = String(state.user.id);
+    Auth.apply(h);
     return h;
   },
   async ensure() {
@@ -1738,6 +1765,7 @@ const chatApi = {
     }
     if (!r.ok) return null;
     const data = await r.json();
+    Auth.capture(data);
     if (data && data.user && data.user.id) {
       state.user.id = data.user.id;
       state.user.photo = data.user.photo_url || state.user.photo;
@@ -1797,9 +1825,10 @@ const chatApi = {
   async offline() {
     if (!state.user || !state.user.id) return;
     try {
-      // Use sendBeacon so it works during page unload
+      // Use sendBeacon so it works during page unload. sendBeacon no permite
+      // cabeceras → el token va en el cuerpo (readUserToken lee body.auth_token).
       if (navigator.sendBeacon) {
-        const blob = new Blob([JSON.stringify({ uid: state.user.id })], { type: "application/json" });
+        const blob = new Blob([JSON.stringify({ uid: state.user.id, auth_token: Auth.get() || undefined })], { type: "application/json" });
         navigator.sendBeacon("/api/my/offline", blob);
       } else {
         await fetch("/api/my/offline", { method: "POST", headers: this.headers(), keepalive: true });
@@ -1855,6 +1884,7 @@ const datingApi = {
   headers() {
     const h = { "Content-Type": "application/json" };
     if (state.user && state.user.id) h["X-User-Id"] = String(state.user.id);
+    Auth.apply(h);
     return h;
   },
   _authed() { return !!(state.user && state.user.id); },
@@ -1966,7 +1996,7 @@ const GPS = {
   async fetchState() {
     if (!state.user?.id) return null;
     try {
-      const r = await fetch("/api/my/gps/state", { headers: { "X-User-Id": String(state.user.id) }, cache: "no-store" });
+      const r = await fetch("/api/my/gps/state", { headers: Auth.apply({ "X-User-Id": String(state.user.id) }), cache: "no-store" });
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
@@ -1976,7 +2006,7 @@ const GPS = {
     try {
       const r = await fetch("/api/my/gps/consent", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
         body: JSON.stringify({ granted }),
       });
       return r.ok;
@@ -1998,7 +2028,7 @@ const GPS = {
     try {
       await fetch("/api/my/gps/report", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
         body: JSON.stringify({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -2049,7 +2079,7 @@ const GPS = {
       // esté descargando (unload). Máx 64 KB — suficiente para un JSON GPS.
       await fetch("/api/my/gps/report", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
         body: JSON.stringify({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
@@ -2284,7 +2314,7 @@ const GPS = {
     try {
       await fetch("/api/my/gps/reask-ack", {
         method: "POST",
-        headers: { "X-User-Id": String(state.user.id) },
+        headers: Auth.apply({ "X-User-Id": String(state.user.id) }),
       });
     } catch {}
   },
@@ -2404,7 +2434,10 @@ function startHeartbeat() {
   // refresca inmediatamente y el banner desaparece/aparece al instante.
   try {
     if (!_restrictionSSE && "EventSource" in window && state.user && state.user.id) {
-      const url = "/api/my/restrictions/stream?uid=" + encodeURIComponent(state.user.id);
+      // EventSource no permite cabeceras; el token va por query (readUserToken
+      // también lo lee de req.query.auth_token) para funcionar en modo estricto.
+      let url = "/api/my/restrictions/stream?uid=" + encodeURIComponent(state.user.id);
+      const _tk = Auth.get(); if (_tk) url += "&auth_token=" + encodeURIComponent(_tk);
       _restrictionSSE = new EventSource(url);
       _restrictionSSE.addEventListener("restrictions", () => {
         try { console.log("[SSE] restrictions push recibido"); } catch(_){}
@@ -2989,8 +3022,10 @@ function _rerender() {
 function showApp() {
   tabbar.hidden = false;
   document.body.classList.add("app-open");
-  // Ensure the current user is registered in DB for real chat + start heartbeat
-  (async () => { try { await chatApi.ensure(); startHeartbeat(); } catch {} })();
+  // Ensure the current user is registered in DB for real chat + start heartbeat.
+  // Auth.refresh() consigue un token de sesión firmado de forma silenciosa para
+  // las sesiones antiguas que aún no lo tienen (migración previa al modo estricto).
+  (async () => { try { await chatApi.ensure(); await Auth.refresh(); startHeartbeat(); } catch {} })();
   // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
   setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
   // Aplica el deep-link pendiente si existe (viene de la URL al arrancar o
@@ -3854,6 +3889,7 @@ function showBlockedAccount(message, opts) {
   // al reactivarlo desde admin la app vuelva sola.
   if (!keepSession) {
     try { localStorage.removeItem("aura-session"); } catch {}
+    Auth.clear();
     state.user = null;
   } else {
     // Mantenemos la sesión → asegúrate de que el heartbeat/SSE/polling de
@@ -4019,6 +4055,7 @@ function showPrivateBetaScreen(opts) {
   const provider = (opts && opts.provider) || "";
   // Limpia sesión local — la app está en beta, no debe recordar la cuenta.
   try { localStorage.removeItem("aura-session"); } catch {}
+  Auth.clear();
   state.user = null;
 
   const root = document.getElementById("viewport");
@@ -4238,6 +4275,7 @@ function showNotRegisteredScreen(opts) {
   const email = (opts && opts.email) || "";
   const provider = (opts && opts.provider) || "";
   try { localStorage.removeItem("aura-session"); } catch {}
+  Auth.clear();
   state.user = null;
 
   const root = document.getElementById("viewport");
@@ -5631,6 +5669,7 @@ function screenLogin(root) {
       }
       state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
       state.zone = data.user.zone || state.zone || "hetero";
+      Auth.capture(data);
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       toast(`Bienvenido, ${data.user.name.split(" ")[0]}`);
       setTimeout(() => showApp(), 400);
@@ -5695,6 +5734,7 @@ function openTwoFactorLoginPrompt(email) {
       }
       state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
       state.zone = data.user.zone || state.zone || "hetero";
+      Auth.capture(data);
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       close();
       toast(data.used_recovery ? "Has iniciado sesión con un código de recuperación" : `Bienvenido, ${data.user.name.split(" ")[0]}`);
@@ -8434,7 +8474,8 @@ async function startCallFromChat(peer, mode) {
         body: JSON.stringify({ type: "ice", candidate: ev.candidate }),
       }).catch(()=>{});
     };
-    const sseUrl = `/api/my/video/room/${room_id}/signal` + (tokenParam ? `?adminToken=${encodeURIComponent(tokenParam)}` : "");
+    let sseUrl = `/api/my/video/room/${room_id}/signal` + (tokenParam ? `?adminToken=${encodeURIComponent(tokenParam)}` : "");
+    const _vtk = Auth.get(); if (_vtk) sseUrl += (sseUrl.includes("?") ? "&" : "?") + "auth_token=" + encodeURIComponent(_vtk);
     const sse = new EventSource(sseUrl);
     sse.onmessage = async (m) => {
       try {
@@ -8652,7 +8693,7 @@ function screenMe(root) {
   (async () => {
     try {
       const r = await fetch("/api/my/account-status", {
-        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+        headers: Auth.apply(state.user?.id ? { "X-User-Id": String(state.user.id) } : {}),
       });
       if (!r.ok) return;
       const d = await r.json();
@@ -8808,6 +8849,7 @@ function screenMe(root) {
       { icon: "⏻", title: T("content.me.item_logout") || "Cerrar sesión", onClick: () => {
           state.user = null;
           try { localStorage.removeItem("aura-session"); } catch {}
+          Auth.clear();
           // Si la app está en pruebas privadas, vuelve a la pantalla beta con
           // el bloque de acceso por código para el superadmin.
           const beta = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
@@ -8912,7 +8954,7 @@ function screenAccountStatus(root) {
     boxInfract.innerHTML = "";
     try {
       const r = await fetch("/api/my/account-status", {
-        headers: state.user?.id ? { "X-User-Id": String(state.user.id) } : {},
+        headers: Auth.apply(state.user?.id ? { "X-User-Id": String(state.user.id) } : {}),
       });
       const d = await r.json();
 
@@ -9307,7 +9349,7 @@ function screenSecurity(root) {
   async function refresh2FAStatus() {
     try {
       const r = await fetch("/api/2fa/status", {
-        headers: { "X-User-Id": String(state.user?.id || "") },
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }),
         cache: "no-store",
       });
       const d = await r.json().catch(() => ({}));
@@ -9946,7 +9988,7 @@ function openZoneChangeWarning(targetZoneId, targetZoneName) {
       if (state.user?.id) {
         const r = await fetch("/api/my/zone/change", {
           method: "POST",
-          headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+          headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
           body: JSON.stringify({ target_zone: targetZoneId }),
         });
         archived = r.ok;
