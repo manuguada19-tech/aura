@@ -1437,9 +1437,13 @@ app.get("/api/stats/dashboard", wrap(async (req, res) => {
   const [[{ total }]] = await pool.query("SELECT COUNT(*) total FROM users");
   const [[{ active }]] = await pool.query("SELECT COUNT(*) active FROM users WHERE status='active'");
   const [[{ online }]] = await pool.query("SELECT COUNT(*) online FROM users WHERE online=1");
-  const [[{ subs }]] = await pool.query("SELECT COUNT(*) subs FROM users WHERE plan<>'free'");
+  // V596 · El MRR y el nº de suscripciones solo cuentan usuarios reales
+  // (role='user'). Si un admin/moderador/superadmin se pone un plan de pago
+  // en su propio perfil (p. ej. para probar la demo), no debe inflar la
+  // estimación de ingresos ni el recuento de suscriptores.
+  const [[{ subs }]] = await pool.query("SELECT COUNT(*) subs FROM users WHERE plan<>'free' AND role='user'");
   const [[{ mrr }]] = await pool.query(
-    `SELECT COALESCE(SUM(CASE plan WHEN 'premium' THEN 9.99 WHEN 'gold' THEN 19.99 WHEN 'platinum' THEN 29.99 ELSE 0 END),0) mrr FROM users WHERE plan<>'free' AND status='active'`
+    `SELECT COALESCE(SUM(CASE plan WHEN 'premium' THEN 9.99 WHEN 'gold' THEN 19.99 WHEN 'platinum' THEN 29.99 ELSE 0 END),0) mrr FROM users WHERE plan<>'free' AND status='active' AND role='user'`
   );
   const [[{ matches }]] = await pool.query("SELECT COUNT(*) matches FROM matches");
   const [[{ open_reports }]] = await pool.query("SELECT COUNT(*) open_reports FROM reports WHERE status='open'");
