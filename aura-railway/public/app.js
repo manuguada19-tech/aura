@@ -5577,6 +5577,58 @@ function screenForgot(root) {
    ================================================================ */
 
 /* ---- Discover (swipe cards) ---- */
+// V605 · Aviso PERSISTENTE de notificaciones dentro del feed de Discover.
+// Sustituye al banner efímero (que dependía de un temporizador + un flag de
+// sessionStorage de un solo uso y no reaparecía). Este aviso se muestra SIEMPRE
+// que el usuario no tenga las notificaciones activas, y el permiso nativo se
+// solicita SOLO al pulsar el botón (gesto de usuario), que es lo que Chrome
+// Android exige para mostrar el diálogo. Así "salta" de forma fiable y el
+// usuario puede activarlas al momento.
+function buildPushNotice() {
+  try {
+    // Si el navegador ni siquiera soporta notificaciones, no mostramos nada.
+    if (!("Notification" in window)) return null;
+    const perm = Notification.permission;
+    // Ya concedido → nada que recordar (la suscripción se gestiona aparte).
+    if (perm === "granted") return null;
+
+    const wrap = el("div", { class: "nearby-gps-notice push-inline-notice" });
+    const denied = perm === "denied";
+    wrap.innerHTML = `
+      <div class="nearby-gps-notice-ic">🔔</div>
+      <div class="nearby-gps-notice-body">
+        <div class="nearby-gps-notice-title">Activa las notificaciones</div>
+        <div class="nearby-gps-notice-lead">${denied
+          ? "Las tienes bloqueadas en el navegador. Ábrelas en el candado 🔒 de la barra de direcciones → Notificaciones → Permitir, y recarga."
+          : "Son necesarias para avisarte al instante de tus matches y mensajes. Aura funciona mejor con ellas."}</div>
+      </div>
+      <button type="button" class="btn btn-primary nearby-gps-notice-cta">${denied ? "Cómo activarlas" : "Activar"}</button>
+    `;
+    const cta = wrap.querySelector(".nearby-gps-notice-cta");
+    cta.onclick = async () => {
+      // Estado bloqueado: no se puede relanzar el prompt nativo → guía.
+      if (Notification.permission === "denied") {
+        try { showPushBlockedReminder(); } catch {}
+        return;
+      }
+      cta.disabled = true;
+      try {
+        const p = await Notification.requestPermission();
+        if (p === "granted") {
+          const ok = await subscribePushDevice();
+          if (ok) { try { toast("Notificaciones activas 🔔"); } catch {} }
+          // Ya no hace falta el aviso: lo quitamos.
+          try { wrap.remove(); } catch {}
+          return;
+        }
+        if (p === "denied") { cta.disabled = false; try { showPushBlockedReminder(); } catch {} return; }
+      } catch {}
+      cta.disabled = false;
+    };
+    return wrap;
+  } catch { return null; }
+}
+
 function screenDiscover(root) {
   root.appendChild(el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
@@ -5600,6 +5652,8 @@ function screenDiscover(root) {
       actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => toast("¡Boost activado por 30 min!")),
     ]),
   ]));
+  // V605 · Aviso persistente de notificaciones (si no están activas).
+  try { const pn = buildPushNotice(); if (pn) root.appendChild(pn); } catch {}
   // Ad slot (visible only to Free plan)
   const adTop = buildAdSlot("discover");
   if (adTop) root.appendChild(adTop);
