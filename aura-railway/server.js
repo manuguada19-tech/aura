@@ -447,6 +447,9 @@ const PUBLIC_API = new Set([
   "POST /api/verify/id/didit-webhook",
   "GET  /api/verify/id/didit-return",
   "GET /api/verify/id/didit-return",
+  // Función 5 · Webhook de Stripe (público: su seguridad es la firma HMAC,
+  //   no un token de admin; Stripe no puede enviar cabeceras de admin).
+  "POST /api/payments/stripe/webhook",
 ]);
 
 /* Runtime settings cache with short TTL (multi-instance-safe) */
