@@ -3183,13 +3183,17 @@ textarea.input { resize: vertical; min-height: 60px; }
 }
 .lv2-dev-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-  font-size: 12px;
+  /* Columnas responsivas: se rellenan según el ancho disponible (4+ en PC,
+     2 en tablets, 1 en móviles estrechos) en vez de forzar siempre 2 columnas
+     apretadas. Así se aprovecha el espacio y las etiquetas no se solapan. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px 22px;
+  font-size: 12.5px;
 }
 .lv2-dev-grid > div { min-width: 0; }
-.lv2-dev-grid small { display: block; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 2px; }
-.lv2-dev-grid code { font-size: 11px; background: rgba(0,0,0,.06); padding: 2px 6px; border-radius: 6px; }
+.lv2-dev-grid small { display: block; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; line-height: 1.25; }
+.lv2-dev-grid > div > div { line-height: 1.5; word-break: break-word; }
+.lv2-dev-grid code { font-size: 11px; background: rgba(0,0,0,.06); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
 [data-theme="dark"] .lv2-dev-grid code { background: rgba(255,255,255,.08); }
 
 .lv2-map {
@@ -3324,10 +3328,11 @@ textarea.input { resize: vertical; min-height: 60px; }
 .usr-live-loading { color: var(--text-muted); text-align: center; padding: 20px; }
 .usr-live-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .usr-live-panel {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 12px;
-  align-items: start;
+  /* El mapa se inserta aparte (a lo ancho, más abajo), así que el panel de
+     datos debe ocupar TODO el ancho disponible. Antes reservaba una columna
+     fija de 320px que quedaba vacía y comprimía los datos a la mitad. */
+  display: block;
+  width: 100%;
 }
 .usr-live-grid { align-content: start; }
 .usr-live-map {
@@ -3339,7 +3344,6 @@ textarea.input { resize: vertical; min-height: 60px; }
 }
 .usr-live-map .leaflet-container { background: #cfd8e3; }
 @media (max-width: 720px) {
-  .usr-live-panel { grid-template-columns: 1fr; }
   .usr-live-map { height: 200px; }
 }
 
