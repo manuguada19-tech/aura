@@ -2119,7 +2119,19 @@ async function viewDashboard(root){
       ]),
     ]),
     el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, [
-      btn("Exportar ahora", "primary sm", async () => {
+      // Crear backup EN EL SERVIDOR (sin descargar). Genera un snapshot que
+      // queda guardado en la plataforma y se puede descargar/restaurar después.
+      btn("Crear backup", "primary sm", async (ev) => {
+        const b = ev && ev.currentTarget;
+        try {
+          if (b) b.disabled = true;
+          const r = await api.post("/api/admin/backup/snapshot", { label: "manual" });
+          toast("Backup creado en el servidor" + (r && r.file ? ": " + r.file : ""));
+          await refreshDashBackupInfo();
+        } catch (e) { console.error(e); toast("Error al crear el backup"); }
+        finally { if (b) b.disabled = false; }
+      }),
+      btn("Descargar", "ghost sm", async () => {
         try {
           const r = await fetch("/api/admin/backup/export?sections=content,design,config,emails",
             { headers: authHeaders(), cache: "no-store" });
@@ -2133,33 +2145,26 @@ async function viewDashboard(root){
           document.body.appendChild(a); a.click(); a.remove();
           setTimeout(() => URL.revokeObjectURL(a.href), 5000);
           toast("Backup descargado");
-          // Refrescar la tarjeta con la nueva fecha
-          try {
-            const info = await api.get("/api/admin/backup/info?_=" + Date.now());
-            const fmtDate = (iso) => iso ? new Date(iso).toLocaleString("es-ES") : "Nunca";
-            const infoEl = document.getElementById("dashBackupInfo");
-            if (infoEl) infoEl.innerHTML = `Último export: <strong>${fmtDate(info.last_export_at)}</strong> · Import: <strong>${fmtDate(info.last_import_at)}</strong>`;
-          } catch {}
+          await refreshDashBackupInfo();
         } catch (e) { console.error(e); toast("Error al exportar"); }
       }),
       btn("Abrir sección", "ghost sm", () => route("backup")),
     ]),
   ]);
   root.appendChild(backupCard);
-  // Cargar fecha del último export/import
-  (async () => {
+  // Refresca el texto de la tarjeta con las últimas fechas (export/import/backup).
+  async function refreshDashBackupInfo() {
     try {
       const info = await api.get("/api/admin/backup/info?_=" + Date.now());
-      const fmtDate = (iso) => {
-        if (!iso) return "Nunca";
-        try { return new Date(iso).toLocaleString("es-ES"); } catch { return iso; }
-      };
+      const fmtDate = (iso) => iso ? new Date(iso).toLocaleString("es-ES") : "Nunca";
       const infoEl = document.getElementById("dashBackupInfo");
-      if (infoEl) {
-        infoEl.innerHTML = `Último export: <strong>${fmtDate(info.last_export_at)}</strong> · Import: <strong>${fmtDate(info.last_import_at)}</strong>`;
-      }
+      if (infoEl) infoEl.innerHTML =
+        `Último backup: <strong>${fmtDate(info.last_snapshot_at)}</strong> (${info.snapshots_count || 0} guardados) · ` +
+        `Descarga: <strong>${fmtDate(info.last_export_at)}</strong> · Import: <strong>${fmtDate(info.last_import_at)}</strong>`;
     } catch {}
-  })();
+  }
+  // Cargar fechas del último backup/export/import.
+  refreshDashBackupInfo();
 
   // Row: activity + zone donut
   const row = el("div", { class: "grid-2" });
@@ -7779,7 +7784,9 @@ async function viewBackup(root){
       ]),
     ]),
     el("div", { class: "muted small", style: "margin-top:12px" }, [
-      el("span", {}, "Último export: "), el("strong", {}, fmtDate(info && info.last_export_at)), el("span", {}, " · "),
+      el("span", {}, "Último backup: "), el("strong", {}, fmtDate(info && info.last_snapshot_at)),
+      el("span", {}, ` (${(info && info.snapshots_count) || 0} guardados)`), el("span", {}, " · "),
+      el("span", {}, "Última descarga: "), el("strong", {}, fmtDate(info && info.last_export_at)), el("span", {}, " · "),
       el("span", {}, "Último import: "), el("strong", {}, fmtDate(info && info.last_import_at)),
     ]),
   ]));
@@ -7795,41 +7802,61 @@ async function viewBackup(root){
     ]);
   };
   const expPanel = el("div", { class: "panel", style: "padding:16px;margin-bottom:16px" }, [
-    el("h3", { style: "margin:0 0 8px" }, "Exportar configuración"),
+    el("h3", { style: "margin:0 0 8px" }, "Crear / exportar configuración"),
     el("p", { class: "muted small", style: "margin:0 0 12px" },
-      "Descarga un archivo JSON con las secciones seleccionadas. Guárdalo en lugar seguro."),
+      "Elige las secciones y crea un backup guardado en el servidor (sin descargar) o descárgalo como archivo JSON."),
     el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" }, [
       chk("content", "Textos"),
       chk("design",  "Diseño"),
       chk("config",  "Configuración"),
       chk("emails",  "Plantillas email"),
     ]),
-    btn("Descargar backup", "primary", async () => {
-      const sections = Object.entries(expSel).filter(([,v]) => v).map(([k]) => k);
-      if (!sections.length) { toast("Selecciona al menos una sección"); return; }
-      const url = "/api/admin/backup/export?sections=" + encodeURIComponent(sections.join(","));
-      try {
-        const r = await fetch(url, { headers: authHeaders(), cache: "no-store" });
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        const blob = await r.blob();
-        // Obtén nombre desde header o genera uno
-        let name = "aura-backup.json";
-        const disp = r.headers.get("Content-Disposition") || "";
-        const m = /filename="([^"]+)"/.exec(disp);
-        if (m) name = m[1];
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = name;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-        toast("Backup descargado");
-        // Refrescar la vista para mostrar la nueva fecha de último export
-        setTimeout(() => route("backup"), 400);
-      } catch (e) {
-        console.error(e);
-        toast("Error al exportar");
-      }
-    }),
+    el("div", { style: "display:flex;flex-wrap:wrap;gap:8px" }, [
+      // Crear backup EN EL SERVIDOR (sin descargar). Queda listado abajo en
+      // "Snapshots guardados" para descargar o restaurar cuando haga falta.
+      btn("Crear backup en servidor", "primary", async (ev) => {
+        const b = ev && ev.currentTarget;
+        const sections = Object.entries(expSel).filter(([,v]) => v).map(([k]) => k);
+        if (!sections.length) { toast("Selecciona al menos una sección"); return; }
+        try {
+          if (b) b.disabled = true;
+          const r = await api.post("/api/admin/backup/snapshot", { label: "manual" });
+          toast("Backup creado en el servidor" + (r && r.file ? ": " + r.file : ""));
+          await refreshSnapshots();
+          // Refresca las fechas del panel superior.
+          setTimeout(() => route("backup"), 300);
+        } catch (e) {
+          console.error(e);
+          toast("Error al crear el backup");
+        } finally { if (b) b.disabled = false; }
+      }),
+      btn("Descargar backup", "ghost", async () => {
+        const sections = Object.entries(expSel).filter(([,v]) => v).map(([k]) => k);
+        if (!sections.length) { toast("Selecciona al menos una sección"); return; }
+        const url = "/api/admin/backup/export?sections=" + encodeURIComponent(sections.join(","));
+        try {
+          const r = await fetch(url, { headers: authHeaders(), cache: "no-store" });
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          const blob = await r.blob();
+          // Obtén nombre desde header o genera uno
+          let name = "aura-backup.json";
+          const disp = r.headers.get("Content-Disposition") || "";
+          const m = /filename="([^"]+)"/.exec(disp);
+          if (m) name = m[1];
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = name;
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+          toast("Backup descargado");
+          // Refrescar la vista para mostrar la nueva fecha de último export
+          setTimeout(() => route("backup"), 400);
+        } catch (e) {
+          console.error(e);
+          toast("Error al exportar");
+        }
+      }),
+    ]),
   ]);
   root.appendChild(expPanel);
 

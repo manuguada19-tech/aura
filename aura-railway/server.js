@@ -4600,7 +4600,7 @@ app.post("/api/admin/backup/import", wrap(async (req, res) => {
 // GET /api/admin/backup/info  → última fecha de export/import (para dashboard)
 app.get("/api/admin/backup/info", wrap(async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT k, v FROM settings WHERE k IN ('backup.last_export_at','backup.last_export_sections','backup.last_import_at')"
+    "SELECT k, v FROM settings WHERE k IN ('backup.last_export_at','backup.last_export_sections','backup.last_import_at','backup.last_snapshot_at','backup.last_snapshot_file')"
   );
   const info = {};
   for (const r of rows) info[r.k] = r.v;
@@ -4608,10 +4608,19 @@ app.get("/api/admin/backup/info", wrap(async (req, res) => {
   const [cntDesign] = await pool.query("SELECT COUNT(*) AS c FROM settings WHERE k LIKE 'content.design.%'");
   const [cntConfig] = await pool.query("SELECT COUNT(*) AS c FROM settings WHERE k NOT LIKE 'content.%'");
   const [cntEmails] = await pool.query("SELECT COUNT(*) AS c FROM email_templates");
+  // Nº de snapshots guardados en el servidor (backups creados sin descargar).
+  let snapshotsCount = 0;
+  try {
+    const all = await fs.promises.readdir(path.join(__dirname, "backups"));
+    snapshotsCount = all.filter(n => /^aura-snapshot-.*\.json$/.test(n)).length;
+  } catch {}
   res.json({
     last_export_at: info["backup.last_export_at"] || null,
     last_export_sections: info["backup.last_export_sections"] || null,
     last_import_at: info["backup.last_import_at"] || null,
+    last_snapshot_at: info["backup.last_snapshot_at"] || null,
+    last_snapshot_file: info["backup.last_snapshot_file"] || null,
+    snapshots_count: snapshotsCount,
     counts: {
       content: cntContent[0].c,
       design: cntDesign[0].c,
