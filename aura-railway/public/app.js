@@ -2973,6 +2973,34 @@ function routeTab(tab) {
   render(map[tab] || screenDiscover);
   // Cuenta la navegación para posible intersticial
   try { maybeShowInterstitial(); } catch {}
+  // V604 · Refuerzo del recordatorio/confirmación de notificaciones. showApp()
+  // lo dispara con 2500ms de retardo, pero si la clave VAPID aún no había
+  // cargado (carrera con /api/public-config) pushSupported() era false y no se
+  // mostraba NADA el resto de la sesión. Al aterrizar en el feed lo reintentamos
+  // (las guardas por sessionStorage evitan que salga dos veces).
+  if ((map[tab] || screenDiscover) === screenDiscover && state.user) {
+    try { maybeEnsurePushHint(); } catch {}
+  }
+}
+
+// V604 · Reintenta el aviso de notificaciones hasta que la config pública (con
+// la clave VAPID) esté disponible. Cada llamada a maybePromptForPush() es
+// idempotente por sesión, así que puede invocarse varias veces sin molestar.
+let __pushHintTries = 0;
+function maybeEnsurePushHint() {
+  if (!state.user) return;
+  // Si ya se mostró el recordatorio o ya se confirmó, no hay nada que hacer.
+  try {
+    if (sessionStorage.getItem("aura_push_reminded") === "1"
+      || sessionStorage.getItem("aura_push_confirmed") === "1") return;
+  } catch {}
+  const run = () => { try { maybePromptForPush(); } catch {} };
+  run();
+  // Reintentos escalonados por si la clave VAPID tarda en cargar.
+  if (__pushHintTries < 3) {
+    __pushHintTries++;
+    setTimeout(() => { try { maybeEnsurePushHint(); } catch {} }, 3000);
+  }
 }
 
 /* ================================================================
@@ -10969,25 +10997,42 @@ function showPushBlockedReminder() {
 // el soft-prompt propio; el prompt nativo solo se lanza si el usuario acepta.
 async function maybePromptForPush() {
   try {
-    if (!pushSupported()) {
-      // Aunque falte VAPID/soporte, si está concedido intentamos vincular.
-      if (("Notification" in window) && Notification.permission === "granted") { try { await subscribePushDevice(); } catch {} }
+    const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+
+    // === Caso 1: permiso YA concedido =================================
+    // (Re)suscribimos en silencio y, para que el usuario TENGA FEEDBACK de que
+    // todo funciona, mostramos una confirmación discreta UNA vez por sesión.
+    // V604 · Antes no se mostraba nada en este estado, por lo que el usuario no
+    // veía "ni recordatorio ni mensaje de notificaciones activadas".
+    if (perm === "granted") {
+      let confirmed = false;
+      try { confirmed = sessionStorage.getItem("aura_push_confirmed") === "1"; } catch {}
+      if (confirmed) return;
+      const ok = await subscribePushDevice();
+      if (ok) {
+        // Solo marcamos como confirmado si la suscripción tuvo éxito; si falló
+        // (p.ej. la clave VAPID aún no había cargado) dejamos que un reintento
+        // posterior lo vuelva a intentar en esta misma sesión.
+        try { sessionStorage.setItem("aura_push_confirmed", "1"); } catch {}
+        try { toast("Notificaciones activas 🔔"); } catch {}
+      }
       return;
     }
-    if (Notification.permission === "granted") {
-      // Permiso ya concedido → (re)suscribir en silencio y vincular al usuario.
-      await subscribePushDevice();
-      return;
-    }
-    // V602 · El usuario NO tiene las notificaciones activas (default o denied).
-    // Se lo recordamos de forma discreta UNA vez por sesión (cada vez que entra),
-    // sin ser insistentes si navega dentro de la misma sesión.
+
+    // Sin soporte real de push (p.ej. iOS sin la PWA instalada) → no hay nada
+    // que podamos activar; salimos sin marcar nada para no bloquear reintentos.
+    if (!pushSupported()) return;
+
+    // === Caso 2: permiso "default" o "denied" =========================
+    // El usuario NO tiene las notificaciones activas. Se lo recordamos de forma
+    // discreta UNA vez por sesión (cada vez que entra), sin ser insistentes si
+    // navega dentro de la misma sesión.
     let alreadyReminded = false;
     try { alreadyReminded = sessionStorage.getItem("aura_push_reminded") === "1"; } catch {}
     if (alreadyReminded) return;
     try { sessionStorage.setItem("aura_push_reminded", "1"); } catch {}
 
-    if (Notification.permission === "denied") {
+    if (perm === "denied") {
       // Bloqueado: no se puede relanzar el prompt nativo → guía para reactivar.
       showPushBlockedReminder();
       return;
