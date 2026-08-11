@@ -2256,6 +2256,9 @@ function startHeartbeat() {
   // V610 · Vigila el estado del permiso de notificaciones para reaccionar sin
   // que el usuario tenga que interactuar (activar/retirar desde ajustes).
   try { watchPushPermission(); } catch {}
+  // V611 · Igual para la UBICACIÓN: detecta activación/retirada del permiso y
+  // avisa/redirige al perfil cuando haga falta.
+  try { watchGeoPermission(); } catch {}
   // Push en tiempo real vía Server-Sent Events. Al recibir un evento,
   // refresca inmediatamente y el banner desaparece/aparece al instante.
   try {
@@ -5695,6 +5698,11 @@ async function watchPushPermission() {
       } else if (prev === "granted") {
         // Se RETIRÓ el permiso → recordar de nuevo y permitir nueva confirmación.
         try { sessionStorage.removeItem("aura_push_confirmed"); } catch {}
+        // V611 · Avisar al usuario y ofrecerle ir al perfil a reactivarlas
+        // (igual que hacemos con la ubicación). Sin notificaciones no recibe
+        // avisos de matches/mensajes → funcionamiento no óptimo.
+        try { toast("Notificaciones desactivadas.", 3500); } catch {}
+        try { showPermissionsRedirect({ needPush: true }); } catch {}
       }
       refreshPushNoticeUI();
     };
@@ -5713,6 +5721,198 @@ async function watchPushPermission() {
   } catch {}
 }
 
+// V611 · Aviso COMPACTO de activación de ubicación en Discover, espejo de
+// buildPushNotice(). Aparece cuando el usuario NO tiene la ubicación activa
+// (permiso del navegador != granted). El prompt del navegador se pide SOLO al
+// pulsar el botón (gesto de usuario), como exige Chrome Android.
+function buildGpsNotice() {
+  try {
+    if (!("geolocation" in navigator)) return null;
+    // Solo tiene sentido para usuarios con sesión (la ubicación se asocia a la
+    // cuenta). Sin login no mostramos nada.
+    if (!state.user?.id) return null;
+    // Estado del permiso aún desconocido → no mostramos nada todavía; el
+    // vigilante (watchGeoPermission) llamará a refreshGpsNoticeUI() en cuanto
+    // lo conozca, evitando un parpadeo cuando ya estaba concedido.
+    if (_geoPermWatch.last == null) return null;
+    // Si ya está concedido no mostramos nada.
+    if (_geoPermWatch.last === "granted") return null;
+    const denied = _geoPermWatch.last === "denied";
+    const wrap = el("div", { class: "push-mini gps-inline-notice" + (denied ? " is-denied" : "") }, [
+      el("span", { class: "push-mini-ico" }, "📍"),
+      el("span", { class: "push-mini-txt" }, denied
+        ? "Ubicación bloqueada en el navegador."
+        : "Activa la ubicación para ver quién tienes cerca."),
+      el("button", { class: "push-mini-btn", type: "button" }, denied ? "Cómo" : "Activar"),
+    ]);
+    const cta = wrap.querySelector(".push-mini-btn");
+    cta.onclick = async () => {
+      // Estado bloqueado: no se puede relanzar el prompt nativo → guía al perfil.
+      if (_geoPermWatch.last === "denied") {
+        try { showPermissionsRedirect({ needGeo: true, blocked: true }); } catch {}
+        return;
+      }
+      cta.disabled = true;
+      try {
+        // Reutilizamos el modal de consentimiento de GPS, que lanza el prompt
+        // nativo y registra el consentimiento en el servidor. El vigilante
+        // (watchGeoPermission) retira el aviso automáticamente al concederse.
+        try { localStorage.removeItem(GPS._prefKey()); } catch {}
+        GPS.showPrompt(true);
+      } catch {}
+      cta.disabled = false;
+    };
+    return wrap;
+  } catch { return null; }
+}
+
+// V611 · Refresca el aviso de ubicación de Discover según el estado ACTUAL del
+// permiso del navegador: si se concedió, lo quita; si falta, lo (re)inserta.
+function refreshGpsNoticeUI() {
+  try {
+    if (state.currentTab !== "discover") return;
+    if (!state.user?.id) return;
+    const st = _geoPermWatch.last;
+    const existing = document.querySelector(".gps-inline-notice");
+    if (st === "granted") { if (existing) existing.remove(); return; }
+    if (existing) return;
+    const disc = document.querySelector(".discover");
+    const topbar = disc && disc.querySelector(".discover-topbar");
+    if (!disc || !topbar) return;
+    const gn = buildGpsNotice();
+    if (!gn) return;
+    // Colocarlo tras el aviso de notificaciones si existe, o tras la topbar.
+    const pushNotice = disc.querySelector(".push-inline-notice");
+    if (pushNotice) pushNotice.insertAdjacentElement("afterend", gn);
+    else topbar.insertAdjacentElement("afterend", gn);
+  } catch {}
+}
+
+// V611 · Vigilante del estado del permiso de UBICACIÓN, espejo de
+// watchPushPermission(). Cubre los mismos casos:
+//  1) El usuario concede la ubicación desde los ajustes de Chrome → detectamos
+//     el cambio a "granted", arrancamos el watcher y quitamos el aviso solo.
+//  2) El usuario RETIRA el permiso → lo detectamos, avisamos y le ofrecemos ir
+//     al perfil a reactivarlo (necesario para "Cerca de ti" y match por zona).
+//  3) Cambios que el navegador no notifica → visibilitychange + sondeo ligero.
+let _geoPermWatch = { started: false, last: null, timer: null };
+async function watchGeoPermission() {
+  try {
+    if (!("geolocation" in navigator)) return;
+    if (_geoPermWatch.started) return;
+    _geoPermWatch.started = true;
+    try { _geoPermWatch.last = await GPS.browserPermissionState(); } catch { _geoPermWatch.last = "prompt"; }
+
+    const onChange = async () => {
+      let cur;
+      try { cur = await GPS.browserPermissionState(); } catch { return; }
+      if (cur === _geoPermWatch.last) return;
+      const prev = _geoPermWatch.last;
+      _geoPermWatch.last = cur;
+      if (cur === "granted") {
+        // Se acaba de conceder (posiblemente desde ajustes del navegador).
+        // Registramos consentimiento en servidor y arrancamos el watcher.
+        try { await GPS.sendConsent(true); } catch {}
+        try { state.gpsConsent = true; } catch {}
+        try { GPS.markAsked(); } catch {}
+        try { GPS.startWatching(); } catch {}
+        try { toast("Ubicación activada 📍"); } catch {}
+      } else if (prev === "granted") {
+        // Se RETIRÓ el permiso → dejar de reportar, avisar y ofrecer reactivar.
+        try { GPS.stopWatching(); } catch {}
+        try { state.gpsConsent = false; } catch {}
+        try { toast("Ubicación desactivada.", 3500); } catch {}
+        try { showPermissionsRedirect({ needGeo: true }); } catch {}
+      }
+      refreshGpsNoticeUI();
+    };
+
+    // 1) Evento nativo de la Permissions API.
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const st = await navigator.permissions.query({ name: "geolocation" });
+        st.onchange = onChange;
+      }
+    } catch {}
+    // 2) Al volver a la pestaña.
+    try { document.addEventListener("visibilitychange", () => { if (!document.hidden) onChange(); }); } catch {}
+    // 3) Sondeo ligero por si el navegador no dispara el evento.
+    if (!_geoPermWatch.timer) _geoPermWatch.timer = setInterval(onChange, 6000);
+    // Refresca el aviso ya con el estado real conocido (buildGpsNotice pudo
+    // ejecutarse antes de tener _geoPermWatch.last inicializado).
+    try { refreshGpsNoticeUI(); } catch {}
+  } catch {}
+}
+
+// V611 · Aviso que REDIRIGE al perfil para activar los permisos necesarios
+// (ubicación y/o notificaciones). Funciona igual en web y en PWA. Explica que
+// son necesarios para el funcionamiento óptimo de la app; si no, no podrá usar
+// todas las funciones. Al pulsar "Ir al perfil" navegamos a la pestaña "Yo" y
+// abrimos la sección correspondiente (ubicación o notificaciones).
+function showPermissionsRedirect(opts) {
+  try {
+    const o = opts || {};
+    const needGeo = !!o.needGeo;
+    const needPush = !!o.needPush;
+    if (!needGeo && !needPush) return;
+    if (!state.user?.id) return;
+    // Evitar apilar avisos: si ya hay uno visible, lo reemplazamos.
+    try { const old = document.getElementById("auraPermRedirect"); if (old) old.remove(); } catch {}
+
+    let what;
+    if (needGeo && needPush) what = "la ubicación y las notificaciones";
+    else if (needGeo) what = "la ubicación";
+    else what = "las notificaciones";
+
+    const title = o.blocked
+      ? `Tienes ${what} bloqueada${(needGeo && needPush) ? "s" : (needGeo ? "" : "s")} en el navegador`
+      : `Activa ${what}`;
+    const body = "Aura las necesita para funcionar de forma óptima. Sin ellas no podrás usar todas las funciones. Ve a tu perfil para activarlas.";
+
+    const wrap = el("div", { id: "auraPermRedirect", class: "push-soft perm-redirect" }, [
+      el("div", { class: "push-soft-ico" }, needGeo && !needPush ? "📍" : (needPush && !needGeo ? "🔔" : "⚙️")),
+      el("div", { class: "push-soft-body" }, [
+        el("strong", {}, title),
+        el("small", {}, body),
+      ]),
+      el("div", { class: "push-soft-actions" }, [
+        el("button", { class: "push-soft-yes", onclick: () => {
+          try { wrap.remove(); } catch {}
+          goToPermissionsInProfile({ needGeo, needPush });
+        } }, "Ir al perfil"),
+        el("button", { class: "push-soft-no", onclick: () => { try { wrap.remove(); } catch {} } }, "Ahora no"),
+      ]),
+    ]);
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.classList.add("show"), 30);
+    // Se oculta solo tras un rato para no molestar; reaparecerá si el permiso
+    // sigue faltando (los vigilantes vuelven a detectarlo).
+    setTimeout(() => { try { wrap.classList.remove("show"); setTimeout(() => wrap.remove(), 300); } catch {} }, 14000);
+  } catch {}
+}
+
+// V611 · Lleva al usuario a la pestaña "Yo" y abre la sección adecuada para
+// activar el/los permiso(s). Prioriza ubicación si ambas faltan (abre su hoja),
+// dejando el resto de accesos visibles en el propio perfil.
+function goToPermissionsInProfile(opts) {
+  try {
+    const o = opts || {};
+    // Marca la pestaña "Yo" como activa en la barra inferior y navega.
+    try {
+      $$(".tab", tabbar).forEach(b => b.classList.toggle("active", b.dataset.tab === "me"));
+    } catch {}
+    state.currentTab = "me";
+    try { routeTab("me"); } catch { render(screenMe); }
+    // Tras pintar el perfil, abrimos la sección correspondiente.
+    setTimeout(() => {
+      try {
+        if (o.needGeo) { openGpsPrivacySheet(); return; }
+        if (o.needPush) { render(screenNotificationSettings); return; }
+      } catch {}
+    }, 350);
+  } catch {}
+}
+
 function screenDiscover(root) {
   // V607 · Aviso persistente de notificaciones. Se construye ANTES del stack y
   // se coloca justo debajo de la barra superior (dentro de .discover) para que
@@ -5720,6 +5920,9 @@ function screenDiscover(root) {
   // por debajo del fold.
   let pushNotice = null;
   try { pushNotice = buildPushNotice(); } catch {}
+  // V611 · Aviso compacto de ubicación (espejo del de notificaciones).
+  let gpsNotice = null;
+  try { gpsNotice = buildGpsNotice(); } catch {}
   root.appendChild(el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
       el("span", {
@@ -5734,6 +5937,7 @@ function screenDiscover(root) {
       el("span", { class: "brand-topbar-spacer", "aria-hidden": "true" }),
     ]),
     pushNotice || null,
+    gpsNotice || null,
     buildSwipeStack(),
     el("div", { class: "action-row" }, [
       actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho")),

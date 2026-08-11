@@ -7900,6 +7900,16 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 }
 .push-mini-btn:disabled { opacity: .6; cursor: default; }
 
+/* V611 · Variante del aviso compacto para la UBICACIÓN (acento azul), para
+   diferenciarlo visualmente del de notificaciones (rosa). Reutiliza .push-mini. */
+.gps-inline-notice {
+  background: linear-gradient(180deg, rgba(59,130,246,.14), rgba(59,130,246,.06));
+  border-color: rgba(59,130,246,.32);
+}
+.gps-inline-notice .push-mini-btn {
+  background: linear-gradient(135deg, #3b82f6, #06b6d4);
+}
+
 /* V592 · Preferencias de notificaciones (toggles) */
 .nprefs-list { display: flex; flex-direction: column; gap: 2px; max-height: 55vh; overflow-y: auto; }
 .nprefs-section {
