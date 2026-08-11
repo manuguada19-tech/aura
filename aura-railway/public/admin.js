@@ -15652,10 +15652,16 @@ async function viewPushCampaigns(root) {
     ["👁", "Ver estadísticas: entregadas / clics / fallos"],
   ]));
 
+  // V603 · Estado compartido para los avisos preventivos (VAPID configurado, etc.)
+  // Lo rellena la llamada a /api/admin/push/stats y lo consultan tanto el editor
+  // como el botón "Enviar ahora" de la tabla.
+  const pushState = { enabled: true };
+
   // Panel de estadísticas
   const statsBar = el("div", { style: "display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px" });
   root.appendChild(statsBar);
   api.get("/api/admin/push/stats").then(s => {
+    pushState.enabled = s.push_enabled !== false;
     statsBar.innerHTML = "";
     const cm = s.campaigns || {};
     const cards = [
@@ -15728,6 +15734,8 @@ async function viewPushCampaigns(root) {
         if (c.status === "draft" || c.status === "failed" || c.status === "scheduled") {
           const btnSend = el("button", { class: "btn btn-sm primary", style: "margin-right:4px" }, "📢 Enviar ahora");
           btnSend.addEventListener("click", async () => {
+            // V603 · Aviso preventivo: sin claves VAPID el envío no puede salir.
+            if (!pushState.enabled && !confirm("⚠ El push no está activo (faltan las claves VAPID). La campaña quedará marcada como fallida y no llegará a nadie.\n\n¿Enviar de todos modos?")) return;
             if (!confirm(`Enviar campaña #${c.id} ahora?`)) return;
             btnSend.disabled = true;
             try { await api.post(`/api/admin/push/campaigns/${c.id}/send-now`, {}); toast("Enviando…"); setTimeout(load, 2000); }
@@ -15956,6 +15964,17 @@ async function viewPushCampaigns(root) {
     async function submit(mode) {
       if (!titleI.value.trim() || !bodyI.value.trim()) { alert("Título y cuerpo son obligatorios."); return; }
       if (mode === "scheduled" && !scheduleI.value) { alert("Elige fecha de envío."); return; }
+      // V603 · Avisos preventivos SOLO al enviar/programar (un borrador se puede
+      // guardar siempre). No aplican al modo "draft".
+      if (mode === "send" || mode === "scheduled") {
+        // 1) Sin claves VAPID el push no puede salir.
+        if (!pushState.enabled && !confirm("⚠ El push no está activo (faltan las claves VAPID VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY). La campaña no llegará a nadie hasta configurarlas.\n\n¿Continuar de todos modos?")) return;
+        // 2) Comprobamos la audiencia real del segmento; si es 0, avisamos.
+        try {
+          const aud = await api.post("/api/admin/push/preview-audience", { segment: segSel.value, segment_params: buildSegParams() });
+          if ((aud.count || 0) === 0 && !confirm("⚠ El segmento elegido no tiene ningún destinatario ahora mismo, así que la notificación no llegará a nadie.\n\n¿Crear la campaña igualmente?")) return;
+        } catch(e) { /* si falla el cálculo, no bloqueamos el envío */ }
+      }
       const payload = {
         title: titleI.value, body: bodyI.value, url: urlI.value || "/",
         icon: iconI.value || null, image: imageI.value || null,
