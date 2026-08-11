@@ -1464,6 +1464,107 @@ function btn(label, cls="ghost sm", onclick) {
   return el("button", { type: "button", class: "btn " + cls, onclick }, label);
 }
 
+/* Buscador de usuarios por nombre/email con autocompletado.
+   Reutiliza el endpoint GET /api/users?q=…&limit= (busca por name/email).
+   Devuelve { wrap, getId, getUser, clear }.
+   - wrap: nodo a insertar en el formulario.
+   - getId(): id del usuario elegido (o null).
+   - onSelect(user): callback opcional al elegir. */
+function userPicker(opts = {}) {
+  let selected = null;
+  const wrap = el("div", { style: "position:relative" });
+  const input = el("input", {
+    class: "input",
+    type: "text",
+    autocomplete: "off",
+    placeholder: opts.placeholder || "Escribe el nombre o email del usuario…",
+    style: "width:100%;box-sizing:border-box",
+  });
+  // Panel flotante de resultados
+  const panel = el("div", {
+    style: "position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:50;max-height:260px;overflow-y:auto;" +
+           "background:var(--panel,#14171f);border:1px solid var(--border,#262a36);border-radius:10px;" +
+           "box-shadow:0 12px 30px rgba(0,0,0,.4);display:none",
+  });
+  // Confirmación del elegido (chip)
+  const chip = el("div", { style: "display:none;align-items:center;gap:8px;margin-top:6px;padding:6px 8px;" +
+    "background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35);border-radius:8px;font-size:13px" });
+
+  function renderChip() {
+    chip.innerHTML = "";
+    if (!selected) { chip.style.display = "none"; return; }
+    chip.style.display = "flex";
+    chip.appendChild(avatar(selected.photo_url, 28));
+    chip.appendChild(el("div", { style: "flex:1;min-width:0" }, [
+      el("div", { style: "font-weight:600" }, `${selected.name || "—"} `),
+      el("small", { style: "opacity:.7" }, `#${selected.id}${selected.email ? " · " + selected.email : ""}`),
+    ]));
+    const x = el("button", { type: "button", class: "btn ghost xs", title: "Quitar selección" }, "✕");
+    x.addEventListener("click", () => { selected = null; input.value = ""; renderChip(); input.focus(); });
+    chip.appendChild(x);
+  }
+
+  function closePanel() { panel.style.display = "none"; panel.innerHTML = ""; }
+
+  function choose(u) {
+    selected = u;
+    input.value = "";
+    closePanel();
+    renderChip();
+    if (typeof opts.onSelect === "function") opts.onSelect(u);
+  }
+
+  let timer = null, lastQ = "";
+  async function search(q) {
+    lastQ = q;
+    try {
+      const data = await api.get("/api/users?q=" + encodeURIComponent(q) + "&limit=8");
+      if (q !== lastQ) return; // respuesta obsoleta
+      const rows = (data && data.rows) || [];
+      panel.innerHTML = "";
+      if (!rows.length) {
+        panel.appendChild(el("div", { style: "padding:10px 12px;opacity:.6;font-size:13px" }, "Sin resultados"));
+      } else {
+        rows.forEach(u => {
+          const row = el("div", {
+            style: "display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer",
+          }, [
+            avatar(u.photo_url, 30),
+            el("div", { style: "flex:1;min-width:0" }, [
+              el("div", { style: "font-weight:600;font-size:13px" }, `${u.name || "—"} `),
+              el("small", { style: "opacity:.65;font-size:11px" }, `#${u.id}${u.email ? " · " + u.email : ""}`),
+            ]),
+          ]);
+          row.addEventListener("mouseenter", () => { row.style.background = "rgba(124,58,237,.15)"; });
+          row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
+          row.addEventListener("mousedown", (e) => { e.preventDefault(); choose(u); });
+          panel.appendChild(row);
+        });
+      }
+      panel.style.display = "block";
+    } catch (e) { closePanel(); }
+  }
+
+  input.addEventListener("input", () => {
+    selected = null; renderChip();
+    const q = input.value.trim();
+    clearTimeout(timer);
+    if (q.length < 2) { closePanel(); return; }
+    timer = setTimeout(() => search(q), 250);
+  });
+  input.addEventListener("blur", () => setTimeout(closePanel, 150));
+
+  wrap.appendChild(input);
+  wrap.appendChild(panel);
+  wrap.appendChild(chip);
+  return {
+    wrap,
+    getId: () => (selected ? selected.id : null),
+    getUser: () => selected,
+    clear: () => { selected = null; input.value = ""; renderChip(); closePanel(); },
+  };
+}
+
 async function downloadCSV(kind) {
   toast("Preparando descarga…");
   try {
@@ -15808,13 +15909,14 @@ async function viewPushCampaigns(root) {
     modal.appendChild(field("⏰ Programar (opcional)", "Deja vacío para enviar inmediatamente.", scheduleI));
 
     // Prueba
-    const testWrap = el("div", { style: "display:flex;gap:8px;margin-bottom:14px;align-items:center;flex-wrap:wrap;padding:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px" });
-    testWrap.appendChild(el("small", { style: "flex:1 1 100%;min-width:0;opacity:.85" }, "🧪 Probar en un user_id concreto antes de enviar:"));
-    const testInp = el("input", { type: "number", placeholder: "user_id", style: INPUT_SM + ";flex:1;min-width:100px" });
-    const btnTest = el("button", { class: "btn btn-sm", type: "button", style: "white-space:nowrap" }, "Enviar prueba");
+    // V600 · Buscador de usuario por nombre/email (en lugar de teclear el ID).
+    const testWrap = el("div", { style: "margin-bottom:14px;padding:10px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.3);border-radius:8px" });
+    testWrap.appendChild(el("small", { style: "display:block;margin-bottom:6px;opacity:.85" }, "🧪 Probar antes de enviar: busca un usuario por nombre o email:"));
+    const testPicker = userPicker({ placeholder: "Escribe el nombre o email del usuario…" });
+    const btnTest = el("button", { class: "btn btn-sm", type: "button", style: "white-space:nowrap;margin-top:8px" }, "Enviar prueba");
     btnTest.addEventListener("click", async () => {
-      const uid = parseInt(testInp.value,10);
-      if (!uid) return alert("Introduce un user_id");
+      const uid = testPicker.getId();
+      if (!uid) return alert("Busca y selecciona un usuario para la prueba");
       btnTest.disabled = true;
       try {
         const j = await api.post("/api/admin/push/test", { user_id: uid, title: titleI.value, body: bodyI.value, url: urlI.value, icon: iconI.value || undefined });
@@ -15822,7 +15924,7 @@ async function viewPushCampaigns(root) {
       } catch(e) { alert("Error: " + e.message); }
       finally { btnTest.disabled = false; }
     });
-    testWrap.appendChild(testInp);
+    testWrap.appendChild(testPicker.wrap);
     testWrap.appendChild(btnTest);
     modal.appendChild(testWrap);
 

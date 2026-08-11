@@ -209,7 +209,82 @@
           const row = document.createElement("div"); row.className = "fx-field";
           const lab = document.createElement("label"); lab.textContent = f.label; row.appendChild(lab);
           let inp;
-          if (f.type === "select") {
+          if (f.type === "user_search") {
+            // V600 · Buscador de usuario por nombre/email. Guarda el id elegido
+            // en un input oculto (inputs[name].value) para que el submit lo lea.
+            inp = document.createElement("input");
+            inp.type = "hidden";
+            const box = document.createElement("div");
+            box.style.position = "relative";
+            const search = document.createElement("input");
+            search.className = "fx-input";
+            search.type = "text";
+            search.autocomplete = "off";
+            search.style.width = "100%";
+            search.style.boxSizing = "border-box";
+            search.placeholder = f.placeholder || "Escribe el nombre o email del usuario…";
+            const panel = document.createElement("div");
+            panel.style.cssText = "position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:60;max-height:240px;overflow-y:auto;background:#14171f;border:1px solid #262a36;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.45);display:none";
+            const chip = document.createElement("div");
+            chip.style.cssText = "display:none;align-items:center;gap:8px;margin-top:6px;padding:6px 8px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35);border-radius:8px;font-size:13px;color:#e8ebf5";
+            function closePanel() { panel.style.display = "none"; panel.innerHTML = ""; }
+            function renderChip(u) {
+              chip.innerHTML = "";
+              if (!u) { chip.style.display = "none"; return; }
+              chip.style.display = "flex";
+              const av = document.createElement("div");
+              av.style.cssText = "width:28px;height:28px;border-radius:50%;background:#262a36 center/cover no-repeat;" + (u.photo_url ? `background-image:url('${u.photo_url}')` : "");
+              const info = document.createElement("div");
+              info.style.cssText = "flex:1;min-width:0";
+              info.innerHTML = `<div style="font-weight:600">${escapeHtml(u.name || "—")}</div><small style="opacity:.7">#${u.id}${u.email ? " · " + escapeHtml(u.email) : ""}</small>`;
+              const x = document.createElement("button");
+              x.type = "button"; x.className = "fx-btn ghost"; x.style.padding = "2px 8px"; x.textContent = "✕"; x.title = "Quitar selección";
+              x.addEventListener("click", () => { inp.value = ""; search.value = ""; renderChip(null); search.focus(); });
+              chip.appendChild(av); chip.appendChild(info); chip.appendChild(x);
+            }
+            let timer = null, lastQ = "";
+            async function doSearch(q) {
+              lastQ = q;
+              try {
+                const rsp = await api("/api/users?q=" + encodeURIComponent(q) + "&limit=8");
+                if (q !== lastQ) return;
+                const rows = (rsp.data && rsp.data.rows) || [];
+                panel.innerHTML = "";
+                if (!rows.length) {
+                  const e = document.createElement("div"); e.style.cssText = "padding:10px 12px;opacity:.6;font-size:13px;color:#e8ebf5"; e.textContent = "Sin resultados"; panel.appendChild(e);
+                } else {
+                  rows.forEach((u) => {
+                    const row = document.createElement("div");
+                    row.style.cssText = "display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer;color:#e8ebf5";
+                    const av = document.createElement("div");
+                    av.style.cssText = "width:30px;height:30px;border-radius:50%;background:#262a36 center/cover no-repeat;flex:0 0 auto;" + (u.photo_url ? `background-image:url('${u.photo_url}')` : "");
+                    const info = document.createElement("div");
+                    info.style.cssText = "flex:1;min-width:0";
+                    info.innerHTML = `<div style="font-weight:600;font-size:13px">${escapeHtml(u.name || "—")}</div><small style="opacity:.65;font-size:11px">#${u.id}${u.email ? " · " + escapeHtml(u.email) : ""}</small>`;
+                    row.appendChild(av); row.appendChild(info);
+                    row.addEventListener("mouseenter", () => { row.style.background = "rgba(124,58,237,.18)"; });
+                    row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
+                    row.addEventListener("mousedown", (ev) => { ev.preventDefault(); inp.value = String(u.id); search.value = ""; closePanel(); renderChip(u); });
+                    panel.appendChild(row);
+                  });
+                }
+                panel.style.display = "block";
+              } catch (e) { closePanel(); }
+            }
+            search.addEventListener("input", () => {
+              inp.value = ""; renderChip(null);
+              const q = search.value.trim();
+              clearTimeout(timer);
+              if (q.length < 2) { closePanel(); return; }
+              timer = setTimeout(() => doSearch(q), 250);
+            });
+            search.addEventListener("blur", () => setTimeout(closePanel, 150));
+            box.appendChild(search); box.appendChild(panel); box.appendChild(chip); box.appendChild(inp);
+            inputs[f.name] = inp;
+            row.appendChild(box);
+            body.appendChild(row);
+            continue;
+          } else if (f.type === "select") {
             inp = document.createElement("select");
             (f.options || []).forEach((o) => { const opt = document.createElement("option"); opt.value = o.value; opt.textContent = o.label; if (f.default === o.value) opt.selected = true; inp.appendChild(opt); });
           } else if (f.type === "textarea") {
@@ -1979,12 +2054,12 @@
         headerActions: [
           { label: "Enviar notificación", icon: "＋", variant: "primary", onClick: async () => {
               const d = await prompt2({ title: "Enviar notificación a un usuario", submitLabel: "Enviar", fields: [
-                { name: "user_id", label: "ID de usuario", type: "number" },
+                { name: "user_id", label: "Destinatario", type: "user_search", placeholder: "Busca por nombre o email…" },
                 { name: "title", label: "Título", placeholder: "Ej. 📣 Nueva función disponible" },
                 { name: "body", label: "Mensaje", type: "textarea", rows: 3 },
                 { name: "icon", label: "Icono (emoji, opcional)", placeholder: "📣" },
               ]});
-              if (!d || !d.user_id || !d.title) return;
+              if (!d || !d.user_id || !d.title) { if (d && !d.user_id) toast("Selecciona un usuario destinatario", "err"); return; }
               const rsp = await api("/api/admin/notifications/send", { method: "POST", body: { user_id: Number(d.user_id), title: d.title, body: d.body || null, icon: d.icon || null } });
               if (rsp.ok && rsp.data?.ok !== false) { toast("Notificación enviada", "ok"); try { rerender(); } catch {} }
               else toast(rsp.data?.error || "No se pudo enviar", "err");
