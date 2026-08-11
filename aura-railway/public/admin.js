@@ -7309,13 +7309,27 @@ async function viewSettings(root){
       onclick: () => { inp.type = inp.type === "password" ? "text" : "password"; },
     }, "👁");
     const genBtn = el("button", {
-      type: "button", class: "btn ghost", title: "Generar código nuevo",
-      onclick: () => {
+      type: "button", class: "btn ghost", title: "Generar y guardar código nuevo",
+      onclick: async (e) => {
         const hex = Array.from(crypto.getRandomValues(new Uint8Array(4)))
           .map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-        inp.value = `AURA-${hex}`;
+        const code = `AURA-${hex}`;
+        inp.value = code;
         inp.type = "text";
-        toast("Código generado — pulsa Guardar para aplicarlo");
+        // V595 · Guardado inmediato: el nuevo código queda activo al momento,
+        // sin depender del botón "Guardar" de la sección. El anterior deja de valer.
+        const b = e.currentTarget;
+        const prev = b.textContent;
+        b.disabled = true; b.textContent = "⏳";
+        try {
+          await api.put("/api/settings", { "app.superadmin_access_code": code });
+          s["app.superadmin_access_code"] = code;
+          toast("Código nuevo generado y guardado ✓ — el anterior ya no vale");
+        } catch (err) {
+          toast("No se pudo guardar: " + (err.message || "error"));
+        } finally {
+          b.disabled = false; b.textContent = prev;
+        }
       },
     }, "🎲");
     return el("label", { class: "field" }, [
