@@ -1615,13 +1615,19 @@ app.get("/api/users/:id", wrap(async (req, res) => {
 }));
 
 app.patch("/api/users/:id", wrap(async (req, res) => {
-  const fields = ["name","email","age","gender","orientation","zone","city","country","height","weight","ethnicity","bio","plan","status","verified"];
+  const fields = ["name","email","age","gender","orientation","zone","city","country","height","weight","ethnicity","bio","plan","status","verified","role"];
+  // V597 · El rol solo puede cambiar a uno de los valores válidos del ENUM.
+  // Si llega un valor desconocido lo ignoramos para no corromper la columna.
+  const VALID_ROLES = ["user","moderator","admin","superadmin"];
+  if ("role" in req.body && !VALID_ROLES.includes(String(req.body.role))) {
+    return res.status(400).json({ error: "invalid_role" });
+  }
   const updates = [], params = [];
-  // Fetch previous state for email/zone/status hooks
+  // Fetch previous state for email/zone/status/role hooks
   let prev = null;
-  if ("email" in req.body || "zone" in req.body || "status" in req.body) {
+  if ("email" in req.body || "zone" in req.body || "status" in req.body || "role" in req.body) {
     try {
-      const [rr] = await pool.query("SELECT id, name, email, zone, status FROM users WHERE id=? LIMIT 1", [req.params.id]);
+      const [rr] = await pool.query("SELECT id, name, email, zone, status, role FROM users WHERE id=? LIMIT 1", [req.params.id]);
       if (rr.length) prev = rr[0];
     } catch {}
   }
@@ -1630,6 +1636,11 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
   params.push(req.params.id);
   await pool.execute(`UPDATE users SET ${updates.join(", ")} WHERE id=?`, params);
   await logActivity("admin", `Usuario actualizado (id ${req.params.id})`);
+  // V597 · Traza dedicada para cambios de rol (acción sensible de seguridad).
+  if (prev && "role" in req.body && req.body.role !== prev.role) {
+    const actor = req.admin?.email || req.session?.email || req.get("X-Admin-Email") || "admin";
+    await logActivity("security", `Rol cambiado: ${prev.name || prev.email || ("id " + prev.id)} de "${prev.role}" a "${req.body.role}" (por ${actor})`);
+  }
 
   // Enganches: cambio de email / zone
   try {

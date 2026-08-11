@@ -2915,6 +2915,26 @@ async function openUserDrawer(id, onChange) {
     field("Estado", el("select", { class: "input", name: "status" }, ["active","suspended","banned","unverified"].map(s =>
       el("option", { value: s, selected: u.status===s }, STATUS_LABELS[s])))),
   ]));
+
+  // V597 · Selector de Rol en el perfil del usuario. Permite convertir a un
+  // usuario en moderador/admin/superadmin (o degradarlo) sin recrearlo. El
+  // backend valida el valor y deja traza en el registro de seguridad.
+  const ROLE_LABELS = { user: "Usuario", moderator: "Moderador", admin: "Administrador", superadmin: "Superadmin" };
+  const ROLE_HELP = {
+    user: "<b>Usuario:</b> uso normal de la app (perfil, likes, matches, chat, pagos). Sin acceso al panel de administración. Cuenta en el MRR estimado.",
+    moderator: "<b>Moderador:</b> revisa reportes, aprueba/rechaza fotos, aplica avisos y suspensiones temporales. No cambia planes, ni ajustes globales, ni roles.",
+    admin: "<b>Administrador:</b> todo lo del moderador + gestión de usuarios (crear/editar/banear), planes, suscripciones, anuncios, contenidos y ajustes de la app. No puede tocar seguridad crítica ni asignar superadmins.",
+    superadmin: "<b>Superadmin:</b> control total. Puede asignar roles, cambiar claves y configuración crítica (KYC/Didit, cobros, RGPD, publicación). Usar solo para el fundador/equipo core.",
+  };
+  const curRole = u.role || "user";
+  const uRoleSel = el("select", { class: "input", name: "role" },
+    ["user","moderator","admin","superadmin"].map(r =>
+      el("option", { value: r, selected: curRole === r }, ROLE_LABELS[r])));
+  const uRoleHelp = el("p", { class: "field-help" });
+  uRoleHelp.innerHTML = ROLE_HELP[curRole] || ROLE_HELP.user;
+  uRoleSel.addEventListener("change", () => { uRoleHelp.innerHTML = ROLE_HELP[uRoleSel.value] || ""; });
+  form.appendChild(el("label", { class: "field" }, [ el("span", {}, "Rol"), uRoleSel, uRoleHelp ]));
+
   form.appendChild(el("label", { class: "check" }, [
     el("input", { type: "checkbox", name: "verified", checked: !!u.verified }),
     el("span", {}, "Verificado"),
