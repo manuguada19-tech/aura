@@ -5617,8 +5617,11 @@ function buildPushNotice() {
         if (p === "granted") {
           const ok = await subscribePushDevice();
           if (ok) { try { toast("Notificaciones activas 🔔"); } catch {} }
-          // Ya no hace falta el aviso: lo quitamos.
+          try { sessionStorage.setItem("aura_push_confirmed", "1"); } catch {}
+          // Ya no hace falta ningún aviso: quitamos este y cualquier banner
+          // flotante que hubiera quedado de una versión anterior.
           try { wrap.remove(); } catch {}
+          try { const f = document.getElementById("auraPushSoft"); if (f) f.remove(); } catch {}
           return;
         }
         if (p === "denied") { cta.disabled = false; try { showPushBlockedReminder(); } catch {} return; }
@@ -11070,6 +11073,10 @@ async function maybePromptForPush() {
         try { sessionStorage.setItem("aura_push_confirmed", "1"); } catch {}
         try { toast("Notificaciones activas 🔔"); } catch {}
       }
+      // V606 · Ya está concedido: retira cualquier aviso que siguiera visible
+      // (el banner flotante y/o el aviso persistente de Discover).
+      try { const f = document.getElementById("auraPushSoft"); if (f) f.remove(); } catch {}
+      try { document.querySelectorAll(".push-inline-notice").forEach(n => n.remove()); } catch {}
       return;
     }
 
@@ -11078,22 +11085,13 @@ async function maybePromptForPush() {
     if (!pushSupported()) return;
 
     // === Caso 2: permiso "default" o "denied" =========================
-    // El usuario NO tiene las notificaciones activas. Se lo recordamos de forma
-    // discreta UNA vez por sesión (cada vez que entra), sin ser insistentes si
-    // navega dentro de la misma sesión.
-    let alreadyReminded = false;
-    try { alreadyReminded = sessionStorage.getItem("aura_push_reminded") === "1"; } catch {}
-    if (alreadyReminded) return;
-    try { sessionStorage.setItem("aura_push_reminded", "1"); } catch {}
-
-    if (perm === "denied") {
-      // Bloqueado: no se puede relanzar el prompt nativo → guía para reactivar.
-      showPushBlockedReminder();
-      return;
-    }
-    // permission === "default" → soft-prompt propio (el prompt nativo solo
-    // se lanza si el usuario pulsa "Sí, avisadme").
-    showPushSoftPrompt("user");
+    // V606 · Para usuarios con sesión, el recordatorio es el aviso PERSISTENTE
+    // dentro de Discover (buildPushNotice), que aparece siempre que las
+    // notificaciones no están activas y ya trae su propio botón "Activar".
+    // Antes también se lanzaba aquí el banner flotante (showPushSoftPrompt),
+    // así que el usuario veía DOS avisos a la vez. Lo eliminamos: el aviso de
+    // Discover es la única fuente de verdad.
+    return;
   } catch {}
 }
 
