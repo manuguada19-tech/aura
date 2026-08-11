@@ -7295,6 +7295,35 @@ async function viewSettings(root){
     ]);
   }
 
+  // V594 · Campo del código de acceso superadmin (antes solo editable en BD).
+  // Se muestra oculto tipo contraseña, con 👁 para verlo y 🎲 para regenerar
+  // un código nuevo (formato AURA-XXXXXXXX). Se guarda con el submit normal.
+  function superadminCodeField() {
+    const inp = el("input", {
+      class: "input", name: "app.superadmin_access_code", type: "password",
+      value: s["app.superadmin_access_code"] || "", autocomplete: "off",
+      placeholder: "AURA-XXXXXXXX", style: "flex:1",
+    });
+    const eyeBtn = el("button", {
+      type: "button", class: "btn ghost", title: "Mostrar / ocultar",
+      onclick: () => { inp.type = inp.type === "password" ? "text" : "password"; },
+    }, "👁");
+    const genBtn = el("button", {
+      type: "button", class: "btn ghost", title: "Generar código nuevo",
+      onclick: () => {
+        const hex = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+          .map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+        inp.value = `AURA-${hex}`;
+        inp.type = "text";
+        toast("Código generado — pulsa Guardar para aplicarlo");
+      },
+    }, "🎲");
+    return el("label", { class: "field" }, [
+      el("span", {}, "Código de acceso superadmin (pantalla de pruebas privadas)"),
+      el("div", { style: "display:flex; gap:8px" }, [inp, eyeBtn, genBtn]),
+    ]);
+  }
+
   form.appendChild(group("Aplicación", [
     textField("app.name", "Nombre de la app"),
     textField("app.slogan", "Eslogan"),
@@ -7307,6 +7336,7 @@ async function viewSettings(root){
     toggleField("app.registrations_open", "Registros abiertos"),
     toggleField("app.access_locked", "Acceso solo para admins (modo pruebas)"),
     textField("app.access_admin_emails", "Emails admin permitidos (coma-separado)"),
+    superadminCodeField(),
     toggleField("app.email_verification_required", "Verificación email obligatoria"),
     toggleField("app.2fa_available", "2FA disponible"),
   ]));
