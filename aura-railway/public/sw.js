@@ -16,7 +16,7 @@
      usuario dejó la app instalada, se registre su última zona.
 */
 
-const CACHE_VERSION = "aura-v18";
+const CACHE_VERSION = "aura-v19";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
@@ -211,7 +211,29 @@ self.addEventListener("push", (event) => {
     },
     vibrate: [80, 30, 80],
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  event.waitUntil((async () => {
+    // Mostrar SIEMPRE la notificación del sistema (userVisibleOnly lo exige).
+    await self.registration.showNotification(title, options);
+    // Además, avisar a las pestañas abiertas para que la app muestre el aviso
+    // DENTRO (banner in-app), ya que si la app está en primer plano el usuario
+    // no debería tener que ir a la barra del sistema para saber qué llegó.
+    try {
+      const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      for (const c of list) {
+        try {
+          c.postMessage({
+            type: "push-received",
+            title,
+            body: options.body || "",
+            url: options.data.url || "/",
+            icon: options.icon || null,
+            image: data.image || null,
+            campaign_id: options.data.campaign_id || null,
+          });
+        } catch {}
+      }
+    } catch {}
+  })());
 });
 
 self.addEventListener("notificationclick", (event) => {

@@ -2206,6 +2206,18 @@ async function registerServiceWorker() {
           );
         } catch {}
       }
+      // V608 · Llegó una notificación push mientras la app está abierta: la
+      // mostramos DENTRO de la app (banner in-app), además de la del sistema.
+      if (data.type === "push-received") {
+        try { showInAppPushBanner(data); } catch {}
+      }
+      // El usuario pulsó una notificación del sistema → navegamos a su sección.
+      if (data.type === "push-click" && data.url) {
+        try {
+          const dl = parseDeepLink(new URL(data.url, location.origin).pathname, "");
+          if (dl && dl.tab && state.user) { applyDeepLink(dl); }
+        } catch {}
+      }
     });
 
     // Periodic Background Sync (solo Chrome/Android con PWA instalada)
@@ -11050,6 +11062,46 @@ function showPushBlockedReminder() {
   setTimeout(() => wrap.classList.add("show"), 30);
   // Se oculta solo tras unos segundos para no molestar.
   setTimeout(() => { try { wrap.classList.remove("show"); setTimeout(() => wrap.remove(), 300); } catch {} }, 12000);
+}
+
+// V608 · Banner IN-APP para notificaciones push recibidas mientras la app está
+// abierta. El Service Worker siempre muestra la notificación en la barra del
+// sistema, pero si el usuario está usando la app conviene mostrar el contenido
+// DENTRO (título + cuerpo), clicable para ir a la sección correspondiente. Así
+// no tiene que salir a la bandeja del sistema para saber qué le llegó.
+function showInAppPushBanner(msg) {
+  try {
+    const m = msg || {};
+    const title = m.title || "Aura";
+    const body = m.body || "";
+    const url = m.url || "/";
+    // Quitamos cualquier banner in-app previo para no apilarlos.
+    try { const old = document.getElementById("auraPushInApp"); if (old) old.remove(); } catch {}
+    const wrap = el("div", { id: "auraPushInApp", class: "push-inapp" }, [
+      el("div", { class: "push-inapp-ico" }, "🔔"),
+      el("div", { class: "push-inapp-body" }, [
+        el("strong", {}, title),
+        body ? el("small", {}, body) : null,
+      ]),
+      el("button", {
+        class: "push-inapp-close",
+        "aria-label": "Cerrar",
+        onclick: (e) => { e.stopPropagation(); try { wrap.classList.remove("show"); setTimeout(() => wrap.remove(), 250); } catch {} },
+      }, "✕"),
+    ]);
+    // Al tocar el banner navegamos a la URL de la notificación (deep-link).
+    wrap.addEventListener("click", () => {
+      try { wrap.classList.remove("show"); setTimeout(() => wrap.remove(), 250); } catch {}
+      try {
+        const dl = parseDeepLink(new URL(url, location.origin).pathname, "");
+        if (dl && dl.tab && state.user) { applyDeepLink(dl); return; }
+      } catch {}
+    });
+    document.body.appendChild(wrap);
+    setTimeout(() => wrap.classList.add("show"), 30);
+    // Se cierra solo tras unos segundos.
+    setTimeout(() => { try { wrap.classList.remove("show"); setTimeout(() => wrap.remove(), 250); } catch {} }, 7000);
+  } catch {}
 }
 
 // Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
