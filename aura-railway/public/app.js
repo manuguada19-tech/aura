@@ -1909,6 +1909,40 @@ const datingApi = {
       return await r.json();
     } catch { return null; }
   },
+  // ---- Denunciar / Bloquear (función 3) ----
+  async block(targetId, reason) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/block", { method: "POST", headers: this.headers(), body: JSON.stringify({ target_id: targetId, reason }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async unblock(targetId) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/unblock", { method: "POST", headers: this.headers(), body: JSON.stringify({ target_id: targetId }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async blocks() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/blocks", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      const rows = await r.json();
+      return Array.isArray(rows) ? rows.map(mapApiUser) : null;
+    } catch { return null; }
+  },
+  async report(targetId, reason, details) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/report", { method: "POST", headers: this.headers(), body: JSON.stringify({ target_id: targetId, reason, details }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
 };
 
 /* ============================================================
@@ -8470,19 +8504,52 @@ function openChatMenu(u) {
       el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); openProfile(u); } }, "Ver perfil"),
       el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); toast("Silenciado"); } }, "Silenciar notificaciones"),
       el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); openReport(u); } }, "Denunciar"),
-      el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); toast("Usuario bloqueado"); routeTab("chats"); } }, "Bloquear"),
+      el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); confirmBlockUser(u); } }, "Bloquear"),
       el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
     ]),
   ]);
   modal.open(sheet);
 }
+// Bloquea a un usuario tras confirmación. Llama a la API real; si no hay
+// sesión/red, cae con elegancia mostrando el aviso igualmente.
+function confirmBlockUser(u) {
+  const sheet = el("div", {}, [
+    el("div", { class: "sheet-title" }, "¿Bloquear a " + u.name + "?"),
+    el("div", { class: "sheet-body" }, "No volveréis a veros en la app ni podréis escribiros. Puedes deshacerlo desde Ajustes → Usuarios bloqueados."),
+    el("div", { class: "sheet-actions" }, [
+      el("button", { class: "btn btn-danger btn-block", onclick: async () => {
+        modal.close();
+        const res = await datingApi.block(u.id);
+        toast(res ? (u.name + " bloqueado") : "Usuario bloqueado");
+        routeTab("chats");
+      } }, "Bloquear"),
+      el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
+    ]),
+  ]);
+  modal.open(sheet);
+}
+
 function openReport(u) {
-  const reasons = ["Perfil falso","Contenido inapropiado","Menor de edad","Spam / publicidad","Acoso","Comportamiento ofensivo","Estafa","Otro"];
+  // [etiqueta visible, código enviado al backend]
+  const reasons = [
+    ["Perfil falso", "fake_profile"],
+    ["Contenido inapropiado", "inappropriate"],
+    ["Menor de edad", "minor"],
+    ["Spam / publicidad", "spam"],
+    ["Acoso", "harassment"],
+    ["Comportamiento ofensivo", "offensive"],
+    ["Estafa", "scam"],
+    ["Otro", "other"],
+  ];
   const wrap = el("div", {}, [
     el("div", { class: "sheet-title" }, "Denunciar a " + u.name),
     el("div", { class: "sheet-body" }, "Cuéntanos qué está pasando. Toda la información es confidencial."),
-    el("div", { class: "reason-list" }, reasons.map(r => {
-      const b = el("button", { class: "reason-item", onclick: () => { modal.close(); toast("Denuncia enviada. Gracias."); } }, r);
+    el("div", { class: "reason-list" }, reasons.map(([label, code]) => {
+      const b = el("button", { class: "reason-item", onclick: async () => {
+        modal.close();
+        await datingApi.report(u.id, code);
+        toast("Denuncia enviada. Gracias.");
+      } }, label);
       return b;
     })),
   ]);
@@ -9468,26 +9535,43 @@ function renderTwoFactorQR(container, otpauth) {
 function screenBlockedUsers(root) {
   meSubHeader(root, T("content.me.item_blocked") || "Usuarios bloqueados");
   const wrap = el("div", { class: "info-wrap" });
-  const blocked = [
-    { name: "Álex", when: T("content.me.blocked_when") || "Bloqueado hace 3 días" },
-    { name: "Carla", when: T("content.me.blocked_when2") || "Bloqueada hace 1 semana" },
-  ];
-  if (!blocked.length) {
+  root.appendChild(wrap);
+  hideApp();
+
+  const renderEmpty = () => {
+    wrap.innerHTML = "";
     wrap.appendChild(el("div", { class: "empty" }, [
       el("h3", {}, T("content.me.blocked_empty_h") || "Sin usuarios bloqueados"),
       el("p", {}, T("content.me.blocked_empty_p") || "Cuando bloquees a alguien aparecerá aquí."),
     ]));
-  } else {
-    blocked.forEach((b, i) => {
-      wrap.appendChild(el("div", { class: "chat-item", style: "background:var(--surface);border:1px solid var(--card-border);border-radius:12px;padding:10px;margin-bottom:8px" }, [
+  };
+
+  const renderList = (list) => {
+    wrap.innerHTML = "";
+    if (!list.length) { renderEmpty(); return; }
+    list.forEach((b) => {
+      const row = el("div", { class: "chat-item", style: "background:var(--surface);border:1px solid var(--card-border);border-radius:12px;padding:10px;margin-bottom:8px" }, [
         el("div", { class: "avatar", style: `background:var(--surface-2);display:grid;place-items:center;font-size:22px` }, "🚫"),
-        el("div", { class: "txt" }, [ el("strong", {}, b.name), el("small", {}, b.when) ]),
-        el("button", { class: "btn btn-sm btn-outline", type: "button", onclick: () => toast(T("content.me.blocked_unblock_toast") || `${b.name} desbloqueado`) }, T("content.me.blocked_unblock") || "Desbloquear"),
-      ]));
+        el("div", { class: "txt" }, [ el("strong", {}, b.name || "Usuario"), el("small", {}, b.city || "") ]),
+        el("button", { class: "btn btn-sm btn-outline", type: "button", onclick: async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true;
+          await datingApi.unblock(b.id);
+          toast(T("content.me.blocked_unblock_toast") || `${b.name} desbloqueado`);
+          row.remove();
+          if (!wrap.querySelector(".chat-item")) renderEmpty();
+        } }, T("content.me.blocked_unblock") || "Desbloquear"),
+      ]);
+      wrap.appendChild(row);
     });
-  }
-  root.appendChild(wrap);
-  hideApp();
+  };
+
+  // Estado de carga mientras llega la lista real desde la API.
+  wrap.appendChild(el("div", { class: "empty" }, [ el("p", {}, T("common.loading") || "Cargando…") ]));
+  datingApi.blocks().then((list) => {
+    if (Array.isArray(list)) renderList(list);
+    else renderEmpty(); // sin sesión/red → vacío en lugar de datos falsos
+  }).catch(() => renderEmpty());
 }
 
 /* — Exportar datos — */

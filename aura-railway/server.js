@@ -5932,6 +5932,114 @@ app.post("/api/my/favorites", wrap(async (req, res) => {
   res.json({ ok: true, favorite: true });
 }));
 
+/* ============================================================
+   Denunciar / Bloquear  (función 3)
+   ------------------------------------------------------------
+   - blocks(user_id=quien bloquea, target_id=bloqueado): un usuario
+     puede bloquear a otro. El feed (/api/discover) y "mis likes"
+     ya excluyen bloqueos en ambos sentidos.
+   - reports(reporter_id, target_id, reason, details): denuncias
+     que llegan al panel de moderación. Un usuario no puede
+     denunciar a la misma persona por el mismo motivo dos veces
+     en 24 h (anti-spam suave).
+   Todo es aditivo: no altera datos existentes de otros usuarios.
+   ============================================================ */
+
+// Razones de denuncia válidas (deben coincidir con el frontend).
+const REPORT_REASONS = new Set([
+  "fake_profile", "inappropriate", "minor", "spam",
+  "harassment", "offensive", "scam", "other",
+]);
+
+// GET /api/my/blocks → lista de usuarios que YO he bloqueado
+app.get("/api/my/blocks", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, b.reason, b.created_at
+       FROM blocks b
+       JOIN users u ON u.id = b.target_id
+      WHERE b.user_id = ?
+      ORDER BY b.created_at DESC LIMIT 200`,
+    [me]
+  );
+  res.json(rows);
+}));
+
+// POST /api/my/block  { target_id, reason? }  → bloquea a un usuario
+app.post("/api/my/block", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  const [[peer]] = await pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [target]);
+  if (!peer) return res.status(404).json({ error: "target_not_found" });
+  const reason = (req.body?.reason ? String(req.body.reason) : "").slice(0, 200) || null;
+  await pool.execute(
+    "INSERT INTO blocks (user_id, target_id, reason) VALUES (?,?,?) " +
+    "ON DUPLICATE KEY UPDATE reason=VALUES(reason), created_at=NOW()",
+    [me, target, reason]
+  );
+  // Cierra cualquier conversación entre ambos (orden canónico a<b).
+  const a = Math.min(me, target), b = Math.max(me, target);
+  try {
+    await pool.execute(
+      "UPDATE conversations SET status='blocked' WHERE user_a=? AND user_b=?",
+      [a, b]
+    );
+  } catch {}
+  res.json({ ok: true, blocked: true });
+}));
+
+// POST /api/my/unblock  { target_id }  → deshace un bloqueo mío
+app.post("/api/my/unblock", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target) return res.status(400).json({ error: "invalid_target" });
+  await pool.execute("DELETE FROM blocks WHERE user_id=? AND target_id=?", [me, target]);
+  // Reabre la conversación sólo si el otro tampoco me tiene bloqueado.
+  const a = Math.min(me, target), b = Math.max(me, target);
+  const [[stillBlocked]] = await pool.query(
+    "SELECT 1 AS x FROM blocks WHERE (user_id=? AND target_id=?) OR (user_id=? AND target_id=?) LIMIT 1",
+    [me, target, target, me]
+  );
+  if (!stillBlocked) {
+    try {
+      await pool.execute(
+        "UPDATE conversations SET status='open' WHERE user_a=? AND user_b=? AND status='blocked'",
+        [a, b]
+      );
+    } catch {}
+  }
+  res.json({ ok: true, blocked: false });
+}));
+
+// POST /api/my/report  { target_id, reason, details? }  → denuncia a moderación
+app.post("/api/my/report", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  const reason = String(req.body?.reason || "other");
+  if (!REPORT_REASONS.has(reason)) return res.status(400).json({ error: "invalid_reason" });
+  const [[peer]] = await pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [target]);
+  if (!peer) return res.status(404).json({ error: "target_not_found" });
+  const details = (req.body?.details ? String(req.body.details) : "").slice(0, 1000) || null;
+  // Anti-spam suave: mismo reporter+target+motivo en las últimas 24 h → no duplica.
+  const [[dup]] = await pool.query(
+    "SELECT id FROM reports WHERE reporter_id=? AND target_id=? AND reason=? AND created_at > NOW()-INTERVAL 1 DAY LIMIT 1",
+    [me, target, reason]
+  );
+  if (!dup) {
+    await pool.execute(
+      "INSERT INTO reports (reporter_id, target_id, reason, details) VALUES (?,?,?,?)",
+      [me, target, reason, details]
+    );
+  }
+  res.json({ ok: true, reported: true });
+}));
+
 /* ---- Conversation demo seed (idempotent) ---- */
 async function seedConversations() {
   if (await isDemoPurged()) return;
@@ -8092,7 +8200,7 @@ async function getUserFullContext(uid) {
         WHERE m.sender_id=? AND m.created_at > NOW()-INTERVAL 1 DAY`, [uid]),
       2500, null, "messages_24h"),
     _withTimeout(
-      pool.query(`SELECT COUNT(*) c FROM reports WHERE reported_user_id=?`, [uid]),
+      pool.query(`SELECT COUNT(*) c FROM reports WHERE target_id=?`, [uid]),
       2500, null, "reports_against"),
     _withTimeout(
       pool.query(`SELECT COUNT(*) c FROM activity_stream WHERE user_id=? AND event='login' AND created_at > NOW()-INTERVAL 1 DAY`, [uid]),
@@ -8301,8 +8409,8 @@ app.post("/api/admin/chats/:id/moderate", wrap(async (req, res) => {
       await pool.execute("DELETE FROM conversations WHERE id=?", [cid]);
       await logActivity("admin", `Chat #${cid} eliminado por ${admin} — ${reasonLabel}`);
     } else if (action === "block_pair") {
-      try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_a, user_b, reasonLabel]); } catch {}
-      try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_b, user_a, reasonLabel]); } catch {}
+      try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_a, user_b, reasonLabel]); } catch {}
+      try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_b, user_a, reasonLabel]); } catch {}
       await pool.execute("UPDATE conversations SET status='blocked' WHERE id=?", [cid]);
       await logActivity("admin", `Chat #${cid}: usuarios ${user_a}<->${user_b} bloqueados por ${admin} — ${reasonLabel}`);
     } else if (action === "restrict") {
@@ -8412,8 +8520,8 @@ app.post("/api/admin/chats/:id/block-pair", wrap(async (req, res) => {
   const [c] = await pool.query("SELECT user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
   if (!c.length) return res.status(404).json({ error: "not_found" });
   const { user_a, user_b } = c[0];
-  try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_a, user_b, "moderacion admin"]); } catch {}
-  try { await pool.execute("INSERT IGNORE INTO blocks (blocker_id, blocked_id, reason) VALUES (?,?,?)", [user_b, user_a, "moderacion admin"]); } catch {}
+  try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_a, user_b, "moderacion admin"]); } catch {}
+  try { await pool.execute("INSERT IGNORE INTO blocks (user_id, target_id, reason) VALUES (?,?,?)", [user_b, user_a, "moderacion admin"]); } catch {}
   await pool.execute("UPDATE conversations SET status='blocked' WHERE id=?", [cid]);
   await logActivity("admin", `Chat #${cid}: usuarios ${user_a} <-> ${user_b} bloqueados`);
   res.json({ ok: true });
@@ -8424,7 +8532,7 @@ app.post("/api/admin/chats/:id/unblock-pair", wrap(async (req, res) => {
   const [c] = await pool.query("SELECT user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
   if (!c.length) return res.status(404).json({ error: "not_found" });
   const { user_a, user_b } = c[0];
-  try { await pool.execute("DELETE FROM blocks WHERE (blocker_id=? AND blocked_id=?) OR (blocker_id=? AND blocked_id=?)", [user_a, user_b, user_b, user_a]); } catch {}
+  try { await pool.execute("DELETE FROM blocks WHERE (user_id=? AND target_id=?) OR (user_id=? AND target_id=?)", [user_a, user_b, user_b, user_a]); } catch {}
   await pool.execute("UPDATE conversations SET status='open' WHERE id=?", [cid]);
   await logActivity("admin", `Chat #${cid}: prohibicion levantada`);
   res.json({ ok: true });
