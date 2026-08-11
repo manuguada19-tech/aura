@@ -1809,6 +1809,109 @@ const chatApi = {
 };
 
 /* ============================================================
+   Dating API helper  (Descubrir / Like / Match / Favoritos)
+   ------------------------------------------------------------
+   Conecta el flujo de citas con la BD real:
+     GET  /api/discover        → perfiles reales (aplica filtros)
+     POST /api/my/like         → like/super/pass + match recíproco
+     GET  /api/my/likes        → quién me ha dado like
+     GET  /api/my/favorites    → mis favoritos (persistentes)
+     POST /api/my/favorites    → alterna favorito
+     PUT  /api/my/filters      → guarda filtros de búsqueda
+   Todos los métodos devuelven null si no hay sesión o falla la
+   red, para que la UI pueda caer con elegancia al modo demo.
+   ============================================================ */
+// Convierte una fila de usuario de la BD al objeto que espera la UI.
+function mapApiUser(row) {
+  if (!row) return null;
+  const photo = row.photo_url || row.photo || `https://i.pravatar.cc/600?u=${row.id}`;
+  const photos = Array.isArray(row.photos) && row.photos.length ? row.photos : [photo];
+  const u = {
+    id: row.id,
+    name: row.name || "Alguien",
+    age: (row.age != null ? row.age : null),
+    gender: row.gender || "",
+    orientation: row.orientation || "",
+    city: row.city || "",
+    // La distancia real depende del GPS (aún no persistido) → null por ahora.
+    distance: (typeof row.distance === "number" ? row.distance : null),
+    job: row.job || "",
+    bio: row.bio || "",
+    interests: Array.isArray(row.interests) ? row.interests : [],
+    verified: !!row.verified,
+    online: !!row.online,
+    height: row.height || null,
+    weight: row.weight || null,
+    photos, photo,
+    _real: true,
+  };
+  if ("is_match" in row) u.is_match = !!row.is_match;
+  if (row.type) u.like_type = row.type;
+  return u;
+}
+
+const datingApi = {
+  headers() {
+    const h = { "Content-Type": "application/json" };
+    if (state.user && state.user.id) h["X-User-Id"] = String(state.user.id);
+    return h;
+  },
+  _authed() { return !!(state.user && state.user.id); },
+  async discover(zone, limit = 12) {
+    if (!this._authed()) return null;
+    try {
+      const z = zone || state.zone || "hetero";
+      const r = await fetch(`/api/discover?zone=${encodeURIComponent(z)}&limit=${limit}`, { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      const rows = await r.json();
+      return Array.isArray(rows) ? rows.map(mapApiUser) : null;
+    } catch { return null; }
+  },
+  async react(targetId, type) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/like", { method: "POST", headers: this.headers(), body: JSON.stringify({ target_id: targetId, type }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async toggleFavorite(targetId) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/favorites", { method: "POST", headers: this.headers(), body: JSON.stringify({ target_id: targetId }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async likesReceived() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/likes", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      const rows = await r.json();
+      return Array.isArray(rows) ? rows.map(mapApiUser) : null;
+    } catch { return null; }
+  },
+  async favorites() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/favorites", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      const rows = await r.json();
+      return Array.isArray(rows) ? rows.map(mapApiUser) : null;
+    } catch { return null; }
+  },
+  async saveFilters(filters) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/filters", { method: "PUT", headers: this.headers(), body: JSON.stringify({ filters }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+};
+
+/* ============================================================
    GPS opcional con consentimiento RGPD
    ============================================================
    - Muestra un modal profesional la 1ª vez tras login pidiendo
@@ -6330,11 +6433,37 @@ function openPlanLimitModal(hiddenCount) {
 
 function buildSwipeStack() {
   const stack = el("div", { class: "discover-stack", id: "swipeStack" });
-  const users = generateUsers(6, { zone: state.zone });
-  stack._users = users;
+  // Arranca vacío con un spinner; los perfiles reales llegan de /api/discover.
+  stack._users = [];
   stack._index = 0;
-  renderStack(stack);
+  stack.appendChild(el("div", { class: "swipe-card-stack-hint", html: `
+    <div style="text-align:center;padding:30px">
+      <div style="font-size:40px">💫</div>
+      <b style="font-size:15px">Buscando personas cerca…</b>
+    </div>
+  `}));
+  loadDiscoverInto(stack);
   return stack;
+}
+
+// Carga perfiles reales en el stack. Si no hay sesión o falla la API,
+// cae a perfiles demo para no dejar la pantalla vacía.
+async function loadDiscoverInto(stack, append = false) {
+  let users = await datingApi.discover(state.zone, 12);
+  if (!users || users.length === 0) {
+    // Fallback: sin usuarios reales disponibles → demo (modo pruebas/anónimo)
+    users = (users && users.length === 0 && datingApi._authed())
+      ? [] // autenticado pero sin más perfiles reales → dejar vacío (empty state)
+      : generateUsers(6, { zone: state.zone });
+  }
+  if (append) {
+    stack._users = stack._users.concat(users);
+  } else {
+    stack._users = users;
+    stack._index = 0;
+  }
+  // Sólo re-renderiza si el stack sigue en el DOM (el usuario no ha salido).
+  if (stack.isConnected) renderStack(stack);
 }
 
 function renderStack(stack) {
@@ -6350,7 +6479,7 @@ function renderStack(stack) {
       </div>
     `}));
     const btn = el("button", { class: "btn btn-outline btn-sm", style: "position:absolute;bottom:24px;left:50%;transform:translateX(-50%)",
-      onclick: () => { stack._users = generateUsers(6, { zone: state.zone }); stack._index = 0; renderStack(stack); }}, "Cargar más");
+      onclick: () => { loadDiscoverInto(stack, false); }}, "Cargar más");
     stack.appendChild(btn);
     return;
   }
@@ -6375,17 +6504,23 @@ function buildSwipeCard(u, depth = 0) {
   card.appendChild(indicators);
   card.appendChild(el("div", { class: "stamp like" }, "LIKE"));
   card.appendChild(el("div", { class: "stamp nope" }, "NOPE"));
-  card.appendChild(el("div", { class: "swipe-card-body" }, [
+  // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
+  // profesión; se omiten con elegancia en lugar de mostrar "null".
+  const locText = [u.city || "", (u.distance != null ? `${u.distance} km` : "")].filter(Boolean).join(" · ");
+  const bodyChildren = [
     el("h3", {}, [
-      `${u.name}, ${u.age}`,
+      `${u.name}${u.age != null ? ", " + u.age : ""}`,
       u.verified ? el("span", { class: "verified", title: "Verificado" }, "✓") : null,
     ]),
     el("div", { class: "meta" }, [
-      el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/>`), ` ${u.city} · ${u.distance} km` ]),
-      el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 3l2.9 6.1L21 10l-4.7 4.4L17.8 21 12 17.8 6.2 21l1.5-6.6L3 10l6.1-.9z"/>`), u.job ]),
+      locText ? el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/>`), ` ${locText}` ]) : null,
+      u.job ? el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 3l2.9 6.1L21 10l-4.7 4.4L17.8 21 12 17.8 6.2 21l1.5-6.6L3 10l6.1-.9z"/>`), u.job ]) : null,
     ]),
-    el("div", { class: "tags" }, u.interests.slice(0,3).map(t => el("span", { class: "tag" }, t))),
-  ]));
+  ];
+  if (u.interests && u.interests.length) {
+    bodyChildren.push(el("div", { class: "tags" }, u.interests.slice(0,3).map(t => el("span", { class: "tag" }, t))));
+  }
+  card.appendChild(el("div", { class: "swipe-card-body" }, bodyChildren));
   // Info button — opens the full profile detail
   const infoBtn = el("button", {
     class: "swipe-info-btn",
@@ -6465,13 +6600,38 @@ function fly(card, dir, stack) {
   card.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
   card.style.opacity = "0";
   const currentUser = stack._users[stack._index];
+  // Registra la reacción en el servidor (like/super/pass) para usuarios reales.
+  const type = dir === "up" ? "super" : dir === "right" ? "like" : "pass";
+  reactToUser(currentUser, type, dir);
   setTimeout(() => {
     card.remove();
     stack._index++;
-    renderStack(stack);
-    if (dir === "right" && Math.random() > 0.55) triggerMatch(currentUser);
-    else if (dir === "up") toast(`✦ Super Like enviado a ${currentUser.name}`);
+    // Cuando quedan pocas cartas, precarga más perfiles reales.
+    if (currentUser && currentUser._real && stack._index >= stack._users.length - 1) {
+      loadDiscoverInto(stack, true);
+    } else {
+      renderStack(stack);
+    }
   }, 320);
+}
+
+// Envía la reacción al backend y resuelve el match (o el aviso de super like).
+// Para usuarios demo (sin id numérico) conserva el comportamiento simulado.
+async function reactToUser(user, type, dir) {
+  if (!user) return;
+  const isReal = user._real && typeof user.id === "number" && Number.isFinite(user.id);
+  if (!isReal) {
+    // Modo demo (anónimo / sin sesión): mantiene la experiencia visual.
+    if (dir === "right" && Math.random() > 0.55) triggerMatch(user);
+    else if (dir === "up") toast(`✦ Super Like enviado a ${user.name}`);
+    return;
+  }
+  if (dir === "up") toast(`✦ Super Like enviado a ${user.name}`);
+  const res = await datingApi.react(user.id, type);
+  if (res && res.match) {
+    // Match real → abre el chat sobre la conversación creada por el servidor.
+    triggerMatch(user, res.conversation_id);
+  }
 }
 
 function swipeCurrent(dir) {
@@ -6482,17 +6642,18 @@ function swipeCurrent(dir) {
   fly(card, dir, stack);
 }
 
-function triggerMatch(user) {
+function triggerMatch(user, conversationId = null) {
+  const chatOpts = conversationId ? { conversationId } : {};
   const match = el("div", { class: "match-screen" });
   match.appendChild(el("p", { style: "font-size:16px;font-weight:700;letter-spacing:.05em;opacity:.9" }, "ES UN MATCH"));
   match.appendChild(el("h2", {}, `${user.name} y tú`));
   match.appendChild(el("p", {}, "Ya podéis chatear."));
   match.appendChild(el("div", { class: "match-avatars" }, [
-    el("div", { class: "a", style: `background-image:url('https://i.pravatar.cc/300?img=32')` }),
+    el("div", { class: "a", style: `background-image:url('${(state.user && state.user.photo) || "https://i.pravatar.cc/300?img=32"}')` }),
     el("div", { class: "a", style: `background-image:url('${user.photo}')` }),
   ]));
   match.appendChild(el("div", { class: "match-actions" }, [
-    el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true); } }, "Enviar mensaje"),
+    el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, "Enviar mensaje"),
     el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, "Seguir descubriendo"),
   ]));
   viewport.appendChild(match);
@@ -6515,13 +6676,26 @@ function screenSearch(root) {
   ]));
   const grid = el("div", { class: "results-grid", id: "resultsGrid" });
   root.appendChild(grid);
+  // Caché de la última búsqueda para poder filtrar en cliente sin re-pedir.
+  grid._pool = null;
   populateResults(grid);
 }
-function populateResults(grid, filter = "") {
+async function populateResults(grid, filter = "") {
+  // Carga (una vez) el conjunto de perfiles: reales si hay sesión, demo si no.
+  if (!grid._pool) {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Buscando…</h3></div>`;
+    let users = await datingApi.discover(state.zone, 30);
+    if (!users) users = generateUsers(14, { zone: state.zone });
+    grid._pool = users;
+  }
+  renderResults(grid, filter);
+}
+function renderResults(grid, filter = "") {
   grid.innerHTML = "";
-  const users = generateUsers(14, { zone: state.zone });
-  const filtered = filter
-    ? users.filter(u => u.name.toLowerCase().includes(filter.toLowerCase()) || u.city.toLowerCase().includes(filter.toLowerCase()) || u.job.toLowerCase().includes(filter.toLowerCase()))
+  const users = grid._pool || [];
+  const q = (filter || "").toLowerCase();
+  const filtered = q
+    ? users.filter(u => (u.name || "").toLowerCase().includes(q) || (u.city || "").toLowerCase().includes(q) || (u.job || "").toLowerCase().includes(q))
     : users;
   if (filtered.length === 0) {
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Prueba a ampliar los filtros o cambiar el término.</p></div>`;
@@ -6529,24 +6703,40 @@ function populateResults(grid, filter = "") {
   }
   filtered.forEach(u => {
     const isFav = state.favorites.has(u.id);
+    const meta = [u.city || "", (u.distance != null ? `${u.distance} km` : (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
     const card = el("div", { class: "result-card", style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
       el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
         el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` })
       ]),
       el("div", { class: "info" }, [
-        el("strong", {}, `${u.name}, ${u.age}`),
-        el("small", {}, `${u.city} · ${u.distance} km`),
+        el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+        el("small", {}, meta),
       ]),
     ]);
     card.addEventListener("click", () => openProfile(u));
     grid.appendChild(card);
   });
 }
-function filterSearch(v) { populateResults($("#resultsGrid"), v); }
+function filterSearch(v) {
+  const grid = $("#resultsGrid");
+  if (grid) renderResults(grid, v);
+}
 function toggleFav(u, btn) {
-  if (state.favorites.has(u.id)) { state.favorites.delete(u.id); btn.classList.remove("on"); toast("Eliminado de favoritos"); }
-  else { state.favorites.add(u.id); btn.classList.add("on"); toast("Añadido a favoritos ♥"); }
+  const isReal = u && u._real && typeof u.id === "number" && Number.isFinite(u.id);
+  const wasFav = state.favorites.has(u.id);
+  // Optimista: actualiza la UI y el estado local al instante.
+  if (wasFav) { state.favorites.delete(u.id); if (btn) btn.classList.remove("on"); }
+  else { state.favorites.add(u.id); if (btn) btn.classList.add("on"); }
+  toast(wasFav ? "Eliminado de favoritos" : "Añadido a favoritos ♥");
+  if (!isReal) return; // demo/anónimo → sólo en memoria
+  // Persiste en el servidor; si falla o el estado difiere, reconcilia.
+  datingApi.toggleFavorite(u.id).then((res) => {
+    if (!res) return; // sin sesión / error de red → conserva el optimista
+    const nowFav = !!res.favorite;
+    if (nowFav) state.favorites.add(u.id); else state.favorites.delete(u.id);
+    if (btn) btn.classList.toggle("on", nowFav);
+  });
 }
 
 /* ---- Filters modal ---- */
@@ -6627,8 +6817,26 @@ function openFilters() {
       state.filters.ageMin = +ageMin.value;
       state.filters.ageMax = +ageMax.value;
       state.filters.distance = +dist.value;
+      // Lee los géneros seleccionados (chips activos) del grupo de género.
+      const selected = $$(".chip.selectable.active", grpGender).map(c => c.textContent.trim());
+      state.filters.genders = selected.length ? selected : ["Todos"];
+      // El backend aplica un único valor de género (o "todos"). Enviamos el
+      // primero seleccionado que no sea "Todos"; la etiqueta coincide con el
+      // valor almacenado en el registro (p.ej. "Mujer", "Hombre").
+      const genderVal = selected.find(g => g !== "Todos") || "todos";
+      // Persiste los filtros básicos en el servidor (si hay sesión).
+      datingApi.saveFilters({
+        age_min: state.filters.ageMin,
+        age_max: state.filters.ageMax,
+        distance_km: state.filters.distance,
+        gender: genderVal,
+      });
       modal.close(); toast("Filtros aplicados");
-      if (state.currentTab === "search") populateResults($("#resultsGrid"));
+      // Invalida las cachés para que la próxima carga use los nuevos filtros.
+      const grid = $("#resultsGrid");
+      if (grid) { grid._pool = null; populateResults(grid); }
+      const stack = $("#swipeStack");
+      if (stack) loadDiscoverInto(stack, false);
     }}, "Aplicar filtros"),
     el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
   ]));
@@ -6652,13 +6860,18 @@ function screenLikes(root) {
   ]);
   root.appendChild(tabs);
   const grid = el("div", { class: "likes-grid" });
-  const users = generateUsers(8, { zone: state.zone });
-  users.forEach((u, i) => {
-    const blurred = i >= 2; // Premium tease
+  root.appendChild(grid);
+
+  const premiumCta = el("div", { class: "pad" }, [
+    el("button", { class: "btn btn-brand btn-block", onclick: () => render(screenSubscriptions) }, "Actualiza a Premium para ver todos"),
+  ]);
+  root.appendChild(premiumCta);
+
+  // Construye una tarjeta de "Te dieron like" (con tease Premium si está bloqueada).
+  function likeCard(u, blurred) {
     const card = el("div", { class: "like-card" + (blurred ? " blurred" : ""), style: `background-image:url('${u.photo}')` });
     let wrap;
     if (blurred) {
-      // Perfil aún bloqueado — solo puede abrir el modal de Premium
       wrap = el("div", { style: "position:relative", class: "like-locked-wrap" }, [
         card,
         el("button", {
@@ -6670,80 +6883,141 @@ function screenLikes(root) {
           el("div", { class: "lock", html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M12 2a5 5 0 015 5v3h1a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2v-9a2 2 0 012-2h1V7a5 5 0 015-5zm-3 8h6V7a3 3 0 10-6 0z"/></svg>` }),
         ]),
       ]);
-    } else {
-      // Perfil desbloqueado — clic abre el perfil completo para decidir like/pass
-      wrap = el("button", {
+      return wrap;
+    }
+    const isReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
+    wrap = el("button", {
+      class: "like-unlocked-wrap",
+      type: "button",
+      "aria-label": `Ver perfil de ${u.name}`,
+      onclick: () => openProfileDetail(u, { backTo: "likes" }),
+    }, [
+      card,
+      el("div", { class: "info" }, [
+        el("strong", { style: "color:white;position:absolute;left:10px;bottom:36px;z-index:2" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+        el("small", { style: "color:rgba(255,255,255,.9);position:absolute;left:10px;bottom:18px;z-index:2;font-size:11px" }, u.is_match ? "Ya sois match ✨" : "Toca para ver perfil"),
+        el("div", { class: "like-quick-actions" }, [
+          el("button", {
+            class: "lqa lqa-pass",
+            type: "button",
+            "aria-label": "Descartar",
+            onclick: (ev) => {
+              ev.stopPropagation();
+              toast(`Descartaste a ${u.name}`);
+              if (isReal) datingApi.react(u.id, "pass");
+              wrap.style.transition = "transform .2s, opacity .2s";
+              wrap.style.transform = "scale(.9)";
+              wrap.style.opacity = "0";
+              setTimeout(() => wrap.remove(), 200);
+            },
+            html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`,
+          }),
+          el("button", {
+            class: "lqa lqa-like",
+            type: "button",
+            "aria-label": "Me gusta",
+            onclick: async (ev) => {
+              ev.stopPropagation();
+              if (isReal) {
+                // Ya me dieron like → mi like cierra el match. El servidor
+                // devuelve la conversación creada para abrir el chat real.
+                const res = await datingApi.react(u.id, "like");
+                wrap.style.transition = "transform .2s, opacity .2s";
+                wrap.style.transform = "scale(.9)";
+                wrap.style.opacity = "0";
+                if (res && res.match) {
+                  toast(`¡Match con ${u.name}! Ya podéis chatear`);
+                  setTimeout(() => { wrap.remove(); openChat(u, true, { conversationId: res.conversation_id }); }, 260);
+                } else {
+                  toast(`Le diste like a ${u.name}`);
+                  setTimeout(() => wrap.remove(), 200);
+                }
+                return;
+              }
+              // Demo/anónimo
+              toast(`¡Match con ${u.name}! Ya podéis chatear`);
+              wrap.style.transition = "transform .2s, opacity .2s";
+              wrap.style.transform = "scale(.9)";
+              wrap.style.opacity = "0";
+              setTimeout(() => { wrap.remove(); openChat(u, true); }, 260);
+            },
+            html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`,
+          }),
+        ]),
+      ]),
+    ]);
+    return wrap;
+  }
+
+  async function renderLikesTab() {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Cargando…</h3></div>`;
+    premiumCta.style.display = "";
+    let users = await datingApi.likesReceived();
+    const isReal = !!users;
+    if (!users) users = generateUsers(8, { zone: state.zone });
+    grid.innerHTML = "";
+    if (users.length === 0) {
+      grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Aún no tienes likes</h3><p>Sigue descubriendo perfiles: cuando alguien te dé like aparecerá aquí.</p></div>`;
+      premiumCta.style.display = "none";
+      return;
+    }
+    // Tease Premium: para usuarios Free, sólo se ven los 2 primeros.
+    const plan = (state.user && state.user.plan) || "free";
+    const unlockedAll = plan !== "free";
+    users.forEach((u, i) => {
+      const blurred = !unlockedAll && i >= 2;
+      grid.appendChild(likeCard(u, blurred));
+    });
+    premiumCta.style.display = unlockedAll ? "none" : "";
+  }
+
+  async function renderFavoritesTab() {
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Cargando…</h3></div>`;
+    premiumCta.style.display = "none";
+    let favs = await datingApi.favorites();
+    if (!favs) {
+      // Sin sesión → usa el conjunto en memoria (modo demo)
+      grid.innerHTML = "";
+      if (state.favorites.size === 0) {
+        grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
+        return;
+      }
+      generateUsers(state.favorites.size).forEach(u => {
+        const c = el("div", { class: "like-card", style: `background-image:url('${u.photo}')` });
+        grid.appendChild(el("div", { style: "position:relative" }, [ c,
+          el("strong", { style: "color:white;position:absolute;left:10px;bottom:10px;z-index:2" }, `${u.name}, ${u.age}`) ]));
+      });
+      return;
+    }
+    grid.innerHTML = "";
+    if (favs.length === 0) {
+      grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
+      return;
+    }
+    // Mantén el Set en memoria sincronizado con el servidor.
+    favs.forEach(u => state.favorites.add(u.id));
+    favs.forEach(u => {
+      const wrap = el("button", {
         class: "like-unlocked-wrap",
         type: "button",
         "aria-label": `Ver perfil de ${u.name}`,
         onclick: () => openProfileDetail(u, { backTo: "likes" }),
       }, [
-        card,
-        el("div", { class: "info" }, [
-          el("strong", { style: "color:white;position:absolute;left:10px;bottom:36px;z-index:2" }, `${u.name}, ${u.age}`),
-          el("small", { style: "color:rgba(255,255,255,.9);position:absolute;left:10px;bottom:18px;z-index:2;font-size:11px" }, "Toca para ver perfil"),
-          // Mini acciones rápidas superpuestas
-          el("div", { class: "like-quick-actions" }, [
-            el("button", {
-              class: "lqa lqa-pass",
-              type: "button",
-              "aria-label": "Descartar",
-              onclick: (ev) => {
-                ev.stopPropagation();
-                toast(`Descartaste a ${u.name}`);
-                wrap.style.transition = "transform .2s, opacity .2s";
-                wrap.style.transform = "scale(.9)";
-                wrap.style.opacity = "0";
-                setTimeout(() => wrap.remove(), 200);
-              },
-              html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`,
-            }),
-            el("button", {
-              class: "lqa lqa-like",
-              type: "button",
-              "aria-label": "Me gusta",
-              onclick: (ev) => {
-                ev.stopPropagation();
-                toast(`¡Match con ${u.name}! Ya podéis chatear`);
-                wrap.style.transition = "transform .2s, opacity .2s";
-                wrap.style.transform = "scale(.9)";
-                wrap.style.opacity = "0";
-                setTimeout(() => { wrap.remove(); openChat(u, true); }, 260);
-              },
-              html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`,
-            }),
-          ]),
-        ]),
+        el("div", { class: "like-card", style: `background-image:url('${u.photo}')` }),
+        el("strong", { style: "color:white;position:absolute;left:10px;bottom:10px;z-index:2" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
       ]);
-    }
-    grid.appendChild(wrap);
-  });
-  root.appendChild(grid);
+      grid.appendChild(wrap);
+    });
+  }
 
-  root.appendChild(el("div", { class: "pad" }, [
-    el("button", { class: "btn btn-brand btn-block", onclick: () => render(screenSubscriptions) }, "Actualiza a Premium para ver todos"),
-  ]));
+  renderLikesTab();
 
   tabs.addEventListener("click", (e) => {
     if (!e.target.classList.contains("likes-tab")) return;
     $$(".likes-tab", tabs).forEach(t => t.classList.remove("active"));
     e.target.classList.add("active");
-    if (e.target.textContent === "Favoritos") {
-      grid.innerHTML = "";
-      if (state.favorites.size === 0) {
-        root.querySelector(".likes-grid").innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
-        return;
-      }
-      const favUsers = generateUsers(state.favorites.size);
-      favUsers.forEach(u => {
-        const c = el("div", { class: "like-card", style: `background-image:url('${u.photo}')` });
-        grid.appendChild(el("div", { style: "position:relative" }, [ c,
-          el("strong", { style: "color:white;position:absolute;left:10px;bottom:10px;z-index:2" }, `${u.name}, ${u.age}`) ]));
-      });
-    } else {
-      // rerender first tab
-      routeTab("likes");
-    }
+    if (e.target.textContent === "Favoritos") renderFavoritesTab();
+    else renderLikesTab();
   });
 }
 
@@ -7178,21 +7452,35 @@ function screenChats(root) {
     }
   })();
 
-  // Sección superior: potenciales matches (para iniciar nuevos chats reales)
-  const matches = generateUsers(6, { zone: state.zone });
+  // Sección superior: matches (reales si hay sesión; demo si no).
   const mrow = el("div", { class: "matches-row" });
-  matches.forEach(u => {
-    const it = el("div", { class: "match-avatar" }, [
-      el("div", { class: "img", style: `background-image:url('${u.photo}')` }, u.online ? el("span", { class: "new" }) : null),
-      el("div", { class: "name" }, u.name),
-    ]);
-    it.addEventListener("click", () => openChat(u, true));
-    mrow.appendChild(it);
-  });
-  root.appendChild(el("div", { style: "border-bottom:1px solid var(--border); padding-bottom:8px" }, [
-    el("h5", { style: "margin:8px 20px 0;color:var(--text-soft);font-size:12px;text-transform:uppercase;letter-spacing:.04em" }, `Nuevos matches (${matches.length})`),
+  const matchesWrap = el("div", { style: "border-bottom:1px solid var(--border); padding-bottom:8px" }, [
+    el("h5", { id: "matchesTitle", style: "margin:8px 20px 0;color:var(--text-soft);font-size:12px;text-transform:uppercase;letter-spacing:.04em" }, "Nuevos matches"),
     mrow,
-  ]));
+  ]);
+  root.appendChild(matchesWrap);
+  (async () => {
+    let matches = null;
+    if (datingApi._authed()) {
+      matches = await fetch("/api/my/matches", { headers: datingApi.headers(), cache: "no-store" })
+        .then(r => r.ok ? r.json() : null).then(rows => Array.isArray(rows) ? rows.map(mapApiUser) : null).catch(() => null);
+    }
+    const isReal = !!matches;
+    if (!matches) matches = generateUsers(6, { zone: state.zone });
+    if (isReal && matches.length === 0) { matchesWrap.style.display = "none"; return; }
+    mrow.innerHTML = "";
+    matches.forEach(u => {
+      const it = el("div", { class: "match-avatar" }, [
+        el("div", { class: "img", style: `background-image:url('${u.photo}')` }, u.online ? el("span", { class: "new" }) : null),
+        el("div", { class: "name" }, u.name),
+      ]);
+      // Con match real, el servidor ya tiene la conversación → openChat la crea/reutiliza.
+      it.addEventListener("click", () => openChat(u, true));
+      mrow.appendChild(it);
+    });
+    const title = document.getElementById("matchesTitle");
+    if (title) title.textContent = `Nuevos matches (${matches.length})`;
+  })();
 
   const list = el("div", { class: "chat-list" });
   root.appendChild(list);
@@ -7419,7 +7707,7 @@ function screenProfileDetail(root, u, opts = {}) {
   // Name + basic info
   wrap.appendChild(el("div", { class: "pd-name" }, [
     el("h2", {}, [
-      `${u.name}, ${u.age}`,
+      `${u.name}${u.age != null ? ", " + u.age : ""}`,
       u.verified ? el("span", { class: "pd-verified", title: "Perfil verificado" }, "✓") : null,
     ]),
     el("div", { class: "pd-status" }, [
@@ -7429,64 +7717,93 @@ function screenProfileDetail(root, u, opts = {}) {
   ]));
 
   // Quick meta chips
+  const pdLoc = [u.city || "", (u.distance != null ? `${u.distance} km` : "")].filter(Boolean).join(" · ");
   wrap.appendChild(el("div", { class: "pd-meta" }, [
-    el("div", { class: "pd-meta-item" }, [
+    pdLoc ? el("div", { class: "pd-meta-item" }, [
       el("span", { class: "pd-meta-ic", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>` }),
-      el("span", {}, `${u.city} · ${u.distance} km`),
-    ]),
-    el("div", { class: "pd-meta-item" }, [
+      el("span", {}, pdLoc),
+    ]) : null,
+    u.job ? el("div", { class: "pd-meta-item" }, [
       el("span", { class: "pd-meta-ic", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>` }),
       el("span", {}, u.job),
-    ]),
+    ]) : null,
   ]));
 
   // Bio
-  wrap.appendChild(el("h3", { class: "pd-section" }, "Sobre mí"));
-  wrap.appendChild(el("div", { class: "pd-card" }, [
-    el("p", { class: "pd-bio" }, u.bio),
-  ]));
+  if (u.bio) {
+    wrap.appendChild(el("h3", { class: "pd-section" }, "Sobre mí"));
+    wrap.appendChild(el("div", { class: "pd-card" }, [
+      el("p", { class: "pd-bio" }, u.bio),
+    ]));
+  }
 
   // Interests
-  wrap.appendChild(el("h3", { class: "pd-section" }, "Intereses"));
-  const tags = el("div", { class: "pd-tags" });
-  u.interests.forEach((t) => tags.appendChild(el("span", { class: "pd-tag" }, t)));
-  wrap.appendChild(tags);
+  if (u.interests && u.interests.length) {
+    wrap.appendChild(el("h3", { class: "pd-section" }, "Intereses"));
+    const tags = el("div", { class: "pd-tags" });
+    u.interests.forEach((t) => tags.appendChild(el("span", { class: "pd-tag" }, t)));
+    wrap.appendChild(tags);
+  }
 
   // Extra details
+  const genderLabel = ({ F: "Mujer", M: "Hombre", NB: "No binario" }[u.gender]) || u.gender || "—";
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
-    el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, u.gender === "F" ? "Mujer" : u.gender === "M" ? "Hombre" : "No binario") ]),
-    el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]),
-    el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", {}, `${u.distance} km`) ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, genderLabel) ]),
+    u.city ? el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]) : null,
+    (u.distance != null) ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", {}, `${u.distance} km`) ]) : null,
     el("div", { class: "pd-row" }, [ el("span", {}, "Verificación"), el("b", {}, u.verified ? "Verificado ✓" : "Sin verificar") ]),
   ]));
 
   // Actions
   const returnTab = backTo === "likes" ? "likes" : "discover";
+  const pdReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
   wrap.appendChild(el("div", { class: "pd-actions" }, [
     el("button", {
       class: "pd-act pd-act-pass",
       type: "button",
       "aria-label": "Descartar",
-      onclick: () => { toast(`Descartaste a ${u.name}`); document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab); },
+      onclick: () => {
+        toast(`Descartaste a ${u.name}`);
+        if (pdReal) datingApi.react(u.id, "pass");
+        document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
+      },
       html: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`
     }),
     el("button", {
       class: "pd-act pd-act-super",
       type: "button",
       "aria-label": "Super Like",
-      onclick: () => { toast(`✦ Super Like enviado a ${u.name}`); document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab); },
+      onclick: async () => {
+        toast(`✦ Super Like enviado a ${u.name}`);
+        document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
+        if (pdReal) {
+          const res = await datingApi.react(u.id, "super");
+          if (res && res.match) triggerMatch(u, res.conversation_id);
+        }
+      },
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z"/></svg>`
     }),
     el("button", {
       class: "pd-act pd-act-like",
       type: "button",
       "aria-label": "Me gusta",
-      onclick: () => {
+      onclick: async () => {
         document.body.classList.remove("profile-open");
         showApp();
+        if (pdReal) {
+          routeTab(returnTab);
+          const res = await datingApi.react(u.id, "like");
+          if (res && res.match) {
+            toast(`¡Match con ${u.name}!`);
+            triggerMatch(u, res.conversation_id);
+          } else {
+            toast(`Le diste like a ${u.name}`);
+          }
+          return;
+        }
+        // Demo/anónimo
         if (backTo === "likes") {
-          // Al venir desde "Te dieron like", darle like = match seguro
           toast(`¡Match con ${u.name}!`);
           openChat(u, true);
           return;
@@ -8184,18 +8501,19 @@ function openProfile(u) {
     root.appendChild(el("div", { class: "profile-body" }, [
       el("div", { class: "profile-name-row" }, [
         el("h2", {}, u.name),
-        el("span", { class: "age" }, `, ${u.age}`),
+        u.age != null ? el("span", { class: "age" }, `, ${u.age}`) : null,
         u.verified ? el("span", { style: "background:#3b82f6;color:white;border-radius:50%;width:22px;height:22px;display:inline-grid;place-items:center;margin-left:6px;font-size:13px" }, "✓") : null,
       ]),
-      el("div", { class: "profile-meta" }, [
-        u.job, el("span", { class: "dot" }, "·"),
-        `${u.city}`, el("span", { class: "dot" }, "·"), `${u.distance} km`,
-      ]),
-      el("div", { class: "section" }, [ el("h4", {}, "Sobre mí"), el("p", {}, u.bio) ]),
-      el("div", { class: "section" }, [
+      el("div", { class: "profile-meta" },
+        [u.job || "", u.city || "", (u.distance != null ? `${u.distance} km` : "")]
+          .filter(Boolean)
+          .flatMap((t, i) => i === 0 ? [t] : [el("span", { class: "dot" }, "·"), t])
+      ),
+      u.bio ? el("div", { class: "section" }, [ el("h4", {}, "Sobre mí"), el("p", {}, u.bio) ]) : null,
+      (u.interests && u.interests.length) ? el("div", { class: "section" }, [
         el("h4", {}, "Intereses"),
         el("div", { class: "badges" }, u.interests.map(t => el("span", { class: "badge" }, t))),
-      ]),
+      ]) : null,
       el("div", { class: "section" }, [
         el("h4", {}, "Fotos"),
         el("div", { class: "profile-photos" }, u.photos.map(p => el("div", { class: "profile-photo", style: `background-image:url('${p}')` }))),
@@ -8210,8 +8528,19 @@ function openProfile(u) {
         ]),
       ]),
       el("div", { class: "profile-actions" }, [
-        el("button", { class: "btn btn-outline", onclick: () => routeTab("search") }, "✕ Pasar"),
-        el("button", { class: "btn btn-brand", onclick: () => triggerMatch(u) }, "♥ Me gusta"),
+        el("button", { class: "btn btn-outline", onclick: () => {
+          if (u._real && typeof u.id === "number") datingApi.react(u.id, "pass");
+          routeTab("search");
+        } }, "✕ Pasar"),
+        el("button", { class: "btn btn-brand", onclick: async () => {
+          if (u._real && typeof u.id === "number") {
+            const res = await datingApi.react(u.id, "like");
+            if (res && res.match) triggerMatch(u, res.conversation_id);
+            else toast(`Le diste like a ${u.name}`);
+          } else {
+            triggerMatch(u);
+          }
+        } }, "♥ Me gusta"),
       ]),
     ]));
     hideApp();

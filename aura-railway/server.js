@@ -5732,13 +5732,204 @@ app.get("/api/export/:kind", wrap(async (req, res) => {
 // Discover (client)
 app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
-  const zone = req.query.zone || "hetero";
+  const me = readMyUserId(req); // puede ser null (anónimo)
+  const zone = req.query.zone === "lgtb" ? "lgtb" : "hetero";
+  const limit = Math.min(30, Math.max(1, parseInt(req.query.limit, 10) || 12));
+
+  // Filtros guardados del usuario (edad / género). Distancia se aplica sólo si hay coords.
+  let f = {};
+  if (me) {
+    try {
+      const [[row]] = await pool.query("SELECT payload FROM user_filters WHERE user_id=? LIMIT 1", [me]);
+      if (row && row.payload) f = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+    } catch { f = {}; }
+  }
+
+  const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
+  const params = [zone];
+
+  if (me) {
+    // No mostrarme a mí mismo
+    where.push("u.id <> ?"); params.push(me);
+    // Excluir perfiles a los que ya di like/super/pass
+    where.push("u.id NOT IN (SELECT to_user FROM likes WHERE from_user = ?)"); params.push(me);
+    // Excluir bloqueos en ambos sentidos
+    where.push("u.id NOT IN (SELECT target_id FROM blocks WHERE user_id = ?)"); params.push(me);
+    where.push("u.id NOT IN (SELECT user_id FROM blocks WHERE target_id = ?)"); params.push(me);
+  }
+
+  // Filtro de edad (básico)
+  const ageMin = parseInt(f.age_min, 10);
+  const ageMax = parseInt(f.age_max, 10);
+  if (Number.isFinite(ageMin) && ageMin > 0) { where.push("(u.age IS NULL OR u.age >= ?)"); params.push(ageMin); }
+  if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
+
+  // Filtro de género (básico) — acepta un valor o "todos"
+  if (f.gender && f.gender !== "todos" && f.gender !== "all") {
+    where.push("u.gender = ?"); params.push(String(f.gender));
+  }
+
   const [rows] = await pool.query(
-    `SELECT id, name, age, gender, orientation, city, height, weight, bio, photo_url, verified, online
-     FROM users WHERE zone=? AND status='active' ORDER BY RAND() LIMIT 12`,
-    [zone]
+    `SELECT id, name, age, gender, orientation, city, lat, lng, height, weight, bio, photo_url, verified, online
+       FROM users u
+      WHERE ${where.join(" AND ")}
+      ORDER BY u.online DESC, u.verified DESC, RAND()
+      LIMIT ?`,
+    [...params, limit]
   );
   res.json(rows);
+}));
+
+/* ============================================================
+   Likes / Pass / Superlike + creación de match  (V-like-match)
+   ------------------------------------------------------------
+   Tablas ya existentes: likes(from_user,to_user,type),
+   matches(user_a,user_b), favorites(user_id,target_id),
+   blocks(user_id,target_id). Aquí se cablean por primera vez.
+   ============================================================ */
+
+// POST /api/my/like  { target_id, type: 'like'|'super'|'pass' }
+// Registra la reacción y, si es recíproca (like/super), crea match + conversación.
+app.post("/api/my/like", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (await enforceRestriction(req, res, "discover")) return;
+  const target = parseInt(req.body?.target_id, 10);
+  const type = ["like", "super", "pass"].includes(req.body?.type) ? req.body.type : "like";
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+
+  // El objetivo debe existir y estar activo
+  const [[peer]] = await pool.query(
+    "SELECT id, name, photo_url FROM users WHERE id=? AND status='active' LIMIT 1", [target]
+  );
+  if (!peer) return res.status(404).json({ error: "target_not_found" });
+
+  // Guardar/actualizar la reacción (idempotente por UNIQUE (from_user,to_user))
+  await pool.execute(
+    "INSERT INTO likes (from_user, to_user, type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE type=VALUES(type), created_at=NOW()",
+    [me, target, type]
+  );
+
+  // Un "pass" nunca genera match
+  if (type === "pass") return res.json({ ok: true, match: false, type });
+
+  // ¿El objetivo ya me había dado like/super? → match recíproco
+  const [[back]] = await pool.query(
+    "SELECT id FROM likes WHERE from_user=? AND to_user=? AND type IN ('like','super') LIMIT 1",
+    [target, me]
+  );
+  if (!back) return res.json({ ok: true, match: false, type });
+
+  // Crear match (orden canónico a<b) y conversación get-or-create
+  const a = Math.min(me, target), b = Math.max(me, target);
+  await pool.execute(
+    "INSERT IGNORE INTO matches (user_a, user_b) VALUES (?,?)", [a, b]
+  );
+  const [existing] = await pool.query(
+    "SELECT id FROM conversations WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?) LIMIT 1",
+    [a, b, b, a]
+  );
+  let convId;
+  if (existing.length) {
+    convId = existing[0].id;
+  } else {
+    const [r] = await pool.execute(
+      "INSERT INTO conversations (user_a, user_b, last_message_at) VALUES (?,?,NOW())", [a, b]
+    );
+    convId = r.insertId;
+  }
+
+  // Notificación in-app + push al otro usuario (best-effort), igual que en /conversations
+  (async () => {
+    try {
+      const [[meRow]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
+      const meName = meRow?.name || "Alguien";
+      if (await notifPrefAllows(target, "matches_inapp")) {
+        await pool.query(
+          `INSERT INTO notifications (user_id, type, title, body, icon, data)
+           VALUES (?, 'new_match', ?, ?, '💘', ?)`,
+          [target, "💘 ¡Nuevo match!",
+           `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
+           JSON.stringify({ conversation_id: convId, peer_id: me })]
+        );
+      }
+      await pushToUser(target, {
+        title: "💘 ¡Nuevo match!",
+        body: `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
+        url: "/", tag: `match-${convId}`,
+      }, "matches_push");
+    } catch (e) { /* best-effort */ }
+  })().catch(() => {});
+
+  res.json({ ok: true, match: true, type, conversation_id: convId, peer: { id: peer.id, name: peer.name, photo_url: peer.photo_url } });
+}));
+
+// GET /api/my/likes  → perfiles que me han dado like (y si ya es match)
+app.get("/api/my/likes", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, l.type, l.created_at,
+            EXISTS(SELECT 1 FROM matches m WHERE (m.user_a=LEAST(?,u.id) AND m.user_b=GREATEST(?,u.id))) AS is_match
+       FROM likes l
+       JOIN users u ON u.id = l.from_user
+      WHERE l.to_user = ? AND l.type IN ('like','super') AND u.status='active'
+        AND u.id NOT IN (SELECT target_id FROM blocks WHERE user_id=?)
+        AND u.id NOT IN (SELECT user_id FROM blocks WHERE target_id=?)
+      ORDER BY l.created_at DESC LIMIT 100`,
+    [me, me, me, me, me]
+  );
+  res.json(rows);
+}));
+
+// GET /api/my/matches → mis matches
+app.get("/api/my/matches", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, m.created_at
+       FROM matches m
+       JOIN users u ON u.id = (CASE WHEN m.user_a=? THEN m.user_b ELSE m.user_a END)
+      WHERE (m.user_a=? OR m.user_b=?) AND u.status='active'
+      ORDER BY m.created_at DESC LIMIT 100`,
+    [me, me, me]
+  );
+  res.json(rows);
+}));
+
+/* ---- Favoritos (persistentes) ---- */
+// GET /api/my/favorites
+app.get("/api/my/favorites", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, fav.created_at
+       FROM favorites fav
+       JOIN users u ON u.id = fav.target_id
+      WHERE fav.user_id = ? AND u.status='active'
+      ORDER BY fav.created_at DESC LIMIT 200`,
+    [me]
+  );
+  res.json(rows);
+}));
+
+// POST /api/my/favorites  { target_id }  → alterna favorito (añade/quita)
+app.post("/api/my/favorites", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  const [[exists]] = await pool.query(
+    "SELECT id FROM favorites WHERE user_id=? AND target_id=? LIMIT 1", [me, target]
+  );
+  if (exists) {
+    await pool.execute("DELETE FROM favorites WHERE user_id=? AND target_id=?", [me, target]);
+    return res.json({ ok: true, favorite: false });
+  }
+  await pool.execute(
+    "INSERT IGNORE INTO favorites (user_id, target_id) VALUES (?,?)", [me, target]
+  );
+  res.json({ ok: true, favorite: true });
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */
