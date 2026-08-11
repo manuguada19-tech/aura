@@ -5657,13 +5657,13 @@ function refreshPushNoticeUI() {
     const existing = document.querySelector(".push-inline-notice");
     if (perm === "granted") { if (existing) existing.remove(); return; }
     // Falta el permiso (default/denied). Si el aviso no está, lo insertamos
-    // justo bajo la barra superior de Discover.
+    // en la capa superpuesta de avisos (V612), no en el flujo.
     if (existing) return;
-    const disc = document.querySelector(".discover");
-    const topbar = disc && disc.querySelector(".discover-topbar");
-    if (!disc || !topbar) return;
+    const notices = document.querySelector(".discover-notices");
+    if (!notices) return;
     const pn = buildPushNotice();
-    if (pn) topbar.insertAdjacentElement("afterend", pn);
+    // El aviso de notificaciones va SIEMPRE el primero (antes del de ubicación).
+    if (pn) notices.insertAdjacentElement("afterbegin", pn);
   } catch {}
 }
 
@@ -5776,15 +5776,12 @@ function refreshGpsNoticeUI() {
     const existing = document.querySelector(".gps-inline-notice");
     if (st === "granted") { if (existing) existing.remove(); return; }
     if (existing) return;
-    const disc = document.querySelector(".discover");
-    const topbar = disc && disc.querySelector(".discover-topbar");
-    if (!disc || !topbar) return;
+    const notices = document.querySelector(".discover-notices");
+    if (!notices) return;
     const gn = buildGpsNotice();
     if (!gn) return;
-    // Colocarlo tras el aviso de notificaciones si existe, o tras la topbar.
-    const pushNotice = disc.querySelector(".push-inline-notice");
-    if (pushNotice) pushNotice.insertAdjacentElement("afterend", gn);
-    else topbar.insertAdjacentElement("afterend", gn);
+    // El de ubicación va SIEMPRE al final (debajo del de notificaciones).
+    notices.appendChild(gn);
   } catch {}
 }
 
@@ -5914,15 +5911,21 @@ function goToPermissionsInProfile(opts) {
 }
 
 function screenDiscover(root) {
-  // V607 · Aviso persistente de notificaciones. Se construye ANTES del stack y
-  // se coloca justo debajo de la barra superior (dentro de .discover) para que
-  // sea visible sin hacer scroll; antes se añadía al final del render y quedaba
-  // por debajo del fold.
+  // V607 · Aviso persistente de notificaciones. Se construye ANTES del stack.
   let pushNotice = null;
   try { pushNotice = buildPushNotice(); } catch {}
   // V611 · Aviso compacto de ubicación (espejo del de notificaciones).
   let gpsNotice = null;
   try { gpsNotice = buildGpsNotice(); } catch {}
+  // V612 · Los avisos ya NO son hermanos en el flujo (empujaban la tarjeta y la
+  // recortaban en pantallas cortas, sobre todo con los dos a la vez). Ahora van
+  // en una CAPA SUPERPUESTA sobre el borde superior de la tarjeta: ocupan 0 de
+  // alto en el layout, así la tarjeta conserva su tamaño y nunca se corta, y el
+  // aviso sigue siendo visible sin hacer scroll.
+  const notices = el("div", { class: "discover-notices" }, [
+    pushNotice || null,
+    gpsNotice || null,
+  ]);
   root.appendChild(el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
       el("span", {
@@ -5936,9 +5939,10 @@ function screenDiscover(root) {
       ]),
       el("span", { class: "brand-topbar-spacer", "aria-hidden": "true" }),
     ]),
-    pushNotice || null,
-    gpsNotice || null,
-    buildSwipeStack(),
+    el("div", { class: "discover-stack-wrap" }, [
+      notices,
+      buildSwipeStack(),
+    ]),
     el("div", { class: "action-row" }, [
       actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho")),
       actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left")),
