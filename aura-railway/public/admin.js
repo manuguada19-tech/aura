@@ -2198,6 +2198,20 @@ async function viewDashboard(root){
   }
   if (!activity.length) renderEmpty();
   else activity.forEach(a => actList.appendChild(activityItem(a)));
+  // Sincronización campana ↔ dashboard: expone un refresco que vuelve a cargar
+  // el feed de actividad reciente. Lo invoca el popover de la campana al vaciar
+  // o borrar, de modo que ambos queden siempre sincronizados sin recargar.
+  async function refreshActivityFeed() {
+    // Solo actúa si este panel sigue montado (dashboard visible).
+    if (!document.body.contains(actList)) return;
+    try {
+      const fresh = await api.get("/api/activity");
+      actList.innerHTML = "";
+      if (!fresh.length) renderEmpty();
+      else fresh.forEach(a => actList.appendChild(activityItem(a)));
+    } catch (_) { /* silent */ }
+  }
+  window.__adminDashboardRefresh = refreshActivityFeed;
   const clearAllBtn = btn("Vaciar todo", "ghost sm danger", async () => {
     if (!(await askConfirm("¿Vaciar toda la actividad reciente? Esta acción no se puede deshacer.", { okText: "Vaciar", danger: true }))) return;
     try {
