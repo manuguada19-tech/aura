@@ -10910,8 +10910,10 @@ function showPushSoftPrompt(context) {
   const wrap = el("div", { id: "auraPushSoft", class: "push-soft" }, [
     el("div", { class: "push-soft-ico" }, "🔔"),
     el("div", { class: "push-soft-body" }, [
-      el("strong", {}, isAnon ? "¿Te contamos las novedades de Aura?" : "¿Te avisamos de tus matches y mensajes?"),
-      el("small", {}, "Solo cosas importantes, sin spam. Puedes desactivarlo cuando quieras."),
+      el("strong", {}, isAnon ? "¿Te contamos las novedades de Aura?" : "Activa las notificaciones"),
+      el("small", {}, isAnon
+        ? "Solo cosas importantes, sin spam. Puedes desactivarlo cuando quieras."
+        : "Necesarias para avisarte al instante de tus matches y mensajes. Aura funciona mejor con ellas."),
     ]),
     el("div", { class: "push-soft-actions" }, [
       el("button", { class: "push-soft-no", onclick: () => {
@@ -10935,6 +10937,31 @@ function showPushSoftPrompt(context) {
   setTimeout(() => wrap.classList.add("show"), 30);
 }
 
+// V602 · Recordatorio discreto cuando el usuario BLOQUEÓ las notificaciones en
+// el navegador (Notification.permission === "denied"). En ese estado NO se puede
+// volver a lanzar el prompt nativo (el navegador lo ignora), así que en vez de
+// pedir permiso explicamos cómo reactivarlas desde los ajustes del sitio.
+function showPushBlockedReminder() {
+  if (document.getElementById("auraPushSoft")) return;
+  const wrap = el("div", { id: "auraPushSoft", class: "push-soft" }, [
+    el("div", { class: "push-soft-ico" }, "🔔"),
+    el("div", { class: "push-soft-body" }, [
+      el("strong", {}, "Tienes las notificaciones bloqueadas"),
+      el("small", {}, "Aura necesita permiso para avisarte de matches y mensajes. Actívalo en el candado 🔒 de la barra de direcciones → Notificaciones → Permitir."),
+    ]),
+    el("div", { class: "push-soft-actions" }, [
+      el("button", { class: "push-soft-no", onclick: () => {
+        try { sessionStorage.setItem("aura_push_reminded", "1"); } catch {}
+        wrap.remove();
+      } }, "Entendido"),
+    ]),
+  ]);
+  document.body.appendChild(wrap);
+  setTimeout(() => wrap.classList.add("show"), 30);
+  // Se oculta solo tras unos segundos para no molestar.
+  setTimeout(() => { try { wrap.classList.remove("show"); setTimeout(() => wrap.remove(), 300); } catch {} }, 12000);
+}
+
 // Pide permiso de notificaciones al usuario y registra el dispositivo en backend.
 // Se llama tras showApp() (login/registro OK). No molesta si ya está permitido
 // o si el usuario ya lo denegó.
@@ -10942,18 +10969,31 @@ function showPushSoftPrompt(context) {
 // el soft-prompt propio; el prompt nativo solo se lanza si el usuario acepta.
 async function maybePromptForPush() {
   try {
-    if (!pushSupported()) return;
-    if (Notification.permission === "denied") return;
+    if (!pushSupported()) {
+      // Aunque falte VAPID/soporte, si está concedido intentamos vincular.
+      if (("Notification" in window) && Notification.permission === "granted") { try { await subscribePushDevice(); } catch {} }
+      return;
+    }
     if (Notification.permission === "granted") {
       // Permiso ya concedido → (re)suscribir en silencio y vincular al usuario.
       await subscribePushDevice();
       return;
     }
-    // permission === "default" → soft-prompt con cooldown de 3 días
-    try {
-      const lastAsk = parseInt(localStorage.getItem("aura_push_last_ask") || "0", 10);
-      if (Date.now() - lastAsk < 3 * 24 * 3600 * 1000) return;
-    } catch {}
+    // V602 · El usuario NO tiene las notificaciones activas (default o denied).
+    // Se lo recordamos de forma discreta UNA vez por sesión (cada vez que entra),
+    // sin ser insistentes si navega dentro de la misma sesión.
+    let alreadyReminded = false;
+    try { alreadyReminded = sessionStorage.getItem("aura_push_reminded") === "1"; } catch {}
+    if (alreadyReminded) return;
+    try { sessionStorage.setItem("aura_push_reminded", "1"); } catch {}
+
+    if (Notification.permission === "denied") {
+      // Bloqueado: no se puede relanzar el prompt nativo → guía para reactivar.
+      showPushBlockedReminder();
+      return;
+    }
+    // permission === "default" → soft-prompt propio (el prompt nativo solo
+    // se lanza si el usuario pulsa "Sí, avisadme").
     showPushSoftPrompt("user");
   } catch {}
 }
