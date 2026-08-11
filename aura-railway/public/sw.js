@@ -16,7 +16,7 @@
      usuario dejó la app instalada, se registre su última zona.
 */
 
-const CACHE_VERSION = "aura-v19";
+const CACHE_VERSION = "aura-v20";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
@@ -201,8 +201,11 @@ self.addEventListener("push", (event) => {
   const title = data.title || "Aura";
   const options = {
     body: data.body || "",
-    icon: data.icon || "/aura-logo.png",
-    badge: data.badge || "/aura-logo-tiny.png",
+    // V609 · Iconos reales de Aura. Antes se apuntaba a /aura-logo.png y
+    // /aura-logo-tiny.png, que no existen (404) → el navegador mostraba un
+    // icono genérico. Usamos los iconos del manifest, que sí existen.
+    icon: data.icon || "/assets/aura-icon-192.png",
+    badge: data.badge || "/assets/aura-icon-192.png",
     image: data.image || undefined,
     tag: data.tag || "aura",
     data: {

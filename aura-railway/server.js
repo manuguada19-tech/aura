@@ -3658,7 +3658,7 @@ async function pushToUser(userId, payload, prefKey) {
       [uid]
     );
     if (!devs.length) return { sent: 0, note: "sin_dispositivos" };
-    const p = { icon: "/aura-logo.png", url: "/", tag: "aura-notif", ...payload };
+    const p = { icon: "/assets/aura-icon-192.png", url: "/", tag: "aura-notif", ...payload };
     let sent = 0;
     for (const d of devs) {
       const r = await sendPushToDevice(d, p);
@@ -3717,7 +3717,7 @@ async function processCampaign(id) {
   const [devices] = await pool.query(`SELECT id, endpoint, p256dh, auth_key FROM push_devices ${q.where}`, q.args);
   const payload = {
     title: c.title, body: c.body, url: c.url || "/",
-    icon: c.icon || "/aura-logo.png", badge: "/aura-logo-tiny.png",
+    icon: c.icon || "/assets/aura-icon-192.png", badge: "/assets/aura-icon-192.png",
     image: c.image || undefined, tag: `camp-${c.id}`,
     campaign_id: c.id,
   };
@@ -3836,7 +3836,7 @@ app.post("/api/admin/push/test", requireAdmin, wrap(async (req, res) => {
   if (!uid || !title || !body) return res.status(400).json({ error: "missing_fields" });
   const [devs] = await pool.query("SELECT id, endpoint, p256dh, auth_key FROM push_devices WHERE user_id=? AND active=1", [uid]);
   if (!devs.length) return res.json({ sent: 0, note: "sin_dispositivos" });
-  const payload = { title, body, url: url || "/", icon: icon || "/aura-logo.png", tag: "test" };
+  const payload = { title, body, url: url || "/", icon: icon || "/assets/aura-icon-192.png", tag: "test" };
   let sent = 0;
   for (const d of devs) { const r = await sendPushToDevice(d, payload); if (r.ok) sent++; }
   res.json({ sent, total: devs.length });
@@ -3964,7 +3964,7 @@ async function sendPopupAsPush(popup) {
     title: popup.title,
     body: (popup.body || "").replace(/<[^>]+>/g, "").slice(0, 500),
     url: popup.cta_url || "/",
-    icon: "/aura-logo.png",
+    icon: "/assets/aura-icon-192.png",
     image: popup.image_url || undefined,
     tag: `popup-${popup.id}`,
   };
