@@ -1963,7 +1963,19 @@
           { key: "read_at", label: "Leída", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.read_at ? "ok" : "amber"); b.textContent = r.read_at ? "✓ " + fmtDate(r.read_at) : "⏳ Sin leer"; return b; } },
           { key: "created_at", label: "Enviada", sortable: true, render: (r) => fmtDate(r.created_at) },
         ],
-        actions: [],
+        // V599 · Borrado individual de una notificación enviada. Usa el mismo
+        // endpoint bulk-delete con un único id.
+        actions: [
+          { label: "", icon: "&#x1f5d1;", title: "Borrar esta notificación", variant: "danger-icon", onClick: async (r, reload) => {
+              const ok = await confirmDialog({ title: "Borrar notificación", message: `#${r.id} · "${r.title || ""}" enviada a ${r.user_name || ("usuario #" + r.user_id)}. Esta acción no se puede deshacer.`, danger: true, confirmLabel: "Borrar" });
+              if (!ok) return;
+              try {
+                const rsp = await api("/api/admin/notifications/bulk-delete", { method: "POST", body: { ids: [r.id] } });
+                if (rsp.ok && rsp.data?.ok !== false) { toast("Notificación borrada", "ok"); reload(); }
+                else toast(rsp.data?.error || "No se pudo borrar", "err");
+              } catch (e) { toast("Error borrando", "err"); }
+            } },
+        ],
         headerActions: [
           { label: "Enviar notificación", icon: "＋", variant: "primary", onClick: async () => {
               const d = await prompt2({ title: "Enviar notificación a un usuario", submitLabel: "Enviar", fields: [
@@ -1979,6 +1991,9 @@
             } },
         ],
         bulkEndpoint: "/api/admin/notifications/bulk-delete",
+        // V599 · Barra de acciones masivas siempre visible (borrar selección /
+        // borrar todo el historial) sin tener que marcar antes una casilla.
+        alwaysShowBulk: true,
       });
     }
 
