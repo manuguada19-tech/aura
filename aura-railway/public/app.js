@@ -2253,6 +2253,9 @@ function startHeartbeat() {
   try { GPS.boot(); } catch {}
   // Registro del Service Worker para PWA + Periodic Background Sync (Android)
   try { registerServiceWorker(); } catch {}
+  // V610 · Vigila el estado del permiso de notificaciones para reaccionar sin
+  // que el usuario tenga que interactuar (activar/retirar desde ajustes).
+  try { watchPushPermission(); } catch {}
   // Push en tiempo real vía Server-Sent Events. Al recibir un evento,
   // refresca inmediatamente y el banner desaparece/aparece al instante.
   try {
@@ -5596,6 +5599,7 @@ function screenForgot(root) {
 // solicita SOLO al pulsar el botón (gesto de usuario), que es lo que Chrome
 // Android exige para mostrar el diálogo. Así "salta" de forma fiable y el
 // usuario puede activarlas al momento.
+// V610 · Versión COMPACTA (una línea) para no tapar la tarjeta de Discover.
 function buildPushNotice() {
   try {
     // Si el navegador ni siquiera soporta notificaciones, no mostramos nada.
@@ -5604,19 +5608,15 @@ function buildPushNotice() {
     // Ya concedido → nada que recordar (la suscripción se gestiona aparte).
     if (perm === "granted") return null;
 
-    const wrap = el("div", { class: "nearby-gps-notice push-inline-notice" });
     const denied = perm === "denied";
-    wrap.innerHTML = `
-      <div class="nearby-gps-notice-ic">🔔</div>
-      <div class="nearby-gps-notice-body">
-        <div class="nearby-gps-notice-title">Activa las notificaciones</div>
-        <div class="nearby-gps-notice-lead">${denied
-          ? "Las tienes bloqueadas en el navegador. Ábrelas en el candado 🔒 de la barra de direcciones → Notificaciones → Permitir, y recarga."
-          : "Son necesarias para avisarte al instante de tus matches y mensajes. Aura funciona mejor con ellas."}</div>
-      </div>
-      <button type="button" class="btn btn-primary nearby-gps-notice-cta">${denied ? "Cómo activarlas" : "Activar"}</button>
-    `;
-    const cta = wrap.querySelector(".nearby-gps-notice-cta");
+    const wrap = el("div", { class: "push-mini push-inline-notice" + (denied ? " is-denied" : "") }, [
+      el("span", { class: "push-mini-ico" }, "🔔"),
+      el("span", { class: "push-mini-txt" }, denied
+        ? "Notificaciones bloqueadas en el navegador."
+        : "Activa las notificaciones para no perderte nada."),
+      el("button", { class: "push-mini-btn", type: "button" }, denied ? "Cómo" : "Activar"),
+    ]);
+    const cta = wrap.querySelector(".push-mini-btn");
     cta.onclick = async () => {
       // Estado bloqueado: no se puede relanzar el prompt nativo → guía.
       if (Notification.permission === "denied") {
@@ -5625,13 +5625,14 @@ function buildPushNotice() {
       }
       cta.disabled = true;
       try {
+        // Muestra el diálogo nativo del navegador. Al concederlo, el vigilante
+        // (watchPushPermission) suscribe y retira el aviso automáticamente; aun
+        // así lo hacemos también aquí para respuesta inmediata.
         const p = await Notification.requestPermission();
         if (p === "granted") {
           const ok = await subscribePushDevice();
           if (ok) { try { toast("Notificaciones activas 🔔"); } catch {} }
           try { sessionStorage.setItem("aura_push_confirmed", "1"); } catch {}
-          // Ya no hace falta ningún aviso: quitamos este y cualquier banner
-          // flotante que hubiera quedado de una versión anterior.
           try { wrap.remove(); } catch {}
           try { const f = document.getElementById("auraPushSoft"); if (f) f.remove(); } catch {}
           return;
@@ -5642,6 +5643,74 @@ function buildPushNotice() {
     };
     return wrap;
   } catch { return null; }
+}
+
+// V610 · Refresca el aviso de Discover para que refleje el estado ACTUAL del
+// permiso: si se concedió, lo quita; si se retiró/está pendiente, lo (re)inserta.
+function refreshPushNoticeUI() {
+  try {
+    if (state.currentTab !== "discover") return;
+    const perm = ("Notification" in window) ? Notification.permission : "unsupported";
+    const existing = document.querySelector(".push-inline-notice");
+    if (perm === "granted") { if (existing) existing.remove(); return; }
+    // Falta el permiso (default/denied). Si el aviso no está, lo insertamos
+    // justo bajo la barra superior de Discover.
+    if (existing) return;
+    const disc = document.querySelector(".discover");
+    const topbar = disc && disc.querySelector(".discover-topbar");
+    if (!disc || !topbar) return;
+    const pn = buildPushNotice();
+    if (pn) topbar.insertAdjacentElement("afterend", pn);
+  } catch {}
+}
+
+// V610 · Vigilante del estado del permiso de notificaciones. Cubre tres casos
+// que antes obligaban al usuario a interactuar de más:
+//  1) El usuario activa las notificaciones desde los ajustes de Chrome (candado
+//     🔒) → detectamos el cambio a "granted", suscribimos y quitamos el aviso
+//     automáticamente, sin tener que pulsar nada en la app.
+//  2) El usuario RETIRA el permiso más tarde → lo detectamos y volvemos a
+//     mostrar el recordatorio.
+//  3) Cambios que el navegador no notifica por evento → se comprueban al volver
+//     a la pestaña (visibilitychange) y con un sondeo ligero periódico.
+let _pushPermWatch = { started: false, last: null, timer: null };
+async function watchPushPermission() {
+  try {
+    if (!("Notification" in window)) return;
+    if (_pushPermWatch.started) return;
+    _pushPermWatch.started = true;
+    _pushPermWatch.last = Notification.permission;
+
+    const onChange = async () => {
+      let cur;
+      try { cur = Notification.permission; } catch { return; }
+      if (cur === _pushPermWatch.last) return;
+      const prev = _pushPermWatch.last;
+      _pushPermWatch.last = cur;
+      if (cur === "granted") {
+        // Se acaba de conceder (posiblemente desde los ajustes del navegador).
+        try { const ok = await subscribePushDevice(); if (ok) toast("Notificaciones activas 🔔"); } catch {}
+        try { sessionStorage.setItem("aura_push_confirmed", "1"); } catch {}
+        try { const f = document.getElementById("auraPushSoft"); if (f) f.remove(); } catch {}
+      } else if (prev === "granted") {
+        // Se RETIRÓ el permiso → recordar de nuevo y permitir nueva confirmación.
+        try { sessionStorage.removeItem("aura_push_confirmed"); } catch {}
+      }
+      refreshPushNoticeUI();
+    };
+
+    // 1) Evento nativo de la Permissions API (Chrome/Android lo soporta).
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const st = await navigator.permissions.query({ name: "notifications" });
+        st.onchange = onChange;
+      }
+    } catch {}
+    // 2) Al volver a la pestaña (p.ej. tras cambiar el permiso en ajustes).
+    try { document.addEventListener("visibilitychange", () => { if (!document.hidden) onChange(); }); } catch {}
+    // 3) Sondeo ligero por si el navegador no dispara el evento.
+    if (!_pushPermWatch.timer) _pushPermWatch.timer = setInterval(onChange, 4000);
+  } catch {}
 }
 
 function screenDiscover(root) {
