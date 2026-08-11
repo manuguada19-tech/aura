@@ -1931,7 +1931,7 @@ async function viewDashboard(root){
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16 4c-1.6 0-3.1.8-4 2.1C11.1 4.8 9.6 4 8 4c-2.8 0-5 2.2-5 5 0 5 5 8 9 12 4-4 9-7 9-12 0-2.8-2.2-5-5-5z"/></svg>` },
     { id: "invites", title: "Invitaciones (testers)", desc: "Códigos de acceso beta cuando registros cerrados.", cls: "violet",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM4 6h16v.5l-8 5-8-5V6z"/></svg>` },
-    { id: "settings", title: "Configuración", desc: "Ajustes generales del sistema.", cls: "slate",
+    { id: "settings", title: "Ajustes", desc: "Ajustes generales del sistema.", cls: "slate",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2-1v-2l-2-3h-2l-2-2h-2l-2 2H7L5 9v2l-2 1v2l2 1v2l2 3h2l2 2h2l2-2h2l2-3v-2l2-1v-2z" fill-opacity=".3"/></svg>` },
     { id: "logs", title: "Logs", desc: "Actividad y eventos del sistema.", cls: "gray",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M4 4h16v2H4zm0 4h16v2H4zm0 4h10v2H4zm0 4h16v2H4zm0 4h10v2H4z"/></svg>` },
@@ -7266,7 +7266,7 @@ async function viewSettings(root){
     ],
   }));
 
-  root.appendChild(viewTitle("Configuración",
+  root.appendChild(viewTitle("Ajustes",
     "Ajustes globales de la aplicación. Los cambios se guardan al momento.", []));
 
   root.appendChild(sectionLegend("¿Qué significa cada icono en Configuración?", [
@@ -7355,6 +7355,49 @@ async function viewSettings(root){
     return el("label", { class: "field" }, [
       el("span", {}, "Código de acceso superadmin (pantalla de pruebas privadas)"),
       el("div", { style: "display:flex; gap:8px" }, [inp, eyeBtn, genBtn]),
+    ]);
+  }
+
+  // V598 · Cambiar la contraseña de administrador desde el panel. El backend
+  // usa el ajuste `admin.password_override`: si está definido, sustituye a la
+  // variable de entorno ADMIN_PASSWORD en el login. Dejar el campo vacío y
+  // guardar mantiene la contraseña actual (no la borra).
+  function adminPasswordField() {
+    const inp = el("input", {
+      class: "input", type: "password", autocomplete: "new-password",
+      placeholder: "Escribe una nueva contraseña para cambiarla", style: "flex:1",
+    });
+    const eyeBtn = el("button", {
+      type: "button", class: "btn ghost", title: "Mostrar / ocultar",
+      onclick: () => { inp.type = inp.type === "password" ? "text" : "password"; },
+    }, "👁");
+    const saveBtn = el("button", {
+      type: "button", class: "btn ghost", title: "Guardar contraseña nueva",
+      onclick: async (e) => {
+        const val = inp.value.trim();
+        if (val.length < 8) { toast("La contraseña debe tener al menos 8 caracteres"); return; }
+        const b = e.currentTarget; const prev = b.textContent;
+        b.disabled = true; b.textContent = "⏳";
+        try {
+          await api.put("/api/settings", { "admin.password_override": val });
+          inp.value = ""; inp.type = "password";
+          toast("Contraseña de admin actualizada ✓ — úsala en el próximo inicio de sesión");
+        } catch (err) {
+          toast("No se pudo guardar: " + (err.message || "error"));
+        } finally {
+          b.disabled = false; b.textContent = prev;
+        }
+      },
+    }, "💾");
+    const hasOverride = !!(s["admin.password_override"] || "").trim();
+    return el("div", {}, [
+      el("label", { class: "field" }, [
+        el("span", {}, "Contraseña de administrador"),
+        el("div", { style: "display:flex; gap:8px" }, [inp, eyeBtn, saveBtn]),
+      ]),
+      el("p", { class: "field-help" }, hasOverride
+        ? "Hay una contraseña personalizada activa. Escribe una nueva y pulsa 💾 para cambiarla (mín. 8 caracteres). Déjalo vacío para no tocarla."
+        : "Actualmente se usa la contraseña de la variable de entorno. Escribe una aquí y pulsa 💾 para fijar una personalizada (mín. 8 caracteres)."),
     ]);
   }
 
@@ -7461,6 +7504,7 @@ async function viewSettings(root){
   form.appendChild(group("Panel de administración — Marca", [ adminLogoBlock ]));
 
   form.appendChild(group("Seguridad", [
+    adminPasswordField(),
     el("div", { class: "grid-3" }, [
       textField("security.max_login_attempts", "Máx. intentos login"),
       textField("security.lockout_minutes", "Bloqueo (min)"),
@@ -15512,10 +15556,15 @@ async function viewPushCampaigns(root) {
   root.appendChild(statsBar);
   api.get("/api/admin/push/stats").then(s => {
     statsBar.innerHTML = "";
+    const cm = s.campaigns || {};
     const cards = [
       { l: "👤 Usuarios con push", v: s.unique_registered_users || 0, sub: `${s.total_registered_devices||0} dispositivos` },
       { l: "👻 Visitantes anónimos", v: s.anon_devices || 0, sub: "PWA instalada sin cuenta" },
       { l: "🌎 Total alcance", v: (s.total_registered_devices||0) + (s.anon_devices||0), sub: "Todos los dispositivos" },
+      // V598 · Totales de entrega acumulados de todas las campañas enviadas.
+      { l: "✅ Entregadas", v: cm.delivered || 0, sub: `${cm.delivery_rate||0}% de ${cm.target||0} objetivo` },
+      { l: "❌ Fallidas", v: cm.failed || 0, sub: `en ${cm.sent||0} campañas enviadas` },
+      { l: "👆 Clics", v: cm.clicks || 0, sub: `${cm.click_rate||0}% de las entregadas` },
     ];
     cards.forEach(c => {
       const box = el("div", { style: "flex:1;min-width:180px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(236,72,153,.12));border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px" }, [
@@ -15525,6 +15574,10 @@ async function viewPushCampaigns(root) {
       ]);
       statsBar.appendChild(box);
     });
+    if (!s.push_enabled) {
+      statsBar.appendChild(el("div", { style: "flex-basis:100%;background:rgba(220,38,38,.12);border:1px solid rgba(220,38,38,.3);border-radius:10px;padding:10px 14px;font-size:12px;color:#fca5a5" },
+        "⚠ El push no está activo: faltan las claves VAPID (VAPID_PUBLIC_KEY y VAPID_PRIVATE_KEY) en las variables de entorno."));
+    }
   }).catch(()=>{ statsBar.style.display = "none"; });
 
   // Acciones superiores

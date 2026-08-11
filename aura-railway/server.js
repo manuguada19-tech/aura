@@ -3780,11 +3780,37 @@ app.get("/api/admin/push/stats", requireAdmin, wrap(async (req, res) => {
   const [[u]] = await pool.query("SELECT COUNT(DISTINCT user_id) AS c FROM push_devices WHERE active=1 AND user_id IS NOT NULL");
   const [[t]] = await pool.query("SELECT COUNT(*) AS c FROM push_devices WHERE active=1 AND user_id IS NOT NULL");
   const [[a]] = await pool.query("SELECT COUNT(*) AS c FROM push_devices WHERE active=1 AND user_id IS NULL");
+  // V598 · Totales agregados de entrega de todas las campañas enviadas, para
+  // que el panel muestre de un vistazo cuántas notificaciones se han
+  // entregado, cuántas fallaron y cuántos clics han recibido, con la tasa
+  // de entrega y de clics calculadas sobre el total objetivo.
+  let campaigns = { sent: 0, target: 0, delivered: 0, failed: 0, clicks: 0 };
+  try {
+    const [[c]] = await pool.query(
+      `SELECT
+         COUNT(*) AS sent,
+         COALESCE(SUM(target_count),0)    AS target,
+         COALESCE(SUM(delivered_count),0) AS delivered,
+         COALESCE(SUM(failed_count),0)    AS failed,
+         COALESCE(SUM(click_count),0)     AS clicks
+       FROM push_campaigns WHERE status='sent'`
+    );
+    campaigns = {
+      sent: c.sent || 0,
+      target: c.target || 0,
+      delivered: c.delivered || 0,
+      failed: c.failed || 0,
+      clicks: c.clicks || 0,
+      delivery_rate: c.target ? Math.round((c.delivered / c.target) * 100) : 0,
+      click_rate: c.delivered ? Math.round((c.clicks / c.delivered) * 100) : 0,
+    };
+  } catch {}
   res.json({
     unique_registered_users: u.c || 0,
     total_registered_devices: t.c || 0,
     anon_devices: a.c || 0,
     push_enabled: pushEnabled(),
+    campaigns,
   });
 }));
 
