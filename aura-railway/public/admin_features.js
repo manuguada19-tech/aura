@@ -2125,10 +2125,10 @@
             } },
           { label: "🎯", title: "Otorgar a usuario", variant: "ghost", onClick: async (r, reload) => {
               const d = await prompt2({ title: "Otorgar recompensa manualmente", fields: [
-                { name: "user_id", label: "ID de usuario", type: "number" },
+                { name: "user_id", label: "Usuario", type: "user_search", placeholder: "Busca por nombre o email…" },
                 { name: "note", label: "Nota interna (opcional)" },
               ]});
-              if (!d || !d.user_id) return;
+              if (!d || !d.user_id) { if (d && !d.user_id) toast("Selecciona un usuario", "err"); return; }
               const rsp = await api(`/api/admin/rewards/${r.id}/grant`, { method: "POST", body: { user_id: Number(d.user_id), note: d.note || null } });
               if (rsp.ok) toast(`Otorgada. Código: ${rsp.data?.code}`, "ok"); else toast("No se pudo otorgar", "err");
               reload();
@@ -2144,7 +2144,7 @@
           { label: "Nueva recompensa", icon: "＋", variant: "primary", onClick: () => openRewardEditor(null, () => { try { rerender(); } catch {} }) },
           { label: "Pendientes de revisión", icon: "⚠️", variant: "ghost", onClick: () => openPendingReviewDialog() },
           { label: "Perfil por usuario", icon: "👤", variant: "ghost", onClick: async () => {
-              const d = await prompt2({ title: "Ver perfil de recompensas", fields: [ { name: "user_id", label: "ID de usuario", type: "number" } ]});
+              const d = await prompt2({ title: "Ver perfil de recompensas", fields: [ { name: "user_id", label: "Usuario", type: "user_search", placeholder: "Busca por nombre o email…" } ]});
               if (d && d.user_id) openUserRewardsProfile(Number(d.user_id));
             } },
           { label: "Ver canjes", icon: "📜", variant: "ghost", onClick: () => openRedemptionsDialog() },

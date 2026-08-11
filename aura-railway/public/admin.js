@@ -15682,7 +15682,7 @@ async function pickMessageOrTemplate(kind, promptLabel) {
 async function viewPushCampaigns(root) {
   root.appendChild(viewTitle(
     "🔔 Campañas Push",
-    "Envía notificaciones push a tus usuarios: anuncios, ofertas, avisos de mantenimiento, novedades. Segmentación por zona, país, edad, premium/free o lista de user_ids."
+    "Envía notificaciones push a tus usuarios: anuncios, ofertas, avisos de mantenimiento, novedades. Segmentación por zona, país, edad, premium/free o personas concretas buscándolas por nombre."
   ));
 
   root.appendChild(sectionLegend("Guía rápida", [
@@ -15889,7 +15889,7 @@ async function viewPushCampaigns(root) {
       el("option", { value: "city" }, "🏙 Por ciudad (registrados)"),
       el("option", { value: "age" }, "🎂 Por rango de edad"),
       el("option", { value: "active_days" }, "⚡ Activos en los últimos N días"),
-      el("option", { value: "user_ids" }, "🎯 Lista específica de user_ids"),
+      el("option", { value: "user_ids" }, "🎯 Personas concretas (buscar por nombre)"),
       el("option", { value: "anon" }, "👻 Solo visitantes SIN cuenta (PWA anónima)"),
       el("option", { value: "anon_country" }, "👻🌎 Visitantes sin cuenta por país"),
       el("option", { value: "anon_lang" }, "👻🗣 Visitantes sin cuenta por idioma"),
@@ -15897,6 +15897,9 @@ async function viewPushCampaigns(root) {
     if (prefill.segment) segSel.value = prefill.segment;
 
     const segParamsWrap = el("div", { style: "margin-top:8px;padding:10px;background:var(--panel-2,#191d27);border:1px solid var(--border,#262a36);border-radius:8px" });
+    // V617 · Destinatarios elegidos por nombre/email para el segmento "user_ids".
+    // Vive en el closure para no perder la selección al cambiar de segmento y volver.
+    const campaignTargetUsers = [];
     function renderSegParams() {
       segParamsWrap.innerHTML = "";
       const v = segSel.value;
@@ -15915,7 +15918,9 @@ async function viewPushCampaigns(root) {
       } else if (v === "active_days") {
         segParamsWrap.appendChild(el("input", { name: "days", type: "number", placeholder: "Últimos N días (ej: 7)", value: "7", style: INPUT_SM + ";width:100%" }));
       } else if (v === "user_ids") {
-        segParamsWrap.appendChild(el("textarea", { name: "user_ids", rows: 3, placeholder: "IDs separados por coma. Ej: 12,34,56,78", style: INPUT_SM + ";width:100%" }));
+        // V617 · Buscador por nombre/email con selección múltiple (chips), en lugar
+        // de teclear IDs numéricos (que además abría el teclado numérico en móvil).
+        segParamsWrap.appendChild(buildTargetUsersPicker());
       } else if (v === "anon_lang") {
         segParamsWrap.appendChild(el("input", { name: "lang", placeholder: "Ej: es, en, fr, pt", style: INPUT_SM + ";width:100%" }));
         segParamsWrap.appendChild(el("small", { style: "display:block;margin-top:4px;color:var(--muted,#8f95a3)" }, "Prefijo del idioma detectado por navigator.language en el visitante."));
@@ -15983,15 +15988,114 @@ async function viewPushCampaigns(root) {
 
     function buildSegParams() {
       const p = {};
+      // V617 · Los destinatarios del segmento "user_ids" se eligen por nombre/email
+      // y se guardan en campaignTargetUsers; enviamos sus IDs al servidor.
+      if (segSel.value === "user_ids") {
+        p.user_ids = campaignTargetUsers.map(u => u.id);
+        return p;
+      }
       segParamsWrap.querySelectorAll("input,select,textarea").forEach(i => {
         const name = i.name;
         if (!name) return;
         let v = i.value;
-        if (name === "user_ids") { p[name] = v.split(",").map(x=>parseInt(x.trim(),10)).filter(Boolean); }
-        else if (name === "min_age" || name === "max_age" || name === "days") { p[name] = parseInt(v,10) || undefined; }
+        if (name === "min_age" || name === "max_age" || name === "days") { p[name] = parseInt(v,10) || undefined; }
         else if (v) p[name] = v;
       });
       return p;
+    }
+
+    // V617 · Componente de selección múltiple de destinatarios por nombre/email.
+    // Reutiliza el endpoint /api/users?q=… y el helper avatar(). Guarda los usuarios
+    // elegidos en campaignTargetUsers (compartido con buildSegParams).
+    function buildTargetUsersPicker() {
+      const wrap = el("div", { style: "position:relative" });
+      wrap.appendChild(el("small", { style: "display:block;margin-bottom:6px;color:var(--muted,#8f95a3)" },
+        "Busca por nombre o email y añade a las personas concretas que recibirán la notificación."));
+      const chips = el("div", { style: "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px" });
+      const input = el("input", {
+        // type text + inputmode text: en móvil NO abre el teclado numérico.
+        type: "text", inputmode: "text", autocomplete: "off",
+        placeholder: "Escribe el nombre o email del usuario…",
+        style: INPUT_SM + ";width:100%",
+      });
+      const panel = el("div", {
+        style: "position:absolute;left:0;right:0;z-index:60;max-height:220px;overflow-y:auto;margin-top:4px;" +
+               "background:var(--panel,#14171f);border:1px solid var(--border,#262a36);border-radius:10px;" +
+               "box-shadow:0 12px 30px rgba(0,0,0,.45);display:none",
+      });
+
+      function renderChips() {
+        chips.innerHTML = "";
+        if (!campaignTargetUsers.length) {
+          chips.appendChild(el("small", { style: "opacity:.6" }, "Aún no has añadido a nadie."));
+          return;
+        }
+        campaignTargetUsers.forEach(u => {
+          const chip = el("span", { style: "display:inline-flex;align-items:center;gap:6px;padding:5px 8px 5px 6px;border-radius:999px;background:rgba(124,58,237,.18);border:1px solid rgba(124,58,237,.4);font-size:12.5px" }, [
+            avatar(u.photo_url, 20),
+            el("span", {}, `${u.name || "—"} · #${u.id}`),
+          ]);
+          const x = el("button", { type: "button", title: "Quitar", style: "background:none;border:0;color:inherit;cursor:pointer;font-size:14px;line-height:1;opacity:.8" }, "✕");
+          x.addEventListener("click", () => {
+            const i = campaignTargetUsers.findIndex(t => t.id === u.id);
+            if (i >= 0) campaignTargetUsers.splice(i, 1);
+            renderChips();
+          });
+          chip.appendChild(x);
+          chips.appendChild(chip);
+        });
+      }
+      function closePanel() { panel.style.display = "none"; panel.innerHTML = ""; }
+      function addUser(u) {
+        if (!campaignTargetUsers.some(t => t.id === u.id)) campaignTargetUsers.push(u);
+        input.value = ""; closePanel(); renderChips(); input.focus();
+      }
+
+      let timer = null, lastQ = "";
+      async function doSearch(q) {
+        lastQ = q;
+        try {
+          const data = await api.get("/api/users?q=" + encodeURIComponent(q) + "&limit=8");
+          if (q !== lastQ) return;
+          const rows = (data && data.rows) || [];
+          panel.innerHTML = "";
+          if (!rows.length) {
+            panel.appendChild(el("div", { style: "padding:10px 12px;opacity:.6;font-size:13px" }, "Sin resultados"));
+          } else {
+            rows.forEach(u => {
+              const already = campaignTargetUsers.some(t => t.id === u.id);
+              const row = el("div", { style: "display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:" + (already ? "default" : "pointer") + ";opacity:" + (already ? ".5" : "1") }, [
+                avatar(u.photo_url, 28),
+                el("div", { style: "flex:1;min-width:0" }, [
+                  el("div", { style: "font-weight:600;font-size:13px" }, `${u.name || "—"}`),
+                  el("small", { style: "opacity:.65;font-size:11px" }, `#${u.id}${u.email ? " · " + u.email : ""}`),
+                ]),
+                already ? el("small", { style: "opacity:.7" }, "✓ añadido") : null,
+              ].filter(Boolean));
+              if (!already) {
+                row.addEventListener("mouseenter", () => { row.style.background = "rgba(124,58,237,.15)"; });
+                row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
+                row.addEventListener("mousedown", (e) => { e.preventDefault(); addUser(u); });
+              }
+              panel.appendChild(row);
+            });
+          }
+          panel.style.display = "block";
+        } catch (e) { closePanel(); }
+      }
+      input.addEventListener("input", () => {
+        const q = input.value.trim();
+        clearTimeout(timer);
+        if (q.length < 2) { closePanel(); return; }
+        timer = setTimeout(() => doSearch(q), 250);
+      });
+      input.addEventListener("blur", () => setTimeout(closePanel, 150));
+
+      wrap.appendChild(chips);
+      wrap.appendChild(input);
+      wrap.appendChild(panel);
+      renderChips();
+      return wrap;
     }
 
     // Acciones
