@@ -5633,6 +5633,12 @@ function buildPushNotice() {
 }
 
 function screenDiscover(root) {
+  // V607 · Aviso persistente de notificaciones. Se construye ANTES del stack y
+  // se coloca justo debajo de la barra superior (dentro de .discover) para que
+  // sea visible sin hacer scroll; antes se añadía al final del render y quedaba
+  // por debajo del fold.
+  let pushNotice = null;
+  try { pushNotice = buildPushNotice(); } catch {}
   root.appendChild(el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
       el("span", {
@@ -5646,6 +5652,7 @@ function screenDiscover(root) {
       ]),
       el("span", { class: "brand-topbar-spacer", "aria-hidden": "true" }),
     ]),
+    pushNotice || null,
     buildSwipeStack(),
     el("div", { class: "action-row" }, [
       actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho")),
@@ -5655,8 +5662,6 @@ function screenDiscover(root) {
       actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => toast("¡Boost activado por 30 min!")),
     ]),
   ]));
-  // V605 · Aviso persistente de notificaciones (si no están activas).
-  try { const pn = buildPushNotice(); if (pn) root.appendChild(pn); } catch {}
   // Ad slot (visible only to Free plan)
   const adTop = buildAdSlot("discover");
   if (adTop) root.appendChild(adTop);
