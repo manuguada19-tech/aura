@@ -11564,11 +11564,30 @@ async function boot() {
       try { history.replaceState(null, "", "/"); } catch {}
     }
   } catch {}
-  // Modo pruebas privadas: al arrancar mostramos la pantalla de bienvenida
-  // (con input de código de invitación de tester). Desde ahí el usuario
-  // puede pulsar "🧪 Ver estado de la beta / Soy superadmin" para ir a la
-  // pantalla beta (waitlist + acceso superadmin) si lo necesita.
-  render(publicInfoScreen || screenWelcome);
+  // Restaurar sesión al recargar la página (F5 / reapertura de la PWA).
+  //   Si el usuario ya tiene una sesión válida guardada (state.user con id),
+  //   entramos DIRECTAMENTE a la app en vez de mostrar siempre la bienvenida.
+  //   Así se mantiene en la misma sección: la URL (/explorar, /chats, /perfil…)
+  //   se resuelve como deep-link dentro de showApp(), que aplica la pestaña
+  //   correspondiente. Aplica en TODOS los modos (test, pruebas privadas y
+  //   real): el servidor sigue siendo la puerta — chatApi.ensure() y el polling
+  //   de restricciones bloquean/expulsan cuentas sin acceso o baneadas.
+  //   Excepción: si venimos de un enlace de apelación (?appeal=1) dejamos que
+  //   el flujo de más abajo muestre la pantalla de aviso.
+  const _hasAppealParam = (() => {
+    try { return new URLSearchParams(location.search || "").get("appeal") === "1"; }
+    catch { return false; }
+  })();
+  if (!publicInfoScreen && !_hasAppealParam && state.user && state.user.id) {
+    try { showApp(); }
+    catch { try { render(screenWelcome); } catch {} }
+  } else {
+    // Modo pruebas privadas / sin sesión: mostramos la pantalla de bienvenida
+    // (con input de código de invitación de tester). Desde ahí el usuario
+    // puede pulsar "🧪 Ver estado de la beta / Soy superadmin" para ir a la
+    // pantalla beta (waitlist + acceso superadmin) si lo necesita.
+    render(publicInfoScreen || screenWelcome);
+  }
   // Deep-link para apelaciones desde el email de moderación:
   // /?appeal=1&email=xxx  → siempre muestra primero la pantalla de aviso con
   // el motivo, la duración y los botones. El usuario debe pulsar "📝 Enviar

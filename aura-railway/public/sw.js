@@ -16,7 +16,7 @@
      usuario dejó la app instalada, se registre su última zona.
 */
 
-const CACHE_VERSION = "aura-v27";
+const CACHE_VERSION = "aura-v28";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
