@@ -3028,6 +3028,28 @@ function showApp() {
   (async () => { try { await chatApi.ensure(); await Auth.refresh(); startHeartbeat(); } catch {} })();
   // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
   setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
+  // Función 5 · Aviso de retorno de pago (Stripe). El plan/los créditos los
+  //   concede el webhook; aquí solo informamos y refrescamos el perfil.
+  try {
+    const payRes = sessionStorage.getItem("aura_pay_result");
+    if (payRes) {
+      sessionStorage.removeItem("aura_pay_result");
+      if (payRes === "ok") {
+        setTimeout(() => {
+          try { toast("¡Pago recibido! Tu compra se activará en unos segundos."); } catch {}
+          // Reintentos suaves para refrescar el estado cuando el webhook llegue.
+          let tries = 0;
+          const iv = setInterval(async () => {
+            tries++;
+            try { await chatApi.ensure(); } catch {}
+            if (tries >= 4) clearInterval(iv);
+          }, 3000);
+        }, 600);
+      } else if (payRes === "cancel") {
+        setTimeout(() => { try { toast("Pago cancelado. No se ha realizado ningún cargo."); } catch {} }, 600);
+      }
+    }
+  } catch {}
   // Aplica el deep-link pendiente si existe (viene de la URL al arrancar o
   // se guardó en sessionStorage antes del login).
   let dl = state.pendingDeepLink;
@@ -7435,6 +7457,20 @@ async function openReadsPaywall(prefStatus) {
             const btn = card.querySelector(".rp2-pack-btn");
             if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
             try {
+              // Función 5 · Si el cobro real (Stripe) está activo, creamos una
+              //   sesión de Checkout y redirigimos a la página de pago de Stripe.
+              //   El crédito se concede al volver, vía webhook verificado.
+              if (publicConfig?.payments?.checkout_live) {
+                const cs = await fetch("/api/my/checkout/reads", {
+                  method: "POST", headers: chatApi.headers(),
+                  body: JSON.stringify({ pack: p.id }),
+                });
+                const csj = await cs.json().catch(() => ({}));
+                if (cs.ok && csj.url) { window.location.href = csj.url; return; }
+                toast(csj.reason || "No se pudo iniciar el pago");
+                if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
+                return;
+              }
               const promo = window.__auraPromo;
               const resp = await fetch("/api/my/reads/purchase", {
                 method: "POST", headers: chatApi.headers(),
@@ -10209,7 +10245,27 @@ function screenSubscriptions(root) {
       const cta = isFree
         ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan actual (Free)")
         : el("button", { class: "btn btn-brand btn-block",
-            onclick: () => toast(`Suscripción ${p.tier} ${billing === "annual" ? "anual" : "mensual"} en curso (demo)`)
+            onclick: async (ev) => {
+              const btn = ev.currentTarget;
+              // Función 5 · Con cobro real (Stripe) activo, creamos la sesión de
+              //   Checkout y redirigimos a la página de pago segura de Stripe.
+              if (publicConfig?.payments?.checkout_live) {
+                const prev = btn.textContent;
+                btn.disabled = true; btn.textContent = "Redirigiendo al pago…";
+                try {
+                  const cs = await fetch("/api/my/checkout/subscription", {
+                    method: "POST", headers: chatApi.headers(),
+                    body: JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "yearly" : "monthly" }),
+                  });
+                  const csj = await cs.json().catch(() => ({}));
+                  if (cs.ok && csj.url) { window.location.href = csj.url; return; }
+                  toast(csj.reason || "No se pudo iniciar el pago");
+                } catch { toast("Error iniciando el pago"); }
+                btn.disabled = false; btn.textContent = prev;
+                return;
+              }
+              toast(`Suscripción ${p.tier} ${billing === "annual" ? "anual" : "mensual"} en curso (demo)`);
+            }
           }, `Elegir ${p.tier}`);
       // Preview of how ads look for the Free plan (upgrade to remove them)
       const adPreview = isFree ? el("div", { class: "plan-ad-preview" }, [
@@ -11462,6 +11518,20 @@ async function boot() {
         } catch {}
         return;
       }
+    }
+  } catch {}
+  // Función 5 · Retorno desde Stripe Checkout: /?pago=ok&sid=... o /?pago=cancelado.
+  //   No concede nada (eso lo hace el webhook); solo informa y refresca el estado
+  //   tras el arranque normal. Guardamos un aviso que showApp() mostrará.
+  try {
+    const pp = new URLSearchParams(location.search || "");
+    const pago = pp.get("pago");
+    if (pago === "ok") {
+      try { sessionStorage.setItem("aura_pay_result", "ok"); } catch {}
+      try { history.replaceState(null, "", "/"); } catch {}
+    } else if (pago === "cancelado") {
+      try { sessionStorage.setItem("aura_pay_result", "cancel"); } catch {}
+      try { history.replaceState(null, "", "/"); } catch {}
     }
   } catch {}
   // Modo pruebas privadas: al arrancar mostramos la pantalla de bienvenida

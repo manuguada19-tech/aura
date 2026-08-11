@@ -8,6 +8,7 @@ const path = require("path");
 const fs = require("fs");
 const nodemailer = require("nodemailer");
 const emailTx = require("./email-translations");
+const stripeClient = require("./stripeClient"); // Función 5 · pagos (Stripe, sin dependencias)
 let webpush = null;
 try {
   webpush = require("web-push");
@@ -35,6 +36,7 @@ app.set("trust proxy", true);
 // por eso se salta express.json y se procesa con express.raw en su ruta.
 app.use((req, res, next) => {
   if (req.path === "/api/verify/id/didit-webhook") return next();
+  if (req.path === "/api/payments/stripe/webhook") return next(); // Función 5 · body bruto para firma
   return express.json({ limit: "8mb" })(req, res, next);
 });
 
@@ -1166,6 +1168,29 @@ async function migrate() {
     "ALTER TABLE devices ADD COLUMN ch_last_seen TIMESTAMP NULL",
   ]) { try { await pool.execute(stmt); } catch {} }
 
+  // Función 5 · Pagos con Stripe. Columnas para enlazar filas locales con los
+  //   objetos de Stripe (idempotencia del webhook y trazabilidad).
+  //   - payments.stripe_session_id / stripe_payment_intent: identifican el cobro.
+  //   - subscriptions.stripe_subscription_id / stripe_customer_id: renovaciones.
+  //   - users.stripe_customer_id: reutilizar el mismo cliente entre compras.
+  for (const stmt of [
+    "ALTER TABLE payments ADD COLUMN stripe_session_id VARCHAR(120) NULL",
+    "ALTER TABLE payments ADD COLUMN stripe_payment_intent VARCHAR(120) NULL",
+    "ALTER TABLE payments ADD COLUMN kind VARCHAR(24) NULL",
+    "ALTER TABLE payments ADD UNIQUE INDEX uniq_stripe_session (stripe_session_id)",
+    "ALTER TABLE subscriptions ADD COLUMN stripe_subscription_id VARCHAR(120) NULL",
+    "ALTER TABLE subscriptions ADD COLUMN stripe_customer_id VARCHAR(120) NULL",
+    "ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(120) NULL",
+  ]) { try { await pool.execute(stmt); } catch {} }
+  // Registro de eventos de webhook ya procesados (idempotencia estricta).
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS stripe_events (
+      id VARCHAR(80) NOT NULL PRIMARY KEY,
+      type VARCHAR(80) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`);
+  } catch (e) { /* ignore */ }
+
   // V402 - Tracking de emails de invitación (sent / opened / clicked / bounced)
   //        y campañas/utm para segmentar cohortes.
   for (const stmt of [
@@ -1484,6 +1509,11 @@ async function seed() {
     "payments.apple_pay": "true",
     "payments.google_pay": "true",
     "payments.bizum": "false",
+    // Función 5 · Proveedor de cobro real. "simulado" = comportamiento actual
+    //   (suma créditos / da plan sin cobrar). "stripe" = cobro real vía Checkout.
+    //   Por defecto "simulado" para NO alterar a los usuarios existentes hasta
+    //   que el admin lo active conscientemente (y existan las claves en env).
+    "payments.provider": "simulado",
     "legal.terms": "Al usar Aura aceptas estos términos y condiciones. Uso responsable, respeto y verificación son pilares de la comunidad.",
     "legal.privacy": "Recogemos los datos necesarios para hacer coincidir usuarios de forma segura y respetamos tu privacidad conforme al RGPD.",
     // Read-receipts economy
@@ -9810,11 +9840,249 @@ app.post("/api/my/reads/reveal", wrap(async (req, res) => {
   res.json({ ok: true, revealed: true, source: result.source, read_at: m.read_at, status: result.status });
 }));
 
+/* ============================================================
+   FUNCIÓN 5 · PAGOS CON STRIPE (Checkout + Webhook)
+   ------------------------------------------------------------
+   Diseño clave (compatible hacia atrás):
+   - El setting "payments.provider" decide el modo:
+       "simulado" (por defecto) → NADA cambia: /reads/purchase sigue
+         sumando créditos sin cobrar, tal como hoy.
+       "stripe" → los endpoints de checkout crean sesiones de pago
+         reales; el plan/los créditos se conceden SOLO cuando llega
+         el webhook `checkout.session.completed` verificado por firma.
+   - El navegador nunca concede nada: la verdad viene del webhook.
+   ============================================================ */
+function stripeEnabled() {
+  return getSetting("payments.provider", "simulado") === "stripe" && stripeClient.isConfigured();
+}
+const PLAN_CODES = new Set(["premium", "gold", "platinum"]);
+
+// URL base pública para success_url / cancel_url.
+function publicBaseUrl(req) {
+  const fromEnv = process.env.PUBLIC_BASE_URL || getSetting("app.public_url", "");
+  if (fromEnv) return String(fromEnv).replace(/\/+$/, "");
+  const proto = (req.headers["x-forwarded-proto"] || req.protocol || "https").split(",")[0].trim();
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  return `${proto}://${host}`;
+}
+
+function genInvoiceNo() {
+  const d = new Date();
+  const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return `INV-${ym}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+}
+
+// Concede un plan al usuario y registra suscripción + pago (idempotente por session).
+async function grantPlanFromStripe({ uid, planCode, period, sessionId, paymentIntent, subscriptionId, customerId, amount, currency }) {
+  if (!PLAN_CODES.has(planCode)) return;
+  const [[plan]] = await pool.query("SELECT id FROM plans WHERE code=? LIMIT 1", [planCode]);
+  const planId = plan ? plan.id : null;
+  const per = period === "yearly" ? "yearly" : "monthly";
+  await pool.execute("UPDATE users SET plan=? WHERE id=?", [planCode, uid]);
+  if (customerId) {
+    try { await pool.execute("UPDATE users SET stripe_customer_id=? WHERE id=?", [customerId, uid]); } catch {}
+  }
+  const renewDays = per === "yearly" ? 365 : 30;
+  let subRowId = null;
+  if (planId) {
+    const [r] = await pool.execute(
+      `INSERT INTO subscriptions (user_id, plan_id, period, status, started_at, renew_at, stripe_subscription_id, stripe_customer_id)
+       VALUES (?,?,?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
+      [uid, planId, per, renewDays, subscriptionId || null, customerId || null]
+    );
+    subRowId = r.insertId;
+  }
+  // Pago (UNIQUE en stripe_session_id evita duplicados si el webhook se reintenta).
+  await pool.execute(
+    `INSERT INTO payments (user_id, subscription_id, invoice_no, amount, currency, method, status, kind, stripe_session_id, stripe_payment_intent)
+     VALUES (?,?,?,?,?, 'stripe', 'completed', 'subscription', ?, ?)
+     ON DUPLICATE KEY UPDATE status='completed'`,
+    [uid, subRowId, genInvoiceNo(), amount, currency || "EUR", sessionId || null, paymentIntent || null]
+  );
+  try { await logActivity("user", `Suscripción ${planCode} (${per}) activada vía Stripe · usuario ${uid}`); } catch {}
+}
+
+// Suma créditos de un pack y registra el pago (idempotente por session).
+async function grantCreditsFromStripe({ uid, packId, credits, sessionId, paymentIntent, amount, currency }) {
+  await ensureReadCreditsRow(uid);
+  // Idempotencia: si ya registramos este pago, no volver a sumar.
+  const [[dup]] = await pool.query("SELECT id FROM payments WHERE stripe_session_id=? LIMIT 1", [sessionId]);
+  if (dup) return;
+  await pool.execute("UPDATE chat_read_credits SET credits = credits + ? WHERE user_id=?", [credits, uid]);
+  await pool.execute(
+    "INSERT INTO chat_read_purchases (user_id, pack, credits, amount, currency) VALUES (?,?,?,?,?)",
+    [uid, packId, credits, amount, currency || "EUR"]
+  );
+  try {
+    await pool.execute(
+      `INSERT INTO payments (user_id, invoice_no, amount, currency, method, status, kind, stripe_session_id, stripe_payment_intent)
+       VALUES (?,?,?,?, 'stripe', 'completed', 'reads_pack', ?, ?)
+       ON DUPLICATE KEY UPDATE status='completed'`,
+      [uid, genInvoiceNo(), amount, currency || "EUR", sessionId || null, paymentIntent || null]
+    );
+  } catch {}
+  try { await logActivity("user", `Pack lecturas '${packId}' (+${credits}) pagado vía Stripe · usuario ${uid}`); } catch {}
+}
+
+// POST /api/my/checkout/subscription  { plan: "premium"|"gold"|"platinum", period?: "monthly"|"yearly" }
+// Crea una sesión de Stripe Checkout para suscribirse. Devuelve { url } para redirigir.
+app.post("/api/my/checkout/subscription", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (!stripeEnabled()) return res.status(503).json({ error: "payments_disabled", reason: "Stripe no está activado" });
+  const planCode = String(req.body?.plan || "").toLowerCase();
+  if (!PLAN_CODES.has(planCode)) return res.status(400).json({ error: "invalid_plan" });
+  const period = req.body?.period === "yearly" ? "yearly" : "monthly";
+
+  const [[plan]] = await pool.query("SELECT code, name, price_monthly, price_yearly FROM plans WHERE code=? AND enabled=1 LIMIT 1", [planCode]);
+  if (!plan) return res.status(400).json({ error: "plan_unavailable" });
+  const price = Number(period === "yearly" ? plan.price_yearly : plan.price_monthly);
+  if (!(price > 0)) return res.status(400).json({ error: "price_unavailable" });
+  const cents = Math.round(price * 100);
+  const currency = String(getSetting("app.currency", "EUR")).toLowerCase();
+  const [[u]] = await pool.query("SELECT email, stripe_customer_id FROM users WHERE id=? LIMIT 1", [me]);
+  const base = publicBaseUrl(req);
+
+  try {
+    const session = await stripeClient.createCheckoutSession({
+      mode: "subscription",
+      success_url: `${base}/?pago=ok&sid={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/?pago=cancelado`,
+      client_reference_id: String(me),
+      customer_email: (!u || !u.stripe_customer_id) && u && u.email ? u.email : undefined,
+      customer: u && u.stripe_customer_id ? u.stripe_customer_id : undefined,
+      allow_promotion_codes: true,
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: cents,
+          recurring: { interval: period === "yearly" ? "year" : "month" },
+          product_data: { name: `Aura ${plan.name}` },
+        },
+      }],
+      metadata: { user_id: String(me), kind: "subscription", plan: planCode, period },
+      subscription_data: { metadata: { user_id: String(me), plan: planCode, period } },
+    });
+    res.json({ ok: true, url: session.url, id: session.id });
+  } catch (e) {
+    console.error("[stripe] subscription checkout:", e.message);
+    res.status(502).json({ error: "stripe_error" });
+  }
+}));
+
+// POST /api/my/checkout/reads  { pack: "s"|"m"|"l" }
+// Crea una sesión de Stripe Checkout (pago único) para comprar un pack de lecturas.
+app.post("/api/my/checkout/reads", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (!stripeEnabled()) return res.status(503).json({ error: "payments_disabled", reason: "Stripe no está activado" });
+  const packs = readPacks();
+  const pick = packs.find(p => p.id === req.body?.pack);
+  if (!pick) return res.status(400).json({ error: "invalid_pack" });
+  if (!(Number(pick.price) > 0)) return res.status(400).json({ error: "price_unavailable" });
+  const cents = Math.round(Number(pick.price) * 100);
+  const currency = String(getSetting("chat.reads.currency", "EUR")).toLowerCase();
+  const [[u]] = await pool.query("SELECT email, stripe_customer_id FROM users WHERE id=? LIMIT 1", [me]);
+  const base = publicBaseUrl(req);
+
+  try {
+    const session = await stripeClient.createCheckoutSession({
+      mode: "payment",
+      success_url: `${base}/?pago=ok&sid={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/?pago=cancelado`,
+      client_reference_id: String(me),
+      customer_email: (!u || !u.stripe_customer_id) && u && u.email ? u.email : undefined,
+      customer: u && u.stripe_customer_id ? u.stripe_customer_id : undefined,
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: cents,
+          product_data: { name: `Aura · ${pick.label} (${pick.credits} lecturas)` },
+        },
+      }],
+      metadata: { user_id: String(me), kind: "reads_pack", pack: pick.id, credits: String(pick.credits) },
+    });
+    res.json({ ok: true, url: session.url, id: session.id });
+  } catch (e) {
+    console.error("[stripe] reads checkout:", e.message);
+    res.status(502).json({ error: "stripe_error" });
+  }
+}));
+
+// POST /api/payments/stripe/webhook  (body BRUTO, firmado por Stripe)
+// Es la ÚNICA vía que concede plan/créditos: se verifica la firma y se aplica
+// la acción según metadata. Idempotente (tabla stripe_events + UNIQUE en payments).
+app.post(
+  "/api/payments/stripe/webhook",
+  express.raw({ type: "*/*", limit: "1mb" }),
+  wrap(async (req, res) => {
+    const secret = process.env.STRIPE_WEBHOOK_SECRET || "";
+    const sig = req.headers["stripe-signature"];
+    const raw = req.body instanceof Buffer ? req.body : Buffer.from(String(req.body || ""));
+    if (!secret) { console.warn("[stripe] webhook sin STRIPE_WEBHOOK_SECRET"); return res.status(500).json({ error: "webhook_not_configured" }); }
+    if (!stripeClient.verifyWebhookSignature(raw, sig, secret)) {
+      return res.status(400).json({ error: "invalid_signature" });
+    }
+    let event = null;
+    try { event = JSON.parse(raw.toString("utf8")); } catch { return res.status(400).json({ error: "bad_json" }); }
+
+    // Idempotencia estricta: si ya vimos este evento, salir con 200.
+    try {
+      const [ins] = await pool.execute(
+        "INSERT IGNORE INTO stripe_events (id, type) VALUES (?,?)",
+        [String(event.id || ""), String(event.type || "")]
+      );
+      if (ins.affectedRows === 0) return res.json({ ok: true, duplicate: true });
+    } catch {}
+
+    if (event.type === "checkout.session.completed") {
+      const s = event.data && event.data.object ? event.data.object : {};
+      // Solo conceder si el pago está realmente cobrado.
+      const paid = s.payment_status === "paid" || s.status === "complete";
+      const md = s.metadata || {};
+      const uid = parseInt(md.user_id || s.client_reference_id, 10);
+      if (paid && Number.isFinite(uid) && uid > 0) {
+        const amount = s.amount_total != null ? Number(s.amount_total) / 100 : 0;
+        const currency = (s.currency || "eur").toUpperCase();
+        try {
+          if (md.kind === "subscription") {
+            await grantPlanFromStripe({
+              uid, planCode: md.plan, period: md.period,
+              sessionId: s.id, paymentIntent: s.payment_intent || null,
+              subscriptionId: s.subscription || null, customerId: s.customer || null,
+              amount, currency,
+            });
+          } else if (md.kind === "reads_pack") {
+            const credits = parseInt(md.credits, 10) || 0;
+            await grantCreditsFromStripe({
+              uid, packId: md.pack, credits,
+              sessionId: s.id, paymentIntent: s.payment_intent || null,
+              amount, currency,
+            });
+          }
+        } catch (e) {
+          console.error("[stripe] grant error:", e.message);
+          // 500 → Stripe reintentará el webhook más tarde.
+          return res.status(500).json({ error: "grant_failed" });
+        }
+      }
+    }
+    // Otros tipos de evento (renovaciones, cancelaciones) se pueden manejar aquí
+    // en el futuro; de momento respondemos 200 para que Stripe no reintente.
+    res.json({ ok: true });
+  })
+);
+
 // POST /api/my/reads/purchase  { pack: "s"|"m"|"l" }
 // (Simulated purchase — in production this would tie into a payment provider.)
 app.post("/api/my/reads/purchase", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
+  // Función 5 · Si Stripe está activo, el crédito gratis simulado queda
+  //   deshabilitado: hay que pasar por /api/my/checkout/reads (cobro real).
+  if (stripeEnabled()) return res.status(409).json({ error: "use_stripe_checkout", checkout: "/api/my/checkout/reads" });
   const packs = readPacks();
   const pick = packs.find(p => p.id === req.body?.pack);
   if (!pick) return res.status(400).json({ error: "invalid_pack" });
@@ -9915,6 +10183,10 @@ app.get("/api/public-config", (req, res) => {
       apple_pay: isTrue("payments.apple_pay", true),
       google_pay: isTrue("payments.google_pay", true),
       bizum: isTrue("payments.bizum", false),
+      // Función 5 · modo real de cobro. "simulado" | "stripe".
+      //   `checkout_live` = true solo si además hay claves configuradas.
+      provider: getSetting("payments.provider", "simulado"),
+      checkout_live: getSetting("payments.provider", "simulado") === "stripe" && stripeClient.isConfigured(),
     },
     ads: {
       enabled: isTrue("ads.enabled", true),
