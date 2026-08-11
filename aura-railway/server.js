@@ -5769,14 +5769,56 @@ app.get("/api/discover", wrap(async (req, res) => {
     where.push("u.gender = ?"); params.push(String(f.gender));
   }
 
-  const [rows] = await pool.query(
-    `SELECT id, name, age, gender, orientation, city, lat, lng, height, weight, bio, photo_url, verified, online
-       FROM users u
-      WHERE ${where.join(" AND ")}
-      ORDER BY u.online DESC, u.verified DESC, RAND()
-      LIMIT ?`,
-    [...params, limit]
-  );
+  // ---- Geolocalización (función 4) ----
+  // Coordenadas del usuario actual (sólo si dio consentimiento GPS y hay
+  // una captura). Si no las hay, el comportamiento es EXACTO al anterior:
+  // no se calcula distancia ni se filtra por ella.
+  let myLat = null, myLng = null;
+  if (me) {
+    try {
+      const [[g]] = await pool.query(
+        "SELECT lat, lng FROM user_gps WHERE user_id=? AND consent_given=1 AND revoked_at IS NULL LIMIT 1",
+        [me]
+      );
+      if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
+    } catch { /* sin coords → seguimos sin distancia */ }
+  }
+  const hasGeo = Number.isFinite(myLat) && Number.isFinite(myLng);
+  const distanceKm = parseInt(f.distance_km, 10);
+
+  // Haversine en SQL (radio Tierra = 6371 km). LEAST(1,…) evita NaN por
+  // redondeo de coma flotante. La distancia sale del user_gps del candidato;
+  // si no tiene coords, es NULL (perfil sin GPS → sigue apareciendo).
+  const distExpr = hasGeo
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    : "NULL";
+  const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
+
+  let sql =
+    `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
+            u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
+            ${distExpr} AS distance
+       FROM users u`;
+  if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
+  sql += ` WHERE ${where.join(" AND ")}`;
+
+  // Filtro por distancia: sólo excluye a quien tiene distancia CONOCIDA y
+  // fuera de rango. Los perfiles sin GPS (distance NULL) siguen visibles
+  // para no vaciar el feed mientras se adopta el GPS.
+  let havingParam = null;
+  if (hasGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
+    sql += " HAVING distance IS NULL OR distance <= ?";
+    havingParam = distanceKm;
+  }
+  sql += " ORDER BY u.online DESC, u.verified DESC, RAND() LIMIT ?";
+
+  const finalParams = [...selectParams, ...params];
+  if (havingParam != null) finalParams.push(havingParam);
+  finalParams.push(limit);
+
+  const [rows] = await pool.query(sql, finalParams);
+  // Normaliza distance a número (o null) por si el driver la devuelve como string.
+  for (const r of rows) r.distance = (r.distance == null ? null : Number(r.distance));
   res.json(rows);
 }));
 
@@ -8976,6 +9018,15 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
     `UPDATE user_gps SET lat=?, lng=?, accuracy=?, heading=?, speed=?, captured_at=NOW() WHERE user_id=?`,
     [lat, lng, acc, heading, speed, uid]
   );
+  res.json({ ok: true });
+}));
+
+// POST /api/my/gps/heartbeat  → latido del service worker en segundo plano.
+// El SW no puede leer geolocation sin ventana; sólo avisa de que la app
+// sigue instalada. Devolvemos 200 (antes daba 404). No escribe coords.
+app.post("/api/my/gps/heartbeat", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
   res.json({ ok: true });
 }));
 

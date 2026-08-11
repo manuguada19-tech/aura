@@ -1833,8 +1833,9 @@ function mapApiUser(row) {
     gender: row.gender || "",
     orientation: row.orientation || "",
     city: row.city || "",
-    // La distancia real depende del GPS (aún no persistido) → null por ahora.
-    distance: (typeof row.distance === "number" ? row.distance : null),
+    // Distancia real en km calculada por el backend (Haversine sobre GPS
+    // con consentimiento). Es null si no hay coords de ambos usuarios.
+    distance: (typeof row.distance === "number" ? row.distance : (row.distance != null ? Number(row.distance) : null)),
     job: row.job || "",
     bio: row.bio || "",
     interests: Array.isArray(row.interests) ? row.interests : [],
