@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards","fx_notifications"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards","fx_notifications","fx_zones"];
 
   function readTok() {
     try {
@@ -2448,6 +2448,251 @@
     // Registro + helpers
     // -----------------------------------------------------------------
     let currentView = null, currentContainer = null;
+    // ---- Zonas (V613) · monitorización + datos archivados -----------
+    const ZLABEL = {
+      hetero: { t: "Hetero", emoji: "❤️", c: "pink" },
+      lgtb:   { t: "LGTB+",  emoji: "🏳️‍🌈", c: "purple" },
+    };
+
+    // Overlay reutilizable para fichas de residencia / usuario.
+    function zoneOverlay(titleHtml, bodyNode) {
+      const back = document.createElement("div");
+      back.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(8,10,20,0.62);backdrop-filter:blur(3px);display:flex;justify-content:flex-end;";
+      const panel = document.createElement("div");
+      panel.style.cssText = "width:min(760px,96vw);height:100%;background:var(--bg-elev,#141a2b);box-shadow:-12px 0 40px rgba(0,0,0,0.4);display:flex;flex-direction:column;overflow:hidden;";
+      const hd = document.createElement("div");
+      hd.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid rgba(255,255,255,0.08);";
+      hd.innerHTML = `<div style="font-size:16px;font-weight:700">${titleHtml}</div>`;
+      const close = btn("Cerrar", { variant: "ghost", icon: "&#x2715;", onClick: () => back.remove() });
+      hd.appendChild(close);
+      const body = document.createElement("div");
+      body.style.cssText = "padding:18px 20px;overflow:auto;flex:1;";
+      body.appendChild(bodyNode);
+      panel.appendChild(hd); panel.appendChild(body); back.appendChild(panel);
+      back.addEventListener("click", (e) => { if (e.target === back) back.remove(); });
+      document.body.appendChild(back);
+      return back;
+    }
+
+    function statGrid(pairs) {
+      const g = document.createElement("div");
+      g.style.cssText = "display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px;margin:12px 0;";
+      pairs.forEach(([label, value]) => {
+        const c = document.createElement("div");
+        c.style.cssText = "background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.07);border-radius:12px;padding:10px 12px;";
+        c.innerHTML = `<div class="fx-muted" style="font-size:11px">${escapeHtml(label)}</div><div style="font-size:19px;font-weight:700">${escapeHtml(String(value ?? "—"))}</div>`;
+        g.appendChild(c);
+      });
+      return g;
+    }
+
+    // Ficha de una residencia (snapshot + chats + llamadas archivadas).
+    async function openZoneResidency(id) {
+      let payload = {};
+      try { payload = (await api("/api/admin/zones/residency/" + id)).data || {}; } catch {}
+      const res = payload.residency || {};
+      const snap = res.snapshot || {};
+      const prof = snap.profile || {};
+      const msgs = payload.messages || [];
+      const calls = payload.calls || [];
+      const lb = ZLABEL[res.zone] || { t: res.zone, emoji: "🌐" };
+
+      const body = document.createElement("div");
+
+      // Perfil
+      const profBox = document.createElement("div");
+      profBox.innerHTML = `<div style="font-weight:700;margin-bottom:6px">👤 Perfil archivado</div>
+        <div class="fx-muted" style="font-size:13px">${escapeHtml(prof.name || res.name || "—")} · ${escapeHtml(prof.email || res.email || "—")}${prof.id ? " · #" + prof.id : ""}</div>
+        <div class="fx-muted" style="font-size:12px;margin-top:4px">${escapeHtml([prof.gender, prof.orientation, prof.age ? prof.age + " años" : "", prof.city, prof.country].filter(Boolean).join(" · "))}</div>`;
+      body.appendChild(profBox);
+
+      body.appendChild(statGrid([
+        ["Mensajes", res.messages_sent],
+        ["Llamadas hechas", res.calls_made],
+        ["Llamadas recibidas", res.calls_received],
+        ["Likes dados", res.likes_given],
+        ["Matches", res.matches_count],
+        ["Conversaciones", res.conversations_count],
+        ["Entró", fmtDate(res.started_at)],
+        ["Salió", fmtDate(res.ended_at)],
+      ]));
+
+      // Conversaciones (del snapshot)
+      const convs = (snap.conversations || []);
+      const convTitle = document.createElement("div");
+      convTitle.style.cssText = "font-weight:700;margin:16px 0 6px";
+      convTitle.textContent = `💬 Conversaciones (${convs.length})`;
+      body.appendChild(convTitle);
+      if (convs.length) {
+        const t = document.createElement("table"); t.className = "fx-table";
+        t.innerHTML = "<thead><tr><th>ID</th><th>Total msgs</th><th>Suyos</th><th>Último</th></tr></thead><tbody></tbody>";
+        const tb = t.querySelector("tbody");
+        convs.slice(0, 200).forEach((c) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>#${c.id}</td><td>${c.total_messages ?? "—"}</td><td>${c.my_messages ?? "—"}</td><td>${fmtDate(c.last_message_at)}</td>`;
+          tb.appendChild(tr);
+        });
+        body.appendChild(t);
+      } else {
+        body.appendChild(h("p", { class: "fx-muted" }, "Sin conversaciones registradas."));
+      }
+
+      // Mensajes archivados en crudo
+      const msgTitle = document.createElement("div");
+      msgTitle.style.cssText = "font-weight:700;margin:16px 0 6px";
+      msgTitle.textContent = `📨 Mensajes archivados (${msgs.length})`;
+      body.appendChild(msgTitle);
+      if (msgs.length) {
+        const box = document.createElement("div");
+        box.style.cssText = "max-height:320px;overflow:auto;border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:6px;";
+        msgs.slice(0, 1000).forEach((m) => {
+          const mine = m.sender_id === (prof.id || res.user_id);
+          const line = document.createElement("div");
+          line.style.cssText = "padding:6px 8px;border-bottom:1px solid rgba(255,255,255,0.05);font-size:13px;";
+          const who = mine ? "Usuario" : (escapeHtml(m.peer_name || ("#" + (m.peer_id || "?"))));
+          const media = m.media_type ? ` [${escapeHtml(m.media_type)}]` : "";
+          line.innerHTML = `<span class="fx-muted" style="font-size:11px">${fmtDate(m.sent_at)} · ${who}${media}</span><br>${escapeHtml(m.body || "")}`;
+          box.appendChild(line);
+        });
+        body.appendChild(box);
+      } else {
+        body.appendChild(h("p", { class: "fx-muted" }, "Sin mensajes archivados."));
+      }
+
+      // Llamadas archivadas
+      const callTitle = document.createElement("div");
+      callTitle.style.cssText = "font-weight:700;margin:16px 0 6px";
+      callTitle.textContent = `📞 Llamadas archivadas (${calls.length})`;
+      body.appendChild(callTitle);
+      if (calls.length) {
+        const t = document.createElement("table"); t.className = "fx-table";
+        t.innerHTML = "<thead><tr><th>Fecha</th><th>Dir.</th><th>Estado</th><th>Modo</th><th>Peer</th></tr></thead><tbody></tbody>";
+        const tb = t.querySelector("tbody");
+        calls.slice(0, 500).forEach((c) => {
+          const peer = c.direction === "out" ? c.callee_id : c.caller_id;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `<td>${fmtDate(c.started_at)}</td><td>${escapeHtml(c.direction || "—")}</td><td>${escapeHtml(c.status || "—")}</td><td>${escapeHtml(c.mode || "—")}</td><td>#${peer ?? "?"}</td>`;
+          tb.appendChild(tr);
+        });
+        body.appendChild(t);
+      } else {
+        body.appendChild(h("p", { class: "fx-muted" }, "Sin llamadas archivadas."));
+      }
+
+      zoneOverlay(`${lb.emoji} Residencia #${id} · ${escapeHtml(res.name || res.email || "usuario")}`, body);
+    }
+
+    // Ficha de un usuario activo: lista de sus residencias por zona.
+    async function openZoneUser(uid) {
+      let residencies = [];
+      try { residencies = (await api("/api/admin/zones/user/" + uid)).data?.residencies || []; } catch {}
+      const body = document.createElement("div");
+      if (!residencies.length) {
+        body.appendChild(h("p", { class: "fx-muted" }, "Este usuario aún no tiene datos de residencia guardados. Se generan progresivamente con su actividad (heartbeat)."));
+      } else {
+        residencies.forEach((r) => {
+          const lb = ZLABEL[r.zone] || { t: r.zone, emoji: "🌐" };
+          const card = document.createElement("div");
+          card.style.cssText = "background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:12px;margin-bottom:10px;";
+          card.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+              <div style="font-weight:700">${lb.emoji} Zona ${lb.t}
+                <span class="fx-badge ${r.status === "active" ? "green" : "amber"}">${r.status === "active" ? "● Activo" : "○ Se fue"}</span></div>
+            </div>
+            <div class="fx-muted" style="font-size:12px;margin-top:6px">${r.messages_sent} msgs · ${(Number(r.calls_made)||0)+(Number(r.calls_received)||0)} llamadas · ${r.likes_given} likes · ${r.matches_count} matches</div>
+            <div class="fx-muted" style="font-size:11px;margin-top:4px">Entró: ${fmtDate(r.started_at)} · Última actividad: ${fmtDate(r.last_active)}${r.ended_at ? " · Salió: " + fmtDate(r.ended_at) : ""}</div>`;
+          const viewBtn = btn("Ver datos archivados", { variant: "primary", icon: "&#x1f441;", onClick: () => openZoneResidency(r.id) });
+          viewBtn.style.marginTop = "10px";
+          card.appendChild(viewBtn);
+          body.appendChild(card);
+        });
+      }
+      zoneOverlay(`👤 Usuario #${uid} · zonas y datos`, body);
+    }
+
+    async function view_zones(container) {
+      container.innerHTML = "";
+      const outer = document.createElement("div"); outer.className = "fx-view";
+      container.appendChild(outer);
+
+      const head = document.createElement("div"); head.className = "fx-view-head";
+      head.innerHTML = `<div class="fx-view-title"><div class="fx-view-emoji">🌈</div><div><h1>Zonas</h1><p class="fx-muted">Monitorización en vivo por zona · usuarios activos, residencias pasadas y datos archivados</p></div></div><div class="fx-view-actions"></div>`;
+      head.querySelector(".fx-view-actions").appendChild(btn("", { variant: "ghost", title: "Refrescar", icon: "&#x21bb;", onClick: () => rerender() }));
+      outer.appendChild(head);
+
+      // Resumen por zona
+      let zones = [];
+      try { zones = (await api("/api/admin/zones/overview")).data?.zones || []; } catch {}
+      const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis";
+      zones.forEach((z) => {
+        const lb = ZLABEL[z.zone] || { t: z.zone, emoji: "🌐", c: "blue" };
+        const card = document.createElement("div"); card.className = "fx-kpi " + (lb.c || "blue");
+        card.innerHTML = `<div class="fx-kpi-label">${lb.emoji} Zona ${lb.t}</div><div class="fx-kpi-value">${z.active_users}</div><div class="fx-muted" style="font-size:11px">${z.past_residencies} pasados · ${z.messages} msgs · ${z.calls} llamadas · ${z.matches} matches</div>`;
+        kpiRow.appendChild(card);
+      });
+      outer.appendChild(kpiRow);
+
+      // Selector de zona
+      const tabs = document.createElement("div");
+      tabs.style.cssText = "display:flex;gap:8px;margin:16px 0 4px;";
+      const listContainer = document.createElement("div");
+
+      function renderUsers(zone) {
+        Array.from(tabs.children).forEach((c) => c.classList.toggle("active", c.dataset.zone === zone));
+        listContainer.innerHTML = "";
+        DataView(listContainer, {
+          title: "Usuarios · zona " + (ZLABEL[zone]?.t || zone),
+          subtitle: "Activos (datos de uso en vivo) + residencias pasadas (usuarios que se fueron)",
+          icon: ZLABEL[zone]?.emoji || "🌐",
+          fetch: async () => {
+            const r = await api("/api/admin/zones/" + zone + "/users");
+            const active = (r.data?.active || []).map((u) => ({ ...u, __kind: "active" }));
+            const past = (r.data?.past || []).map((p) => ({ ...p, __kind: "past" }));
+            return active.concat(past);
+          },
+          rowId: (r) => r.__kind + "_" + (r.id || r.user_id),
+          kpis: (rows) => [
+            { label: "Activos", value: rows.filter((r) => r.__kind === "active").length, accent: "green" },
+            { label: "Pasados", value: rows.filter((r) => r.__kind === "past").length, accent: "amber" },
+            { label: "Mensajes", value: rows.reduce((s, r) => s + (Number(r.messages_sent) || 0), 0), accent: "blue" },
+            { label: "Llamadas", value: rows.reduce((s, r) => s + (Number(r.calls_made) || 0) + (Number(r.calls_received) || 0), 0), accent: "purple" },
+          ],
+          filters: [
+            { key: "__kind", label: "Estado", type: "select", options: [ { value: "active", label: "Activos" }, { value: "past", label: "Pasados" } ] },
+          ],
+          columns: [
+            { key: "user", label: "Usuario", render: (r) => {
+                const d = document.createElement("div");
+                d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.name || "—")} <span class="fx-muted">#${r.user_id || r.id}</span></div><div class="fx-muted" style="font-size:11px">${escapeHtml(r.email || "")}</div>`;
+                return d;
+              } },
+            { key: "__kind", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.__kind === "active" ? "green" : "amber"); b.textContent = r.__kind === "active" ? "● Activo" : "○ Se fue"; return b; } },
+            { key: "messages_sent", label: "Msgs", sortable: true },
+            { key: "calls", label: "Llamadas", render: (r) => (Number(r.calls_made) || 0) + (Number(r.calls_received) || 0) },
+            { key: "likes_given", label: "Likes", sortable: true },
+            { key: "matches_count", label: "Matches", sortable: true },
+            { key: "last", label: "Actividad", render: (r) => fmtDate(r.last_active || r.last_login || r.ended_at) },
+          ],
+          actions: [
+            { label: "", icon: "&#x1f441;", title: "Ver ficha / datos archivados", variant: "primary", onClick: async (r) => {
+                if (r.__kind === "past") openZoneResidency(r.id);
+                else openZoneUser(r.user_id || r.id);
+              } },
+          ],
+        });
+      }
+
+      ["hetero", "lgtb"].forEach((z, i) => {
+        const lb = ZLABEL[z];
+        const t = btn(`${lb.emoji} Zona ${lb.t}`, { variant: "ghost", onClick: () => renderUsers(z) });
+        t.dataset.zone = z;
+        tabs.appendChild(t);
+      });
+      outer.appendChild(tabs);
+      outer.appendChild(listContainer);
+
+      renderUsers((zones[0] && zones[0].zone) || "hetero");
+    }
+
     function wrapView(fn) {
       return function (container, ctx) {
         currentView = fn; currentContainer = container;
@@ -2474,8 +2719,9 @@
       fx_push_ctx: wrapView(view_push_ctx),
       fx_rewards: wrapView(view_rewards),
       fx_notifications: wrapView(view_notifications),
+      fx_zones: wrapView(view_zones),
     });
-    console.log("[admin_features] v587 · 15 vistas + notificaciones enviadas");
+    console.log("[admin_features] v613 · 16 vistas + zonas");
   }
 
   // -------------------------------------------------------------------

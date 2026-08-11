@@ -5046,6 +5046,122 @@ app.get("/api/my/restrictions", wrap(async (req, res) => {
   res.json({ ok: true, restrictions: list, user_email: email, user_name: name });
 }));
 
+/* — Estado de la cuenta del usuario —
+   Consolida en una sola respuesta el estado de verificación de edad (KYC),
+   las apelaciones enviadas y las infracciones/avisos de moderación de la
+   cuenta. Lo consume la pantalla "Mi cuenta y estado" del perfil.
+   Cada bloque va envuelto en try/catch para que si una tabla no existe o
+   está vacía, el resto de la respuesta siga funcionando. */
+app.get("/api/my/account-status", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+
+  // Datos base del usuario (email para cruzar apelaciones/KYC, verified/status).
+  let email = null, verified = 0, uStatus = "active";
+  try {
+    const [urow] = await pool.query(
+      "SELECT email, verified, status FROM users WHERE id=? LIMIT 1", [me]
+    );
+    if (urow.length) {
+      email = urow[0].email || null;
+      verified = urow[0].verified ? 1 : 0;
+      uStatus = urow[0].status || "active";
+    }
+  } catch {}
+
+  // ---- KYC / verificación de edad ----
+  let kyc_status = "none", kyc_reason = null, kyc_updated_at = null;
+  try {
+    const [krows] = await pool.query(
+      `SELECT status, last_reason, updated_at
+         FROM identity_verifications
+        WHERE user_id=? OR (email IS NOT NULL AND email=?)
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      [me, email]
+    );
+    if (krows.length) {
+      const raw = krows[0].status || "pending";
+      // Los estados intermedios del flujo se muestran como "pendiente".
+      const map = {
+        verified: "verified",
+        manual_review: "manual_review",
+        rejected: "rejected",
+        suspended: "suspended",
+        pending: "pending",
+        doc_ok: "pending",
+        selfie_ok: "pending",
+        video_ok: "pending",
+      };
+      kyc_status = map[raw] || "pending";
+      kyc_reason = krows[0].last_reason || null;
+      kyc_updated_at = krows[0].updated_at || null;
+    }
+    // Si no hay registro KYC pero el usuario está marcado como verificado.
+    if (kyc_status === "none" && verified) kyc_status = "verified";
+    // Si la cuenta está suspendida/baneada, reflejarlo.
+    if (uStatus === "suspended") kyc_status = kyc_status === "verified" ? "verified" : "suspended";
+  } catch {}
+
+  // ---- Apelaciones ----
+  let appeals = [];
+  try {
+    const [arows] = await pool.query(
+      `SELECT id, restriction_reason, account_status, status, created_at
+         FROM appeals
+        WHERE user_id=? OR (email IS NOT NULL AND email=?)
+        ORDER BY created_at DESC LIMIT 20`,
+      [me, email]
+    );
+    const stMap = { open: "open", review: "reviewed", resolved: "accepted", rejected: "rejected" };
+    appeals = arows.map((a) => ({
+      id: a.id,
+      subject: a.restriction_reason || ("Apelación #" + a.id),
+      status: stMap[a.status] || a.status,
+      created_at: a.created_at,
+    }));
+  } catch {}
+
+  // ---- Infracciones / avisos de moderación ----
+  let infractions = [];
+  try {
+    const [irows] = await pool.query(
+      `SELECT id, kind, score, flags, status, created_at
+         FROM moderation_flags
+        WHERE user_id=? AND status NOT IN ('ok','ignored')
+        ORDER BY created_at DESC LIMIT 30`,
+      [me]
+    );
+    const kindLabel = {
+      spam: "Spam detectado",
+      abuse: "Lenguaje abusivo",
+      harassment: "Acoso",
+      nsfw: "Contenido inapropiado",
+      scam: "Posible estafa",
+    };
+    infractions = irows.map((i) => {
+      const severity = i.status === "banned" ? "high" : (i.status === "warned" ? "medium" : "low");
+      return {
+        id: i.id,
+        title: kindLabel[i.kind] || (i.kind || "Infracción"),
+        type: i.kind || "infraccion",
+        detail: i.flags || "",
+        severity,
+        status: (i.status === "warned" || i.status === "banned") ? "open" : "resolved",
+        created_at: i.created_at,
+      };
+    });
+  } catch {}
+
+  res.json({
+    ok: true,
+    kyc_status,
+    kyc_reason,
+    kyc_updated_at,
+    appeals,
+    infractions,
+  });
+}));
+
 /* Registro/actualización del dispositivo del usuario tras login o
    heartbeat. Guarda la IP real (incluye modo demo/local) para que el
    panel de admin pueda mostrarlas y usarlas para asociar bloqueos por
@@ -8617,6 +8733,14 @@ app.post("/api/my/heartbeat", wrap(async (req, res) => {
   await touchUserDevice(req, me);
   if (await enforceRestriction(req, res, "login")) return;
   await pool.execute("UPDATE users SET online=1, last_login=NOW() WHERE id=?", [me]);
+  // V613 · Guardado progresivo de la residencia de zona (uso en vivo).
+  try {
+    const [zr] = await pool.query("SELECT zone, email, name FROM users WHERE id=? LIMIT 1", [me]);
+    if (zr.length) {
+      const z = zr[0].zone || "hetero";
+      await phaseZones.touchResidency(pool, me, z, { email: zr[0].email, name: zr[0].name });
+    }
+  } catch { /* silent */ }
   res.json({ ok: true });
 }));
 
@@ -9695,6 +9819,7 @@ const phase5 = require("./features_phase5"); // V558 · grants por función
 const phase6 = require("./features_phase6_vault"); // V569 · bóveda cifrada
 const phase7 = require("./features_phase7_rewards"); // V576 · recompensas/cupones XP
 const phase8 = require("./features_phase8_notifications"); // V587 · notificaciones in-app
+const phaseZones = require("./features_zones"); // V613 · zonas: archivado + monitorización
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage }); // V591 · +notifyNewMessage
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
@@ -9703,6 +9828,7 @@ phase5.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
 phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
+phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }); // V613 · zonas
 
 (async () => {
   try {
@@ -9727,6 +9853,7 @@ phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notif
       await phase6.migrate(pool); // V569 · bóveda cifrada
       await phase7.migrate(pool); // V576 · recompensas/cupones XP
       await phase8.migrate(pool); // V587 · notificaciones in-app
+      await phaseZones.migrate(pool); // V613 · zonas: archivado + monitorización
     } catch (e) {
       console.error("[phases] init error:", e);
     }

@@ -7885,7 +7885,12 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
    NUNCA se recorta, aunque haya dos avisos (notificaciones + ubicación). Se
    apila justo bajo los indicadores de fotos de la tarjeta (top ~10px). */
 .discover-notices {
-  position: absolute; z-index: 4;
+  /* V613 · z-index POR ENCIMA de las tarjetas. Las swipe-card usan
+     z-index:10-depth (la superior = 10) y .discover-stack NO crea contexto de
+     apilado propio (position:relative + z-index auto), por lo que un z-index:4
+     dejaba el aviso DEBAJO de la tarjeta → "no salía el aviso". Con z-index:20
+     el aviso vuelve a verse superpuesto sobre el borde superior de la foto. */
+  position: absolute; z-index: 20;
   top: 22px; left: 10px; right: 10px; /* justo bajo los indicadores de fotos */
   display: flex; flex-direction: column; gap: 6px;
   pointer-events: none; /* deja pasar el swipe salvo en los propios pills */

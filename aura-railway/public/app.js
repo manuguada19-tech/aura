@@ -2259,6 +2259,9 @@ function startHeartbeat() {
   // V611 · Igual para la UBICACIÓN: detecta activación/retirada del permiso y
   // avisa/redirige al perfil cuando haga falta.
   try { watchGeoPermission(); } catch {}
+  // V613 · Coordina los banners flotantes inferiores para que nunca se
+  // superpongan (2FA, instalar PWA, avisos de permisos).
+  try { initFloatingBannerStacking(); } catch {}
   // Push en tiempo real vía Server-Sent Events. Al recibir un evento,
   // refresca inmediatamente y el banner desaparece/aparece al instante.
   try {
@@ -8300,7 +8303,7 @@ function screenMe(root) {
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
     ]},
     { title: "Novedades", items: [
-      { icon: "🔔", title: "Notificaciones", sub: "Avisos de canjes, mensajes del equipo y más", onClick: () => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} } },
+      { icon: "📨", title: "Bandeja de avisos", sub: "Avisos de canjes, mensajes del equipo y más", onClick: () => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} } },
       { icon: "📸", title: "Historias 24h", sub: "Publica y descubre historias efímeras", onClick: () => { try { window.aura2 && window.aura2.openStoriesFeed && window.aura2.openStoriesFeed(); } catch {} } },
       { icon: "🎮", title: "Progreso y logros", sub: "XP, nivel y misiones diarias", onClick: () => { try { window.aura2 && window.aura2.openGamification && window.aura2.openGamification(); } catch {} } },
       { icon: "📅", title: "Quedadas", sub: "Eventos y planes con la comunidad", onClick: () => { try { window.aura2 && window.aura2.openEvents && window.aura2.openEvents(); } catch {} } },
@@ -9444,28 +9447,39 @@ function openGpsPrivacySheet() {
 }
 
 function openZoneSwitch() {
+  // V613 · Solo hay dos zonas (hetero / lgtb), así que la ÚNICA zona a la que
+  // el usuario puede cambiarse es la contraria a la actual. Antes se mostraban
+  // las dos cards sin ninguna seleccionada, lo que confundía. Ahora mostramos
+  // solo la zona DESTINO. Al pulsarla se abre el aviso de borrado de datos.
+  const currentId = state.zone === "lgtb" ? "lgtb" : "hetero";
+  const targetId = currentId === "lgtb" ? "hetero" : "lgtb";
+  const targetEmoji = targetId === "lgtb" ? T("content.zone.lgtb.emoji") : T("content.zone.hetero.emoji");
+  const targetName = targetId === "lgtb"
+    ? (T("content.zone.lgtb.title") || "Zona LGTB+")
+    : (T("content.zone.hetero.title") || "Zona Hetero");
+  const currentName = currentId === "lgtb"
+    ? (T("content.zone.lgtb.title") || "Zona LGTB+")
+    : (T("content.zone.hetero.title") || "Zona Hetero");
+
+  const targetCard = el("div", { class: "zone-card zone-" + targetId }, [
+    el("div", { class: "zone-emoji" }, targetEmoji),
+    el("div", {}, [
+      el("h4", {}, targetName),
+      el("p", {}, "Cambiar a esta zona"),
+    ]),
+    el("div", { class: "radio" }),
+  ]);
+  targetCard.addEventListener("click", () => openZoneChangeWarning(targetId, targetName));
+
   const wrap = el("div", {}, [
     el("div", { class: "sheet-title" }, "Cambiar zona"),
     el("div", { class: "form", style: "padding-top:0" }, [
-      el("div", { class: "zone-options" }, [
-        zoneOption("hetero", T("content.zone.hetero.emoji"), T("content.zone.hetero.title")),
-        zoneOption("lgtb", T("content.zone.lgtb.emoji"), T("content.zone.lgtb.title")),
-      ]),
+      el("p", { class: "small", style: "margin:0 0 12px; opacity:.85" },
+        `Estás en ${currentName}. La única zona a la que puedes cambiarte es ${targetName}.`),
+      el("div", { class: "zone-options" }, [ targetCard ]),
     ]),
   ]);
   modal.open(wrap);
-  function zoneOption(id, emoji, name) {
-    const card = el("div", { class: "zone-card zone-" + id + (state.zone === id ? " selected" : "") }, [
-      el("div", { class: "zone-emoji" }, emoji),
-      el("div", {}, [ el("h4", {}, name), el("p", {}, "Cambia cuando quieras.") ]),
-      el("div", { class: "radio" }),
-    ]);
-    card.addEventListener("click", () => {
-      if (state.zone === id) { modal.close(); return; }
-      openZoneChangeWarning(id, name);
-    });
-    return card;
-  }
 }
 
 /* Zone change flow:
@@ -9508,17 +9522,42 @@ function openZoneChangeWarning(targetZoneId, targetZoneName) {
   confirmBtn.addEventListener("click", async () => {
     confirmBtn.setAttribute("disabled", "true");
     confirmBtn.textContent = "Eliminando cuenta…";
+    // V613 · Nuevo flujo: en vez de un simple DELETE, llamamos a un endpoint que
+    // ARCHIVA todos los datos de uso del usuario en su zona actual (chats,
+    // llamadas, actividad, likes, matches…) para el panel de administración y
+    // DESPUÉS elimina la cuenta. No se descarga ninguna copia: el archivado es
+    // interno y el borrado del perfil es inmediato e irreversible.
+    let archived = false;
     try {
       if (state.user?.id) {
-        await fetch("/api/users/" + encodeURIComponent(state.user.id), { method: "DELETE" });
+        const r = await fetch("/api/my/zone/change", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-User-Id": String(state.user.id) },
+          body: JSON.stringify({ target_zone: targetZoneId }),
+        });
+        archived = r.ok;
+        if (!archived) {
+          // Fallback: si el nuevo endpoint no estuviera disponible, al menos
+          // eliminamos la cuenta como antes para no dejar al usuario atascado.
+          try { await fetch("/api/users/" + encodeURIComponent(state.user.id), { method: "DELETE" }); } catch {}
+        }
       }
-    } catch {}
+    } catch {
+      try { if (state.user?.id) await fetch("/api/users/" + encodeURIComponent(state.user.id), { method: "DELETE" }); } catch {}
+    }
     try { localStorage.removeItem("aura-session"); } catch {}
     state.user = null;
     state.zone = targetZoneId;
+    // Prepara el formulario de registro con la nueva zona ya seleccionada para
+    // que el usuario solo tenga que completar el alta.
+    try {
+      state.registration = state.registration || {};
+      state.registration.zone = targetZoneId;
+    } catch {}
     modal.close();
     toast("Cuenta eliminada. Regístrate en " + targetZoneName + ".");
-    render(screenWelcome);
+    // Redirige DIRECTAMENTE al formulario de creación de cuenta (no a Welcome).
+    try { render(screenRegisterEmail); } catch { render(screenWelcome); }
   });
 
   const wrap = el("div", { class: "zone-warning" }, [
@@ -9530,16 +9569,18 @@ function openZoneChangeWarning(targetZoneId, targetZoneName) {
         "Cada zona es una comunidad independiente con perfiles distintos. Por eso, cambiar de zona requiere eliminar tu cuenta actual y registrarte de nuevo en la otra zona."),
 
       el("div", { class: "zone-lose-title", style: "font-weight:700; margin:12px 0 6px" },
-        "Perderás de forma permanente:"),
+        "Perderás el acceso a:"),
       el("ul", { class: "zone-lose-list", style: "margin:0 0 14px; padding-left:20px; font-size:13px; line-height:1.6" },
         lostFeatures.map(f => el("li", {}, f))),
 
       el("div", { class: "zone-privacy", style: "background:var(--surface-2,#f6f6fa); border:1px solid var(--border,#e5e7eb); border-radius:12px; padding:12px; margin-bottom:14px; font-size:12px; line-height:1.55" }, [
         el("div", { style: "font-weight:700; margin-bottom:4px" }, "Protección de datos (RGPD)"),
         el("p", { style: "margin:0 0 6px" },
-          "Al confirmar, eliminaremos tus datos personales, tu perfil, tus fotos y todas las conversaciones asociadas de forma irreversible, cumpliendo con el derecho al olvido (art. 17 RGPD)."),
+          "Al confirmar, tu cuenta actual se cerrará y tu perfil, tus fotos y tus conversaciones dejarán de estar accesibles en la app. No podrás recuperar el acceso a esta cuenta."),
         el("p", { style: "margin:0 0 6px" },
-          "Podríamos conservar datos anonimizados agregados con fines estadísticos y datos legalmente obligatorios (facturación, prevención de fraude, denuncias) durante los plazos exigidos por la ley."),
+          "Por motivos de seguridad, prevención del fraude y moderación, conservaremos internamente un registro de tu actividad en esta zona (incluidos mensajes y llamadas) durante los plazos legalmente permitidos. Estos datos NO son públicos y solo son accesibles por el equipo autorizado."),
+        el("p", { style: "margin:0 0 6px; font-weight:600" },
+          "El cierre de cuenta al cambiar de zona no incluye descarga ni exportación de tus datos. Si deseas una copia o la supresión completa de tus datos, puedes ejercer tus derechos RGPD escribiendo a soporte antes de cambiar de zona."),
         el("p", { style: "margin:0" },
           "Este proceso no se puede deshacer. Una vez completado, tendrás que registrarte de nuevo con un email en la nueva zona."),
       ]),
@@ -9775,12 +9816,14 @@ function infoPage(root, title, content) {
   root.classList.add("screen-info");
   document.body.classList.add("info-open");
   // Si venimos de una pantalla concreta guardada en window.__infoBackTo,
-  // volvemos a ella al pulsar atrás. Si no, vamos a Welcome.
+  // volvemos a ella al pulsar atrás. Si no y hay sesión iniciada, volvemos
+  // al perfil ("me"); solo si no hay usuario vamos a la pantalla de bienvenida.
   const backFn = () => {
     document.body.classList.remove("info-open");
     const prev = window.__infoBackTo;
     window.__infoBackTo = null;
     if (typeof prev === "function") { render(prev); }
+    else if (state.user) { routeTab("me"); }
     else { render(screenWelcome); }
   };
   root.appendChild(topbar(title, backFn));
@@ -11277,6 +11320,58 @@ async function subscribePushDevice() {
     }).catch(()=>{});
     return true;
   } catch { return false; }
+}
+
+// V613 · Coordinador de banners flotantes inferiores.
+// Varios avisos se anclan abajo de forma INDEPENDIENTE (2FA "Protege tu
+// cuenta", instalar la PWA, y los avisos de permisos push/ubicación). Cada uno
+// fijaba su propio `bottom`, de modo que cuando coincidían quedaban
+// SUPERPUESTOS (el usuario reportó el aviso de notificaciones encima del de
+// protección de cuenta). Este reordenador los apila verticalmente según una
+// prioridad fija: el primero pegado al tabbar y el resto hacia arriba, dejando
+// una separación entre ellos. Es idempotente y barato.
+let __restackRaf = 0;
+function restackFloatingBanners() {
+  try {
+    // Orden de ABAJO → ARRIBA. El primero queda pegado al tabbar.
+    const ids = ["auraInstallBanner", "twofaToast", "auraPushSoft", "auraPermRedirect"];
+    const safe = "env(safe-area-inset-bottom, 0px)";
+    const tab = 66;      // alto aproximado del tabbar inferior
+    let offset = 12 + tab; // punto de partida (px) — se suma `safe` vía calc()
+    ids.forEach((id) => {
+      const node = document.getElementById(id);
+      if (!node) return;
+      let cs;
+      try { cs = getComputedStyle(node); } catch { return; }
+      // Visible = no display:none Y con la clase .show (todos la usan al mostrarse).
+      const visible = cs.display !== "none" && node.classList.contains("show");
+      if (!visible) return;
+      node.style.bottom = `calc(${safe} + ${offset}px)`;
+      const h = node.offsetHeight || 60;
+      offset += h + 10; // alto del banner + separación
+    });
+  } catch {}
+}
+function scheduleRestack() {
+  if (__restackRaf) return;
+  __restackRaf = requestAnimationFrame(() => { __restackRaf = 0; restackFloatingBanners(); });
+}
+// Observa la aparición/cambio de estado (.show) de los banners y reordena.
+// attributeFilter se limita a "class" para que nuestras propias escrituras de
+// `style.bottom` NO reactiven el observador (evita bucles).
+let __bannerObs = null;
+function initFloatingBannerStacking() {
+  try {
+    if (__bannerObs) return;
+    __bannerObs = new MutationObserver(() => scheduleRestack());
+    __bannerObs.observe(document.body, {
+      childList: true, subtree: true,
+      attributes: true, attributeFilter: ["class"],
+    });
+    window.addEventListener("resize", scheduleRestack, { passive: true });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden) scheduleRestack(); });
+    scheduleRestack();
+  } catch {}
 }
 
 // V588 · Soft-prompt de dos pasos: banner propio ANTES del prompt nativo.

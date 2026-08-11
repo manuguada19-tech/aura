@@ -146,7 +146,7 @@ function register(app, pool, helpers) {
     //  - matches  → solo si (me,autor) hay match en cualquier direccion
     //  - private  → solo el propio autor
     const [rows] = await pool.query(
-      `SELECT s.*, u.name AS user_name, u.avatar_url
+      `SELECT s.*, u.name AS user_name, u.photo_url AS avatar_url
          FROM stories s
          JOIN users u ON u.id = s.user_id
         WHERE s.expires_at > NOW()

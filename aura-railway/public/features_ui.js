@@ -629,8 +629,24 @@
   }
 
   async function openMyRewards() {
+    // Cerramos primero el modal actual (p. ej. la tienda) para que, aunque
+    // la petición falle, no se quede la tienda visible dando la sensación de
+    // que "se ha vuelto a abrir la tienda".
     const { ok, data } = await api("/api/my/rewards/mine");
-    if (!ok) { toast("No se pudieron cargar tus recompensas"); return; }
+    if (!ok) {
+      toast("No se pudieron cargar tus recompensas");
+      modal([
+        h("div", { class: "rewards-shop" }, [
+          h("h3", {}, "🎫 Mis recompensas"),
+          h("p", { class: "muted" }, "No se pudieron cargar tus recompensas ahora mismo. Inténtalo de nuevo en unos segundos."),
+          h("div", { class: "modal-actions" }, [
+            h("button", { class: "btn secondary", onclick: () => openMyRewards() }, "Reintentar"),
+            h("button", { class: "btn primary", onclick: closeModal }, "Cerrar"),
+          ]),
+        ]),
+      ], "wide");
+      return;
+    }
     const items = data.items || [];
     const stateBadge = (st) => {
       const map = {
