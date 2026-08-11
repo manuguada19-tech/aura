@@ -15917,10 +15917,14 @@ async function viewPushCampaigns(root) {
     btnTest.addEventListener("click", async () => {
       const uid = testPicker.getId();
       if (!uid) return alert("Busca y selecciona un usuario para la prueba");
+      // V601 · El servidor exige título y cuerpo también para la prueba: avisamos
+      // en el cliente para no lanzar un error 400 sin explicación.
+      if (!titleI.value.trim() || !bodyI.value.trim()) return alert("Rellena el Título y el Cuerpo de la notificación antes de enviar la prueba.");
       btnTest.disabled = true;
       try {
         const j = await api.post("/api/admin/push/test", { user_id: uid, title: titleI.value, body: bodyI.value, url: urlI.value, icon: iconI.value || undefined });
-        toast(`Prueba enviada. Dispositivos alcanzados: ${j.sent||0}`);
+        if ((j.sent || 0) > 0) toast(`Prueba enviada. Dispositivos alcanzados: ${j.sent}`);
+        else alert("El usuario seleccionado no tiene ningún dispositivo con notificaciones push activas, así que no se pudo entregar la prueba.");
       } catch(e) { alert("Error: " + e.message); }
       finally { btnTest.disabled = false; }
     });
