@@ -10145,6 +10145,15 @@ function stripeEnabled() {
 }
 const PLAN_CODES = new Set(["premium", "gold", "platinum"]);
 
+// V641 · Normaliza un valor de divisa a su código ISO-4217 en minúsculas para
+// Stripe. Acepta entradas "sucias" como "EUR (€)", "eur", "€ EUR", etc. y
+// devuelve las 3 primeras letras [a-z]. Si no encuentra un código válido cae a
+// "eur" (divisa por defecto de la app). No lanza; siempre devuelve algo usable.
+function normalizeCurrencyCode(raw, fallback = "eur") {
+  const m = String(raw || "").toLowerCase().match(/[a-z]{3}/);
+  return m ? m[0] : fallback;
+}
+
 // URL base pública para success_url / cancel_url.
 function publicBaseUrl(req) {
   const fromEnv = process.env.PUBLIC_BASE_URL || getSetting("app.public_url", "");
@@ -10227,7 +10236,10 @@ app.post("/api/my/checkout/subscription", wrap(async (req, res) => {
   const price = Number(period === "yearly" ? plan.price_yearly : plan.price_monthly);
   if (!(price > 0)) return res.status(400).json({ error: "price_unavailable" });
   const cents = Math.round(price * 100);
-  const currency = String(getSetting("app.currency", "EUR")).toLowerCase();
+  // V641 · El setting app.currency puede venir con símbolo ("EUR (€)"), que
+  // NO es un código ISO válido para Stripe (daba "Invalid currency: eur (€)"
+  // y por tanto 502 en toda suscripción). Saneamos a las 3 letras del código.
+  const currency = normalizeCurrencyCode(getSetting("app.currency", "EUR"));
   const [[u]] = await pool.query("SELECT email, stripe_customer_id FROM users WHERE id=? LIMIT 1", [me]);
   const base = publicBaseUrl(req);
 
@@ -10270,7 +10282,8 @@ app.post("/api/my/checkout/reads", wrap(async (req, res) => {
   if (!pick) return res.status(400).json({ error: "invalid_pack" });
   if (!(Number(pick.price) > 0)) return res.status(400).json({ error: "price_unavailable" });
   const cents = Math.round(Number(pick.price) * 100);
-  const currency = String(getSetting("chat.reads.currency", "EUR")).toLowerCase();
+  // V641 · Mismo saneamiento de divisa que en la suscripción (robustez).
+  const currency = normalizeCurrencyCode(getSetting("chat.reads.currency", "EUR"));
   const [[u]] = await pool.query("SELECT email, stripe_customer_id FROM users WHERE id=? LIMIT 1", [me]);
   const base = publicBaseUrl(req);
 
