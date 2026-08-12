@@ -2449,6 +2449,57 @@ async function registerServiceWorker() {
 // Global heartbeat loop: keeps the current user "online" for the admin panel.
 let _heartbeatTimer = null;
 let _restrictionTimer = null;
+let _tabBadgeTimer = null;
+
+// V638 · Badges de pestañas (Likes / Chats) con datos REALES.
+//   Antes: index.html tenía "7" y "3" escritos a mano → parecían mensajes y
+//   likes falsos aunque no hubiera nada. Ahora los badges nacen ocultos y solo
+//   se muestran con conteos reales (likes recibidos y mensajes sin leer). En el
+//   modo preview de admin se muestran números de ejemplo para que la maqueta se
+//   vea poblada, igual que el resto de datos demo (ver isPreviewMode / V637).
+function setTabBadge(id, count) {
+  try {
+    const b = document.getElementById(id);
+    if (!b) return;
+    const n = Number(count) || 0;
+    if (n > 0) {
+      b.textContent = n > 99 ? "99+" : String(n);
+      b.hidden = false;
+    } else {
+      b.textContent = "";
+      b.hidden = true;
+    }
+  } catch {}
+}
+
+async function refreshTabBadges() {
+  try {
+    if (isPreviewMode()) {
+      setTabBadge("tabBadgeLikes", 7);
+      setTabBadge("tabBadgeChats", 3);
+      return;
+    }
+    if (!state.user || !state.user.id) {
+      setTabBadge("tabBadgeLikes", 0);
+      setTabBadge("tabBadgeChats", 0);
+      return;
+    }
+    // Likes recibidos (reales). likesReceived() devuelve null si no hay auth o
+    // falla la API → tratamos como 0.
+    try {
+      const likes = await datingApi.likesReceived();
+      setTabBadge("tabBadgeLikes", Array.isArray(likes) ? likes.length : 0);
+    } catch { setTabBadge("tabBadgeLikes", 0); }
+    // Mensajes sin leer (reales). Sumamos el campo unread de cada conversación.
+    try {
+      const convos = await chatApi.listConversations();
+      const unread = Array.isArray(convos)
+        ? convos.reduce((sum, c) => sum + (Number(c && c.unread) || 0), 0)
+        : 0;
+      setTabBadge("tabBadgeChats", unread);
+    } catch { setTabBadge("tabBadgeChats", 0); }
+  } catch {}
+}
 let _restrictionSSE = null;
 function startHeartbeat() {
   if (_heartbeatTimer) return;
@@ -2457,6 +2508,9 @@ function startHeartbeat() {
   _restrictionTimer = setInterval(refreshRestrictions, 5000);
   chatApi.heartbeat();
   refreshRestrictions();
+  // V638 · Refresca los badges de Likes/Chats con datos reales.
+  refreshTabBadges();
+  if (!_tabBadgeTimer) _tabBadgeTimer = setInterval(refreshTabBadges, 30000);
   // GPS: dispara el modal de consentimiento la 1ª vez tras login
   try { GPS.boot(); } catch {}
   // Registro del Service Worker para PWA + Periodic Background Sync (Android)
@@ -3270,6 +3324,8 @@ function routeTab(tab) {
   render(map[tab] || screenDiscover);
   // Cuenta la navegación para posible intersticial
   try { maybeShowInterstitial(); } catch {}
+  // V638 · Al entrar en Likes/Chats se marcan como vistos → refresca badges.
+  if (tab === "likes" || tab === "chats") { try { refreshTabBadges(); } catch {} }
   // V604 · Refuerzo del recordatorio/confirmación de notificaciones. showApp()
   // lo dispara con 2500ms de retardo, pero si la clave VAPID aún no había
   // cargado (carrera con /api/public-config) pushSupported() era false y no se
