@@ -3,6 +3,7 @@
    Node.js + Express + MySQL (TiDB)
    ================================================================ */
 const express = require("express");
+const compression = require("compression");
 const mysql = require("mysql2/promise");
 const path = require("path");
 const fs = require("fs");
@@ -32,6 +33,13 @@ if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
 const pool = mysql.createPool(DATABASE_URL);
 const app = express();
 app.set("trust proxy", true);
+
+// V634 · Compresión gzip en origen. Cloudflare ya comprime en el borde, pero
+// esto ayuda al tramo origen→CF y a las respuestas JSON de la API (que CF a
+// veces no cachea). `compression` respeta automáticamente `Cache-Control:
+// no-transform` y NO comprime `text/event-stream`, así que el SSE de
+// /api/my/restrictions/stream sigue funcionando sin buffering.
+app.use(compression());
 // El webhook de Didit necesita el cuerpo bruto para validar HMAC,
 // por eso se salta express.json y se procesa con express.raw en su ruta.
 app.use((req, res, next) => {
@@ -10504,8 +10512,23 @@ app.get("/admin_features.js", (req, res) => {
 });
 
 app.use(express.static(path.join(__dirname, "public"), {
-  setHeaders: (res) => {
-    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  setHeaders: (res, filePath) => {
+    // V634 · Cache diferenciada:
+    //   - Recursos de /assets (imágenes, iconos, fuentes…): son estables y ya
+    //     van versionados con ?v= en las URLs, así que se cachean 30 días como
+    //     immutable. Esto elimina la re-descarga del logo/iconos en cada visita
+    //     (antes todo era no-store → 0 cache).
+    //   - El código de la app (app.js, features_ui.js, styles.css, sw.js,
+    //     index.html): no-cache, porque index.html los pide con ?v=Date.now()
+    //     para forzar la versión nueva, y el SW gestiona su propio ciclo.
+    const rel = filePath.replace(/\\/g, "/");
+    const isAsset = rel.includes("/public/assets/");
+    const isAppCode = /\.(?:js|css)$/i.test(rel) || /\/(?:index\.html|sw\.js)$/i.test(rel);
+    if (isAsset && !isAppCode) {
+      res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+    } else {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    }
   }
 }));
 
