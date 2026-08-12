@@ -1898,6 +1898,19 @@ const datingApi = {
       return Array.isArray(rows) ? rows.map(mapApiUser) : null;
     } catch { return null; }
   },
+  // "Cerca de ti" con usuarios reales ordenados por distancia (GPS con
+  // consentimiento). Devuelve null si no hay sesión o la API falla, para que
+  // la pantalla pueda caer con elegancia a demo sólo en modo anónimo/pruebas.
+  async nearby(zone, limit = 40) {
+    if (!this._authed()) return null;
+    try {
+      const z = zone || state.zone || "hetero";
+      const r = await fetch(`/api/my/nearby?zone=${encodeURIComponent(z)}&limit=${limit}`, { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      const rows = await r.json();
+      return Array.isArray(rows) ? rows.map(mapApiUser) : null;
+    } catch { return null; }
+  },
   async react(targetId, type) {
     if (!this._authed()) return null;
     try {
@@ -6359,7 +6372,11 @@ function buildAdSlot(placement) {
 /* ---- Nearby section (reused across screens) ---- */
 function buildNearbySection() {
   const wrap = el("div", { class: "nearby-section" });
-  const nearbyPool = generateUsers(24, { zone: state.zone });
+  // Arranca vacío: los usuarios REALES llegan de /api/my/nearby (como Explorar).
+  // Sólo si NO hay sesión (modo anónimo/pruebas) caemos a perfiles demo para no
+  // dejar la pantalla vacía. paintNearby() se vuelve a llamar cuando cargan.
+  let nearbyPool = [];
+  let nearbyLoading = true;
   state.nearbyFilters = state.nearbyFilters || {
     ageMin: 18, ageMax: 60,
     distance: 50,
@@ -6400,7 +6417,10 @@ function buildNearbySection() {
     const f = state.nearbyFilters;
     return pool.filter(u => {
       if (u.age < f.ageMin || u.age > f.ageMax) return false;
-      if ((u.distance ?? 999) > f.distance) return false;
+      // La distancia sólo excluye a quien tiene distancia conocida y fuera del
+      // radio. Los usuarios reales sin GPS (distance null) no se descartan aquí,
+      // igual que en el backend (HAVING distance IS NULL OR <= ?).
+      if (typeof u.distance === "number" && u.distance > f.distance) return false;
       if (f.onlyOnline && !u.online) return false;
       if (f.looking_for !== "any" && u.looking_for !== f.looking_for) return false;
       if (f.relationship !== "any" && u.relationship !== f.relationship) return false;
@@ -6418,14 +6438,36 @@ function buildNearbySection() {
     const visible = limit === Infinity ? list : list.slice(0, limit);
     const hidden = list.length - visible.length;
     nearbyGrid.innerHTML = "";
-    if (!list.length) {
+    if (nearbyLoading) {
       nearbyGrid.appendChild(el("div", { class: "nearby-empty" }, [
-        el("strong", {}, "Sin resultados"),
-        el("small", {}, "Prueba a ampliar tus filtros."),
+        el("strong", {}, "Buscando personas cerca…"),
+        el("small", {}, "Usando tu ubicación para ordenar por distancia real."),
       ]));
+    } else if (!list.length) {
+      // Vacío real: si hay sesión, es que aún no hay usuarios cercanos que
+      // encajen con los filtros (o nadie ha compartido GPS todavía).
+      const authed = (typeof datingApi !== "undefined" && datingApi._authed && datingApi._authed());
+      if (authed && !nearbyPool.length) {
+        nearbyGrid.appendChild(el("div", { class: "nearby-empty" }, [
+          el("strong", {}, "Aún no hay nadie cerca"),
+          el("small", {}, "Se irán mostrando personas reales a medida que se registren y compartan su ubicación."),
+        ]));
+      } else {
+        nearbyGrid.appendChild(el("div", { class: "nearby-empty" }, [
+          el("strong", {}, "Sin resultados"),
+          el("small", {}, "Prueba a ampliar tus filtros."),
+        ]));
+      }
     } else {
       visible.forEach(u => {
-        const dist = (typeof u.distance === "number") ? u.distance : Math.floor(Math.random()*15)+1;
+        // Distancia real: si el backend no la conoce (sin GPS de ambos), no
+        // inventamos km; mostramos sólo la ciudad. Para perfiles demo sin
+        // distancia (modo anónimo) sí generamos un valor de relleno.
+        const isReal = !!u._real;
+        let distLabel;
+        if (typeof u.distance === "number") distLabel = `${u.distance} km`;
+        else if (isReal) distLabel = null;
+        else distLabel = `${Math.floor(Math.random()*15)+1} km`;
         const looking = LOOKING_FOR_OPTIONS.find(l => l.id === u.looking_for);
         const card = el("div", { class: "nearby-card", style: `background-image:url('${u.photo}')` }, [
           el("div", { class: "nearby-status " + (u.online ? "on" : "off") }, [
@@ -6435,7 +6477,7 @@ function buildNearbySection() {
           looking ? el("div", { class: "nearby-badge" }, `${looking.emoji} ${looking.label}`) : null,
           el("div", { class: "nearby-info" }, [
             el("strong", {}, `${u.name}, ${u.age}`),
-            el("small", {}, `${u.city} · ${dist} km`),
+            el("small", {}, distLabel ? `${u.city} · ${distLabel}` : (u.city || "")),
           ]),
         ]);
         card.addEventListener("click", () => openProfileDetail(u));
@@ -6501,6 +6543,33 @@ function buildNearbySection() {
   wrap.appendChild(chipsRow);
   wrap.appendChild(nearbyGrid);
   paintNearby();
+
+  // Carga de usuarios REALES por distancia (igual que Explorar con /api/discover).
+  // Sólo caemos a perfiles demo si NO hay sesión (modo anónimo/pruebas), para no
+  // dejar la pantalla vacía. Con sesión mostramos únicamente personas reales.
+  (async () => {
+    try {
+      let real = null;
+      if (datingApi._authed && datingApi._authed()) {
+        real = await datingApi.nearby(state.zone, 60);
+      }
+      if (Array.isArray(real)) {
+        nearbyPool = real;
+      } else if (!datingApi._authed || !datingApi._authed()) {
+        // Sin sesión: perfiles demo para que la pantalla no quede vacía.
+        nearbyPool = generateUsers(24, { zone: state.zone });
+      } else {
+        // Con sesión pero sin datos: dejamos el pool vacío (mensaje "aún no hay nadie").
+        nearbyPool = [];
+      }
+    } catch {
+      nearbyPool = (datingApi._authed && datingApi._authed()) ? [] : generateUsers(24, { zone: state.zone });
+    } finally {
+      nearbyLoading = false;
+      try { paintNearby(); } catch {}
+    }
+  })();
+
   return wrap;
 }
 

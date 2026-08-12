@@ -5929,6 +5929,89 @@ app.get("/api/discover", wrap(async (req, res) => {
   res.json(rows);
 }));
 
+// GET /api/my/nearby  → "Cerca de ti" con USUARIOS REALES ordenados por distancia.
+// ------------------------------------------------------------------------------
+// Igual que /api/discover (mismos filtros de zona/edad/género/bloqueos y misma
+// distancia Haversine sobre GPS con consentimiento), pero:
+//   - Requiere sesión (self-auth por X-User-Id / token). Sin sesión → 401.
+//   - Ordena por CERCANÍA (distancia ascendente; los sin coords van al final).
+//   - Devuelve online y verified para pintar el estado en la rejilla.
+// Los perfiles SIN coordenadas siguen apareciendo (al final) para no vaciar la
+// pantalla mientras se adopta el GPS. El filtro por distancia sólo excluye a
+// quien tiene distancia conocida y fuera del radio pedido.
+app.get("/api/my/nearby", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (await enforceRestriction(req, res, "discover")) return;
+  const zone = req.query.zone === "lgtb" ? "lgtb" : "hetero";
+  const limit = Math.min(60, Math.max(1, parseInt(req.query.limit, 10) || 40));
+
+  // Filtros guardados del usuario (edad / género / distancia).
+  let f = {};
+  try {
+    const [[row]] = await pool.query("SELECT payload FROM user_filters WHERE user_id=? LIMIT 1", [me]);
+    if (row && row.payload) f = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+  } catch { f = {}; }
+
+  const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
+  const params = [zone];
+  where.push("u.id <> ?"); params.push(me);
+  where.push("u.id NOT IN (SELECT target_id FROM blocks WHERE user_id = ?)"); params.push(me);
+  where.push("u.id NOT IN (SELECT user_id FROM blocks WHERE target_id = ?)"); params.push(me);
+
+  const ageMin = parseInt(f.age_min, 10);
+  const ageMax = parseInt(f.age_max, 10);
+  if (Number.isFinite(ageMin) && ageMin > 0) { where.push("(u.age IS NULL OR u.age >= ?)"); params.push(ageMin); }
+  if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
+  if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
+
+  // Coordenadas del usuario actual (sólo con consentimiento GPS vigente).
+  let myLat = null, myLng = null;
+  try {
+    const [[g]] = await pool.query(
+      "SELECT lat, lng FROM user_gps WHERE user_id=? AND consent_given=1 AND revoked_at IS NULL LIMIT 1",
+      [me]
+    );
+    if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
+  } catch { /* sin coords → sin distancia */ }
+  const hasGeo = Number.isFinite(myLat) && Number.isFinite(myLng);
+  const distanceKm = parseInt(f.distance_km, 10);
+
+  const distExpr = hasGeo
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    : "NULL";
+  const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
+
+  let sql =
+    `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
+            u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
+            ${distExpr} AS distance
+       FROM users u`;
+  if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
+  sql += ` WHERE ${where.join(" AND ")}`;
+
+  let havingParam = null;
+  if (hasGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
+    sql += " HAVING distance IS NULL OR distance <= ?";
+    havingParam = distanceKm;
+  }
+  // Cercanía primero: los que tienen distancia conocida y menor, arriba; los
+  // sin coordenadas (NULL) al final; a igualdad, online y verificados primero.
+  if (hasGeo) {
+    sql += " ORDER BY (distance IS NULL), distance ASC, u.online DESC, u.verified DESC LIMIT ?";
+  } else {
+    sql += " ORDER BY u.online DESC, u.verified DESC, RAND() LIMIT ?";
+  }
+
+  const finalParams = [...selectParams, ...params];
+  if (havingParam != null) finalParams.push(havingParam);
+  finalParams.push(limit);
+
+  const [rows] = await pool.query(sql, finalParams);
+  for (const r of rows) r.distance = (r.distance == null ? null : Number(r.distance));
+  res.json(rows);
+}));
+
 /* ============================================================
    Likes / Pass / Superlike + creación de match  (V-like-match)
    ------------------------------------------------------------
