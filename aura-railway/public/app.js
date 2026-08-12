@@ -2318,6 +2318,33 @@ const GPS = {
       this.startWatching();
       return;
     }
+    // V636 - Si el NAVEGADOR ya tiene la ubicación concedida (aunque el
+    //   servidor no tenga registrado el consentimiento, p. ej. el usuario la
+    //   activó desde los ajustes del navegador o se perdió el registro), NO
+    //   mostramos el modal: la ubicación ya está activa. Sincronizamos el
+    //   consentimiento en el servidor en silencio y arrancamos el watcher.
+    //   Antes, este caso reabría el modal en cada inicio de sesión pese a
+    //   tener el GPS activado.
+    if (browserState === "granted") {
+      try { await this.sendConsent(true); } catch {}
+      try { state.gpsConsent = true; } catch {}
+      this.markAsked();
+      this.startWatching();
+      return;
+    }
+    // V636 - En navegadores SIN Permissions API para geolocation (iOS Safari,
+    //   PWA en iOS…) browserPermissionState() siempre devuelve "prompt". Si el
+    //   servidor ya tiene el consentimiento del usuario (aceptó antes), NO
+    //   repetimos el modal en cada inicio de sesión: intentamos arrancar el
+    //   watcher en silencio. Si el permiso se hubiese revocado en el navegador,
+    //   watchPosition fallará sin molestar. Solo tratamos "denied" como
+    //   claramente inactivo (ahí sí mostramos el recordatorio).
+    if (st && st.consent_given && browserState !== "denied") {
+      try { state.gpsConsent = true; } catch {}
+      this.markAsked();
+      this.startWatching();
+      return;
+    }
     // GPS apagado / no autorizado — mostrar recordatorio (con pequeño delay).
     setTimeout(() => this.showPrompt(), 2500);
   },
