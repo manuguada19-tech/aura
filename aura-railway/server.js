@@ -6037,10 +6037,14 @@ app.post("/api/my/like", wrap(async (req, res) => {
   if (!peer) return res.status(404).json({ error: "target_not_found" });
 
   // Guardar/actualizar la reacción (idempotente por UNIQUE (from_user,to_user))
-  await pool.execute(
+  // V631 · affectedRows: 1 = fila NUEVA, 2 = actualización de una ya existente.
+  // Solo notificamos "like recibido" en la campana cuando el like es NUEVO, para
+  // no repetir avisos si el usuario reacciona varias veces al mismo perfil.
+  const [likeRes] = await pool.execute(
     "INSERT INTO likes (from_user, to_user, type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE type=VALUES(type), created_at=NOW()",
     [me, target, type]
   );
+  const isNewLike = likeRes && likeRes.affectedRows === 1;
 
   // Un "pass" nunca genera match
   if (type === "pass") return res.json({ ok: true, match: false, type });
@@ -6050,7 +6054,33 @@ app.post("/api/my/like", wrap(async (req, res) => {
     "SELECT id FROM likes WHERE from_user=? AND to_user=? AND type IN ('like','super') LIMIT 1",
     [target, me]
   );
-  if (!back) return res.json({ ok: true, match: false, type });
+  if (!back) {
+    // V631 · Like unidireccional recibido → aviso en la campana del objetivo
+    // (in-app, best-effort). Respeta la preferencia likes_inapp del usuario.
+    if (isNewLike) {
+      (async () => {
+        try {
+          if (await notifPrefAllows(target, "likes_inapp")) {
+            const [[meRow]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
+            const meName = meRow?.name || "Alguien";
+            const isSuper = type === "super";
+            await pool.query(
+              `INSERT INTO notifications (user_id, type, title, body, icon, data)
+               VALUES (?, 'like_received', ?, ?, ?, ?)`,
+              [target,
+               isSuper ? "⭐ ¡Super like recibido!" : "❤️ ¡Nuevo like!",
+               isSuper
+                 ? `A ${meName} le encantas. Míralo en «Quién me ha dado like».`
+                 : `A ${meName} le gustas. Míralo en «Quién me ha dado like».`,
+               isSuper ? "⭐" : "❤️",
+               JSON.stringify({ peer_id: me, like_type: type })]
+            );
+          }
+        } catch (e) { /* best-effort */ }
+      })().catch(() => {});
+    }
+    return res.json({ ok: true, match: false, type });
+  }
 
   // Crear match (orden canónico a<b) y conversación get-or-create
   const a = Math.min(me, target), b = Math.max(me, target);

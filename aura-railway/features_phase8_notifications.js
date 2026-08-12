@@ -52,10 +52,18 @@ async function migrate(pool) {
     chat_push     TINYINT(1) NOT NULL DEFAULT 1,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // V631 · Nueva preferencia: avisos de "like recibido" en la campana (in-app).
+  // Additiva y retrocompatible: por defecto activada. Se añade con ALTER si la
+  // tabla ya existía sin la columna (instalaciones previas).
+  try {
+    await pool.query("ALTER TABLE notification_prefs ADD COLUMN likes_inapp TINYINT(1) NOT NULL DEFAULT 1");
+  } catch (e) { /* la columna ya existe */ }
 }
 
 // V592 · Claves válidas de preferencias (y sus defaults)
-const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push"];
+// V631 · likes_inapp añadida (avisos de like recibido en la campana).
+const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push", "likes_inapp"];
 function prefDefaults() {
   const o = {};
   for (const k of PREF_KEYS) o[k] = true;

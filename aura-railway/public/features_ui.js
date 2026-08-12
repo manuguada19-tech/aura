@@ -700,6 +700,7 @@
     reward_granted:  { icon: "🎁", label: "Recompensa concedida" },
     admin_message:   { icon: "📣", label: "Mensaje del equipo" },
     new_match:       { icon: "💘", label: "Nuevo match" }, // V591
+    like_received:   { icon: "❤️", label: "Nuevo like" }, // V631
   };
 
   function timeAgo(d) {
@@ -791,6 +792,8 @@
     { section: "💘 Matches" },
     { key: "matches_inapp", label: "En la campanita", hint: "Aviso en la app cuando haces match" },
     { key: "matches_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada" },
+    { section: "❤️ Likes recibidos" },
+    { key: "likes_inapp",   label: "En la campanita", hint: "Aviso cuando alguien te da like o super like" },
     { section: "💬 Mensajes de chat" },
     { key: "chat_push",     label: "Push en el móvil", hint: "Cuando te escriben y no estás en la app" },
     { section: "🎁 Canjes y recompensas" },
@@ -840,10 +843,37 @@
     ], "notif-modal");
   }
 
-  // Polling del badge cada 45 s + primera actualización al cargar
+  // V631 · Refresco del badge de la campana. Antes: setInterval fijo cada 45 s
+  // sin reaccionar a que la pestaña volviera a primer plano → la campana podía
+  // quedarse "vieja". Ahora:
+  //   • Polling cada 20 s SOLO cuando la pestaña está visible.
+  //   • Se pausa cuando la pestaña está oculta (no gasta batería/datos en 2º plano).
+  //   • Se refresca al instante cuando la pestaña vuelve a ser visible o recupera
+  //     el foco (que es cuando el usuario espera ver la actividad reciente).
   if (typeof window !== "undefined") {
-    setInterval(updateNotifBadge, 45000);
+    const POLL_MS = 20000;
+    let notifPollTimer = null;
+    function startNotifPoll() {
+      if (notifPollTimer) return;
+      notifPollTimer = setInterval(() => {
+        if (document.visibilityState === "visible") updateNotifBadge();
+      }, POLL_MS);
+    }
+    function stopNotifPoll() {
+      if (notifPollTimer) { clearInterval(notifPollTimer); notifPollTimer = null; }
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
+        updateNotifBadge();   // refresco inmediato al volver
+        startNotifPoll();
+      } else {
+        stopNotifPoll();      // pausa en segundo plano
+      }
+    });
+    window.addEventListener("focus", () => { updateNotifBadge(); });
+    // Arranque inicial
     setTimeout(updateNotifBadge, 2500);
+    if (document.visibilityState === "visible") startNotifPoll();
   }
 
   window.aura2 = {
