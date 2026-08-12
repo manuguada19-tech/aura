@@ -14,7 +14,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="styles.css?v=536" />
+  <link rel="stylesheet" href="styles.css?v=537" />
   <!-- Google AdSense: verificación de propiedad + carga de anuncios -->
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9759358849227466"
      crossorigin="anonymous"></script>
@@ -28,29 +28,48 @@
       position: fixed; inset: 0; z-index: 9999;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      gap: 18px;
-      background: #0b0c10;
-      transition: opacity .25s ease;
+      gap: 26px;
+      background:
+        radial-gradient(900px 620px at 50% 38%, rgba(168,85,247,.20), transparent 62%),
+        radial-gradient(680px 480px at 50% 44%, rgba(255,59,107,.16), transparent 58%),
+        #0b0c10;
+      transition: opacity .4s ease;
     }
-    html[data-theme="light"] #auraSplash { background: #ffe4ec; }
+    html[data-theme="light"] #auraSplash {
+      background:
+        radial-gradient(900px 620px at 50% 38%, rgba(255,138,59,.22), transparent 62%),
+        radial-gradient(680px 480px at 50% 44%, rgba(236,72,153,.14), transparent 58%),
+        #ffe4ec;
+    }
+    /* Logo original (marca redonda) con resplandor + respiración sutil */
+    #auraSplash .sp-logo-wrap {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #auraSplash .sp-glow {
+      position: absolute; width: 210px; height: 210px; border-radius: 50%;
+      background: radial-gradient(circle, rgba(236,72,153,.38), rgba(168,85,247,.16) 46%, transparent 70%);
+      filter: blur(8px);
+      animation: spGlow 3s ease-in-out infinite;
+    }
     #auraSplash .sp-logo {
-      width: 120px; height: 120px;
-      background-image: url("assets/aura-logo.png?v=3");
+      position: relative;
+      width: 138px; height: 138px;
+      background-image: url("assets/aura-logo-round.png?v=1");
       background-size: contain;
       background-position: center;
       background-repeat: no-repeat;
-    }
-    html[data-theme="light"] #auraSplash .sp-logo {
-      background-image: url("assets/aura-logo-light.png?v=3");
+      filter: drop-shadow(0 12px 34px rgba(0,0,0,.45));
+      animation: spPulse 2.4s ease-in-out infinite;
     }
     #auraSplash .sp-text {
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      font-size: 14px;
+      font-size: 15px;
       font-weight: 600;
-      letter-spacing: .04em;
-      color: #b7bdcc;
+      letter-spacing: .06em;
+      color: #d8dce8;
     }
-    html[data-theme="light"] #auraSplash .sp-text { color: #5b6270; }
+    html[data-theme="light"] #auraSplash .sp-text { color: #6b3b52; }
     #auraSplash .sp-dot {
       display: inline-block; width: 4px; height: 4px; margin: 0 1px;
       border-radius: 50%;
@@ -59,9 +78,40 @@
     }
     #auraSplash .sp-dot:nth-child(2) { animation-delay: .15s; }
     #auraSplash .sp-dot:nth-child(3) { animation-delay: .3s; }
+    /* Barra de progreso indeterminada con degradado de marca */
+    #auraSplash .sp-bar {
+      width: 184px; height: 4px; border-radius: 999px;
+      background: rgba(255,255,255,.10);
+      overflow: hidden; position: relative;
+    }
+    html[data-theme="light"] #auraSplash .sp-bar { background: rgba(0,0,0,.08); }
+    #auraSplash .sp-bar::before {
+      content: ""; position: absolute; top: 0; left: -42%;
+      height: 100%; width: 42%; border-radius: 999px;
+      background: linear-gradient(90deg, #ff8a3b, #ff3b6b, #a855f7, #3b82f6);
+      animation: spBar 1.4s ease-in-out infinite;
+    }
     @keyframes spDot {
       0%, 80%, 100% { opacity: .25; transform: translateY(0); }
       40% { opacity: 1; transform: translateY(-3px); }
+    }
+    @keyframes spPulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.045); }
+    }
+    @keyframes spGlow {
+      0%, 100% { opacity: .55; transform: scale(1); }
+      50% { opacity: .95; transform: scale(1.08); }
+    }
+    @keyframes spBar {
+      0% { left: -42%; }
+      100% { left: 100%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #auraSplash .sp-logo,
+      #auraSplash .sp-glow,
+      #auraSplash .sp-dot,
+      #auraSplash .sp-bar::before { animation: none; }
     }
     html:not(.js-loading) #auraSplash { opacity: 0; pointer-events: none; }
   </style>
@@ -91,8 +141,12 @@
 <body>
   <!-- Splash inicial anti-FOUC (fuera del body oculto). Se desvanece cuando app.js termina de renderizar. -->
   <div id="auraSplash" aria-hidden="true">
-    <div class="sp-logo" role="img" aria-label="Aura"></div>
-    <div class="sp-text">Cargando versión web<span class="sp-dot"></span><span class="sp-dot"></span><span class="sp-dot"></span></div>
+    <div class="sp-logo-wrap">
+      <div class="sp-glow"></div>
+      <div class="sp-logo" role="img" aria-label="Aura"></div>
+    </div>
+    <div class="sp-text">Preparando tu experiencia<span class="sp-dot"></span><span class="sp-dot"></span><span class="sp-dot"></span></div>
+    <div class="sp-bar" role="progressbar" aria-label="Cargando"></div>
   </div>
   <!-- Capa de fondo global, controlada solo con inline styles -->
   <div id="auraBg" style="position:fixed;inset:0;z-index:0;pointer-events:none;background:#0b0c10 radial-gradient(1200px 500px at 10% -10%, rgba(255,59,107,.22), transparent 60%), radial-gradient(900px 500px at 110% 10%, rgba(168,85,247,.22), transparent 60%)"></div>

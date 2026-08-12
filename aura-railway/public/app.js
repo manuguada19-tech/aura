@@ -8956,7 +8956,7 @@ function screenMe(root) {
       })(),
     ]},
     { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
-      { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: T("content.me.item_invisible_sub") || "Solo Premium", onClick: () => render(screenInvisibleMode) },
+      { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: (INVISIBLE_PLANS.has(getUserPlan()) ? "Incluido en tu plan" : (T("content.me.item_invisible_sub") || "Solo Premium")), onClick: () => render(screenInvisibleMode) },
       { icon: "🛡", title: "Dispositivo perdido o robado", sub: "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
       { icon: "🔒", title: T("content.me.item_security") || "Contraseña y 2FA", onClick: () => render(screenSecurity) },
       { icon: "🚫", title: T("content.me.item_blocked") || "Usuarios bloqueados", onClick: () => render(screenBlockedUsers) },
@@ -9424,7 +9424,20 @@ function screenVerifyAccount(root) {
   hideApp();
 }
 
-/* — Modo invisible — */
+/* — Modo invisible —
+   Función Premium (incluida en Premium, Gold y Platinum). La pantalla es
+   consciente del plan del usuario: si su plan no la incluye, se muestra
+   BLOQUEADA con el plan actual y un CTA para mejorar; en cuanto el usuario
+   sube de plan, la misma pantalla queda desbloqueada y los interruptores
+   funcionan. El estado se recuerda en el dispositivo (localStorage). */
+const INVISIBLE_PLANS = new Set(["premium", "gold", "platinum"]);
+function invisiblePrefs() {
+  try { return JSON.parse(localStorage.getItem("aura-invisible") || "{}") || {}; }
+  catch { return {}; }
+}
+function saveInvisiblePrefs(p) {
+  try { localStorage.setItem("aura-invisible", JSON.stringify(p || {})); } catch {}
+}
 function screenInvisibleMode(root) {
   meSubHeader(root, T("content.me.item_invisible") || "Modo invisible");
   const wrap = el("div", { class: "info-wrap" });
@@ -9433,16 +9446,69 @@ function screenInvisibleMode(root) {
     T("content.me.invisible_h") || "Navega sin ser visto",
     T("content.me.invisible_p") || "Aparece solo para quienes tú elijas y explora perfiles sin dejar rastro."
   ));
+
+  const plan = getUserPlan();
+  const unlocked = INVISIBLE_PLANS.has(plan);
+
+  // Banner con el plan actual del usuario (siempre visible, para que sepa
+  // qué plan tiene y si la función está o no incluida).
+  wrap.appendChild(el("div", { class: "plan-status-banner" + (unlocked ? " ok" : " locked") }, [
+    el("span", { class: "psb-ic", html: unlocked
+      ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`
+      : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
+    el("div", { class: "psb-txt" }, [
+      el("strong", {}, `Tu plan: ${planLabel(plan)}`),
+      el("small", {}, unlocked
+        ? "Modo invisible incluido en tu plan · configúralo abajo"
+        : "El modo invisible se incluye desde el plan Premium"),
+    ]),
+  ]));
+
   const opts = [
-    { title: T("content.me.invisible_opt1") || "Activar modo invisible", sub: T("content.me.invisible_opt1_sub") || "Tu perfil no aparecerá en la lista de descubrir", val: false },
-    { title: T("content.me.invisible_opt2") || "Ocultar mi edad", val: false },
-    { title: T("content.me.invisible_opt3") || "Ocultar mi distancia", val: false },
-    { title: T("content.me.invisible_opt4") || "Ocultar mi actividad online", val: true },
+    { key: "invisible", title: T("content.me.invisible_opt1") || "Activar modo invisible", sub: T("content.me.invisible_opt1_sub") || "Tu perfil no aparecerá en la lista de descubrir", def: false },
+    { key: "hide_age", title: T("content.me.invisible_opt2") || "Ocultar mi edad", def: false },
+    { key: "hide_distance", title: T("content.me.invisible_opt3") || "Ocultar mi distancia", def: false },
+    { key: "hide_online", title: T("content.me.invisible_opt4") || "Ocultar mi actividad online", def: true },
   ];
-  const card = el("div", { class: "info-card" });
-  opts.forEach(o => card.appendChild(switchRow(o.title, o.val, () => toast(T("content.me.saved_short") || "Guardado"))));
+  const prefs = invisiblePrefs();
+  const card = el("div", { class: "info-card" + (unlocked ? "" : " is-locked") });
+
+  opts.forEach(o => {
+    const current = (o.key in prefs) ? !!prefs[o.key] : o.def;
+    if (unlocked) {
+      card.appendChild(switchRow(o.title, current, (checked) => {
+        const p = invisiblePrefs();
+        p[o.key] = checked;
+        saveInvisiblePrefs(p);
+        toast(T("content.me.saved_short") || "Guardado");
+      }));
+    } else {
+      // Fila bloqueada: interruptor deshabilitado + candado. Al tocar, invita a mejorar.
+      const inp = el("input", { type: "checkbox", disabled: true });
+      const row = el("div", { class: "switch-row switch-row-locked", onclick: () => render(screenSubscriptions) }, [
+        el("span", { style: "font-size:14px;display:flex;align-items:center;gap:8px" }, [
+          el("span", { class: "lock-mini", html: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
+          o.title,
+        ]),
+        el("label", { class: "switch" }, [ inp, el("span") ]),
+      ]);
+      card.appendChild(row);
+    }
+  });
   wrap.appendChild(card);
-  wrap.appendChild(el("p", { class: "info-hero-sub", style: "margin-top:12px" }, T("content.me.invisible_note") || "Nota: Modo invisible solo está disponible con suscripción Premium."));
+
+  if (unlocked) {
+    wrap.appendChild(el("p", { class: "info-hero-sub", style: "margin-top:12px" },
+      "Los cambios se guardan automáticamente en este dispositivo."));
+  } else {
+    // CTA de mejora de plan.
+    wrap.appendChild(el("button", {
+      class: "btn btn-brand btn-block", style: "margin-top:14px",
+      onclick: () => render(screenSubscriptions),
+    }, "Mejorar a Premium para activarlo"));
+    wrap.appendChild(el("p", { class: "info-hero-sub", style: "margin-top:10px" },
+      T("content.me.invisible_note") || "Nota: Modo invisible solo está disponible con suscripción Premium."));
+  }
   root.appendChild(wrap);
   hideApp();
 }
