@@ -438,6 +438,8 @@ const PUBLIC_API = new Set([
   "POST /api/my/gps/report",
   "GET /api/my/gps/state",
   "POST /api/my/gps/reask-ack",
+  // Eliminación de cuenta por el propio usuario (RGPD)
+  "POST /api/my/account/delete",
   // Preferencias de idioma y tracking del usuario
   "POST /api/my/lang",
   "POST /api/my/track",
@@ -1977,20 +1979,80 @@ app.post("/api/users/:id/action", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-app.delete("/api/users/:id", wrap(async (req, res) => {
-  const id = req.params.id;
-  // Recuperar email antes de borrar para limpiar identity_verifications
-  const [ur] = await pool.query("SELECT email FROM users WHERE id=?", [id]);
-  const email = ur.length ? ur[0].email : null;
-  await pool.execute("DELETE FROM users WHERE id=?", [id]);
-  // Borrar verificaciones asociadas por user_id o por email
+// V639 · Borrado profundo de un usuario (RGPD, derecho de supresión).
+//   Antes el DELETE de admin solo tocaba users + identity_verifications, lo que
+//   dejaba filas huérfanas (fotos, likes, matches, mensajes, GPS, 2FA…) por toda
+//   la base de datos. Este helper limpia TODAS las tablas personales/de uso.
+//   Cada DELETE es independiente y va en su try/catch: si una tabla no existe en
+//   un despliegue concreto, el purgado no se aborta.
+//   Facturación (payments/subscriptions): por obligación legal (6 años Código de
+//   Comercio / 4 fiscal) NO se borra por defecto; para un purgado total pasar
+//   { keepBilling: false }.
+async function purgeUserData(id, { keepBilling = true } = {}) {
+  const uid = parseInt(id, 10);
+  if (!Number.isFinite(uid) || uid <= 0) return { ok: false, error: "invalid_id" };
+  // Email para limpiar tablas indexadas por email (KYC, etc.).
+  let email = null;
+  try {
+    const [ur] = await pool.query("SELECT email FROM users WHERE id=?", [uid]);
+    email = ur.length ? ur[0].email : null;
+  } catch {}
+  // 1) Mensajes de las conversaciones del usuario (borra ambos lados del hilo).
+  try {
+    const [convs] = await pool.query(
+      "SELECT id FROM conversations WHERE user_a=? OR user_b=?", [uid, uid]);
+    const ids = convs.map(c => c.id);
+    if (ids.length) {
+      const ph = ids.map(() => "?").join(",");
+      try { await pool.execute(`DELETE FROM messages WHERE conversation_id IN (${ph})`, ids); } catch {}
+    }
+  } catch {}
+  // 2) Resto de datos personales / de uso.
+  const stmts = [
+    ["DELETE FROM conversations WHERE user_a=? OR user_b=?", [uid, uid]],
+    ["DELETE FROM messages WHERE sender_id=?", [uid]],
+    ["DELETE FROM photos WHERE user_id=?", [uid]],
+    ["DELETE FROM likes WHERE from_user=? OR to_user=?", [uid, uid]],
+    ["DELETE FROM matches WHERE user_a=? OR user_b=?", [uid, uid]],
+    ["DELETE FROM favorites WHERE user_id=? OR target_id=?", [uid, uid]],
+    ["DELETE FROM blocks WHERE user_id=? OR target_id=?", [uid, uid]],
+    ["DELETE FROM notifications WHERE user_id=?", [uid]],
+    ["DELETE FROM devices WHERE user_id=?", [uid]],
+    ["DELETE FROM push_devices WHERE user_id=?", [uid]],
+    ["DELETE FROM chat_read_credits WHERE user_id=?", [uid]],
+    ["DELETE FROM chat_read_purchases WHERE user_id=?", [uid]],
+    ["DELETE FROM chat_read_reveals WHERE user_id=?", [uid]],
+    ["DELETE FROM user_restrictions WHERE user_id=?", [uid]],
+    ["DELETE FROM user_gps WHERE user_id=?", [uid]],
+    ["DELETE FROM user_2fa WHERE user_id=?", [uid]],
+    ["DELETE FROM activity_stream WHERE user_id=?", [uid]],
+    ["DELETE FROM appeals WHERE user_id=?", [uid]],
+    // Solo las denuncias PUESTAS por el usuario (su contenido). Las que le
+    // señalan como objetivo se conservan como registro de moderación: ya no
+    // contienen datos personales suyos (solo un id), útil para antifraude.
+    ["DELETE FROM reports WHERE reporter_id=?", [uid]],
+  ];
+  for (const [sql, args] of stmts) { try { await pool.execute(sql, args); } catch {} }
+  // Datos biométricos (KYC): se eliminan por user_id o por email.
   try {
     await pool.execute(
       "DELETE FROM identity_verifications WHERE user_id=? OR (email IS NOT NULL AND email=?)",
-      [id, email]
+      [uid, email]
     );
   } catch {}
-  await logActivity("admin", `Usuario eliminado (id ${id}${email ? " · " + email : ""})`);
+  if (!keepBilling) {
+    try { await pool.execute("DELETE FROM payments WHERE user_id=?", [uid]); } catch {}
+    try { await pool.execute("DELETE FROM subscriptions WHERE user_id=?", [uid]); } catch {}
+  }
+  // Finalmente, la fila del propio usuario.
+  try { await pool.execute("DELETE FROM users WHERE id=?", [uid]); } catch {}
+  return { ok: true, email };
+}
+
+app.delete("/api/users/:id", wrap(async (req, res) => {
+  const id = req.params.id;
+  const result = await purgeUserData(id, { keepBilling: true });
+  await logActivity("admin", `Usuario eliminado (id ${id}${result.email ? " · " + result.email : ""})`);
   res.json({ ok: true });
 }));
 
@@ -9402,6 +9464,22 @@ app.post("/api/my/gps/reask-ack", wrap(async (req, res) => {
     await pool.execute(
       "UPDATE user_gps SET reask_pending = 0 WHERE user_id = ?", [uid]);
   } catch {}
+  res.json({ ok: true });
+}));
+
+// V639 · Eliminación de cuenta por el propio usuario (RGPD, derecho de
+//   supresión). Antes el botón "Eliminar cuenta" solo cerraba la sesión en el
+//   móvil y los datos seguían en la base de datos. Ahora borra de verdad todos
+//   los datos personales/de uso mediante purgeUserData(). La identidad se toma
+//   SIEMPRE de readMyUserId (token firmado o X-User-Id), nunca de un id del
+//   body, para que nadie pueda borrar la cuenta de otro.
+app.post("/api/my/account/delete", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "no_user" });
+  const result = await purgeUserData(uid, { keepBilling: true });
+  if (!result.ok) return res.status(400).json({ error: result.error || "delete_failed" });
+  try { await logActivity("user", `Cuenta eliminada por el propio usuario (id ${uid}${result.email ? " · " + result.email : ""})`); } catch {}
+  try { await logStream(uid, "account_self_deleted", { req }); } catch {}
   res.json({ ok: true });
 }));
 

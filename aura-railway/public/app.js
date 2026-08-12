@@ -10256,7 +10256,35 @@ function openDeleteAccountSheet() {
       el("p", {}, T("content.me.delete_p") || "Esta acción es irreversible. Perderás tu perfil, fotos, matches y todo el historial de mensajes."),
       el("p", { class: "small" }, T("content.me.delete_note") || "Al confirmar, tus datos personales se eliminarán en un plazo máximo de 30 días conforme al RGPD."),
       el("div", { class: "sheet-actions", style: "display:grid;gap:8px;margin-top:14px" }, [
-        el("button", { class: "btn btn-danger btn-block", type: "button", onclick: () => { modal.close(); state.user = null; toast(T("content.me.deleted") || "Cuenta eliminada"); render(screenWelcome); } }, T("content.me.delete_confirm") || "Sí, eliminar mi cuenta"),
+        el("button", { class: "btn btn-danger btn-block", type: "button", onclick: async (ev) => {
+          // V639 · Antes esto SOLO cerraba la sesión local y los datos seguían en
+          // la base de datos (incumplía el derecho de supresión RGPD que la
+          // propia app promete). Ahora llama al backend para borrar de verdad.
+          const btn = ev.currentTarget;
+          try { btn.setAttribute("disabled", "true"); btn.textContent = T("content.me.deleting") || "Eliminando cuenta…"; } catch {}
+          let ok = false;
+          try {
+            if (state.user && state.user.id) {
+              const r = await fetch("/api/my/account/delete", {
+                method: "POST",
+                headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
+                body: JSON.stringify({}),
+              });
+              ok = r.ok;
+            }
+          } catch { ok = false; }
+          // Limpieza de sesión local (igual que en "Cerrar sesión").
+          try { chatApi.offline(); } catch {}
+          try { localStorage.removeItem("aura-session"); } catch {}
+          try { Auth.clear(); } catch {}
+          // Avisa al service worker para que olvide el user_id guardado.
+          try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.controller.postMessage({ type: "clear-user" }); } catch {}
+          state.user = null;
+          modal.close();
+          if (ok) { toast(T("content.me.deleted") || "Cuenta eliminada"); }
+          else    { toast(T("content.me.delete_err") || "Sesión cerrada. Si tu cuenta no se eliminó, escríbenos a soporte.", 4500); }
+          render(screenWelcome);
+        } }, T("content.me.delete_confirm") || "Sí, eliminar mi cuenta"),
         el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.cancel") || "Cancelar"),
       ]),
     ]),
