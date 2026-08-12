@@ -2796,7 +2796,18 @@ $("#themeToggle").addEventListener("click", _toggleAuraTheme);
 const _themeCardEl = document.getElementById("themeCard");
 if (_themeCardEl) _themeCardEl.addEventListener("click", _toggleAuraTheme);
 
-/* ---------- Mock data ---------- */
+/* ---------- Mock data ----------
+   V637 · Los perfiles demo (generateUsers) SOLO deben aparecer en la vista
+   previa del panel de admin (URL con ?preview=…). En la app real nunca se
+   inventan personas, likes ni matches: si no hay datos reales, se muestran
+   los estados vacíos ("Aún no tienes likes", "No hay nadie cerca", etc.).
+   isPreviewMode() centraliza esa detección. */
+function isPreviewMode() {
+  try {
+    const p = new URLSearchParams(location.search || "");
+    return !!p.get("preview");
+  } catch { return false; }
+}
 const NAMES_F = ["Sofía","Lucía","Valentina","Camila","Isabella","Emma","Martina","Aitana","Elena","Carla","Noa","Julia","Alba","Nora"];
 const NAMES_M = ["Mateo","Hugo","Leo","Daniel","Alex","Álvaro","Adrián","Diego","Pablo","Marc","Iker","Bruno","Nico","Rodrigo"];
 const NAMES_NB = ["Ari","Sam","Kai","Luca","Ren","Alex","Robin"];
@@ -6661,15 +6672,16 @@ function buildNearbySection() {
       }
       if (Array.isArray(real)) {
         nearbyPool = real;
-      } else if (!datingApi._authed || !datingApi._authed()) {
-        // Sin sesión: perfiles demo para que la pantalla no quede vacía.
+      } else if (isPreviewMode()) {
+        // V637 · Solo en la vista previa del admin usamos perfiles demo para
+        // que la pantalla no salga vacía. En la app real dejamos el pool vacío.
         nearbyPool = generateUsers(24, { zone: state.zone });
       } else {
-        // Con sesión pero sin datos: dejamos el pool vacío (mensaje "aún no hay nadie").
+        // Sin datos reales → pool vacío (mensaje "aún no hay nadie").
         nearbyPool = [];
       }
     } catch {
-      nearbyPool = (datingApi._authed && datingApi._authed()) ? [] : generateUsers(24, { zone: state.zone });
+      nearbyPool = isPreviewMode() ? generateUsers(24, { zone: state.zone }) : [];
     } finally {
       nearbyLoading = false;
       try { paintNearby(); } catch {}
@@ -6748,15 +6760,13 @@ function buildSwipeStack() {
   return stack;
 }
 
-// Carga perfiles reales en el stack. Si no hay sesión o falla la API,
-// cae a perfiles demo para no dejar la pantalla vacía.
+// Carga perfiles reales en el stack. En la app real, si no hay usuarios
+// reales se deja vacío (empty state). Solo la vista previa del admin usa demo.
 async function loadDiscoverInto(stack, append = false) {
   let users = await datingApi.discover(state.zone, 12);
   if (!users || users.length === 0) {
-    // Fallback: sin usuarios reales disponibles → demo (modo pruebas/anónimo)
-    users = (users && users.length === 0 && datingApi._authed())
-      ? [] // autenticado pero sin más perfiles reales → dejar vacío (empty state)
-      : generateUsers(6, { zone: state.zone });
+    // V637 · Sin usuarios reales → vacío en la app real; demo solo en preview.
+    users = isPreviewMode() ? generateUsers(6, { zone: state.zone }) : [];
   }
   if (append) {
     stack._users = stack._users.concat(users);
@@ -6983,11 +6993,12 @@ function screenSearch(root) {
   populateResults(grid);
 }
 async function populateResults(grid, filter = "") {
-  // Carga (una vez) el conjunto de perfiles: reales si hay sesión, demo si no.
+  // Carga (una vez) el conjunto de perfiles reales. En la app real, sin datos
+  // se muestra el estado vacío; solo la vista previa del admin usa demo.
   if (!grid._pool) {
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Buscando…</h3></div>`;
     let users = await datingApi.discover(state.zone, 30);
-    if (!users) users = generateUsers(14, { zone: state.zone });
+    if (!users || users.length === 0) users = isPreviewMode() ? generateUsers(14, { zone: state.zone }) : []; // V637
     grid._pool = users;
   }
   renderResults(grid, filter);
@@ -7255,8 +7266,8 @@ function screenLikes(root) {
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Cargando…</h3></div>`;
     premiumCta.style.display = "";
     let users = await datingApi.likesReceived();
-    const isReal = !!users;
-    if (!users) users = generateUsers(8, { zone: state.zone });
+    // V637 · Sin datos reales → estado vacío en la app real; demo solo en preview.
+    if (!users) users = isPreviewMode() ? generateUsers(8, { zone: state.zone }) : [];
     grid.innerHTML = "";
     if (users.length === 0) {
       grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Aún no tienes likes</h3><p>Sigue descubriendo perfiles: cuando alguien te dé like aparecerá aquí.</p></div>`;
@@ -7278,9 +7289,10 @@ function screenLikes(root) {
     premiumCta.style.display = "none";
     let favs = await datingApi.favorites();
     if (!favs) {
-      // Sin sesión → usa el conjunto en memoria (modo demo)
+      // V637 · Sin datos reales (API caída o sin sesión): estado vacío en la
+      // app real. Solo la vista previa del admin genera favoritos demo.
       grid.innerHTML = "";
-      if (state.favorites.size === 0) {
+      if (!isPreviewMode() || state.favorites.size === 0) {
         grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
         return;
       }
@@ -7781,9 +7793,17 @@ function screenChats(root) {
       matches = await fetch("/api/my/matches", { headers: datingApi.headers(), cache: "no-store" })
         .then(r => r.ok ? r.json() : null).then(rows => Array.isArray(rows) ? rows.map(mapApiUser) : null).catch(() => null);
     }
-    const isReal = !!matches;
-    if (!matches) matches = generateUsers(6, { zone: state.zone });
-    if (isReal && matches.length === 0) { matchesWrap.style.display = "none"; return; }
+    // V637 · En la app real, sin matches reales ocultamos la fila "Nuevos
+    // matches" (antes se inventaban 6). Solo la vista previa del admin muestra
+    // matches demo para que la sección no salga vacía.
+    if (!matches || matches.length === 0) {
+      if (isPreviewMode()) {
+        matches = generateUsers(6, { zone: state.zone });
+      } else {
+        matchesWrap.style.display = "none";
+        return;
+      }
+    }
     mrow.innerHTML = "";
     matches.forEach(u => {
       const it = el("div", { class: "match-avatar" }, [
