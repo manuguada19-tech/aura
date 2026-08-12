@@ -7637,7 +7637,34 @@ async function viewSettings(root){
     toggleField("security.daily_backups", "Backups diarios automáticos"),
   ]));
 
+  // V640 · Selector de proveedor de cobro. Antes "payments.provider" solo se
+  // podía cambiar en la BD. Ahora es visible aquí: "simulado" = pago ficticio
+  // (pruebas); "stripe" = cobro real vía las claves STRIPE_SECRET_KEY /
+  // STRIPE_WEBHOOK_SECRET. El backend solo cobra de verdad si provider="stripe"
+  // Y las claves están configuradas (checkout_live).
+  const paymentsProviderField = (() => {
+    const current = s["payments.provider"] || "simulado";
+    const sel = el("select", { class: "input", name: "payments.provider" },
+      [
+        { value: "simulado", label: "Simulado (pruebas · no cobra)" },
+        { value: "stripe", label: "Stripe (cobro real)" },
+      ].map(o => {
+        const opt = el("option", { value: o.value }, o.label);
+        if (o.value === current) opt.setAttribute("selected", "selected");
+        return opt;
+      })
+    );
+    return el("div", {}, [
+      el("label", { class: "field" }, [ el("span", {}, "Proveedor de cobro"), sel ]),
+      el("small", { class: "muted" },
+        "«Simulado»: el cobro es ficticio (no se usa Stripe). «Stripe»: cobro real "
+        + "con las claves configuradas en el servidor. Requiere STRIPE_SECRET_KEY y "
+        + "STRIPE_WEBHOOK_SECRET válidas."),
+    ]);
+  })();
+
   form.appendChild(group("Pagos", [
+    paymentsProviderField,
     toggleField("payments.stripe", "Stripe"),
     toggleField("payments.paypal", "PayPal"),
     toggleField("payments.apple_pay", "Apple Pay"),
