@@ -401,6 +401,8 @@ const PUBLIC_API = new Set([
   "GET /api/admin-branding",
   "GET /api/discover",
   "POST /api/login",
+  // V633 · Verificación del OTP de login (pre-sesión, sin token de admin)
+  "POST /api/login/otp-verify",
   // Acceso superadmin con código (bypass de access_locked para pruebas privadas)
   "POST /api/access/superadmin",
   "POST /api/verify/send",
