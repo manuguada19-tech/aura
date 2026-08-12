@@ -153,7 +153,13 @@ function clearLoginFails(email) { loginAttempts.delete(email); }
 /* ---------- Admin auth (DB-backed, multi-instance-safe) ---------- */
 const crypto = require("crypto");
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "manuguada19@gmail.com").toLowerCase();
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admincitas88";
+// V633 · Seguridad: ya NO hay contraseña por defecto en el código. El acceso de
+// admin usa (por orden de prioridad): admin.password_override guardado en la BD
+// (panel → perfil) o la variable de entorno ADMIN_PASSWORD. Si no existe
+// ninguna de las dos, se genera un secreto aleatorio por arranque (inutilizable
+// sin conocerlo) → el login admin queda deshabilitado en vez de usar una
+// contraseña conocida. La contraseña conocida antigua queda revocada.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(24).toString("hex");
 const ADMIN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8h
 const adminTokenCache = new Map(); // token -> { email, exp } (short-lived read cache)
 const ADMIN_TOKEN_CACHE_TTL = 5000;
@@ -8908,11 +8914,70 @@ app.post("/api/login", wrap(async (req, res) => {
     try { await logStream(rows[0].id, "login_2fa_pending", { detail: rows[0].email, req }); } catch {}
     return res.json({ ok: false, needs_2fa: true, email: rows[0].email });
   }
+  // V633 · Login por OTP (código de un solo uso al email). Opt-in mediante el
+  // flag `security.login_otp_required` (APAGADO por defecto). Si está activo y
+  // el usuario NO tiene 2FA, no completamos el login: enviamos un código y el
+  // cliente lo verifica en /api/login/otp-verify. Con el flag apagado el
+  // comportamiento es idéntico al anterior (login directo por email) → no
+  // rompe a ningún usuario existente. Rollback = apagar el flag.
+  if (isTrue("security.login_otp_required", false)) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = new Date(Date.now() + 10 * 60 * 1000);
+    let sent = false;
+    try {
+      await pool.execute("INSERT INTO verifications (email, code, expires_at) VALUES (?,?,?)", [email, code, expires]);
+      const result = await sendOtpEmail(email, code);
+      sent = !!result.sent;
+      await logActivity("system", `OTP de login enviado a ${email} (mail=${sent})`);
+      enqueueEmail("otp", null, {
+        user_name: rows[0].name || email.split("@")[0],
+        user_email: email,
+        code,
+        expires_min: 10,
+        __lang: emailTx.normalizeLang(req.body?.lang || "es"),
+      }).catch(() => {});
+    } catch (e) { console.error("login otp send failed:", e.message); }
+    try { await logStream(rows[0].id, "login_otp_pending", { detail: email, req }); } catch {}
+    // demoCode solo cuando no hay SMTP configurado (igual que /api/verify/send).
+    return res.json({ ok: false, needs_otp: true, email, demoCode: sent ? null : code });
+  }
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
   await touchUserDevice(req, rows[0].id);
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
+  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id) });
+}));
+
+// V633 · Verificación del OTP de login (solo relevante si el flag
+// `security.login_otp_required` está activo). Valida el código, lo marca como
+// usado y completa la sesión devolviendo user + auth_token firmado.
+app.post("/api/login/otp-verify", wrap(async (req, res) => {
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  const code = String(req.body?.code || "").trim();
+  if (!email.includes("@") || !/^\d{6}$/.test(code)) return res.status(400).json({ ok: false, error: "bad_input" });
+  if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
+  if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes", "15"), 10) });
+  if (await enforceAccess(req, res, { email })) return;
+  const [vrows] = await pool.query(
+    "SELECT id FROM verifications WHERE email=? AND code=? AND used=0 AND expires_at > NOW() ORDER BY id DESC LIMIT 1",
+    [email, code]
+  );
+  if (!vrows.length) {
+    recordLoginFail(email);
+    return res.status(400).json({ ok: false, error: "invalid_or_expired" });
+  }
+  await pool.execute("UPDATE verifications SET used=1 WHERE id=?", [vrows[0].id]);
+  const [rows] = await pool.query("SELECT id, email, name, role, plan, zone, photo_url FROM users WHERE email=? LIMIT 1", [email]);
+  if (!rows.length) return res.status(404).json({ ok: false, error: "not_found" });
+  // Defensa en profundidad: si activó 2FA entre medias, respétalo.
+  if (await is2FAEnabled(rows[0].id)) return res.json({ ok: false, needs_2fa: true, email: rows[0].email });
+  clearLoginFails(email);
+  await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
+  await touchUserDevice(req, rows[0].id);
+  const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
+  await logActivity("user", `Login (OTP) ${rows[0].email}${ipMsg}`);
+  try { await logStream(rows[0].id, "login_otp", { detail: rows[0].email, req }); } catch {}
   res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id) });
 }));
 

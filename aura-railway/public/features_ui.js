@@ -60,10 +60,27 @@
     } catch {}
     return "";
   }
+  // V633 · Lee el token firmado que guarda app.js (Auth.set → "aura-auth-token").
+  // El backend valida X-Auth-Token (readMyUserId → verifyUserToken). Enviarlo
+  // aquí también hace que la campana / Quedadas / Recompensas sigan funcionando
+  // cuando se active el modo estricto (security.require_auth_token). No-op si
+  // todavía no hay token → 100% retrocompatible.
+  function readSignedToken() {
+    try {
+      if (typeof Auth !== "undefined" && Auth && typeof Auth.get === "function") {
+        const t = Auth.get();
+        if (t) return t;
+      }
+    } catch {}
+    try { return localStorage.getItem("aura-auth-token") || ""; } catch {}
+    return "";
+  }
   function authHeaders() {
     const headers = {};
     const uid = readMyUserId();
     if (uid) headers["X-User-Id"] = uid;
+    const signed = readSignedToken();
+    if (signed) headers["X-Auth-Token"] = signed;
     const t = readToken();
     if (t) headers["Authorization"] = "Bearer " + t;
     return headers;

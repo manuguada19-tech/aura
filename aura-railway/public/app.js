@@ -5728,6 +5728,12 @@ function screenLogin(root) {
         openTwoFactorLoginPrompt(data.email || email);
         return;
       }
+      // V633 · El backend pide un código OTP (flag security.login_otp_required).
+      // No completamos el login aún: abrimos el modal para introducir el código.
+      if (r.ok && data && data.needs_otp) {
+        openLoginOtpPrompt(data.email || email, data.demoCode || null);
+        return;
+      }
       if (!r.ok || !data.ok) {
         toast(r.status === 404 ? "Cuenta no encontrada. Regístrate primero." : "Error al iniciar sesión");
         return;
@@ -5803,6 +5809,79 @@ function openTwoFactorLoginPrompt(email) {
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       close();
       toast(data.used_recovery ? "Has iniciado sesión con un código de recuperación" : `Bienvenido, ${data.user.name.split(" ")[0]}`);
+      setTimeout(() => showApp(), 400);
+    } catch {
+      errEl.textContent = "Error de red";
+      errEl.style.display = "block";
+      okBtn.disabled = false; okBtn.textContent = "Verificar";
+    }
+  }
+  okBtn.addEventListener("click", submit);
+}
+
+/* V633 · Modal de OTP de login. Aparece cuando el backend responde needs_otp
+   (flag security.login_otp_required activo). Pide el código de 6 dígitos que
+   se ha enviado al email y completa la sesión al verificarlo. */
+function openLoginOtpPrompt(email, demoCode) {
+  const overlay = el("div", { style:
+    "position:fixed;inset:0;z-index:99998;background:rgba(6,4,20,.75);backdrop-filter:blur(6px);" +
+    "-webkit-backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:16px"
+  });
+  const card = el("div", { style:
+    "max-width:420px;width:100%;background:linear-gradient(160deg,#1a0b3a 0%,#0d0620 100%);" +
+    "border:1px solid rgba(255,255,255,.14);border-radius:20px;padding:22px;color:#fff;box-shadow:0 30px 80px rgba(0,0,0,.6)"
+  });
+  card.innerHTML = `
+    <div style="text-align:center;font-size:36px;margin-bottom:6px">📧</div>
+    <h3 style="margin:0 0 6px;font-size:19px;font-weight:800;text-align:center">Verifica tu email</h3>
+    <p style="margin:0 0 14px;font-size:14px;color:#e6d9ff;text-align:center;line-height:1.4">
+      Hemos enviado un código de 6 dígitos a<br><strong>${email}</strong>.
+      ${demoCode ? `<br><small style="color:#c9bce4">Modo demo: ${demoCode}</small>` : ""}
+    </p>
+    <input class="otp-token" type="text" inputmode="numeric" maxlength="6" placeholder="123456"
+      style="width:100%;padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.35);color:#fff;font-size:22px;text-align:center;font-family:monospace;letter-spacing:4px">
+    <div class="otp-err" style="color:#ff8ea3;font-size:13px;margin-top:8px;display:none;text-align:center"></div>
+    <div style="display:flex;gap:8px;margin-top:14px">
+      <button class="otp-cancel" type="button" style="flex:0 0 auto;height:46px;padding:0 16px;border-radius:12px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.06);color:#fff;font-weight:700;cursor:pointer">Cancelar</button>
+      <button class="otp-ok" type="button" style="flex:1;height:46px;border-radius:12px;border:0;background:linear-gradient(90deg,#ff3b6b,#ff8a3b,#a855f7);color:#fff;font-weight:800;cursor:pointer">Verificar</button>
+    </div>`;
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  const tokenI = card.querySelector(".otp-token");
+  const errEl  = card.querySelector(".otp-err");
+  const okBtn  = card.querySelector(".otp-ok");
+  setTimeout(() => { try { tokenI.focus(); } catch {} }, 100);
+  const close = () => { try { overlay.remove(); } catch {} };
+  card.querySelector(".otp-cancel").addEventListener("click", close);
+  tokenI.addEventListener("input", () => {
+    tokenI.value = tokenI.value.replace(/\D/g, "").slice(0, 6);
+    errEl.style.display = "none";
+  });
+  tokenI.addEventListener("keydown", (e) => { if (e.key === "Enter") okBtn.click(); });
+
+  async function submit() {
+    const code = tokenI.value.trim();
+    if (code.length !== 6) { errEl.textContent = "Introduce los 6 dígitos"; errEl.style.display = "block"; return; }
+    okBtn.disabled = true; okBtn.textContent = "Verificando…";
+    try {
+      const r = await fetch("/api/login/otp-verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, code }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok && data && data.needs_2fa) { close(); openTwoFactorLoginPrompt(data.email || email); return; }
+      if (!r.ok || !data.ok) {
+        errEl.textContent = data.error === "invalid_or_expired" ? "Código incorrecto o caducado" : "No se pudo verificar";
+        errEl.style.display = "block";
+        okBtn.disabled = false; okBtn.textContent = "Verificar";
+        return;
+      }
+      state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
+      state.zone = data.user.zone || state.zone || "hetero";
+      Auth.capture(data);
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      close();
+      toast(`Bienvenido, ${data.user.name.split(" ")[0]}`);
       setTimeout(() => showApp(), 400);
     } catch {
       errEl.textContent = "Error de red";
@@ -9646,7 +9725,7 @@ function openTwoFactorSetup(onDone) {
   // 1. Setup
   fetch("/api/2fa/setup", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+    headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(uid) }),
     body: "{}",
   }).then(r => r.json()).then(d => {
     if (!d || !d.ok) { toast("No se pudo iniciar el 2FA"); close(); return; }
@@ -9668,7 +9747,7 @@ function openTwoFactorSetup(onDone) {
     try {
       const r = await fetch("/api/2fa/verify", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(uid) }),
         body: JSON.stringify({ token }),
       });
       const d = await r.json().catch(() => ({}));
@@ -9735,7 +9814,7 @@ function openTwoFactorDisable(onDone) {
     try {
       const r = await fetch("/api/2fa/disable", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-User-Id": String(uid) },
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(uid) }),
         body: JSON.stringify({ token }),
       });
       const d = await r.json().catch(() => ({}));
@@ -12271,6 +12350,10 @@ async function maybePromptForPushAnon() {
 function authHeaders() {
   const h = {};
   try { if (state && state.user && state.user.id) h["X-User-Id"] = String(state.user.id); } catch {}
+  // V633 · Enviar también el token firmado (X-Auth-Token) para que estos
+  // endpoints sigan funcionando cuando se active el modo estricto. No-op si
+  // aún no hay token guardado, así que es 100% retrocompatible.
+  try { Auth.apply(h); } catch {}
   return h;
 }
 
