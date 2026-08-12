@@ -5479,7 +5479,7 @@ function screenVerifySuspended(root) {
 /* ---- Zone select ---- */
 function screenZoneSelect(root) {
   root.appendChild(topbar("Elige tu zona", () => render(screenVerifyIdentityIntro)));
-  root.appendChild(stepper(3, 6));
+  root.appendChild(stepper(4, 6));
 
   const form = el("form", { class: "form" });
   form.appendChild(el("div", { class: "form-hero" }, [
@@ -5523,7 +5523,7 @@ function screenZoneSelect(root) {
 /* ---- Register: profile info ---- */
 function screenRegisterProfile(root) {
   root.appendChild(topbar("Sobre ti", () => render(screenZoneSelect)));
-  root.appendChild(stepper(4, 6));
+  root.appendChild(stepper(5, 6));
 
   const form = el("form", { class: "form" });
   form.appendChild(el("div", { class: "form-hero" }, [
@@ -5597,7 +5597,7 @@ function screenRegisterProfile(root) {
 /* ---- Register: photos ---- */
 function screenRegisterPhotos(root) {
   root.appendChild(topbar("Añade fotos", () => render(screenRegisterProfile)));
-  root.appendChild(stepper(5, 6));
+  root.appendChild(stepper(6, 6));
 
   const form = el("form", { class: "form" });
   form.appendChild(el("div", { class: "form-hero" }, [
@@ -5634,7 +5634,7 @@ function screenRegisterPhotos(root) {
   form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Finalizar registro"));
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    if (state.registration.photos.length < 1) return toast("Añade al menos 1 foto");
+    if (state.registration.photos.length < 2) return toast("Añade al menos 2 fotos");
     state.user = { name: state.registration.name || "Tú", email: state.registration.email, ...state.registration };
     toast("¡Bienvenido a Aura! 🎉");
     setTimeout(() => showApp(), 400);
@@ -8163,6 +8163,46 @@ function screenChat(root, u, isNew, opts = {}) {
     el("button", { class: "icon-btn", title: "Enviar", id: "chatSendBtn", onclick: () => sendMsg(), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 20l18-8L3 4v6l12 2-12 2z"/></svg>` }),
   ]);
   root.appendChild(composer);
+
+  // V635 · Sugerencias de primer mensaje. Se muestran sobre el composer cuando
+  // la conversación aún no tiene ningún mensaje; al tocar una, se rellena el
+  // input para que el usuario pueda editarla antes de enviar. Desaparecen en
+  // cuanto hay un primer mensaje (enviado o recibido). Es 100% frontend: no
+  // toca el backend ni envía nada por sí solo.
+  function firstMsgSuggestionsFor(peer) {
+    const name = (peer && peer.name ? String(peer.name).split(" ")[0].trim() : "");
+    const hi = name ? "¡Hola, " + name + "!" : "¡Hola!";
+    const pool = [
+      hi + " ¿Qué tal llevas la semana? 😊",
+      hi + " Me ha encantado tu perfil ✨ ¿Qué haces en un finde perfecto?",
+      "Si pudieras viajar mañana a cualquier sitio, ¿a dónde irías? ✈️",
+      "Confiesa: ¿café tranqui o planazo de tarde? ☕",
+      hi + " ¿Alguna serie que me tenga que enganchar ya? 📺",
+      "¿Team playa o team montaña? 🏖️⛰️",
+    ];
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    return pool.slice(0, 3);
+  }
+  function hideFirstMsgSuggestions() { const s = document.getElementById("firstMsgSuggest"); if (s) s.remove(); }
+  function showFirstMsgSuggestions() {
+    if (document.getElementById("firstMsgSuggest")) return;
+    const chips = firstMsgSuggestionsFor(u).map((txt) =>
+      el("button", { type: "button", class: "first-msg-chip", onclick: () => {
+        const inp = $("#chatInput");
+        if (!inp) return;
+        inp.disabled = false; inp.removeAttribute("readonly");
+        inp.value = txt;
+        try { inp.focus(); } catch {}
+        hideFirstMsgSuggestions();
+      } }, txt)
+    );
+    const bar = el("div", { class: "first-msg-suggest", id: "firstMsgSuggest" }, [
+      el("div", { class: "first-msg-suggest-title" }, "💡 Rompe el hielo"),
+      el("div", { class: "first-msg-chips" }, chips),
+    ]);
+    root.insertBefore(bar, composer);
+  }
+
   hideApp();
 
   let convId = opts && opts.conversationId ? opts.conversationId : null;
@@ -8174,6 +8214,7 @@ function screenChat(root, u, isNew, opts = {}) {
     const v = (inp.value || "").trim();
     if (!v || !state_.convId) return;
     inp.value = "";
+    hideFirstMsgSuggestions(); // V635
     const optimistic = bubble("out", v, new Date().toISOString());
     optimistic.dataset.pending = "1";
     msgs.appendChild(optimistic);
@@ -8520,6 +8561,9 @@ function screenChat(root, u, isNew, opts = {}) {
     list.forEach(m => {
       if (m.id <= lastId) return;
       lastId = m.id;
+      // V635 · En cuanto llega/se envía el primer mensaje real, ocultamos las
+      // sugerencias de rompehielo.
+      hideFirstMsgSuggestions();
       const mine = state.user && m.sender_id === state.user.id;
       const t = mine ? "out" : "in";
       // Skip if this is our own pending message we already appended optimistically
@@ -8598,6 +8642,9 @@ function screenChat(root, u, isNew, opts = {}) {
       // Do NOT auto-focus: keyboard should only open when the user taps the composer.
     }
     await poll();
+    // V635 · Si la conversación no tiene ningún mensaje aún, mostramos las
+    // sugerencias de primer mensaje para ayudar a romper el hielo.
+    if (lastId === 0) showFirstMsgSuggestions();
     _chatPollTimer = setInterval(poll, 3500);
   })();
 }

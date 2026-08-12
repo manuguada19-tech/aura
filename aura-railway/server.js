@@ -1236,6 +1236,25 @@ async function migrate() {
       INDEX idx_time (created_at)
     )`);
   } catch {}
+
+  // V635 · Índices de rendimiento (additivos e idempotentes). Todos van en
+  //        try/catch: si el índice ya existe, TiDB/MySQL lanza error 1061 y lo
+  //        ignoramos. No modifican datos ni esquema de columnas.
+  //   - messages(conversation_id, id): acelera el poll del chat
+  //     (WHERE conversation_id=? AND id>? ORDER BY id) y las subconsultas
+  //     "último mensaje por conversación" (ORDER BY id DESC LIMIT 1).
+  //   - blocks(target_id): la subconsulta inversa de discover
+  //     (SELECT user_id FROM blocks WHERE target_id=?) no tenía índice usable
+  //     (uniq_block empieza por user_id).
+  //   - users(zone, status): filtro principal de /api/my/nearby (discover).
+  //   - conversations(user_b): lista de chats (WHERE user_a=? OR user_b=?);
+  //     uniq_conv cubre user_a pero no user_b.
+  for (const stmt of [
+    "ALTER TABLE messages ADD INDEX idx_conv_id (conversation_id, id)",
+    "ALTER TABLE blocks ADD INDEX idx_block_target (target_id)",
+    "ALTER TABLE users ADD INDEX idx_zone_status (zone, status)",
+    "ALTER TABLE conversations ADD INDEX idx_user_b (user_b)",
+  ]) { try { await pool.execute(stmt); } catch {} }
 }
 
 /* ---------- Seed data (only if empty) ---------- */

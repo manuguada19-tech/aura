@@ -2119,6 +2119,26 @@ body.account-suspended .restriction-banner .rb-close {
 }
 .composer input:focus { outline: none; border-color: var(--brand-1); }
 
+/* V635 · Sugerencias de primer mensaje (rompehielo) sobre el composer */
+.first-msg-suggest {
+  position: sticky; bottom: 62px; z-index: 3;
+  padding: 8px 12px 4px; background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.first-msg-suggest-title {
+  font-size: 12px; font-weight: 600; color: var(--text-muted);
+  margin: 0 0 6px 2px;
+}
+.first-msg-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.first-msg-chip {
+  border: 1px solid var(--border-strong); background: var(--surface-2);
+  color: var(--text); border-radius: 999px; padding: 8px 14px;
+  font-size: 13px; line-height: 1.25; cursor: pointer; text-align: left;
+  max-width: 100%; transition: border-color .15s, background .15s, transform .05s;
+}
+.first-msg-chip:hover { border-color: var(--brand-1); }
+.first-msg-chip:active { transform: scale(.98); }
+
 /* -------- Profile -------- */
 .profile-hero {
   aspect-ratio: 1/1;
