@@ -3,27 +3,22 @@
   "port": 587,
   "secure": false,
   "requireTLS": true,
-  "shared_password": "1a{9|6I:r@42",
+  "_note": "Las contraseñas NO se guardan aquí. Se leen de variables de entorno en Railway: SMTP_PASS_<BUZON> (p.ej. SMTP_PASS_HOLA_CITASAURA_ES). Ver server.js initSmtpMailers(). Opcional: SMTP_HOST, SMTP_PORT, SMTP_SECURE.",
   "boxes": {
     "hola@citasaura.es": {
-      "name": "Aura",
-      "password": "1a{9|6I:r@42"
+      "name": "Aura"
     },
     "seguridad@citasaura.es": {
-      "name": "Aura Seguridad",
-      "password": "1a{9|6I:r@42"
+      "name": "Aura Seguridad"
     },
     "soporte@citasaura.es": {
-      "name": "Aura Soporte",
-      "password": "1a{9|6I:r@42"
+      "name": "Aura Soporte"
     },
     "suscripciones@citasaura.es": {
-      "name": "Aura Suscripciones",
-      "password": "1a{9|6I:r@42"
+      "name": "Aura Suscripciones"
     },
     "no-reply@citasaura.es": {
-      "name": "Aura",
-      "password": "7gU7+R_8\\#^6"
+      "name": "Aura"
     }
   }
 }
