@@ -10642,6 +10642,17 @@ app.use(express.static(path.join(__dirname, "public"), {
   }
 }));
 
+// V701 · Páginas públicas RASTREABLES para SEO/AdSense (contenido de editor
+// servido como HTML plano server-side, sin depender del JS de la SPA).
+// DEBE ir ANTES del fallback SPA, porque /faq, /privacidad, /terminos, /normas,
+// /ayuda y /contacto también están en SPA_ROUTES: si el fallback se registrara
+// primero, ganaría y devolvería el index.html vacío que ve (mal) el crawler.
+// No cambia la navegación interna de la app (usa render() en cliente, sin HTTP).
+try {
+  const seoPages = require("./features_seo_pages");
+  seoPages.register(app);
+} catch (e) { console.error("SEO pages register error:", e && e.message); }
+
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 // SPA fallback: rutas cliente (deep-links de emails y navegación interna)
