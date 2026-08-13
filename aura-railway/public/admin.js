@@ -1973,11 +1973,17 @@ async function viewDashboard(root){
       isLocked ? "ghost sm" : "primary sm",
       async () => {
         try {
-          await api.put("/api/settings", {
+          const payload = {
             "app.access_locked": isLocked ? "false" : "true",
             "app.access_admin_emails": emailsInput.value || "manuguada19@gmail.com",
-          });
-          toast(isLocked ? "Modo pruebas desactivado" : "Modo pruebas activado — solo admins entran");
+          };
+          // Al DESACTIVAR el modo pruebas abrimos también los registros para
+          // que la bienvenida muestre la pantalla NORMAL de "Crear cuenta /
+          // Iniciar sesión". Sin esto, `registrations_open` seguía en false
+          // (forzado por la migración V381) y se quedaba la pantalla de código.
+          if (isLocked) payload["app.registrations_open"] = "true";
+          await api.put("/api/settings", payload);
+          toast(isLocked ? "Modo pruebas desactivado — registros abiertos" : "Modo pruebas activado — solo admins entran");
           setTimeout(() => route("dashboard"), 500);
         } catch (e) { toast("Error al actualizar"); }
       }
