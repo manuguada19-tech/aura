@@ -8303,3 +8303,101 @@ body.welcome-desktop .hero-desktop .welcome-foot,
   .dw-right { max-width: 560px; }
   .dw-split { padding-bottom: 24px; }
 }
+
+/* ============================================================
+   V702 · AJUSTE FINAL DE ENCAJE DE LA BIENVENIDA
+   Corrige dos defectos heredados de la maqueta V419/V700:
+    (A) MÓVIL — el hero estaba fijado a 100dvh con overflow:hidden y el
+        contenido anclado arriba. Resultado: en móviles altos/beta ON el
+        pie quedaba CORTADO (inaccesible) y en móviles bajos/beta OFF
+        quedaba un HUECO muerto enorme bajo el pie.
+        Solución: el hero puede crecer y hay scroll de seguridad; el pie
+        se ancla al fondo (margin-top:auto) para eliminar el hueco.
+    (B) PC — la maqueta de escritorio no bajaba de ~690px de alto, así que
+        en portátiles de poca altura aparecía scroll. Solución: en alturas
+        cortas comprimimos tipografías/espaciados para que quepa sin scroll.
+   Se añade AL FINAL para ganar la cascada sin tocar las reglas previas,
+   de forma aditiva y sin afectar a otras pantallas.
+   ============================================================ */
+
+/* ---- (A) MÓVIL: centrado vertical + scroll de seguridad ----
+   El contenedor scrollable (.app-viewport) mantiene la altura de la
+   ventana con scroll de seguridad. El hero se centra verticalmente
+   cuando el contenido es MÁS CORTO que la ventana (reparte el hueco
+   arriba y abajo, sin un hueco enorme al pie) y CRECE con scroll
+   cuando el contenido es MÁS ALTO (así el pie nunca se corta). */
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
+  body:not(:has(#tabbar:not([hidden]))) .app-viewport {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+  }
+  .app-viewport .screen.screen-hero {
+    overflow: visible !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    max-height: none !important;
+    justify-content: center !important;
+  }
+  /* Todos los bloques del hero conservan su tamaño natural; el reparto
+     lo hace justify-content:center del hero. Neutralizamos los
+     flex-grow heredados que provocaban el descuadre. */
+  .app-viewport .screen-hero > .welcome-cta { flex: 0 0 auto !important; }
+  .app-viewport .screen-hero .welcome-below { flex: 0 0 auto !important; }
+  .app-viewport .screen-hero .welcome-below .welcome-steps { flex: 0 0 auto !important; }
+  .app-viewport .screen-hero .welcome-below .welcome-foot {
+    flex: 0 0 auto !important;
+    margin-top: clamp(8px, 1.6vh, 14px) !important;
+    margin-bottom: max(4px, env(safe-area-inset-bottom, 0px)) !important;
+  }
+}
+/* Móviles de altura media (≈600–720px) en modo invitación: recortamos un
+   poco el logo y los espacios para que TODO quepa sin necesitar scroll.
+   OJO: reducimos el TAMAÑO REAL del logo (width/height), no con transform:
+   scale, porque scale no cambia la altura que ocupa en el layout. */
+@media (max-width: 900px) and (min-height: 601px) and (max-height: 720px) and ((pointer: coarse) or (hover: none)) {
+  /* Prefijo html body … .screen.screen-hero para vencer la regla V543
+     (línea ~7613) que fija el tamaño del logo con alta especificidad. */
+  html body .app-viewport .screen.screen-hero .welcome-heart,
+  html body .app-viewport .screen.screen-hero .welcome-heart.logo-transparent {
+    transform: none !important;
+    width: 116px !important; height: 116px !important;
+    min-width: 116px !important; min-height: 116px !important;
+    max-width: 116px !important; max-height: 116px !important;
+    margin-bottom: 2px !important;
+  }
+  .app-viewport .screen-hero .welcome-logo { margin: 0 auto 2px !important; }
+  .app-viewport .screen-hero .welcome-sub { margin: 4px 0 4px !important; }
+  .app-viewport .screen-hero .welcome-below { gap: 4px !important; }
+  .app-viewport .screen-hero .welcome-below .welcome-steps { gap: 4px !important; }
+  .app-viewport .screen-hero .welcome-below .welcome-trust { margin: 2px 0 !important; gap: 4px !important; }
+  .app-viewport .screen-hero .welcome-below .welcome-foot { margin-top: clamp(4px,1vh,8px) !important; }
+  .app-viewport .screen-hero .welcome-cta { gap: 5px !important; }
+}
+
+/* ---- (B) PC: comprimir la maqueta de escritorio en pantallas de poca
+   altura para que quepa sin scroll (portátiles ~640–768px útiles). ---- */
+@media (hover: hover) and (pointer: fine) and (max-height: 760px) {
+  body.welcome-desktop .dw-top { padding-top: clamp(6px,1vh,12px) !important; padding-bottom: clamp(6px,1vh,12px) !important; }
+  body.welcome-desktop .dw-split { padding-top: 2px !important; padding-bottom: clamp(8px,1.4vh,18px) !important; align-items: center !important; }
+  body.welcome-desktop .dw-h1 { font-size: clamp(26px,3.4vw,40px) !important; margin-bottom: clamp(6px,1vh,12px) !important; }
+  body.welcome-desktop .dw-lead { font-size: clamp(13px,1.2vw,16px) !important; margin-bottom: clamp(10px,1.6vh,18px) !important; }
+  body.welcome-desktop .dw-eyebrow { margin-bottom: clamp(6px,1vh,12px) !important; }
+  body.welcome-desktop .dw-invite { padding: clamp(12px,1.8vh,18px) !important; }
+  body.welcome-desktop .dw-invite-p { margin-bottom: clamp(8px,1.4vh,12px) !important; }
+  body.welcome-desktop .dw-screen .btn { padding: 12px !important; font-size: 15px !important; }
+  body.welcome-desktop .dw-sc-logo { width: clamp(72px,8vh,104px) !important; height: clamp(72px,8vh,104px) !important; }
+  body.welcome-desktop .dw-showcase { padding: clamp(14px,2vh,24px) !important; }
+  body.welcome-desktop .dw-below .welcome-step { padding: 10px 13px !important; }
+  body.welcome-desktop .dw-screen > .welcome-foot { padding-top: clamp(6px,1vh,10px) !important; padding-bottom: clamp(6px,1vh,10px) !important; }
+}
+/* Alturas MUY cortas (portátiles 1366×640 con barra de marcadores): aún más. */
+@media (hover: hover) and (pointer: fine) and (max-height: 660px) {
+  body.welcome-desktop .dw-h1 { font-size: clamp(24px,3vw,34px) !important; }
+  body.welcome-desktop .dw-lead { display: none !important; }
+  body.welcome-desktop .dw-sc-logo { width: 64px !important; height: 64px !important; margin-bottom: 4px !important; }
+  body.welcome-desktop .dw-sc-sub { margin-bottom: 10px !important; }
+  body.welcome-desktop .dw-below .welcome-step-p { display: none !important; }
+  body.welcome-desktop .dw-below .welcome-step { padding: 8px 12px !important; }
+}
