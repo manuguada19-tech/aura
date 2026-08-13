@@ -8185,6 +8185,7 @@ body.welcome-desktop .screen.screen-hero.hero-desktop::after { display: none !im
 body.welcome-desktop .dw-invite .welcome-invite-input,
 .dw-invite-input {
   width: 100% !important;
+  max-width: none !important; /* el tope de 420px (móvil) dejaba el input más corto que el botón en escritorio */
   height: auto !important;
   min-height: 0 !important;
   padding: 13px 16px !important;

@@ -3737,6 +3737,31 @@ function _welcomeIsDesktop() {
 
 // Async handler que valida un código de invitación de tester y avanza al
 // registro. Reutilizado por la bienvenida móvil y la de escritorio.
+// Formatea el código de invitación mientras se escribe: mayúsculas, solo
+// A-Z/0-9 y guiones automáticos cada 4 caracteres → XXXX-XXXX-XXXX.
+// Los códigos reales tienen exactamente 12 caracteres (3 grupos de 4) y se
+// validan por coincidencia exacta, así que insertar los guiones automáticamente
+// no cambia el valor que se envía al servidor.
+function _formatInviteCode(raw) {
+  const clean = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 12);
+  return clean.replace(/(.{4})(?=.)/g, "$1-");
+}
+function _attachInviteFormatter(inputEl) {
+  try {
+    inputEl.setAttribute("maxlength", "14"); // 12 caracteres + 2 guiones
+    inputEl.setAttribute("inputmode", "latin");
+    inputEl.setAttribute("autocapitalize", "characters");
+    inputEl.setAttribute("spellcheck", "false");
+  } catch {}
+  inputEl.addEventListener("input", () => {
+    const atEnd = inputEl.selectionStart === inputEl.value.length;
+    inputEl.value = _formatInviteCode(inputEl.value);
+    if (atEnd) {
+      try { inputEl.selectionStart = inputEl.selectionEnd = inputEl.value.length; } catch {}
+    }
+  });
+}
+
 function _welcomeInviteHandler(inputEl) {
   return async () => {
     const code = (inputEl.value || "").trim();
@@ -3990,7 +4015,7 @@ function buildDesktopWelcome(root, testMode, regOpen) {
       placeholder: T("content.welcome.invite_placeholder"),
       autocomplete: "off",
     });
-    inv.addEventListener("input", () => { inv.value = inv.value.toUpperCase(); });
+    _attachInviteFormatter(inv);
     invite.appendChild(inv);
     invite.appendChild(el("button", { class: "btn btn-primary btn-block", onclick: _welcomeInviteHandler(inv) }, T("content.welcome.invite_cta")));
     invite.appendChild(el("button", {
@@ -4084,7 +4109,7 @@ function screenWelcome(root) {
       autocomplete: "off",
       style: "width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(0,0,0,.28);color:#fff;font-size:14px;letter-spacing:1px;text-align:center;text-transform:uppercase;margin:8px 0",
     });
-    inv.addEventListener("input", () => { inv.value = inv.value.toUpperCase(); });
+    _attachInviteFormatter(inv);
     cta.appendChild(inv);
     cta.appendChild(el("button", {
       class: "btn btn-primary btn-block",
