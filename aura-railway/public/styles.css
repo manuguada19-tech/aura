@@ -8012,3 +8012,294 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 .npref-switch.on { background: linear-gradient(135deg, #ff3b6b, #a855f7); border-color: transparent; }
 .npref-switch.on .npref-knob { transform: translateX(18px); background: #fff; }
 .notif-prefs-btn { font-size: 15px; padding: 4px 10px; }
+
+/* ============================================================
+   V700 · BIENVENIDA A PANTALLA COMPLETA EN ESCRITORIO (sin marco)
+   Cuando body.welcome-desktop está activo, la pantalla de bienvenida
+   ROMPE el marco #phone y ocupa toda la ventana. Todas las reglas
+   usan !important porque el JS de index.html aplica estilos inline
+   (transform: scale, width/height fijos) al .phone que debemos vencer.
+   Solo afecta a la bienvenida; el resto de pantallas siguen usando el
+   marco de teléfono normal.
+   ============================================================ */
+body.welcome-desktop { overflow: auto !important; }
+html:has(body.welcome-desktop) { overflow: auto !important; }
+body.welcome-desktop .stage {
+  display: block !important;
+  grid-template-columns: none !important;
+  max-height: none !important;
+  min-height: 100dvh !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  overflow: visible !important;
+  background: transparent !important;
+}
+/* Ocultar los paneles laterales de escritorio (brand-block, mock-cards, theme-card) */
+body.welcome-desktop .stage-side-left,
+body.welcome-desktop .stage-side-right { display: none !important; }
+/* Neutralizar el wrapper de escalado y el marco físico del teléfono */
+body.welcome-desktop #phoneScaleWrap {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 100dvh !important;
+  flex: 1 1 auto !important;
+  display: block !important;
+}
+body.welcome-desktop .phone {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 100dvh !important;
+  max-height: none !important;
+  flex: 1 1 auto !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transform: none !important;
+  background: transparent !important;
+  isolation: auto !important;
+}
+/* Ocultar cromo del teléfono (notch, barra de estado, home indicator) */
+body.welcome-desktop .phone-notch,
+body.welcome-desktop .phone-status,
+body.welcome-desktop .phone-home,
+body.welcome-desktop #tabbar { display: none !important; }
+body.welcome-desktop .app-viewport {
+  overflow: visible !important;
+  height: auto !important;
+  min-height: 100dvh !important;
+  background: transparent !important;
+}
+/* La propia pantalla hero a pantalla completa */
+body.welcome-desktop .screen.screen-hero.hero-desktop {
+  overflow: visible !important;
+  height: auto !important;
+  min-height: 100dvh !important;
+  max-height: none !important;
+  padding: 0 !important;
+  display: block !important;
+  background: transparent !important;
+}
+body.welcome-desktop .screen.screen-hero.hero-desktop::before,
+body.welcome-desktop .screen.screen-hero.hero-desktop::after { display: none !important; }
+
+/* ---- Estructura general de la maqueta a dos columnas ---- */
+.dw-screen {
+  --dw-b1: var(--brand-1, #ff3b6b);
+  --dw-b2: var(--brand-2, #ff8a3b);
+  --dw-grad: linear-gradient(135deg, var(--dw-b1), var(--dw-b2));
+  --dw-glow-l: radial-gradient(80% 90% at 12% 30%, rgba(255,59,107,.30), transparent 60%);
+  --dw-glow-r: radial-gradient(70% 80% at 92% 80%, rgba(255,138,59,.22), transparent 60%);
+  position: relative;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--bg);
+}
+[data-theme="light"] .dw-screen {
+  --dw-glow-l: radial-gradient(80% 90% at 12% 30%, rgba(255,59,107,.16), transparent 60%);
+  --dw-glow-r: radial-gradient(70% 80% at 92% 80%, rgba(255,138,59,.12), transparent 60%);
+}
+.dw-screen::before {
+  content: ""; position: absolute; inset: 0;
+  background: var(--dw-glow-l), var(--dw-glow-r);
+  pointer-events: none; z-index: 0;
+}
+
+/* ---- Barra superior ---- */
+.dw-top {
+  position: relative; z-index: 3;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: clamp(9px,1.4vh,18px) clamp(24px,4vw,56px);
+}
+.dw-brand { display: flex; align-items: center; gap: 8px; line-height: 1; }
+.dw-brand-logo { display: inline-flex; width: 52px; height: 52px; }
+.dw-logo-img { width: 52px; height: 52px; object-fit: contain; display: block; }
+[data-theme="dark"] .dw-logo-light { display: none; }
+[data-theme="light"] .dw-logo-dark { display: none; }
+.dw-lockup { display: flex; align-items: center; gap: 9px; line-height: 1; }
+.dw-word { height: 30px; width: auto; object-fit: contain; display: block; position: relative; top: -3px; }
+.dw-dash { color: var(--text-soft); font-weight: 400; opacity: .55; font-size: 17px; line-height: 1; }
+.dw-tag {
+  font-weight: 800; font-size: 17px; letter-spacing: -.01em; line-height: 1;
+  background: linear-gradient(95deg, #ff8a3b 0%, #ff3b6b 34%, #d43bff 66%, #3b7bff 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+@media (max-width: 720px) { .dw-dash, .dw-tag { display: none; } }
+.dw-actions { display: flex; align-items: center; gap: 10px; }
+.dw-theme-btn {
+  width: 44px; height: 44px; padding: 0;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 999px; cursor: pointer; display: grid; place-items: center;
+  transition: transform .12s ease, background .2s ease;
+}
+.dw-theme-btn:hover { transform: translateY(-1px); }
+/* La bienvenida de escritorio usa su propio selector de idioma dentro de .dw-actions,
+   así que reposicionamos el .welcome-lang para que sea estático dentro de la barra. */
+.dw-actions .welcome-lang { position: static; top: auto; left: auto; right: auto; }
+
+/* ---- Cuerpo a dos columnas ---- */
+.dw-split {
+  position: relative; z-index: 2; flex: 1; min-height: 0;
+  display: grid; grid-template-columns: 1.05fr 1fr; align-items: center;
+  gap: clamp(24px,4vw,64px);
+  padding: 4px clamp(24px,4vw,56px) clamp(14px,2.4vh,32px);
+}
+@media (max-width: 900px) {
+  .dw-split { grid-template-columns: 1fr; gap: 20px; align-items: start; }
+}
+
+/* ---- Columna izquierda ---- */
+.dw-left { max-width: 560px; justify-self: center; width: 100%; }
+.dw-eyebrow {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; font-weight: 800; letter-spacing: .04em;
+  color: var(--dw-b1); background: color-mix(in srgb, var(--dw-b1) 14%, transparent);
+  padding: 7px 14px; border-radius: 999px; margin-bottom: clamp(10px,1.8vh,18px);
+}
+.dw-h1 {
+  font-size: clamp(30px,4.2vw,58px); line-height: 1.02; letter-spacing: -.02em;
+  margin: 0 0 clamp(10px,1.6vh,16px);
+  background: var(--dw-grad);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  font-weight: 800;
+}
+.dw-lead {
+  font-size: clamp(15px,1.4vw,19px); color: var(--text-soft); line-height: 1.45;
+  margin: 0 0 clamp(14px,2.4vh,26px); max-width: 46ch;
+}
+/* CTA abierto (beta OFF) */
+.dw-open-cta { display: flex; flex-direction: column; gap: 11px; }
+/* Panel de invitación (beta ON) */
+.dw-invite {
+  background: linear-gradient(135deg, color-mix(in srgb, var(--dw-b1) 16%, transparent), color-mix(in srgb, var(--brand-3, #a855f7) 16%, transparent));
+  border: 1px solid var(--border);
+  border-radius: 22px; padding: clamp(16px,2.4vh,22px);
+  box-shadow: var(--shadow-md);
+}
+.dw-invite-t { font-size: 18px; font-weight: 800; margin: 0 0 6px; background: var(--dw-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.dw-invite-p { margin: 0 0 clamp(10px,1.8vh,14px); font-size: 14px; color: var(--text-soft); line-height: 1.45; }
+/* Reset del input de invitación (vencemos las reglas .phone .welcome-invite-input) */
+body.welcome-desktop .dw-invite .welcome-invite-input,
+.dw-invite-input {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 13px 16px !important;
+  border-radius: 13px !important;
+  border: 1px solid var(--border) !important;
+  background: rgba(0,0,0,.16) !important;
+  color: var(--text) !important;
+  font-size: 14px !important;
+  letter-spacing: 1px !important;
+  text-align: center !important;
+  text-transform: uppercase !important;
+  margin: 0 0 12px !important;
+}
+[data-theme="light"] .dw-invite-input { background: rgba(0,0,0,.03) !important; }
+
+/* Botones de la bienvenida de escritorio — vencen los caps de altura del marco */
+body.welcome-desktop .hero-desktop .btn,
+.dw-screen .btn {
+  height: auto !important;
+  min-height: 0 !important;
+  border: 0; cursor: pointer; font-weight: 800; width: 100%;
+  padding: 15px; border-radius: 14px; font-size: 16px;
+  transition: transform .12s ease;
+}
+.dw-screen .btn:hover { transform: translateY(-1px); }
+body.welcome-desktop .hero-desktop .btn.btn-primary,
+.dw-screen .btn-primary {
+  background: var(--dw-grad) !important; color: #fff !important;
+  box-shadow: 0 12px 28px rgba(255,59,107,.38) !important;
+}
+body.welcome-desktop .hero-desktop .btn.btn-ghost,
+.dw-screen .btn-ghost {
+  background: var(--surface) !important; color: var(--text) !important;
+  border: 1px solid var(--border) !important; font-weight: 700 !important;
+  font-size: 14px !important; box-shadow: none !important;
+}
+.dw-open-cta .welcome-or { margin: 4px 0; }
+.dw-open-cta .welcome-or-text { color: var(--text-soft); }
+.dw-open-cta .welcome-or-line { background: var(--border); }
+.dw-open-cta .welcome-oauth { grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-top: 0; }
+.dw-screen .oauth-btn { height: 50px !important; }
+.dw-left .welcome-terms {
+  font-size: 12.5px !important;
+  color: var(--text-soft) !important;
+  text-align: left !important; opacity: 1 !important;
+  line-height: 1.5; margin: 16px 0 0;
+}
+.dw-left .welcome-terms .welcome-terms-link { color: var(--dw-b1); }
+
+/* ---- Columna derecha: tarjeta showcase ---- */
+.dw-right { justify-self: center; width: 100%; max-width: 520px; }
+.dw-showcase {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 28px; padding: clamp(20px,2.6vh,32px);
+  box-shadow: var(--shadow-lg);
+}
+.dw-sc-logo {
+  width: clamp(88px,10.4vh,124px); height: clamp(88px,10.4vh,124px);
+  margin: 0 auto clamp(4px,0.8vh,10px);
+  display: flex; align-items: center; justify-content: center;
+}
+.dw-sc-logo .dw-logo-img { width: 100%; height: 100%; }
+.dw-sc-sub { text-align: center; font-size: 14px; color: var(--text-soft); margin: 4px 0 clamp(12px,2.2vh,22px); }
+
+/* Reutilizamos welcome-below dentro del showcase, pero reseteamos los caps del
+   marco de teléfono para que se vea a tamaño completo de escritorio. */
+.dw-below { margin: 0 !important; }
+.dw-below .welcome-steps-title {
+  font-size: 12px !important; letter-spacing: .14em; font-weight: 800;
+  color: var(--text-soft); margin: 0 0 clamp(8px,1.4vh,12px) !important; text-align: center;
+}
+.dw-below .welcome-steps {
+  display: flex !important; flex-direction: column;
+  gap: clamp(7px,1.2vh,10px); margin-bottom: clamp(12px,2.2vh,20px);
+}
+.dw-below .welcome-step {
+  display: flex; align-items: center; gap: 13px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 14px; padding: 13px 15px !important;
+}
+.dw-below .welcome-step-ic {
+  flex: 0 0 32px !important; width: 32px !important; height: 32px !important;
+  border-radius: 10px; background: var(--dw-grad); color: #fff;
+  font-weight: 800; font-size: 14px !important; display: grid; place-items: center;
+  box-shadow: 0 6px 14px rgba(255,59,107,.4);
+}
+.dw-below .welcome-step-h { font-size: 15px !important; margin: 0; }
+.dw-below .welcome-step-p { font-size: 12.5px !important; color: var(--text-soft); line-height: 1.35; margin: 2px 0 0; }
+.dw-below .welcome-trust {
+  display: grid !important; grid-template-columns: 1fr 1fr; gap: 9px;
+}
+.dw-below .welcome-badge {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 11px 12px !important;
+  min-height: 0 !important; font-size: 13px !important; font-weight: 700;
+  color: var(--text);
+}
+.dw-below .welcome-badge svg { width: 15px; height: 15px; color: var(--dw-b1); }
+
+/* ---- Pie de página ---- */
+body.welcome-desktop .hero-desktop .welcome-foot,
+.dw-screen > .welcome-foot {
+  position: relative; z-index: 2;
+  border-top: 1px solid var(--border);
+  padding: clamp(8px,1.2vh,14px) clamp(24px,4vw,56px);
+  text-align: center; font-size: 13px !important; color: var(--text-soft);
+  margin: 0 !important; line-height: 1.6;
+}
+.dw-screen > .welcome-foot a { color: var(--text-soft); text-decoration: none; white-space: nowrap; margin: 0 4px; }
+.dw-screen > .welcome-foot a:hover { color: var(--text); }
+.dw-screen > .welcome-foot .foot-sep { opacity: .45; margin: 0 2px; }
+
+@media (max-width: 900px) {
+  .dw-h1 { font-size: clamp(28px,7vw,40px); }
+  .dw-right { max-width: 560px; }
+  .dw-split { padding-bottom: 24px; }
+}

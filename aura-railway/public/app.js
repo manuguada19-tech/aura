@@ -54,6 +54,10 @@ const contentFallback = {
   "content.brand.name": "Aura",
   "content.brand.tag": "Conexiones reales, momentos únicos.",
   "content.welcome.title": "Aura",
+  "content.welcome.brand_tagline": "Encuentra tu match",
+  "content.welcome.desktop_eyebrow": "✨ CONECTA TU ESENCIA",
+  "content.welcome.desktop_lead": "Aura es la app de citas donde importa quién eres de verdad. Perfiles verificados, chat cifrado y matches con sentido.",
+  "content.welcome.desktop_start": "Empieza en menos de dos minutos.",
   "content.welcome.subtitle": "Conexiones reales, momentos únicos.",
   "content.welcome.cta_register": "Crear cuenta",
   "content.welcome.cta_login": "Ya tengo cuenta",
@@ -401,6 +405,10 @@ const translations = {
   es: {}, // default — uses contentFallback
 
   en: {
+    "content.welcome.brand_tagline": "Find your match",
+    "content.welcome.desktop_eyebrow": "✨ CONNECT YOUR ESSENCE",
+    "content.welcome.desktop_lead": "Aura is the dating app where who you really are matters. Verified profiles, encrypted chat and matches that make sense.",
+    "content.welcome.desktop_start": "Get started in under two minutes.",
     "content.welcome.subtitle": "Real connections, unique moments.",
     "content.welcome.cta_register": "Create account",
     "content.welcome.cta_login": "I already have an account",
@@ -565,6 +573,10 @@ const translations = {
   },
 
   fr: {
+    "content.welcome.brand_tagline": "Trouve ton match",
+    "content.welcome.desktop_eyebrow": "✨ CONNECTE TON ESSENCE",
+    "content.welcome.desktop_lead": "Aura est l'app de rencontres où ce que tu es vraiment compte. Profils vérifiés, chat chiffré et matchs qui ont du sens.",
+    "content.welcome.desktop_start": "Commence en moins de deux minutes.",
     "content.welcome.subtitle": "Des connexions réelles, des moments uniques.",
     "content.welcome.cta_register": "Créer un compte",
     "content.welcome.cta_login": "J'ai déjà un compte",
@@ -725,6 +737,10 @@ const translations = {
   },
 
   de: {
+    "content.welcome.brand_tagline": "Finde dein Match",
+    "content.welcome.desktop_eyebrow": "✨ VERBINDE DEINE ESSENZ",
+    "content.welcome.desktop_lead": "Aura ist die Dating-App, bei der zählt, wer du wirklich bist. Verifizierte Profile, verschlüsselter Chat und sinnvolle Matches.",
+    "content.welcome.desktop_start": "Starte in weniger als zwei Minuten.",
     "content.welcome.subtitle": "Echte Verbindungen, einzigartige Momente.",
     "content.welcome.cta_register": "Konto erstellen",
     "content.welcome.cta_login": "Ich habe bereits ein Konto",
@@ -878,6 +894,10 @@ const translations = {
   },
 
   it: {
+    "content.welcome.brand_tagline": "Trova il tuo match",
+    "content.welcome.desktop_eyebrow": "✨ CONNETTI LA TUA ESSENZA",
+    "content.welcome.desktop_lead": "Aura è l'app di incontri dove conta chi sei davvero. Profili verificati, chat cifrata e match che hanno senso.",
+    "content.welcome.desktop_start": "Inizia in meno di due minuti.",
     "content.welcome.subtitle": "Connessioni reali, momenti unici.",
     "content.welcome.cta_register": "Crea un account",
     "content.welcome.cta_login": "Ho già un account",
@@ -1028,6 +1048,10 @@ const translations = {
   },
 
   pt: {
+    "content.welcome.brand_tagline": "Encontra o teu match",
+    "content.welcome.desktop_eyebrow": "✨ CONECTA A TUA ESSÊNCIA",
+    "content.welcome.desktop_lead": "Aura é a app de encontros onde importa quem és de verdade. Perfis verificados, chat cifrado e matches com sentido.",
+    "content.welcome.desktop_start": "Começa em menos de dois minutos.",
     "content.welcome.subtitle": "Conexões reais, momentos únicos.",
     "content.welcome.cta_register": "Criar conta",
     "content.welcome.cta_login": "Já tenho conta",
@@ -2979,6 +3003,16 @@ function render(screenFn, opts = {}) {
   if ((screenFn && screenFn.name) !== "screenProfileDetail") {
     document.body.classList.remove("profile-open");
   }
+  // V700 · El flag de bienvenida a pantalla completa (escritorio) solo debe
+  // vivir mientras estamos en la propia pantalla de bienvenida. Al navegar a
+  // cualquier otra pantalla lo quitamos para que el marco #phone vuelva y
+  // pedimos al escalador (index.html) que recalcule el transform del marco.
+  if ((screenFn && screenFn.name) !== "screenWelcome") {
+    if (document.body.classList.contains("welcome-desktop")) {
+      document.body.classList.remove("welcome-desktop");
+      try { window.dispatchEvent(new Event("resize")); } catch {}
+    }
+  }
   viewport.innerHTML = "";
   const section = SECTION_MAP[screenFn && screenFn.name] || "welcome";
   const screen = el("div", { class: "screen", "data-section": section });
@@ -3677,10 +3711,334 @@ function showBetaBotsNotice() {
   document.addEventListener("keydown", onKey);
 }
 
+/* ---------------------------------------------------------------------------
+   V700 · Bienvenida a PANTALLA COMPLETA en escritorio (sin marco de teléfono)
+   Detecta escritorio con la MISMA lógica que index.html (isDesktop): hover +
+   pointer fino, salvo tablets en portrait y landscape muy bajito. Cuando es
+   escritorio, la bienvenida rompe el marco #phone y ocupa toda la ventana.
+   -------------------------------------------------------------------------- */
+function _welcomeIsDesktop() {
+  try {
+    const hoverFine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+    if (!hoverFine) return false;
+    const isTabletPortrait = window.matchMedia(
+      "(min-width: 601px) and (max-width: 1400px) and (orientation: portrait)"
+    ).matches;
+    if (isTabletPortrait) return false;
+    const isShortLandscape = window.matchMedia(
+      "(max-height: 500px) and (orientation: landscape)"
+    ).matches;
+    if (isShortLandscape) return false;
+    // Necesitamos ancho suficiente para la maqueta a dos columnas.
+    if (!window.matchMedia("(min-width: 901px)").matches) return false;
+    return true;
+  } catch (_) { return false; }
+}
+
+// Async handler que valida un código de invitación de tester y avanza al
+// registro. Reutilizado por la bienvenida móvil y la de escritorio.
+function _welcomeInviteHandler(inputEl) {
+  return async () => {
+    const code = (inputEl.value || "").trim();
+    if (!code) { toast(T("content.welcome.invite_empty")); return; }
+    try {
+      const r = await fetch("/api/invite/check", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        const errMap = {
+          invite_not_found: T("content.welcome.invite_err_not_found"),
+          invite_revoked: T("content.welcome.invite_err_revoked"),
+          invite_expired: T("content.welcome.invite_err_expired"),
+          invite_used_up: T("content.welcome.invite_err_used_up"),
+          invite_email_mismatch: T("content.welcome.invite_err_email_mismatch"),
+        };
+        toast(errMap[d.error] || T("content.welcome.invite_err_generic"), 3500);
+        return;
+      }
+      state.registration = state.registration || {};
+      state.registration.invite_code = code;
+      if (d.tied_email) state.registration.email = d.tied_email;
+      toast(T("content.welcome.invite_ok"), 2400);
+      render(screenRegisterEmail);
+    } catch {
+      toast(T("content.welcome.invite_err_validate"));
+    }
+  };
+}
+
+// Construye el párrafo de términos con enlaces a Términos, Privacidad y Normas.
+// Pure builder — reutilizado por móvil y escritorio.
+function _buildWelcomeTerms() {
+  const termsText = T("content.welcome.terms") || "";
+  const LEGAL_LINK_WORDS = {
+    es: ["Términos", "Política de privacidad"],
+    en: ["Terms", "Privacy Policy"],
+    fr: ["Conditions", "Politique de confidentialité"],
+    de: ["Bedingungen", "Datenschutzerklärung"],
+    it: ["Termini", "Privacy Policy"],
+    pt: ["Termos", "Política de Privacidade"],
+  };
+  const linkWords = LEGAL_LINK_WORDS[currentLang] || LEGAL_LINK_WORDS.es;
+  const termsP = el("p", { class: "welcome-terms" });
+  const escapeReg = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const parts = [{ text: termsText, isLink: false }];
+  [
+    { word: linkWords[0], target: () => render(screenInfoTerms) },
+    { word: linkWords[1], target: () => render(screenInfoPrivacy) },
+  ].forEach(({ word, target }) => {
+    const next = [];
+    parts.forEach(part => {
+      if (part.isLink) { next.push(part); return; }
+      const re = new RegExp("(" + escapeReg(word) + ")", "i");
+      const bits = part.text.split(re);
+      bits.forEach((b, i) => {
+        if (!b) return;
+        if (i % 2 === 1) next.push({ text: b, isLink: true, target });
+        else next.push({ text: b, isLink: false });
+      });
+    });
+    parts.length = 0; parts.push(...next);
+  });
+  parts.forEach(p => {
+    if (p.isLink) {
+      termsP.appendChild(el("a", {
+        href: "#", class: "welcome-terms-link",
+        onclick: (ev) => { ev.preventDefault(); p.target(); },
+      }, p.text));
+    } else {
+      termsP.appendChild(document.createTextNode(p.text));
+    }
+  });
+  termsP.appendChild(document.createTextNode(T("content.welcome.rules_prefix") || " Revisa también las "));
+  termsP.appendChild(el("a", {
+    href: "#", class: "welcome-terms-link",
+    onclick: (ev) => { ev.preventDefault(); render(screenInfoRules); },
+  }, T("content.welcome.rules_link") || "normas de la comunidad"));
+  termsP.appendChild(document.createTextNode(T("content.welcome.rules_suffix") || "."));
+  return termsP;
+}
+
+// Bloque de pasos "Cómo funciona" (título + 2 pasos). Pure builder.
+function _buildWelcomeSteps() {
+  const wrap = document.createDocumentFragment();
+  wrap.appendChild(el("div", { class: "welcome-steps-title" }, T("content.welcome.steps_title")));
+  const steps = el("div", { class: "welcome-steps" });
+  [1, 2].forEach((i) => {
+    steps.appendChild(el("div", { class: "welcome-step" }, [
+      el("div", { class: "welcome-step-ic" }, String(i)),
+      el("div", { class: "welcome-step-txt" }, [
+        el("div", { class: "welcome-step-h" }, T(`content.welcome.step${i}_h`)),
+        el("div", { class: "welcome-step-p" }, T(`content.welcome.step${i}_p`)),
+      ]),
+    ]));
+  });
+  wrap.appendChild(steps);
+  return wrap;
+}
+
+// Chips de confianza (verificación, cifrado, RGPD, sin bots). Pure builder.
+function _buildWelcomeTrust() {
+  const trust = el("div", { class: "welcome-trust" });
+  const trustIcons = [
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 1L3 5v6c0 5 4 10 9 12 5-2 9-7 9-12V5l-9-4z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 6L9 17l-5-5 1.5-1.5L9 14l9.5-9.5L20 6z"/></svg>`,
+    `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C7 2 3 6 3 11c0 4 3 8 7 9v-3c-2-.5-4-3-4-6a6 6 0 0112 0c0 3-2 5.5-4 6v3c4-1 7-5 7-9 0-5-4-9-9-9z"/></svg>`,
+  ];
+  ["trust1", "trust2", "trust3", "trust4"].forEach((k, i) => {
+    const badge = el("span", { class: "welcome-badge" });
+    const ic = document.createElement("span");
+    ic.innerHTML = trustIcons[i];
+    badge.appendChild(ic.firstChild);
+    badge.appendChild(document.createTextNode(" " + T(`content.welcome.${k}`)));
+    trust.appendChild(badge);
+  });
+  return trust;
+}
+
+// Enlaces de pie (ayuda, faq, normas, términos, privacidad, contacto) + copy.
+// sep = separador entre enlaces ("|" en móvil, "·" en escritorio).
+function _buildWelcomeFoot(sep) {
+  const foot = el("div", { class: "welcome-foot" });
+  const footMap = {
+    foot_help: () => render(screenInfoHelp),
+    foot_faq: () => render(screenInfoFaq),
+    foot_rules: () => render(screenInfoRules),
+    foot_terms: () => render(screenInfoTerms),
+    foot_privacy: () => render(screenInfoPrivacy),
+    foot_contact: () => render(screenInfoContact),
+  };
+  const footLabels = {
+    foot_help: T("content.welcome.foot_help"),
+    foot_faq: T("content.welcome.foot_faq"),
+    foot_rules: T("content.welcome.foot_rules") || "Normas de la comunidad",
+    foot_terms: T("content.welcome.foot_terms"),
+    foot_privacy: T("content.welcome.foot_privacy"),
+    foot_contact: T("content.welcome.foot_contact"),
+  };
+  ["foot_help", "foot_faq", "foot_rules", "foot_terms", "foot_privacy", "foot_contact"].forEach((k, i, arr) => {
+    foot.appendChild(el("a", {
+      href: "#",
+      onclick: (ev) => { ev.preventDefault(); (footMap[k] || (() => {}))(); }
+    }, footLabels[k]));
+    if (i < arr.length - 1) {
+      foot.appendChild(el("span", { class: "foot-sep", "aria-hidden": "true" }, sep || "|"));
+    }
+  });
+  foot.appendChild(el("br"));
+  foot.appendChild(document.createTextNode(T("content.welcome.foot_copy")));
+  return foot;
+}
+
+// Logo redondo de la marca que cambia según el tema (oscuro/claro), con los
+// mismos assets nuevos usados en la barra y el showcase de escritorio.
+function _welcomeBrandLogoHTML() {
+  return `<img class="dw-logo-img dw-logo-dark" src="assets/welcome-logo-dark.png?v=1" alt="Aura">`
+       + `<img class="dw-logo-img dw-logo-light" src="assets/welcome-logo-light.png?v=1" alt="Aura">`;
+}
+
+/* Bienvenida a pantalla completa para ESCRITORIO (maqueta a dos columnas,
+   sin marco de teléfono). Mantiene el mismo contenido y los mismos handlers
+   que la versión móvil (beta ON = invitación, beta OFF = crear/entrar + OAuth).
+*/
+function buildDesktopWelcome(root, testMode, regOpen) {
+  root.classList.add("hero-desktop");
+  document.body.classList.add("welcome-desktop");
+
+  if (testMode) {
+    setTimeout(() => { try { showBetaBotsNotice(); } catch {} }, 350);
+  }
+
+  const screen = el("div", { class: "dw-screen" });
+
+  // ---- Barra superior: marca (logo + Aura + — + tagline) y acciones ----
+  const top = el("div", { class: "dw-top" });
+  const brand = el("div", { class: "dw-brand" }, [
+    el("span", { class: "dw-brand-logo", html: _welcomeBrandLogoHTML() }),
+    el("span", { class: "dw-lockup" }, [
+      el("img", { class: "dw-word", src: "assets/aura-word.png?v=1", alt: "Aura" }),
+      el("span", { class: "dw-dash", "aria-hidden": "true" }, "—"),
+      el("span", { class: "dw-tag" }, T("content.welcome.brand_tagline")),
+    ]),
+  ]);
+  const actions = el("div", { class: "dw-actions" });
+  actions.appendChild(buildWelcomeLangSelector());
+  const isDark = (document.documentElement.dataset.theme !== "light");
+  const themeBtn = el("button", {
+    class: "dw-theme-btn", type: "button", "aria-label": "Cambiar tema",
+    title: isDark ? (T("content.theme_card.to_light") || "Ver en modo claro")
+                  : (T("content.theme_card.to_dark") || "Ver en modo oscuro"),
+    onclick: () => { try { _toggleAuraTheme(); } catch {} },
+  });
+  themeBtn.innerHTML = isDark
+    ? '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>'
+    : '<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.5" y1="4.5" x2="6" y2="6"/><line x1="18" y1="18" x2="19.5" y2="19.5"/><line x1="4.5" y1="19.5" x2="6" y2="18"/><line x1="18" y1="6" x2="19.5" y2="4.5"/></g></svg>';
+  actions.appendChild(themeBtn);
+  top.appendChild(brand);
+  top.appendChild(actions);
+  screen.appendChild(top);
+
+  // ---- Cuerpo a dos columnas ----
+  const split = el("div", { class: "dw-split" });
+
+  // Columna izquierda: gancho + CTA (invitación o crear cuenta/oauth) + términos
+  const left = el("div", { class: "dw-left" });
+  left.appendChild(el("span", { class: "dw-eyebrow" }, T("content.welcome.desktop_eyebrow")));
+  left.appendChild(el("h1", { class: "dw-h1" }, T("content.welcome.subtitle")));
+  left.appendChild(el("p", { class: "dw-lead" }, T("content.welcome.desktop_lead")));
+
+  if (regOpen && !testMode) {
+    // Beta OFF: crear cuenta / ya tengo cuenta + OAuth
+    const openCta = el("div", { class: "dw-open-cta" });
+    openCta.appendChild(el("button", { class: "btn btn-primary btn-block", onclick: () => render(screenRegisterEmail) }, T("content.welcome.cta_register")));
+    openCta.appendChild(el("button", { class: "btn btn-ghost btn-block", onclick: () => render(screenLogin) }, T("content.welcome.cta_login")));
+    openCta.appendChild(el("div", { class: "welcome-or" }, [
+      el("span", { class: "welcome-or-line" }),
+      el("span", { class: "welcome-or-text" }, "o continúa con"),
+      el("span", { class: "welcome-or-line" }),
+    ]));
+    openCta.appendChild(el("div", { class: "welcome-oauth" }, [
+      el("button", { class: "oauth-btn oauth-google", title: "Continuar con Google", onclick: () => quickLogin("Google") }, [
+        svgIcon(`<path fill="#EA4335" d="M12 10.4v3.4h4.7c-.2 1.2-1.5 3.6-4.7 3.6-2.8 0-5.1-2.3-5.1-5.2s2.3-5.2 5.1-5.2c1.6 0 2.7.7 3.3 1.3l2.3-2.2C16.1 4.7 14.3 4 12 4c-4.4 0-8 3.6-8 8s3.6 8 8 8c4.6 0 7.7-3.3 7.7-7.9 0-.5-.1-.9-.1-1.3H12z"/><path fill="#34A853" d="M3.5 7.6l2.8 2c.8-1.9 2.6-3.2 4.7-3.2 1.3 0 2.5.5 3.4 1.3l2.5-2.5C15.4 3.6 13.8 3 12 3 8.5 3 5.5 5 3.5 7.6z"/><path fill="#FBBC05" d="M12 21c2.3 0 4.3-.8 5.7-2.1l-2.6-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.2-3.8l-2.8 2.2C5.4 19.1 8.4 21 12 21z"/><path fill="#4285F4" d="M20.7 12.2c0-.7-.1-1.3-.2-1.9H12v3.6h4.9c-.2 1.1-.9 2.1-1.9 2.7l2.6 2.2c1.5-1.4 2.6-3.5 2.6-6.6z"/>`),
+        el("span", {}, "Google"),
+      ]),
+      el("button", { class: "oauth-btn oauth-apple", title: "Continuar con Apple", onclick: () => quickLogin("Apple") }, [
+        svgIcon(`<path fill="#fff" d="M16.4 12.7c0-2.5 2-3.7 2.1-3.7-1.1-1.7-2.9-2-3.5-2-1.5-.2-2.9.9-3.6.9-.7 0-1.9-.9-3.2-.9-1.6 0-3.1.9-3.9 2.4-1.7 2.9-.4 7.1 1.2 9.5.8 1.1 1.7 2.4 3 2.3 1.2-.1 1.7-.8 3.2-.8s1.9.8 3.2.8c1.3 0 2.2-1.1 3-2.2.9-1.3 1.3-2.5 1.3-2.6-.1-.1-2.8-1.1-2.8-4.7zM14.3 5.4c.7-.9 1.2-2.1 1-3.4-1.1.1-2.4.7-3.1 1.6-.6.8-1.2 2.1-1 3.3 1.2.1 2.4-.6 3.1-1.5z"/>`),
+        el("span", {}, "Apple"),
+      ]),
+      el("button", { class: "oauth-btn oauth-facebook", title: "Continuar con Facebook", onclick: () => quickLogin("Facebook") }, [
+        svgIcon(`<path fill="#fff" d="M22 12c0-5.5-4.5-10-10-10S2 6.5 2 12c0 5 3.7 9.1 8.4 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.5h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.3v7c4.7-.8 8.4-4.9 8.4-9.9z"/>`),
+        el("span", {}, "Facebook"),
+      ]),
+    ]));
+    left.appendChild(openCta);
+  } else {
+    // Beta ON: panel de invitación
+    const invite = el("div", { class: "dw-invite" });
+    invite.appendChild(el("p", { class: "dw-invite-t" }, testMode
+      ? T("content.welcome.invite_beta_title")
+      : T("content.welcome.invite_closed_title")));
+    invite.appendChild(el("p", { class: "dw-invite-p" }, testMode
+      ? T("content.welcome.invite_beta_desc")
+      : T("content.welcome.invite_closed_desc")));
+    const inv = el("input", {
+      class: "welcome-invite-input dw-invite-input",
+      type: "text",
+      placeholder: T("content.welcome.invite_placeholder"),
+      autocomplete: "off",
+    });
+    inv.addEventListener("input", () => { inv.value = inv.value.toUpperCase(); });
+    invite.appendChild(inv);
+    invite.appendChild(el("button", { class: "btn btn-primary btn-block", onclick: _welcomeInviteHandler(inv) }, T("content.welcome.invite_cta")));
+    invite.appendChild(el("button", {
+      class: "btn btn-ghost btn-block",
+      onclick: () => { try { showPrivateBetaScreen({}); } catch {} }
+    }, "🧪 Ver estado de la beta / Soy superadmin"));
+    left.appendChild(invite);
+  }
+
+  left.appendChild(_buildWelcomeTerms());
+  split.appendChild(left);
+
+  // Columna derecha: tarjeta showcase (logo + cómo funciona + confianza)
+  const right = el("div", { class: "dw-right" });
+  const showcase = el("div", { class: "dw-showcase" });
+  showcase.appendChild(el("div", { class: "dw-sc-logo", html: _welcomeBrandLogoHTML() }));
+  showcase.appendChild(el("p", { class: "dw-sc-sub" }, T("content.welcome.desktop_start")));
+  showcase.appendChild(el("div", { class: "welcome-below dw-below" }, [
+    _buildWelcomeSteps(),
+    _buildWelcomeTrust(),
+  ]));
+  right.appendChild(showcase);
+  split.appendChild(right);
+
+  screen.appendChild(split);
+
+  // Pie de página
+  screen.appendChild(_buildWelcomeFoot("·"));
+
+  root.appendChild(screen);
+  hideApp();
+}
+
 function screenWelcome(root) {
   root.classList.add("screen-hero");
   const _welcomeTestMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
   if (_welcomeTestMode) root.classList.add("screen-hero-beta");
+
+  // V700 · En escritorio real (sin marco de teléfono) usamos la maqueta a
+  // pantalla completa a dos columnas. En móvil/tablet portrait mantenemos el
+  // flujo vertical de siempre.
+  const _regOpen = publicConfig?.app?.registrations_open !== false;
+  if (_welcomeIsDesktop()) {
+    buildDesktopWelcome(root, _welcomeTestMode, _regOpen);
+    return;
+  }
+  // Móvil/tablet: aseguramos que el flag de escritorio no quede pegado.
+  document.body.classList.remove("welcome-desktop");
 
   // En modo pruebas privadas mostramos un aviso emergente cada vez que se
   // entra a la pantalla de bienvenida, aclarando que los perfiles visibles
