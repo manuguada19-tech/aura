@@ -4870,6 +4870,61 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
 .beta-admin-fb.beta-feedback-ok  { color: #22c55e; }
 .beta-admin-fb.beta-feedback-err { color: #ef4444; }
 
+/* ============================================================
+   Modo REVISIÓN (review_mode) — pantalla "App en revisión".
+   Reutiliza la base .beta-* pero con una paleta ámbar/azul de
+   "mantenimiento" para diferenciarla de las pruebas privadas.
+   ============================================================ */
+.beta-screen.review-screen {
+  background:
+    radial-gradient(720px 520px at 15% -10%, rgba(255, 176, 32, 0.24), transparent 60%),
+    radial-gradient(620px 440px at 100% 100%, rgba(56, 132, 255, 0.22), transparent 65%),
+    var(--surface, #14161d);
+}
+.review-badge {
+  background: linear-gradient(135deg, #f59e0b, #3884ff) !important;
+  box-shadow: 0 12px 40px rgba(56, 132, 255, 0.35) !important;
+  animation: reviewBadgePulse 2.4s ease-in-out infinite !important;
+}
+@keyframes reviewBadgePulse {
+  0%, 100% { transform: translateY(0) scale(1) rotate(0deg); box-shadow: 0 12px 40px rgba(56,132,255,.35); }
+  50%      { transform: translateY(-3px) scale(1.03) rotate(-6deg); box-shadow: 0 18px 48px rgba(245,158,11,.5); }
+}
+.review-pill {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.4);
+}
+[data-theme="light"] .review-pill {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+.review-screen .beta-title {
+  background: linear-gradient(135deg, #f59e0b, #3884ff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Aviso destacado de cierre TEMPORAL */
+.review-temp {
+  display: flex; align-items: center; gap: 8px;
+  align-self: center;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 13px; font-weight: 700;
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+.review-temp-ic { display: inline-flex; }
+[data-theme="light"] .review-temp {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #b45309;
+}
+.review-screen .beta-point-ic {
+  background: linear-gradient(135deg, rgba(245,158,11,.25), rgba(56,132,255,.25));
+}
+
 /* Confetti overlay */
 .beta-confetti {
   position: absolute; inset: 0;

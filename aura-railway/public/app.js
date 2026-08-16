@@ -395,6 +395,24 @@ const contentFallback = {
   "content.beta.admin_err_invalid": "Código no válido",
   "content.beta.admin_err_generic": "No se pudo verificar el código",
   "content.beta.admin_ok": "Acceso concedido ✓",
+
+  /* Pantalla "App en revisión" (review_mode · solo administradores) */
+  "content.review.pill": "🔧 En revisión",
+  "content.review.title": "Estamos afinando Aura",
+  "content.review.subtitle": "La app está temporalmente en revisión para garantizar la mejor experiencia y máxima seguridad. Volveremos a estar disponibles en breve.",
+  "content.review.temp": "Cierre temporal · Estamos trabajando en ello",
+  "content.review.point1_ic": "🔧",
+  "content.review.point1_h": "Mantenimiento en curso",
+  "content.review.point1_p": "Estamos revisando y mejorando la app. Es un proceso temporal.",
+  "content.review.point2_ic": "🛡️",
+  "content.review.point2_h": "Seguridad primero",
+  "content.review.point2_p": "Verificación, moderación y anti-fraude siguen activos mientras revisamos.",
+  "content.review.point3_ic": "⏳",
+  "content.review.point3_h": "Volvemos pronto",
+  "content.review.point3_p": "El acceso se restablecerá automáticamente en cuanto terminemos.",
+  "content.review.retry": "Reintentar",
+  "content.review.admin_toggle": "¿Eres administrador?",
+  "content.review.foot_text": "¿Necesitas ayuda? Escríbenos a ",
 };
 let content = Object.assign({}, contentFallback);
 
@@ -1309,8 +1327,17 @@ async function pollLiveConfig() {
         const sig = _stableStringify(data);
         if (sig !== _lastConfigHash) {
           _lastConfigHash = sig;
+          const _wasReview = publicConfig?.app?.review_mode === true;
           publicConfig = data;
           try { window.__vapidPublicKey = publicConfig?.push?.vapid_public_key || null; } catch {}
+          // Si el admin ACABA de activar el modo revisión y hay una sesión
+          // dentro de la app, re-verificamos contra el servidor: chatApi.ensure()
+          // devolverá review_mode y expulsará a los no-administradores mostrando
+          // la pantalla de revisión (los admins siguen dentro sin interrupción).
+          if (!_wasReview && publicConfig?.app?.review_mode === true
+              && state.user && state.user.id && !isPreviewMode()) {
+            try { chatApi.ensure(); } catch {}
+          }
           if (typeof _rerender === "function") _rerender();
         }
       } catch {}
@@ -1764,6 +1791,11 @@ const chatApi = {
       let msg = "Tu cuenta no puede iniciar sesión.";
       let d = null;
       try { d = await r.json(); if (d?.reason) msg = d.reason; } catch {}
+      if (d && d.error === "review_mode") {
+        try { showReviewScreen({ email: state.user && state.user.email }); }
+        catch { toast("Aura está en revisión. Vuelve pronto 🔧", 4200); render(screenWelcome); }
+        return null;
+      }
       if (d && d.error === "access_locked") {
         try { showPrivateBetaScreen({ email: state.user && state.user.email }); }
         catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4200); render(screenWelcome); }
@@ -4050,6 +4082,11 @@ function buildDesktopWelcome(root, testMode, regOpen) {
 }
 
 function screenWelcome(root) {
+  // Modo revisión: solo administradores. Nadie más puede entrar ni registrarse.
+  // Mostramos la pantalla profesional de revisión en lugar del welcome.
+  if (publicConfig?.app?.review_mode === true) {
+    try { showReviewScreen({}); return; } catch {}
+  }
   root.classList.add("screen-hero");
   const _welcomeTestMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
   if (_welcomeTestMode) root.classList.add("screen-hero-beta");
@@ -4349,6 +4386,12 @@ async function quickLogin(provider) {
       let msg = "Tu cuenta no puede iniciar sesión.";
       let data = null;
       try { data = await r.json(); if (data?.reason) msg = data.reason; } catch {}
+      // Modo revisión: solo administradores. Pantalla temporal de revisión.
+      if (data && data.error === "review_mode") {
+        try { showReviewScreen({ provider }); }
+        catch { toast("Aura está en revisión. Vuelve pronto 🔧", 4500); try { render(screenWelcome); } catch {} }
+        return;
+      }
       // App en pruebas privadas o registro público deshabilitado: mostramos
       // toast amable y volvemos al welcome, no la pantalla de "cuenta bloqueada".
       if (data && data.error === "access_locked") {
@@ -4810,6 +4853,161 @@ function showPrivateBetaScreen(opts) {
   requestAnimationFrame(() => wrap.classList.add("beta-in"));
 }
 
+// Pantalla profesional "App en revisión" (modo review_mode). MÁS estricta que
+// la beta: el acceso queda reservado a administradores, sin códigos de
+// invitación ni registro. Se muestra cuando el backend responde
+// { error: "review_mode" } o cuando publicConfig.app.review_mode === true.
+// Reutiliza los estilos beta-* y añade el modificador .review-screen.
+function showReviewScreen(opts) {
+  const email = (opts && opts.email) || "";
+  const provider = (opts && opts.provider) || "";
+  // Limpia sesión local — la app está en revisión, no debe recordar la cuenta.
+  try { localStorage.removeItem("aura-session"); } catch {}
+  Auth.clear();
+  state.user = null;
+
+  const root = document.getElementById("viewport");
+  if (!root) { toast("La app está temporalmente en revisión 🔧", 4200); return; }
+  hideApp();
+  root.innerHTML = "";
+
+  const wrap = el("div", { class: "beta-screen review-screen" });
+
+  // Hero
+  const hero = el("div", { class: "beta-hero" });
+  const badge = el("div", { class: "beta-badge review-badge" });
+  badge.innerHTML = `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.7 2.7-2-2 2.7-2.7z"/>
+    </svg>`;
+  hero.appendChild(badge);
+  hero.appendChild(el("div", { class: "beta-pill review-pill" }, T("content.review.pill") || "🔧 En revisión"));
+  hero.appendChild(el("h2", { class: "beta-title" }, T("content.review.title") || "Estamos afinando Aura"));
+  hero.appendChild(el("p", { class: "beta-sub" },
+    T("content.review.subtitle") || "La app está temporalmente en revisión para garantizar la mejor experiencia y máxima seguridad. Volveremos a estar disponibles en breve."
+  ));
+  wrap.appendChild(hero);
+
+  // Aviso claro de que es TEMPORAL
+  const tempNote = el("div", { class: "review-temp" }, [
+    el("span", { class: "review-temp-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>` }),
+    el("span", {}, T("content.review.temp") || "Cierre temporal · Estamos trabajando en ello"),
+  ]);
+  wrap.appendChild(tempNote);
+
+  // Card informativa con puntos
+  const card = el("div", { class: "beta-card" });
+  const points = [
+    { ic: T("content.review.point1_ic") || "🔧", h: T("content.review.point1_h") || "Mantenimiento en curso", p: T("content.review.point1_p") || "Estamos revisando y mejorando la app. Es un proceso temporal." },
+    { ic: T("content.review.point2_ic") || "🛡️", h: T("content.review.point2_h") || "Seguridad primero", p: T("content.review.point2_p") || "Verificación, moderación y anti-fraude siguen activos mientras revisamos." },
+    { ic: T("content.review.point3_ic") || "⏳", h: T("content.review.point3_h") || "Volvemos pronto", p: T("content.review.point3_p") || "El acceso se restablecerá automáticamente en cuanto terminemos." },
+  ];
+  points.forEach(pt => {
+    const row = el("div", { class: "beta-point" });
+    row.appendChild(el("div", { class: "beta-point-ic" }, pt.ic));
+    const txt = el("div", { class: "beta-point-txt" });
+    txt.appendChild(el("div", { class: "beta-point-h" }, pt.h));
+    txt.appendChild(el("div", { class: "beta-point-p" }, pt.p));
+    row.appendChild(txt);
+    card.appendChild(row);
+  });
+  wrap.appendChild(card);
+
+  // Botón "Reintentar" — recomprueba el estado por si ya se reabrió el acceso.
+  const actions = el("div", { class: "beta-actions" });
+  const retryBtn = el("button", { class: "btn btn-primary btn-block", type: "button" },
+    T("content.review.retry") || "Reintentar");
+  retryBtn.addEventListener("click", () => { try { location.reload(); } catch {} });
+  actions.appendChild(retryBtn);
+  wrap.appendChild(actions);
+
+  // Acceso reservado para superadmin (idéntico al de la pantalla beta): botón
+  // discreto que despliega el input de código para entrar durante la revisión.
+  const adminBox = el("div", { class: "beta-admin" });
+  const adminToggle = el("button", {
+    class: "beta-admin-toggle", type: "button", "aria-expanded": "false",
+  }, T("content.review.admin_toggle") || T("content.beta.admin_toggle") || "¿Eres administrador?");
+  const adminPanel = el("div", { class: "beta-admin-panel", hidden: true });
+  const adminInput = el("input", {
+    class: "beta-admin-input", type: "text",
+    placeholder: T("content.beta.admin_placeholder") || "Código de acceso",
+    autocomplete: "off", spellcheck: "false",
+  });
+  const adminBtn = el("button", { class: "btn btn-primary beta-admin-cta", type: "button" },
+    T("content.beta.admin_cta") || "Entrar");
+  const adminFb = el("div", { class: "beta-admin-fb", hidden: true }, "");
+  adminPanel.appendChild(adminInput);
+  adminPanel.appendChild(adminBtn);
+  adminPanel.appendChild(adminFb);
+  adminToggle.addEventListener("click", () => {
+    const open = adminPanel.hidden;
+    adminPanel.hidden = !open;
+    adminToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) { try { adminInput.focus(); } catch {} }
+  });
+  adminBtn.addEventListener("click", async () => {
+    const code = (adminInput.value || "").trim();
+    if (!code) {
+      adminFb.hidden = false;
+      adminFb.className = "beta-admin-fb beta-feedback-err";
+      adminFb.textContent = T("content.beta.admin_err_empty") || "Introduce el código";
+      return;
+    }
+    adminBtn.disabled = true;
+    adminBtn.textContent = T("content.beta.sending") || "Enviando…";
+    try {
+      const r = await fetch("/api/access/superadmin", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        adminFb.hidden = false;
+        adminFb.className = "beta-admin-fb beta-feedback-err";
+        adminFb.textContent = (d && d.error === "invalid_code")
+          ? (T("content.beta.admin_err_invalid") || "Código no válido")
+          : (T("content.beta.admin_err_generic") || "No se pudo verificar el código");
+        adminBtn.disabled = false;
+        adminBtn.textContent = T("content.beta.admin_cta") || "Entrar";
+        return;
+      }
+      state.user = {
+        id: d.user.id, name: d.user.name || "", email: d.user.email,
+        photo: d.user.photo_url || "", role: d.user.role || "superadmin",
+      };
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      adminFb.hidden = false;
+      adminFb.className = "beta-admin-fb beta-feedback-ok";
+      adminFb.textContent = T("content.beta.admin_ok") || "Acceso concedido ✓";
+      setTimeout(() => {
+        try { showApp(); } catch {}
+        try { render(screenDiscover); } catch { try { location.reload(); } catch {} }
+      }, 400);
+    } catch {
+      adminFb.hidden = false;
+      adminFb.className = "beta-admin-fb beta-feedback-err";
+      adminFb.textContent = T("content.beta.admin_err_generic") || "No se pudo verificar el código";
+      adminBtn.disabled = false;
+      adminBtn.textContent = T("content.beta.admin_cta") || "Entrar";
+    }
+  });
+  adminInput.addEventListener("keydown", (e) => { if (e.key === "Enter") adminBtn.click(); });
+  adminBox.appendChild(adminToggle);
+  adminBox.appendChild(adminPanel);
+  wrap.appendChild(adminBox);
+
+  // Nota de contacto
+  const footEmail = T("content.beta.foot_email") || "hola@citasaura.es";
+  const footText  = T("content.review.foot_text")  || "¿Necesitas ayuda? Escríbenos a ";
+  wrap.appendChild(el("p", { class: "beta-foot" }, [
+    footText,
+    el("a", { href: "mailto:" + footEmail }, footEmail),
+  ]));
+
+  root.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add("beta-in"));
+}
+
 // Pantalla bonita "Esta cuenta no está registrada" cuando el usuario intenta
 // entrar por Google/Apple/Facebook con un email que no existe en la BD.
 // Reutiliza los estilos beta-* para mantener consistencia visual.
@@ -5064,6 +5262,10 @@ function showAppealForm(prefEmail, prefReason, kind, prefOpts) {
 
 /* ---- Register: email ---- */
 function screenRegisterEmail(root) {
+  // Modo revisión: no se permite ningún registro. Pantalla de revisión.
+  if (publicConfig?.app?.review_mode === true) {
+    try { showReviewScreen({}); return; } catch {}
+  }
   // En modo pruebas privadas exigimos que exista un `invite_code` validado
   // (setteado por el flujo del welcome cuando el tester introduce su código).
   // Sin código, no permitimos entrar al registro y devolvemos a la beta screen.
@@ -5192,6 +5394,11 @@ function screenRegisterEmail(root) {
         if (data.error === "registrations_closed") {
           toast("Registros cerrados por el administrador", 3500);
           render(screenWelcome);
+          return;
+        }
+        if (data.error === "review_mode") {
+          try { showReviewScreen({ email: state.registration && state.registration.email }); }
+          catch { toast("Aura está en revisión. Vuelve pronto 🔧", 4200); render(screenWelcome); }
           return;
         }
         if (data.error === "access_locked") {
@@ -6127,6 +6334,11 @@ function screenLogin(root) {
   // pantalla beta con waitlist + acceso superadmin. El login normal
   // solo está disponible para testers autorizados con código o para
   // cuentas verificadas por el backend.
+  // Modo revisión: acceso solo para administradores (por sesión ya activa o
+  // por código de superadmin dentro de la propia pantalla de revisión).
+  if (publicConfig?.app?.review_mode === true) {
+    try { showReviewScreen({}); return; } catch {}
+  }
   const testMode = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
   if (testMode) {
     try { showPrivateBetaScreen({}); return; } catch {}
@@ -6196,6 +6408,18 @@ function screenLogin(root) {
           untilDate: data.expires_at || null,
           until: data.expires_at ? ("Hasta el " + new Date(data.expires_at).toLocaleString()) : "",
         });
+        return;
+      }
+      // Modo revisión / pruebas privadas: solo administradores. Mostramos la
+      // pantalla correspondiente en vez del error genérico de login.
+      if (r.status === 403 && data && data.error === "review_mode") {
+        try { showReviewScreen({ email }); }
+        catch { toast("Aura está en revisión. Vuelve pronto 🔧", 4200); }
+        return;
+      }
+      if (r.status === 403 && data && data.error === "access_locked") {
+        try { showPrivateBetaScreen({ email }); }
+        catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4200); }
         return;
       }
       // El backend nos indica que este usuario tiene 2FA activo: no
@@ -9597,6 +9821,9 @@ function screenMe(root) {
           state.user = null;
           try { localStorage.removeItem("aura-session"); } catch {}
           Auth.clear();
+          // Si la app está en revisión, vuelve a la pantalla de revisión con
+          // el bloque de acceso por código para el superadmin.
+          if (publicConfig?.app?.review_mode === true) { try { showReviewScreen({}); return; } catch {} }
           // Si la app está en pruebas privadas, vuelve a la pantalla beta con
           // el bloque de acceso por código para el superadmin.
           const beta = publicConfig?.app?.access_locked === true || publicConfig?.app?.private_beta === true;
@@ -12191,6 +12418,11 @@ async function boot() {
         // exactamente lo que el admin haya configurado en
         // content.beta.form_default_email (o el placeholder si está vacío).
         try { showPrivateBetaScreen({}); return; }
+        catch { try { render(screenWelcome); return; } catch {} }
+      }
+      if (n === "review") {
+        // Vista previa de la pantalla de "App en revisión" (modo review_mode).
+        try { showReviewScreen({}); return; }
         catch { try { render(screenWelcome); return; } catch {} }
       }
       if (n === "register-email" && typeof screenRegisterEmail === "function") {

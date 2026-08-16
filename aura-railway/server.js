@@ -1530,6 +1530,12 @@ async function seed() {
     // "app.access_admin_emails" (coma-separado). Ideal para pruebas privadas.
     "app.access_locked": "false",
     "app.access_admin_emails": "manuguada19@gmail.com",
+    // Modo "En revisión" (independiente del modo pruebas). Cuando está en
+    // "true", SOLO los emails de "app.access_admin_emails" pueden entrar; el
+    // resto ve una pantalla profesional de "app en revisión (temporal)". No
+    // admite códigos de invitación, registro ni acceso social. Pensado para
+    // periodos de revisión de tiendas (Google Play / App Store).
+    "app.review_mode": "false",
     // Código de acceso para superadmin cuando la app está en pruebas privadas.
     // Se muestra en la pantalla de beta bajo "¿Eres administrador?" y permite
     // entrar aunque el email admin todavía no exista en la BD.
@@ -7126,6 +7132,7 @@ async function sendOtpEmail(email, code) {
 app.post("/api/verify/send", wrap(async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   if (!email.includes("@")) return res.status(400).json({ error: "invalid_email" });
+  if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   // Bloqueo unificado (IP/estado/restricción) — evita enviar OTP a cuentas
   // suspendidas/baneadas o desde IPs baneadas.
@@ -8229,6 +8236,9 @@ async function validateInvite(code, emailOpt) {
 }
 
 app.post("/api/invite/check", wrap(async (req, res) => {
+  // En modo revisión NO se aceptan códigos de invitación: el acceso queda
+  // reservado exclusivamente a los administradores (vía código superadmin).
+  if (isReviewMode()) return res.status(403).json({ ok: false, error: "review_mode" });
   const r = await validateInvite(req.body?.code, req.body?.email);
   if (!r.ok) return res.status(400).json({ ok: false, error: r.error });
   res.json({ ok: true, role: r.invite.role, tied_email: r.invite.email || null });
@@ -8973,20 +8983,40 @@ app.post("/api/admin/purge-demo", wrap(async (req, res) => {
   res.json({ ok: true, deleted: results });
 }));
 
+// Devuelve true si este email está en la lista de administradores con acceso
+// (app.access_admin_emails, coma-separado). Base común para el modo pruebas
+// y el modo "En revisión".
+function emailIsAdminListed(email) {
+  const raw = String(getSetting("app.access_admin_emails", "") || "").toLowerCase();
+  const list = raw.split(",").map(s => s.trim()).filter(Boolean);
+  const em = String(email || "").toLowerCase().trim();
+  return list.includes(em);
+}
+
 // Devuelve true si el acceso está bloqueado para este email
 // (modo pruebas: solo admins listados pueden entrar).
 function isAccessLockedFor(email) {
   if (!isTrue("app.access_locked", false)) return false;
-  const raw = String(getSetting("app.access_admin_emails", "") || "").toLowerCase();
-  const list = raw.split(",").map(s => s.trim()).filter(Boolean);
-  const em = String(email || "").toLowerCase().trim();
-  return !list.includes(em);
+  return !emailIsAdminListed(email);
+}
+
+// Devuelve true si la app está en "modo revisión" (temporal, para revisión de
+// tiendas) y este email NO es admin. Es MÁS estricto que el modo pruebas: no
+// admite códigos de invitación ni registro/acceso social. Tiene prioridad
+// sobre el modo pruebas y devuelve el código de error propio "review_mode".
+function isReviewMode() {
+  return isTrue("app.review_mode", false);
+}
+function isReviewDeniedFor(email) {
+  if (!isReviewMode()) return false;
+  return !emailIsAdminListed(email);
 }
 
 // Simple demo login (no password — demo mode)
 app.post("/api/login", wrap(async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase();
   if (!email) return res.status(400).json({ error: "email_required" });
+  if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes","15"),10) });
   // Bloqueo unificado: IP + estado + restricción login
@@ -9047,6 +9077,7 @@ app.post("/api/login/otp-verify", wrap(async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   const code = String(req.body?.code || "").trim();
   if (!email.includes("@") || !/^\d{6}$/.test(code)) return res.status(400).json({ ok: false, error: "bad_input" });
+  if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes", "15"), 10) });
   if (await enforceAccess(req, res, { email })) return;
@@ -9306,6 +9337,7 @@ app.post("/api/2fa/login-verify", wrap(async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase();
   const token = String(req.body?.token || "").trim();
   if (!email || !token) return res.status(400).json({ error: "bad_request" });
+  if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   const [uRows] = await pool.query(
     "SELECT id, email, name, role, plan, zone, photo_url FROM users WHERE email=? LIMIT 1", [email]);
@@ -9660,6 +9692,7 @@ app.post("/api/access/superadmin", wrap(async (req, res) => {
 app.post("/api/my/ensure", wrap(async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase().trim();
   if (!email) return res.status(400).json({ error: "email_required" });
+  if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   const name = String(req.body?.name || "").trim() || email.split("@")[0];
   const photo = String(req.body?.photo || "").trim() || null;
@@ -9690,8 +9723,12 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
   }
   // Auto-registro deshabilitado: los usuarios se crean únicamente desde el
   // panel de administrador (Usuarios → crear). Si el email no existe:
+  //  - Si la app está en revisión → review_mode (muestra pantalla de revisión).
   //  - Si la app está en pruebas privadas → access_locked (muestra pantalla beta).
-  //  - Si NO está en pruebas → not_registered (cuenta no existe; volver a welcome).
+  //  - Si NO está en ninguno → not_registered (cuenta no existe; volver a welcome).
+  if (isReviewMode()) {
+    return res.status(403).json({ error: "review_mode" });
+  }
   if (isTrue("app.access_locked", false)) {
     return res.status(403).json({ error: "access_locked" });
   }
@@ -10473,6 +10510,7 @@ app.get("/api/public-config", (req, res) => {
       maintenance: isTrue("app.maintenance", false),
       access_locked: isTrue("app.access_locked", false),
       private_beta: isTrue("app.access_locked", false),
+      review_mode: isTrue("app.review_mode", false),
     },
     push: {
       vapid_public_key: process.env.VAPID_PUBLIC_KEY || "",

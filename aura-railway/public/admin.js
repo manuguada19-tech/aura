@@ -1990,6 +1990,55 @@ async function viewDashboard(root){
     );
     banner.append(iconBox, txt, emailsInput, toggleBtn);
     root.appendChild(banner);
+
+    // --- Modo REVISIÓN (solo administradores): más estricto que el modo
+    // pruebas. Pensado para activarse mientras el modo pruebas está apagado.
+    // Cierra TODOS los accesos y creaciones de cuenta salvo administradores,
+    // y muestra al resto una pantalla profesional de "app en revisión". ---
+    const isReview = String(settings["app.review_mode"] || "false") === "true";
+    const rBanner = el("div", {
+      class: "review-mode-banner" + (isReview ? " on" : ""),
+      style: `display:flex; flex-wrap:wrap; align-items:center; gap:12px 18px;
+              margin: 0 0 18px; padding: 14px 16px; border-radius: 14px;
+              background: ${isReview ? "linear-gradient(135deg, rgba(245,158,11,.16), rgba(56,132,255,.16))" : "var(--panel-2)"};
+              border: 1px solid ${isReview ? "rgba(245,158,11,.5)" : "var(--border)"};
+              box-shadow: var(--shadow-md);`
+    });
+    const rIcon = el("div", {
+      style: `width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center;
+              background: linear-gradient(135deg,#f59e0b,#3884ff); color:#fff; flex-shrink:0`,
+      innerHTML: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.7 2.7-2-2 2.7-2.7z"/></svg>`,
+    });
+    const rTxt = el("div", { style: "flex:1; min-width:180px" }, [
+      el("div", { style: "font-weight:700; font-size:15px; color:var(--text)" },
+        isReview ? "Modo revisión ACTIVADO — solo administradores" : "Modo revisión — desactivado"),
+      el("div", { style: "font-size:12.5px; color:var(--text-soft); margin-top:2px" },
+        isReview
+          ? `Cierre temporal: solo ${emails} pueden entrar. El resto ve la pantalla "app en revisión" y no puede registrarse.`
+          : "Ciérralo temporalmente para revisión: solo los administradores podrán entrar; el resto verá una pantalla profesional de revisión."),
+    ]);
+    const rToggleBtn = btn(
+      isReview ? "Desactivar" : "Activar",
+      isReview ? "ghost sm" : "primary sm",
+      async () => {
+        try {
+          // Reutilizamos la misma lista de emails admin del modo pruebas para
+          // no duplicar la fuente de verdad de quién es administrador.
+          const payload = {
+            "app.review_mode": isReview ? "false" : "true",
+            "app.access_admin_emails": emailsInput.value || "manuguada19@gmail.com",
+          };
+          await api.put("/api/settings", payload);
+          toast(isReview ? "Modo revisión desactivado" : "Modo revisión activado — solo admins entran");
+          setTimeout(() => route("dashboard"), 500);
+        } catch (e) { toast("Error al actualizar"); }
+      }
+    );
+    const rPreviewBtn = btn("Ver pantalla", "ghost sm", () => {
+      try { window.open("/?preview=review", "_blank", "noopener"); } catch {}
+    });
+    rBanner.append(rIcon, rTxt, rToggleBtn, rPreviewBtn);
+    root.appendChild(rBanner);
   } catch (e) { /* silent */ }
 
   // Section cards grid — quick access shortcuts, especially handy on mobile
@@ -7538,6 +7587,7 @@ async function viewSettings(root){
     buildMaintenanceBlock(s, form),
     toggleField("app.registrations_open", "Registros abiertos"),
     toggleField("app.access_locked", "Acceso solo para admins (modo pruebas)"),
+    toggleField("app.review_mode", "Modo revisión (solo admins · pantalla \"app en revisión\")"),
     textField("app.access_admin_emails", "Emails admin permitidos (coma-separado)"),
     superadminCodeField(),
     toggleField("app.email_verification_required", "Verificación email obligatoria"),
