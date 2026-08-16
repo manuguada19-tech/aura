@@ -60,6 +60,24 @@
       var t = localStorage.getItem("aura-admin-theme") || localStorage.getItem("aura-theme") || "light";
       document.documentElement.dataset.theme = t;
     } catch(e){}
+    // V706 · Vigilante anti-cuelgue del panel. Si admin.js no retira la clase
+    // "admin-loading" (red lenta, error de arranque, script bloqueado…),
+    // pasados 12 s revelamos el panel para no dejar al admin atrapado en el
+    // splash ("se queda cargando").
+    (function(){
+      try {
+        setTimeout(function(){
+          try {
+            var h = document.documentElement;
+            if (h.classList.contains("admin-loading")) {
+              h.classList.remove("admin-loading");
+              var sp = document.getElementById("adminSplash");
+              if (sp) { sp.style.opacity = "0"; setTimeout(function(){ try { sp.remove(); } catch(e){} }, 400); }
+            }
+          } catch(e){}
+        }, 12000);
+      } catch(e){}
+    })();
   </script>
   <script>
     // Bootstrap: capture adminToken from URL (if any), persist, then load protected assets with it.

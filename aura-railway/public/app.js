@@ -1268,9 +1268,26 @@ function setLanguage(lang) {
 let publicConfig = { app: {}, payments: {} };
 let _lastContentHash = "";
 let _lastConfigHash = "";
+// V706 · Fetch con timeout. Evita que una red lenta o un endpoint que no
+// responde dejen la app colgada en el splash inicial ("se queda cargando").
+// Si expira, aborta y rechaza; el llamador cae a sus valores por defecto
+// (contentFallback / bienvenida) y el arranque continúa igualmente.
+function _fetchTO(url, opts, ms) {
+  opts = opts || {};
+  ms = ms || 7000;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => { try { ctrl.abort(); } catch {} }, ms);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+      .finally(() => { try { clearTimeout(timer); } catch {} });
+  } catch (e) {
+    // Navegadores muy antiguos sin AbortController: fetch normal.
+    return fetch(url, opts);
+  }
+}
 async function loadPublicConfig() {
   try {
-    const r = await fetch("/api/public-config", { cache: "no-store" });
+    const r = await _fetchTO("/api/public-config", { cache: "no-store" }, 7000);
     if (r.ok) {
       publicConfig = await r.json();
       // Expose VAPID public key globally so the push-subscribe flow finds it.
@@ -1280,7 +1297,7 @@ async function loadPublicConfig() {
 }
 async function loadContent() {
   try {
-    const r = await fetch("/api/content", { cache: "no-store" });
+    const r = await _fetchTO("/api/content", { cache: "no-store" }, 7000);
     if (r.ok) {
       const data = await r.json();
       content = Object.assign({}, contentFallback, data);
@@ -12474,8 +12491,8 @@ async function boot() {
   // match _stableStringify() used inside pollLiveConfig().
   try {
     const [cr, pr] = await Promise.all([
-      fetch("/api/content", { cache: "no-store" }),
-      fetch("/api/public-config", { cache: "no-store" }),
+      _fetchTO("/api/content", { cache: "no-store" }, 7000),
+      _fetchTO("/api/public-config", { cache: "no-store" }, 7000),
     ]);
     if (cr.ok) _lastContentHash = _stableStringify(await cr.json());
     if (pr.ok) _lastConfigHash  = _stableStringify(await pr.json());
@@ -13593,4 +13610,17 @@ function showLockScreen(reason) {
 setInterval(pollDeviceAlerts, 15 * 1000);
 setTimeout(pollDeviceAlerts, 4000);
 
-boot();
+// V706 · Arranque protegido. Si boot() rechaza por cualquier motivo (una
+// promesa sin capturar, un fetch inicial que falla, etc.) NO debemos dejar al
+// usuario atrapado en el splash con la pantalla oculta ("se queda cargando").
+// Revelamos el DOM y, si no se pintó nada, mostramos la bienvenida.
+boot().catch((err) => {
+  try { console.error("[boot] fallo en arranque:", err); } catch {}
+  try { document.documentElement.classList.remove("js-loading"); } catch {}
+  try { const sp = document.getElementById("auraSplash"); if (sp) sp.remove(); } catch {}
+  try {
+    const vp = document.getElementById("viewport");
+    const painted = vp && vp.querySelector && vp.querySelector(".screen");
+    if (vp && !painted && typeof screenWelcome === "function") render(screenWelcome);
+  } catch {}
+});

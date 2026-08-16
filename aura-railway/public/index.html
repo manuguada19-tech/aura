@@ -136,6 +136,41 @@
   <script>
     // Marca el documento como "cargando" antes de mostrar contenido.
     document.documentElement.classList.add("js-loading");
+    // V706 · Vigilante anti-cuelgue. Si por cualquier motivo app.js no llega a
+    // retirar la clase "js-loading" (red muy lenta, un fetch inicial colgado,
+    // un error de arranque, el script bloqueado por la red…), pasados 10 s
+    // revelamos el contenido igualmente para que el usuario NUNCA se quede
+    // atrapado en el splash ("se queda cargando"). Si app.js arranca bien, ya
+    // habrá quitado la clase mucho antes y este temporizador no hace nada.
+    (function(){
+      try {
+        setTimeout(function(){
+          try {
+            var h = document.documentElement;
+            if (h.classList.contains("js-loading")) {
+              h.classList.remove("js-loading");
+              var sp = document.getElementById("auraSplash");
+              if (sp) { sp.style.opacity = "0"; setTimeout(function(){ try { sp.remove(); } catch(e){} }, 350); }
+              // Si app.js ya definió la bienvenida pero aún no pintó nada
+              // (p.ej. un fetch inicial colgado), mostramos la bienvenida con
+              // los textos por defecto para no dejar una pantalla en blanco.
+              try {
+                var vp = document.getElementById("viewport");
+                // El viewport arranca con un comentario placeholder, así que
+                // comprobamos si YA hay una pantalla pintada (.screen) en vez
+                // de mirar innerHTML (que nunca está "vacío").
+                var painted = vp && vp.querySelector && vp.querySelector(".screen");
+                if (vp && !painted
+                    && typeof window.render === "function"
+                    && typeof window.screenWelcome === "function") {
+                  window.render(window.screenWelcome);
+                }
+              } catch(e){}
+            }
+          } catch(e){}
+        }, 10000);
+      } catch(e){}
+    })();
   </script>
   <script>
     // Cache-bust styles.css y app.js dinámicamente si el usuario ha visto una versión anterior recientemente
