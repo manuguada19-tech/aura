@@ -9686,7 +9686,12 @@ app.post("/api/access/superadmin", wrap(async (req, res) => {
   try { await touchUserDevice(req, user.id); } catch {}
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   try { await logActivity("security", `Acceso superadmin con código${ipMsg}`); } catch {}
-  res.json({ ok: true, user });
+  // V708 · Devolver el token firmado igual que /api/login. Sin esto, con el
+  // modo estricto (security.require_auth_token) activo, la sesión de superadmin
+  // se quedaba sin X-Auth-Token y TODAS las llamadas de features_ui.js
+  // (Quedadas, Historias, Progreso, Avisos, Recompensas, Cupones, GDPR)
+  // devolvían 401. Retrocompatible: quien ya funcionaba sigue igual.
+  res.json({ ok: true, user, auth_token: signUserToken(user.id) });
 }));
 
 app.post("/api/my/ensure", wrap(async (req, res) => {

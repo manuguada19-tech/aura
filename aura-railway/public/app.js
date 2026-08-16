@@ -4837,6 +4837,11 @@ function showPrivateBetaScreen(opts) {
         photo: d.user.photo_url || "", role: d.user.role || "superadmin",
       };
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      // V708 · Capturar el token firmado que ahora devuelve el backend, para
+      // que las peticiones autenticadas (features_ui.js: Quedadas, Historias,
+      // Progreso, Avisos, Recompensas, Cupones…) lleven X-Auth-Token y no
+      // reciban 401 con el modo estricto activo. No-op si no viene token.
+      try { Auth.capture(d); } catch {}
       adminFb.hidden = false;
       adminFb.className = "beta-admin-fb beta-feedback-ok";
       adminFb.textContent = T("content.beta.admin_ok") || "Acceso concedido ✓";
@@ -4993,6 +4998,11 @@ function showReviewScreen(opts) {
         photo: d.user.photo_url || "", role: d.user.role || "superadmin",
       };
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      // V708 · Capturar el token firmado que ahora devuelve el backend, para
+      // que las peticiones autenticadas (features_ui.js: Quedadas, Historias,
+      // Progreso, Avisos, Recompensas, Cupones…) lleven X-Auth-Token y no
+      // reciban 401 con el modo estricto activo. No-op si no viene token.
+      try { Auth.capture(d); } catch {}
       adminFb.hidden = false;
       adminFb.className = "beta-admin-fb beta-feedback-ok";
       adminFb.textContent = T("content.beta.admin_ok") || "Acceso concedido ✓";
