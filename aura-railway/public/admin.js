@@ -10519,7 +10519,7 @@ async function viewEmails(root) {
         }),
         mkTb("⛓", "Quitar enlace", () => exec("unlink")),
         mkTb("🖼", "Insertar imagen", () => {
-          const url = prompt("URL de la imagen:", "https://www.citasaura.es/assets/aura-logo.png");
+          const url = prompt("URL de la imagen:", "https://citasaura.es/assets/aura-logo.png");
           if (url) exec("insertImage", url);
         }),
         mkTb("─", "Línea horizontal", () => exec("insertHorizontalRule")),

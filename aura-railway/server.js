@@ -2481,7 +2481,7 @@ app.post("/api/contact", wrap(async (req, res) => {
   const pad = (n) => String(n).padStart(2, "0");
   const ref = `AURA-CT-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${Math.floor(Math.random()*10000).toString().padStart(4,"0")}`;
   const receivedAt = now.toLocaleString("es-ES", { dateStyle: "long", timeStyle: "short" });
-  const appUrl = getSetting("app.public_url", process.env.APP_URL || "https://www.citasaura.es");
+  const appUrl = getSetting("app.public_url", process.env.APP_URL || "https://citasaura.es");
   const sourceUrl = String(req.headers.referer || "").slice(0, 200) || `${appUrl}/contacto`;
 
   const commonVars = {
@@ -7587,9 +7587,9 @@ async function seedEmailTemplates() {
 function appPublicUrl() {
   const raw = getSetting(
     "app.public_url",
-    process.env.APP_PUBLIC_URL || "https://www.citasaura.es"
+    process.env.APP_PUBLIC_URL || "https://citasaura.es"
   );
-  return String(raw || "").replace(/\/+$/, "") || "https://www.citasaura.es";
+  return String(raw || "").replace(/\/+$/, "") || "https://citasaura.es";
 }
 
 function interpolate(str, vars) {
