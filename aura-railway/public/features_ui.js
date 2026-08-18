@@ -110,13 +110,26 @@
   let currentBackdrop = null;
   function modal(children, extraClass = "") {
     closeModal();
-    const backdrop = h("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) closeModal(); } }, [
-      h("div", { class: "modal-card " + extraClass }, children),
-    ]);
+    // Botón de cierre (X) fijo en la esquina superior derecha, para no tener
+    // que desplazarse hasta abajo a buscar "Cerrar".
+    const closeX = h("button", { class: "modal-x", "aria-label": "Cerrar", title: "Cerrar", onclick: closeModal }, "✕");
+    const card = h("div", { class: "modal-card " + extraClass }, children);
+    card.insertBefore(closeX, card.firstChild);
+    const backdrop = h("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) closeModal(); } }, [card]);
     document.body.appendChild(backdrop);
     currentBackdrop = backdrop;
+    // Cerrar con la tecla Escape.
+    const onKey = (e) => { if (e.key === "Escape") { closeModal(); } };
+    document.addEventListener("keydown", onKey);
+    backdrop._auraOnKey = onKey;
   }
-  function closeModal() { if (currentBackdrop) { currentBackdrop.remove(); currentBackdrop = null; } }
+  function closeModal() {
+    if (currentBackdrop) {
+      try { if (currentBackdrop._auraOnKey) document.removeEventListener("keydown", currentBackdrop._auraOnKey); } catch {}
+      currentBackdrop.remove();
+      currentBackdrop = null;
+    }
+  }
 
   // ============ STORIES ==========================================
   async function openStoriesFeed() {
@@ -233,18 +246,28 @@
   }
 
   function openEventCreate() {
+    const field = (labelText, control, hint) => h("div", { class: "ev-field" }, [
+      h("label", { class: "ev-label" }, labelText),
+      control,
+      hint ? h("div", { class: "ev-hint" }, hint) : null,
+    ]);
     modal([
-      h("h3", {}, "📅 Nueva quedada"),
-      h("input", { type: "text", id: "evTitle", placeholder: "Título" }),
-      h("input", { type: "text", id: "evPlace", placeholder: "Lugar" }),
-      h("input", { type: "datetime-local", id: "evStart" }),
-      h("textarea", { id: "evDesc", placeholder: "Descripción" }),
-      h("label", { style: "display:block;font-size:12px;color:#96a0b8;margin-top:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px" }, "Privacidad"),
-      h("select", { id: "evPrivacy" }, [
-        h("option", { value: "public" }, "🌍 Pública (cualquiera puede apuntarse)"),
-        h("option", { value: "matches" }, "💘 Solo mis matches"),
-        h("option", { value: "private" }, "🔒 Privada (solo yo, pero puedo invitar a mano)"),
+      h("div", { class: "ev-form-head" }, [
+        h("div", { class: "ev-form-emoji" }, "📅"),
+        h("div", {}, [
+          h("h3", { style: "margin:0" }, "Nueva quedada"),
+          h("p", { class: "muted", style: "margin:2px 0 0" }, "Organiza un plan y deja que la gente se apunte."),
+        ]),
       ]),
+      field("Título", h("input", { class: "ev-input", type: "text", id: "evTitle", maxlength: "80", placeholder: "Ej.: Café y paseo por el centro" })),
+      field("Lugar", h("input", { class: "ev-input", type: "text", id: "evPlace", maxlength: "120", placeholder: "Ej.: Plaza Mayor, Madrid" })),
+      field("Fecha y hora", h("input", { class: "ev-input", type: "datetime-local", id: "evStart" })),
+      field("Descripción", h("textarea", { class: "ev-input ev-textarea", id: "evDesc", rows: "3", maxlength: "500", placeholder: "Cuenta de qué va el plan, qué llevar, cómo reconoceros…" }), "Opcional"),
+      field("Privacidad", h("select", { class: "ev-input", id: "evPrivacy" }, [
+        h("option", { value: "public" }, "🌍 Pública · cualquiera puede apuntarse"),
+        h("option", { value: "matches" }, "💘 Solo mis matches"),
+        h("option", { value: "private" }, "🔒 Privada · solo yo (puedo invitar a mano)"),
+      ])),
       h("div", { class: "modal-actions" }, [
         h("button", { class: "btn secondary", onclick: closeModal }, "Cancelar"),
         h("button", { class: "btn primary", onclick: async () => {
@@ -253,12 +276,12 @@
           const starts_at = document.getElementById("evStart")?.value;
           const description = document.getElementById("evDesc")?.value?.trim();
           const privacy = document.getElementById("evPrivacy")?.value || "public";
-          if (!title || !starts_at) { toast("Título y fecha requeridos"); return; }
+          if (!title || !starts_at) { toast("Añade al menos título y fecha"); return; }
           const r = await api("/api/my/events", { method: "POST", body: JSON.stringify({ title, place, starts_at, description, privacy }) });
           if (r.status === 402) { planLock(r.data?.required_plan || "gold", "Crear quedadas"); return; }
-          if (!r.ok) { toast("Error"); return; }
-          toast("Quedada creada"); closeModal(); openEvents();
-        } }, "Crear"),
+          if (!r.ok) { toast("No se pudo crear la quedada"); return; }
+          toast("¡Quedada creada!"); closeModal(); openEvents();
+        } }, "Crear quedada"),
       ]),
     ], "event-form");
   }
@@ -654,7 +677,7 @@
       toast("No se pudieron cargar tus recompensas");
       modal([
         h("div", { class: "rewards-shop" }, [
-          h("h3", {}, "🎫 Mis recompensas"),
+          h("h3", {}, "🎫 Mis cupones"),
           h("p", { class: "muted" }, "No se pudieron cargar tus recompensas ahora mismo. Inténtalo de nuevo en unos segundos."),
           h("div", { class: "modal-actions" }, [
             h("button", { class: "btn secondary", onclick: () => openMyRewards() }, "Reintentar"),
@@ -697,7 +720,7 @@
     }) : [h("div", { class: "muted" }, "Aún no has canjeado ninguna recompensa.")];
     modal([
       h("div", { class: "rewards-shop" }, [
-        h("h3", {}, "🎫 Mis recompensas"),
+        h("h3", {}, "🎫 Mis cupones"),
         h("div", { class: "reward-list" }, rows),
         h("div", { class: "modal-actions" }, [
           h("button", { class: "btn secondary", onclick: () => openRewardsShop() }, "← Volver a la tienda"),

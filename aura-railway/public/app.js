@@ -9678,7 +9678,8 @@ function screenMe(root) {
         el("span", { class: "me-bell-ico" }, "🔔"),
         el("span", { class: "me-bell-badge", style: "display:none" }, "0"),
       ]),
-      el("button", { class: "me-edit", onclick: () => render(screenEditProfile) }, T("content.me.edit_button") || "Editar"),
+      // V709 · Botón "Editar" retirado: ya existe la opción "Editar perfil"
+      // en la lista de ajustes (grupo Cuenta), evitando la acción duplicada.
     ]),
   ]));
   // Actualiza el badge nada más pintar la pantalla

@@ -7753,7 +7753,24 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
   max-height: 85vh;
   overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,.4);
+  position: relative;
 }
+/* Botón de cierre (X) fijo arriba a la derecha de cualquier modal de aura2 */
+.modal-card .modal-x {
+  position: sticky;
+  top: -6px;
+  float: right;
+  margin: -8px -6px 0 8px;
+  width: 34px; height: 34px;
+  border: none; border-radius: 999px;
+  background: rgba(255,255,255,.1); color: inherit;
+  font-size: 16px; line-height: 1; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 3;
+}
+.modal-card .modal-x:hover { background: rgba(255,255,255,.2); }
+:root[data-theme="light"] .modal-card .modal-x { background: #eef0f5; }
+:root[data-theme="light"] .modal-card .modal-x:hover { background: #e0e3ec; }
 :root[data-theme="light"] .modal-card {
   background: #ffffff;
   color: #111827;
@@ -7878,6 +7895,35 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 .reward-flag.ok { background: rgba(30,180,110,.18); color: #34d18a; }
 .reward-flag.warn { background: rgba(240,180,60,.18); color: #f5b830; }
 .reward-flag.off { background: rgba(200,80,80,.18); color: #ff7777; }
+
+/* Formulario "Nueva quedada" */
+.event-form .ev-form-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.event-form .ev-form-emoji {
+  font-size: 26px; width: 46px; height: 46px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 14px; background: linear-gradient(135deg, rgba(255,59,107,.18), rgba(255,138,59,.18));
+}
+.event-form .ev-field { margin-bottom: 14px; }
+.event-form .ev-label {
+  display: block; font-size: 12px; font-weight: 700; margin-bottom: 6px;
+  text-transform: uppercase; letter-spacing: .4px; opacity: .8;
+}
+.event-form .ev-input {
+  width: 100%; box-sizing: border-box;
+  padding: 12px 14px; font-size: 15px; font-family: inherit;
+  border-radius: 12px; border: 1px solid rgba(255,255,255,.14);
+  background: rgba(255,255,255,.05); color: inherit;
+  transition: border-color .15s, box-shadow .15s;
+}
+.event-form .ev-input:focus {
+  outline: none; border-color: #ff5b86;
+  box-shadow: 0 0 0 3px rgba(255,91,134,.18);
+}
+.event-form .ev-textarea { resize: vertical; min-height: 76px; line-height: 1.4; }
+.event-form .ev-hint { font-size: 11px; opacity: .6; margin-top: 4px; }
+:root[data-theme="light"] .event-form .ev-input {
+  background: #f6f7fb; border-color: #dfe2ec;
+}
 
 
 
