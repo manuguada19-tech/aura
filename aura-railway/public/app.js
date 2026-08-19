@@ -13291,6 +13291,18 @@ setTimeout(() => { try { checkActivePopup(); } catch {} }, 3500);
   .sec-case .status{padding:2px 8px;border-radius:12px;font-size:10px;background:#2a2f45}
   .sec-case .status.active{background:#dc2626;color:#fff}
   .sec-case .status.pending{background:#f59e0b;color:#111}
+  .sec-section-title{margin:16px 0 8px;font-size:14px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.4px}
+  /* V710 · modo claro */
+  [data-theme="light"] .screen-security{color:#14161d}
+  [data-theme="light"] .sec-section-title{color:#5b6478}
+  [data-theme="light"] .sec-step{background:#f1f3f8;border-color:#dfe3ec;color:#5b6478}
+  [data-theme="light"] .sec-form-card{background:#fff;border-color:#dfe3ec;color:#14161d}
+  [data-theme="light"] .sec-form-card label{color:#5b6478}
+  [data-theme="light"] .sec-form-card input,[data-theme="light"] .sec-form-card select,[data-theme="light"] .sec-form-card textarea{background:#fff;border-color:#cfd4e0;color:#14161d}
+  [data-theme="light"] .sec-form-card input::placeholder,[data-theme="light"] .sec-form-card textarea::placeholder{color:#9aa4bf}
+  [data-theme="light"] .sec-form-card small{color:#5b6478}
+  [data-theme="light"] .sec-case{background:#fff;border-color:#dfe3ec;color:#14161d}
+  [data-theme="light"] .sec-case .status{background:#e6e9f2;color:#3a3f4a}
   `;
   document.head.appendChild(s);
 })();
@@ -13314,13 +13326,20 @@ async function screenDeviceSecurity(container) {
   ]));
 
   const list = el("div", { class: "device-incidents-list" });
-  wrap.appendChild(el("h3", { style: "margin:16px 0 8px;font-size:14px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.4px" }, "Mis casos"));
+  wrap.appendChild(el("h3", { class: "sec-section-title" }, "Mis casos"));
   wrap.appendChild(list);
   async function loadMine() {
     list.innerHTML = '<p class="muted">Cargando…</p>';
     try {
       const r = await fetch("/api/my/device-incidents", { headers: authHeaders() });
-      const j = await r.json();
+      if (!r.ok) {
+        list.innerHTML = "";
+        list.appendChild(el("p", { class: "muted" }, r.status === 401
+          ? "Inicia sesión para ver tus casos."
+          : "No tienes casos abiertos."));
+        return;
+      }
+      const j = await r.json().catch(() => ({ items: [] }));
       list.innerHTML = "";
       if (!j.items || !j.items.length) {
         list.appendChild(el("p", { class: "muted" }, "No tienes casos abiertos."));
@@ -13338,7 +13357,7 @@ async function screenDeviceSecurity(container) {
           list.appendChild(c);
         });
       }
-    } catch(e) { list.innerHTML = ""; list.appendChild(el("p", { class: "err" }, e.message || "Error")); }
+    } catch(e) { list.innerHTML = ""; list.appendChild(el("p", { class: "muted" }, "No tienes casos abiertos.")); }
   }
 
   // Formulario de nuevo caso
