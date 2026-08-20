@@ -9747,7 +9747,17 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
 // está activo. Con el modo estricto ya activo sólo puede renovar (requiere
 // token válido), nunca crear uno desde un X-User-Id suelto.
 app.post("/api/my/session/token", wrap(async (req, res) => {
-  const me = readMyUserId(req);
+  // V711 · Reabrir la ventana de migración: aunque el modo estricto esté
+  // activo, este endpoint puede emitir token a una sesión legacy que sólo
+  // manda X-User-Id, SIEMPRE que el usuario exista y esté activo. Así las
+  // sesiones antiguas se auto-reparan sin re-login manual. El resto de rutas
+  // siguen exigiendo token (readMyUserId), la seguridad global no baja.
+  let me = verifyUserToken(readUserToken(req));
+  if (!me) {
+    const raw = req.get("X-User-Id") || req.query.uid || req.body?.uid;
+    const n = parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) me = n;
+  }
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query("SELECT id, status FROM users WHERE id=? LIMIT 1", [me]);
   if (!u || u.status !== "active") return res.status(403).json({ error: "inactive" });
