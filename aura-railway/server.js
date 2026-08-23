@@ -10927,6 +10927,7 @@ const phase6 = require("./features_phase6_vault"); // V569 · bóveda cifrada
 const phase7 = require("./features_phase7_rewards"); // V576 · recompensas/cupones XP
 const phase8 = require("./features_phase8_notifications"); // V587 · notificaciones in-app
 const phaseZones = require("./features_zones"); // V613 · zonas: archivado + monitorización
+const adminExtra = require("./features_admin_extra"); // V712 · endpoints admin que faltaban
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage }); // V591 · +notifyNewMessage
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
@@ -10936,6 +10937,7 @@ phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
 phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
 phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }); // V613 · zonas
+adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 · endpoints admin faltantes
 
 (async () => {
   try {
@@ -10962,6 +10964,7 @@ phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }
       await phase7.migrate(pool); // V576 · recompensas/cupones XP
       await phase8.migrate(pool); // V587 · notificaciones in-app
       await phaseZones.migrate(pool); // V613 · zonas: archivado + monitorización
+      await adminExtra.migrate(pool); // V712 · tablas config admin
     } catch (e) {
       console.error("[phases] init error:", e);
     }
