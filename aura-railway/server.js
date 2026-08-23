@@ -10928,6 +10928,7 @@ const phase7 = require("./features_phase7_rewards"); // V576 · recompensas/cupo
 const phase8 = require("./features_phase8_notifications"); // V587 · notificaciones in-app
 const phaseZones = require("./features_zones"); // V613 · zonas: archivado + monitorización
 const adminExtra = require("./features_admin_extra"); // V712 · endpoints admin que faltaban
+const adminExtra2 = require("./features_admin_extra2"); // V713 · 2º lote endpoints admin (mod/tickets/pagos/stats/dispositivos)
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage }); // V591 · +notifyNewMessage
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
@@ -10938,6 +10939,7 @@ phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notif
 phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
 phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }); // V613 · zonas
 adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 · endpoints admin faltantes
+adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V713 · 2º lote endpoints admin
 
 (async () => {
   try {
@@ -10965,6 +10967,7 @@ adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 ·
       await phase8.migrate(pool); // V587 · notificaciones in-app
       await phaseZones.migrate(pool); // V613 · zonas: archivado + monitorización
       await adminExtra.migrate(pool); // V712 · tablas config admin
+      await adminExtra2.migrate(pool); // V713 · tablas mod-templates + device_incidents
     } catch (e) {
       console.error("[phases] init error:", e);
     }
