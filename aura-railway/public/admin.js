@@ -15421,8 +15421,9 @@ async function openHeatmap() {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   try {
-    // Requiere Leaflet ya cargado en admin
-    if (typeof L === "undefined") { container.textContent = "Leaflet no cargado."; return; }
+    // Carga Leaflet bajo demanda (igual que el resto de mapas del panel)
+    const L = await _ensureLeaflet();
+    if (!L) { container.textContent = "No se pudo cargar el mapa (Leaflet)."; return; }
     const map = L.map(container).setView([40, -3], 3);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "OSM" }).addTo(map);
     const pts = await api.get("/api/stats/geo-points");

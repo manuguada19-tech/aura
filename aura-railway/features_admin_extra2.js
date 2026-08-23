@@ -79,6 +79,25 @@ async function migrate(pool) {
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_inc (incident_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // IMPORTANTE · Reconciliación de esquema.
+  // En producción ya existían device_incidents / device_incident_actions de un
+  // backend anterior (retirado). Por eso los CREATE IF NOT EXISTS de arriba son
+  // no-ops y a las tablas viejas les faltan columnas que este código usa,
+  // provocando 500. Añadimos de forma idempotente (try/catch) SOLO las columnas
+  // que faltan. No renombramos ni borramos nada existente.
+  const addCol = async (table, ddl) => {
+    try { await pool.query(`ALTER TABLE ${table} ADD COLUMN ${ddl}`); }
+    catch (e) { /* 1060 = Duplicate column → ya existe */ }
+  };
+  await addCol("device_incidents", "scheduled_lock_at TIMESTAMP NULL");
+  await addCol("device_incidents", "reviewed_at TIMESTAMP NULL");
+  await addCol("device_incidents", "lock_reason VARCHAR(255) NULL");
+  await addCol("device_incidents", "lock_message VARCHAR(500) NULL");
+  await addCol("device_incidents", "deny_reason VARCHAR(255) NULL");
+  await addCol("device_incident_actions", "detail VARCHAR(500) NULL");
+  await addCol("device_incident_actions", "admin_email VARCHAR(190) NULL");
+  await addCol("device_incident_actions", "hash CHAR(64) NULL");
 }
 
 function register(app, pool, helpers) {
@@ -311,6 +330,28 @@ function registerStats(app, pool, wrap) {
       items.push(row);
     }
     items.sort((a, b) => (a.cohort < b.cohort ? 1 : -1));
+    res.json({ ok: true, items });
+  }));
+
+  // Puntos para el mapa de calor. Agrega usuarios por celda ~0.1° usando la
+  // ubicación de users(lat,lng); si falta, cae a user_gps. Sin PII individual.
+  app.get("/api/stats/geo-points", wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT ROUND(lat,1) AS lat, ROUND(lng,1) AS lng, COUNT(*) AS count
+         FROM (
+           SELECT u.id,
+                  COALESCE(u.lat, g.lat) AS lat,
+                  COALESCE(u.lng, g.lng) AS lng
+             FROM users u
+             LEFT JOIN user_gps g ON g.user_id = u.id
+            WHERE u.role='user' AND u.status='active'
+         ) t
+        WHERE lat IS NOT NULL AND lng IS NOT NULL
+        GROUP BY ROUND(lat,1), ROUND(lng,1)
+        ORDER BY count DESC
+        LIMIT 500`
+    );
+    const items = rows.map((r) => ({ lat: Number(r.lat), lng: Number(r.lng), count: Number(r.count) || 0 }));
     res.json({ ok: true, items });
   }));
 }
