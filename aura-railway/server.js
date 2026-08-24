@@ -1113,6 +1113,17 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya aplicado */ }
   }
 
+  // V719: "Editar perfil" real. Faltaban columnas para persistir los campos que
+  // el usuario edita (antes solo se guardaban en localStorage). Aditivo.
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN job VARCHAR(120) NULL",
+    "ALTER TABLE users ADD COLUMN looking_for VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN relationship VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN interests TEXT NULL",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
+  }
+
   // V400: Sistema de invitaciones (tester privado / beta cerrada), stream
   // detallado de actividad de cada usuario y campos de moderación de
   // mensajes (soft-delete + auditoría).
@@ -6509,6 +6520,55 @@ app.post("/api/my/photos/:id/primary", wrap(async (req, res) => {
   await pool.execute("UPDATE photos SET is_primary=1 WHERE id=? AND user_id=?", [id, me]);
   const url = await syncPrimaryPhoto(me);
   res.json({ ok: true, photo_url: url });
+}));
+
+/* ============================================================
+   V719 · Editar perfil (persistido en servidor)
+   ------------------------------------------------------------
+   Antes la pantalla "Editar perfil" solo guardaba en localStorage,
+   así que los cambios no llegaban a la BD ni los veía el resto de
+   la app. Ahora se guardan de verdad en la fila del usuario.
+     GET  /api/my/profile → datos del perfil editable
+     POST /api/my/profile → guarda name/bio/city/job/height/
+                            looking_for/relationship/interests
+   Solo se actualizan los campos presentes en el body (merge).
+   ============================================================ */
+app.get("/api/my/profile", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[u]] = await pool.query(
+    "SELECT id, name, bio, city, job, height, looking_for, relationship, interests, photo_url FROM users WHERE id=? LIMIT 1", [me]
+  );
+  if (!u) return res.status(404).json({ ok: false, error: "not_found" });
+  let interests = [];
+  try { interests = u.interests ? JSON.parse(u.interests) : []; } catch { interests = []; }
+  res.json({ ok: true, profile: { ...u, interests: Array.isArray(interests) ? interests : [] } });
+}));
+
+app.post("/api/my/profile", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const b = req.body || {};
+  const sets = [];
+  const vals = [];
+  if (typeof b.name === "string" && b.name.trim()) { sets.push("name=?"); vals.push(b.name.trim().slice(0, 100)); }
+  if ("bio" in b) { sets.push("bio=?"); vals.push(b.bio ? String(b.bio).slice(0, 2000) : null); }
+  if ("city" in b) { sets.push("city=?"); vals.push(b.city ? String(b.city).slice(0, 120) : null); }
+  if ("job" in b) { sets.push("job=?"); vals.push(b.job ? String(b.job).slice(0, 120) : null); }
+  if ("height" in b) {
+    const h = parseInt(b.height, 10);
+    sets.push("height=?"); vals.push(Number.isFinite(h) && h > 0 && h < 300 ? h : null);
+  }
+  if ("looking_for" in b) { sets.push("looking_for=?"); vals.push(b.looking_for ? String(b.looking_for).slice(0, 30) : null); }
+  if ("relationship" in b) { sets.push("relationship=?"); vals.push(b.relationship ? String(b.relationship).slice(0, 30) : null); }
+  if ("interests" in b) {
+    const arr = Array.isArray(b.interests) ? b.interests.filter((x) => typeof x === "string").slice(0, 30) : [];
+    sets.push("interests=?"); vals.push(JSON.stringify(arr));
+  }
+  if (!sets.length) return res.json({ ok: true, updated: 0 });
+  vals.push(me);
+  await pool.execute(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, vals);
+  res.json({ ok: true, updated: sets.length });
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */

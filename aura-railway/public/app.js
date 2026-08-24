@@ -10193,27 +10193,53 @@ function screenEditProfile(root) {
     el("button", { class: "btn btn-outline btn-sm", type: "button", onclick: () => render(screenMyPhotos) }, T("content.me.change_photo") || "Cambiar foto"),
   ]));
 
-  // Persist profile prefs on state
+  // V719 · Perfil real: se guarda en el servidor (antes solo en localStorage).
+  // Partimos de defaults y luego rellenamos con lo que devuelva /api/my/profile.
   state.myProfile = Object.assign({
     looking_for: "serious",
     relationship: "mono",
     interests: [],
   }, state.myProfile || {});
 
-  const form = el("form", { class: "contact-form", onsubmit: (e) => {
+  const form = el("form", { class: "contact-form", onsubmit: async (e) => {
     e.preventDefault();
     state.myProfile.looking_for = lookingRef.id;
     state.myProfile.relationship = relRef.id;
     state.myProfile.interests = Array.from(selectedInterests);
+    const payload = {
+      name: nameInp.value.trim(),
+      bio: bioInp.value.trim(),
+      city: cityInp.value.trim(),
+      job: jobInp.value.trim(),
+      height: parseInt(heightInp.value, 10) || null,
+      looking_for: lookingRef.id,
+      relationship: relRef.id,
+      interests: Array.from(selectedInterests),
+    };
     try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
-    toast(T("content.me.saved") || "Cambios guardados");
-    render(screenMe);
+    try {
+      const r = await fetch("/api/my/profile", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { toast("No se pudo guardar"); return; }
+      if (state.user && payload.name) state.user.name = payload.name;
+      toast(T("content.me.saved") || "Cambios guardados");
+      render(screenMe);
+    } catch (ex) { toast("Error de red"); }
   } });
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_name") || "Nombre"), el("input", { type: "text", value: u.name || T("content.me.default_name") || "", placeholder: "Tu nombre" }) ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_bio") || "Sobre mí"), el("textarea", { rows: 4 }, T("content.me.default_bio") || "Amante del café, las conversaciones largas y los planes espontáneos.") ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_city") || "Ciudad"), el("input", { type: "text", value: T("content.me.default_city") || "Madrid" }) ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_job") || "Profesión"), el("input", { type: "text", value: T("content.me.default_job") || "Diseñadora UX" }) ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.field_height") || "Altura (cm)"), el("input", { type: "number", value: 172 }) ]));
+  const nameField = el("div", { class: "field" }); const nameInp = el("input", { type: "text", value: u.name || "", placeholder: "Tu nombre" });
+  nameField.appendChild(el("label", {}, T("content.me.field_name") || "Nombre")); nameField.appendChild(nameInp); form.appendChild(nameField);
+  const bioField = el("div", { class: "field" }); const bioInp = el("textarea", { rows: 4 });
+  bioField.appendChild(el("label", {}, T("content.me.field_bio") || "Sobre mí")); bioField.appendChild(bioInp); form.appendChild(bioField);
+  const cityField = el("div", { class: "field" }); const cityInp = el("input", { type: "text", value: u.city || "" });
+  cityField.appendChild(el("label", {}, T("content.me.field_city") || "Ciudad")); cityField.appendChild(cityInp); form.appendChild(cityField);
+  const jobField = el("div", { class: "field" }); const jobInp = el("input", { type: "text", value: "" });
+  jobField.appendChild(el("label", {}, T("content.me.field_job") || "Profesión")); jobField.appendChild(jobInp); form.appendChild(jobField);
+  const heightField = el("div", { class: "field" }); const heightInp = el("input", { type: "number", value: u.height || "" });
+  heightField.appendChild(el("label", {}, T("content.me.field_height") || "Altura (cm)")); heightField.appendChild(heightInp); form.appendChild(heightField);
 
   // Qué estoy buscando
   const lookingRef = { id: state.myProfile.looking_for || "serious" };
@@ -10264,6 +10290,37 @@ function screenEditProfile(root) {
     el("label", {}, T("content.me.field_interests") || "Intereses (elige varios)"),
     intWrap,
   ]));
+
+  // V719 · Carga el perfil real del servidor y rellena el formulario.
+  (async () => {
+    try {
+      const r = await fetch("/api/my/profile", {
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }), cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!d || !d.ok || !d.profile) return;
+      const p = d.profile;
+      if (p.name != null) nameInp.value = p.name;
+      if (p.bio != null) bioInp.value = p.bio;
+      if (p.city != null) cityInp.value = p.city;
+      if (p.job != null) jobInp.value = p.job;
+      if (p.height != null) heightInp.value = p.height;
+      const setChip = (wrapEl, ref, id) => {
+        if (!id) return;
+        ref.id = id;
+        const opts = wrapEl === lookingWrap ? LOOKING_FOR_OPTIONS : RELATIONSHIP_TYPES;
+        const idx = opts.findIndex((o) => o.id === id);
+        wrapEl.querySelectorAll(".chip").forEach((x, i) => x.classList.toggle("active", i === idx));
+      };
+      setChip(lookingWrap, lookingRef, p.looking_for);
+      setChip(relWrap, relRef, p.relationship);
+      if (Array.isArray(p.interests)) {
+        selectedInterests.clear();
+        p.interests.forEach((i) => selectedInterests.add(i));
+        intWrap.querySelectorAll(".chip").forEach((x, i) => x.classList.toggle("active", selectedInterests.has(INTERESTS[i])));
+      }
+    } catch (ex) { /* deja los valores por defecto */ }
+  })();
 
   form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, T("content.me.save_button") || "Guardar cambios"));
   wrap.appendChild(form);
