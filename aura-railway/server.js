@@ -411,6 +411,9 @@ const PUBLIC_API = new Set([
   "POST /api/login",
   // V633 · Verificación del OTP de login (pre-sesión, sin token de admin)
   "POST /api/login/otp-verify",
+  // V714 · Login con huella / Face ID (WebAuthn) — pre-sesión, sin token
+  "POST /api/webauthn/login/options",
+  "POST /api/webauthn/login/verify",
   // Acceso superadmin con código (bypass de access_locked para pruebas privadas)
   "POST /api/access/superadmin",
   "POST /api/verify/send",
@@ -10929,6 +10932,7 @@ const phase8 = require("./features_phase8_notifications"); // V587 · notificaci
 const phaseZones = require("./features_zones"); // V613 · zonas: archivado + monitorización
 const adminExtra = require("./features_admin_extra"); // V712 · endpoints admin que faltaban
 const adminExtra2 = require("./features_admin_extra2"); // V713 · 2º lote endpoints admin (mod/tickets/pagos/stats/dispositivos)
+const webauthn = require("./features_webauthn"); // V714 · login con huella / Face ID (WebAuthn)
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage }); // V591 · +notifyNewMessage
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
@@ -10940,6 +10944,7 @@ phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notif
 phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }); // V613 · zonas
 adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 · endpoints admin faltantes
 adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V713 · 2º lote endpoints admin
+webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice }); // V714 · WebAuthn
 
 (async () => {
   try {
@@ -10968,6 +10973,7 @@ adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V713 �
       await phaseZones.migrate(pool); // V613 · zonas: archivado + monitorización
       await adminExtra.migrate(pool); // V712 · tablas config admin
       await adminExtra2.migrate(pool); // V713 · tablas mod-templates + device_incidents
+      await webauthn.migrate(pool); // V714 · tabla webauthn_credentials
     } catch (e) {
       console.error("[phases] init error:", e);
     }

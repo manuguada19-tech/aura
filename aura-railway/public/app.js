@@ -1783,6 +1783,115 @@ const Auth = {
   },
 };
 
+/* ---------- WebAuthn (huella / Face ID) ---------- V714 ----------
+   Login y registro biométrico sin dependencias. Conversión base64url <->
+   ArrayBuffer para hablar con navigator.credentials.                    */
+const WebAuthn = {
+  supported() {
+    return !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create);
+  },
+  _b64uToBuf(s) {
+    s = String(s || "").replace(/-/g, "+").replace(/_/g, "/");
+    const pad = s.length % 4; if (pad) s += "=".repeat(4 - pad);
+    const bin = atob(s); const buf = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+    return buf.buffer;
+  },
+  _bufToB64u(buf) {
+    const bytes = new Uint8Array(buf); let bin = "";
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  },
+  // Registra una credencial para el usuario actual (Ajustes → Seguridad).
+  async registerCurrent() {
+    const uid = state.user && state.user.id;
+    if (!uid) throw new Error("no_user");
+    const or = await fetch("/api/my/webauthn/register/options", {
+      method: "POST",
+      headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(uid) }),
+      body: "{}",
+    });
+    const opt = await or.json();
+    if (!or.ok || !opt.ok) throw new Error(opt.error || "options_failed");
+    const publicKey = {
+      challenge: this._b64uToBuf(opt.challenge),
+      rp: opt.rp,
+      user: {
+        id: this._b64uToBuf(opt.user.id),
+        name: opt.user.name,
+        displayName: opt.user.displayName,
+      },
+      pubKeyCredParams: opt.pubKeyCredParams,
+      authenticatorSelection: opt.authenticatorSelection,
+      timeout: opt.timeout,
+      attestation: opt.attestation,
+      excludeCredentials: (opt.excludeCredentials || []).map((c) => ({
+        type: c.type, id: this._b64uToBuf(c.id),
+      })),
+    };
+    const cred = await navigator.credentials.create({ publicKey });
+    const payload = {
+      credential: {
+        id: cred.id,
+        rawId: this._bufToB64u(cred.rawId),
+        type: cred.type,
+        response: {
+          clientDataJSON: this._bufToB64u(cred.response.clientDataJSON),
+          attestationObject: this._bufToB64u(cred.response.attestationObject),
+        },
+      },
+    };
+    const vr = await fetch("/api/my/webauthn/register/verify", {
+      method: "POST",
+      headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(uid) }),
+      body: JSON.stringify(payload),
+    });
+    const vd = await vr.json();
+    if (!vr.ok || !vd.ok) throw new Error(vd.error || "verify_failed");
+    return vd;
+  },
+  // Login biométrico a partir de un email ya introducido.
+  async login(email) {
+    const or = await fetch("/api/webauthn/login/options", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const opt = await or.json();
+    if (!or.ok || !opt.ok) throw new Error(opt.error || "options_failed");
+    const publicKey = {
+      challenge: this._b64uToBuf(opt.challenge),
+      rpId: opt.rpId,
+      timeout: opt.timeout,
+      userVerification: opt.userVerification,
+      allowCredentials: (opt.allowCredentials || []).map((c) => ({
+        type: c.type, id: this._b64uToBuf(c.id),
+      })),
+    };
+    const cred = await navigator.credentials.get({ publicKey });
+    const payload = {
+      email,
+      credential: {
+        id: cred.id,
+        rawId: this._bufToB64u(cred.rawId),
+        type: cred.type,
+        response: {
+          clientDataJSON: this._bufToB64u(cred.response.clientDataJSON),
+          authenticatorData: this._bufToB64u(cred.response.authenticatorData),
+          signature: this._bufToB64u(cred.response.signature),
+          userHandle: cred.response.userHandle ? this._bufToB64u(cred.response.userHandle) : null,
+        },
+      },
+    };
+    const vr = await fetch("/api/webauthn/login/verify", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const vd = await vr.json();
+    if (!vr.ok || !vd.ok) throw new Error(vd.error || "verify_failed");
+    return vd;
+  },
+};
+
 /* ---------- Real-chat API helper ---------- */
 const chatApi = {
   headers() {
@@ -6390,6 +6499,35 @@ function screenLogin(root) {
   ]);
   form.appendChild(rememberRow);
   form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit", style: "margin-top:8px" }, T("content.login.button")));
+  // V714 · Inicio de sesión con huella / Face ID (solo si el navegador lo soporta)
+  if (WebAuthn.supported()) {
+    const bioBtn = el("button", {
+      type: "button", class: "btn btn-block", id: "bioLogin",
+      style: "margin-top:8px;background:rgba(255,255,255,.06);border:1px solid var(--border,rgba(255,255,255,.14));display:flex;align-items:center;justify-content:center;gap:8px",
+    }, "👆 Iniciar sesión con huella / Face ID");
+    bioBtn.addEventListener("click", async () => {
+      const email = fEmail.value.trim().toLowerCase();
+      if (!email.includes("@")) return toast("Escribe tu email para usar la huella");
+      bioBtn.disabled = true;
+      try {
+        const data = await WebAuthn.login(email);
+        state.user = { id: data.user.id, name: data.user.name, email: data.user.email, photo: data.user.photo_url, role: data.user.role };
+        state.zone = data.user.zone || state.zone || "hetero";
+        Auth.capture(data);
+        try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+        toast(`Bienvenido, ${(data.user.name || "").split(" ")[0]}`);
+        setTimeout(() => showApp(), 400);
+      } catch (err) {
+        const m = String(err && err.message || "");
+        if (m === "no_credentials") toast("No tienes huella configurada. Entra con email y actívala en Seguridad.", 4200);
+        else if (m === "not_found") toast("Cuenta no encontrada. Regístrate primero.");
+        else if (err && err.name === "NotAllowedError") toast("Autenticación cancelada");
+        else toast("No se pudo iniciar sesión con huella");
+        bioBtn.disabled = false;
+      }
+    });
+    form.appendChild(bioBtn);
+  }
   form.appendChild(el("p", { class: "center small", html: `¿No tienes cuenta? <button type="button" class="link-btn" id="toReg">Regístrate</button>` }));
   form.addEventListener("click", (e) => {
     if (e.target.id === "toReg") {
@@ -10411,6 +10549,79 @@ function screenSecurity(root) {
   // TODO: reactivar 2FA por email cuando el sistema de emails transaccionales
   // esté probado en producción. De momento solo mostramos App autenticadora.
   wrap.appendChild(c2);
+
+  // V714 · Huella digital / Face ID (WebAuthn) — solo si el navegador lo soporta
+  if (WebAuthn.supported()) {
+    wrap.appendChild(el("h3", { class: "info-section" }, "Huella digital / Face ID"));
+    const cBio = el("div", { class: "info-card" });
+    const bioStatus = el("small", { style: "font-size:12px;color:var(--text-muted,#8f95a3)" }, "Comprobando…");
+    const bioRow = el("div", { class: "switch-row" }, [
+      el("div", { style: "display:flex;flex-direction:column;gap:2px;flex:1;min-width:0" }, [
+        el("span", { style: "font-size:14px;font-weight:600" }, "Iniciar sesión con biometría"),
+        bioStatus,
+      ]),
+    ]);
+    const bioList = el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:6px" });
+    const bioAdd = el("button", {
+      class: "btn btn-block", type: "button",
+      style: "margin-top:10px;background:rgba(255,255,255,.06);border:1px solid var(--border,rgba(255,255,255,.14))",
+    }, "👆 Añadir este dispositivo");
+    cBio.appendChild(bioRow);
+    cBio.appendChild(bioList);
+    cBio.appendChild(bioAdd);
+    wrap.appendChild(cBio);
+
+    async function refreshBio() {
+      try {
+        const r = await fetch("/api/my/webauthn/credentials", {
+          headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }), cache: "no-store",
+        });
+        const d = await r.json().catch(() => ({}));
+        bioList.innerHTML = "";
+        const items = (d && d.items) || [];
+        bioStatus.textContent = items.length
+          ? `Activada · ${items.length} dispositivo(s) registrado(s)`
+          : "Registra este dispositivo para entrar con tu huella o Face ID.";
+        items.forEach((it) => {
+          const row = el("div", {
+            style: "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(255,255,255,.04);border-radius:10px",
+          }, [
+            el("span", { style: "font-size:13px" }, `${it.label || "Dispositivo"} · ${new Date(it.created_at).toLocaleDateString()}`),
+          ]);
+          const del = el("button", {
+            class: "link-btn", type: "button", style: "color:#ff8ea3;font-size:13px",
+          }, "Quitar");
+          del.addEventListener("click", async () => {
+            del.disabled = true;
+            try {
+              await fetch("/api/my/webauthn/credentials/" + it.id, {
+                method: "DELETE",
+                headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }),
+              });
+              toast("Dispositivo eliminado");
+              refreshBio();
+            } catch { toast("No se pudo eliminar"); del.disabled = false; }
+          });
+          row.appendChild(del);
+          bioList.appendChild(row);
+        });
+      } catch { bioStatus.textContent = "No se pudo cargar el estado."; }
+    }
+    refreshBio();
+
+    bioAdd.addEventListener("click", async () => {
+      if (!state.user?.id) { toast("Inicia sesión primero"); return; }
+      bioAdd.disabled = true;
+      try {
+        await WebAuthn.registerCurrent();
+        toast("Huella / Face ID activada");
+        refreshBio();
+      } catch (err) {
+        if (err && err.name === "NotAllowedError") toast("Registro cancelado");
+        else toast("No se pudo registrar la biometría");
+      } finally { bioAdd.disabled = false; }
+    });
+  }
 
   // Estado inicial + conexión con endpoints.
   const statusEl = authLabel.querySelector(".sec-2fa-status");
