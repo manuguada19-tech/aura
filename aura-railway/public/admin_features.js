@@ -1548,7 +1548,11 @@
       ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
       outer.appendChild(kpiRow);
 
-      const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;";
+      // position:relative + z-index:0 + isolation:isolate → crea un contexto de
+      // apilamiento propio para que las capas internas de Leaflet (panes y
+      // controles con z-index 200–1000) NO se salgan por encima del menú
+      // lateral (z-index 60) ni de la barra superior (z-index 5) del panel.
+      const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;position:relative;z-index:0;isolation:isolate;";
       outer.appendChild(mapDiv);
 
       // Tabla top 100 con checkbox (sólo lectura, no bulk aquí)
