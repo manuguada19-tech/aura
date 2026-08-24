@@ -1103,6 +1103,16 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V718: "Mis fotos" reales. Las fotos se guardan como data URL (el front las
+  // reduce antes de subir), por lo que las columnas de URL deben poder alojar
+  // cadenas largas. MODIFY es idempotente y retrocompatible (no borra datos).
+  for (const stmt of [
+    "ALTER TABLE photos MODIFY COLUMN url LONGTEXT NOT NULL",
+    "ALTER TABLE users MODIFY COLUMN photo_url LONGTEXT NULL",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya aplicado */ }
+  }
+
   // V400: Sistema de invitaciones (tester privado / beta cerrada), stream
   // detallado de actividad de cada usuario y campos de moderación de
   // mensajes (soft-delete + auditoría).
@@ -6412,6 +6422,93 @@ app.post("/api/my/report", wrap(async (req, res) => {
     );
   }
   res.json({ ok: true, reported: true });
+}));
+
+/* ============================================================
+   V718 · Mis fotos (persistidas en servidor)
+   ------------------------------------------------------------
+   Antes la pantalla "Mis fotos" solo guardaba en memoria (fotos
+   demo). Ahora se persisten en la tabla `photos` y la foto
+   principal se refleja en users.photo_url (que es lo que ve el
+   resto de la app / el descubrimiento). El front reduce la imagen
+   antes de subirla y la manda como data URL.
+     GET    /api/my/photos            → lista (principal primero)
+     POST   /api/my/photos {data}     → añade (máx 6)
+     DELETE /api/my/photos/:id        → elimina (repromociona principal)
+     POST   /api/my/photos/:id/primary→ marca principal + photo_url
+   ============================================================ */
+const MAX_MY_PHOTOS = 6;
+function validPhotoData(s) {
+  if (typeof s !== "string") return false;
+  // Aceptamos data URLs de imagen o URLs http(s) normales (fotos ya existentes).
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(s)) return s.length <= 7 * 1024 * 1024;
+  if (/^https?:\/\//i.test(s)) return s.length <= 1000;
+  return false;
+}
+async function syncPrimaryPhoto(uid) {
+  // Deja users.photo_url = la foto principal (o la más antigua si no hay flag).
+  const [[p]] = await pool.query(
+    "SELECT url FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC LIMIT 1", [uid]
+  );
+  await pool.execute("UPDATE users SET photo_url=? WHERE id=?", [p ? p.url : null, uid]);
+  return p ? p.url : null;
+}
+
+app.get("/api/my/photos", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    "SELECT id, url, is_primary FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC", [me]
+  );
+  res.json({ ok: true, items: rows });
+}));
+
+app.post("/api/my/photos", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const data = req.body?.data;
+  if (!validPhotoData(data)) return res.status(400).json({ ok: false, error: "invalid_image" });
+  const [[{ c }]] = await pool.query("SELECT COUNT(*) c FROM photos WHERE user_id=?", [me]);
+  if (c >= MAX_MY_PHOTOS) return res.status(400).json({ ok: false, error: "max_photos", max: MAX_MY_PHOTOS });
+  const isPrimary = c === 0 ? 1 : 0; // la primera foto es la principal
+  const [ins] = await pool.execute(
+    "INSERT INTO photos (user_id, url, is_primary, approved) VALUES (?,?,?,1)", [me, data, isPrimary]
+  );
+  if (isPrimary) await syncPrimaryPhoto(me);
+  res.json({ ok: true, id: ins.insertId, is_primary: !!isPrimary });
+}));
+
+app.delete("/api/my/photos/:id", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
+  const [r] = await pool.execute("DELETE FROM photos WHERE id=? AND user_id=?", [id, me]);
+  // Si borramos y no queda ninguna marcada como principal, promocionamos la 1ª.
+  const [[p]] = await pool.query(
+    "SELECT id FROM photos WHERE user_id=? AND is_primary=1 LIMIT 1", [me]
+  );
+  if (!p) {
+    const [[first]] = await pool.query(
+      "SELECT id FROM photos WHERE user_id=? ORDER BY id ASC LIMIT 1", [me]
+    );
+    if (first) await pool.execute("UPDATE photos SET is_primary=1 WHERE id=?", [first.id]);
+  }
+  await syncPrimaryPhoto(me);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+app.post("/api/my/photos/:id/primary", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
+  const [[own]] = await pool.query("SELECT id FROM photos WHERE id=? AND user_id=? LIMIT 1", [id, me]);
+  if (!own) return res.status(404).json({ ok: false, error: "not_found" });
+  await pool.execute("UPDATE photos SET is_primary=0 WHERE user_id=?", [me]);
+  await pool.execute("UPDATE photos SET is_primary=1 WHERE id=? AND user_id=?", [id, me]);
+  const url = await syncPrimaryPhoto(me);
+  res.json({ ok: true, photo_url: url });
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */

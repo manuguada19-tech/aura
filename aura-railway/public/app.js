@@ -10272,61 +10272,123 @@ function screenEditProfile(root) {
 }
 
 /* — Mis fotos — */
+// V718 · Reduce una imagen a JPEG (máx 1000px lado mayor) para subirla ligera.
+function downscaleImageFile(file, maxSide = 1000, quality = 0.82) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read"));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("decode"));
+      img.onload = () => {
+        try {
+          let { width: w, height: h } = img;
+          if (w > maxSide || h > maxSide) {
+            if (w >= h) { h = Math.round(h * maxSide / w); w = maxSide; }
+            else { w = Math.round(w * maxSide / h); h = maxSide; }
+          }
+          const cnv = document.createElement("canvas");
+          cnv.width = w; cnv.height = h;
+          cnv.getContext("2d").drawImage(img, 0, 0, w, h);
+          resolve(cnv.toDataURL("image/jpeg", quality));
+        } catch (e) { reject(e); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function screenMyPhotos(root) {
   meSubHeader(root, T("content.me.item_photos") || "Mis fotos");
   const wrap = el("div", { class: "info-wrap" });
   wrap.appendChild(el("p", { class: "info-hero-sub" }, T("content.me.photos_hint") || "Añade hasta 6 fotos. La primera será tu foto principal."));
 
-  // Persist across renders via state
-  if (!state.myPhotos) {
-    state.myPhotos = [
-      "https://i.pravatar.cc/400?img=32",
-      "https://picsum.photos/seed/me1/400/500",
-      "https://picsum.photos/seed/me2/400/500",
-    ];
-  }
+  // V718 · Fotos reales del usuario: [{id, url, is_primary}], cargadas del server.
+  let photos = [];
+  let busy = false;
 
   const grid = el("div", { class: "photos-grid" });
   wrap.appendChild(grid);
 
+  const hint = el("p", { class: "muted", style: "font-size:13px;margin:10px 2px 0" }, "Toca una foto para hacerla principal.");
+  wrap.appendChild(hint);
+
   // Hidden file input for the add flow
   const fileInput = el("input", { type: "file", accept: "image/*", style: "display:none" });
-  fileInput.addEventListener("change", (e) => {
+  fileInput.addEventListener("change", async (e) => {
     const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    if (state.myPhotos.length >= 6) { toast(T("content.me.photos_full") || "Máximo 6 fotos"); return; }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      state.myPhotos.push(ev.target.result);
-      renderGrid();
-      toast(T("content.me.photo_added") || "Foto añadida");
-    };
-    reader.readAsDataURL(file);
     fileInput.value = "";
+    if (!file) return;
+    if (photos.length >= 6) { toast(T("content.me.photos_full") || "Máximo 6 fotos"); return; }
+    if (busy) return;
+    busy = true;
+    toast("Subiendo…");
+    try {
+      const data = await downscaleImageFile(file);
+      const r = await fetch("/api/my/photos", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+        body: JSON.stringify({ data }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) {
+        toast(d.error === "max_photos" ? (T("content.me.photos_full") || "Máximo 6 fotos") : "No se pudo subir");
+      } else {
+        toast(T("content.me.photo_added") || "Foto añadida");
+        await load();
+      }
+    } catch (ex) { toast("No se pudo procesar la imagen"); }
+    busy = false;
   });
   wrap.appendChild(fileInput);
+
+  async function del(id) {
+    if (busy) return;
+    busy = true;
+    try {
+      await fetch("/api/my/photos/" + id, {
+        method: "DELETE",
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }),
+      });
+      toast(T("content.me.photo_removed") || "Foto eliminada");
+      await load();
+    } catch (ex) { toast("Error"); }
+    busy = false;
+  }
+
+  async function makePrimary(id) {
+    if (busy) return;
+    busy = true;
+    try {
+      const r = await fetch("/api/my/photos/" + id + "/primary", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (d.ok && d.photo_url && state.user) state.user.photo = d.photo_url;
+      await load();
+    } catch (ex) { toast("Error"); }
+    busy = false;
+  }
 
   function renderGrid() {
     grid.innerHTML = "";
     for (let i = 0; i < 6; i++) {
-      const has = state.myPhotos[i];
+      const p = photos[i];
       const cell = el("div", {
-        class: "photo-cell" + (has ? " has" : ""),
-        style: has ? `background-image:url('${has}')` : "",
+        class: "photo-cell" + (p ? " has" : ""),
+        style: p ? `background-image:url('${p.url}')` : "",
       });
-      if (has) {
+      if (p) {
         cell.appendChild(el("button", {
           class: "photo-del",
           type: "button",
-          onclick: (ev) => {
-            ev.stopPropagation();
-            state.myPhotos.splice(i, 1);
-            renderGrid();
-            toast(T("content.me.photo_removed") || "Foto eliminada");
-          },
+          onclick: (ev) => { ev.stopPropagation(); del(p.id); },
           html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`
         }));
-        if (i === 0) cell.appendChild(el("span", { class: "photo-main" }, T("content.me.photo_main") || "Principal"));
+        if (p.is_primary) cell.appendChild(el("span", { class: "photo-main" }, T("content.me.photo_main") || "Principal"));
+        else cell.addEventListener("click", () => makePrimary(p.id));
       } else {
         cell.appendChild(el("span", { class: "photo-add", html: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>` }));
         cell.addEventListener("click", () => fileInput.click());
@@ -10334,7 +10396,19 @@ function screenMyPhotos(root) {
       grid.appendChild(cell);
     }
   }
+
+  async function load() {
+    try {
+      const r = await fetch("/api/my/photos", {
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }), cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      photos = (d && d.items) || [];
+    } catch (ex) { photos = []; }
+    renderGrid();
+  }
   renderGrid();
+  load();
 
   // Big add button for clarity
   wrap.appendChild(el("button", {
@@ -10342,7 +10416,7 @@ function screenMyPhotos(root) {
     type: "button",
     style: "margin-top:14px",
     onclick: () => {
-      if (state.myPhotos.length >= 6) { toast(T("content.me.photos_full") || "Máximo 6 fotos"); return; }
+      if (photos.length >= 6) { toast(T("content.me.photos_full") || "Máximo 6 fotos"); return; }
       fileInput.click();
     }
   }, T("content.me.photo_add_button") || "+ Añadir foto"));
@@ -10523,13 +10597,18 @@ function screenInvisibleMode(root) {
 function screenSecurity(root) {
   meSubHeader(root, T("content.me.item_security") || "Contraseña y 2FA");
   const wrap = el("div", { class: "info-wrap" });
-  wrap.appendChild(el("h3", { class: "info-section" }, T("content.me.sec_pass") || "Contraseña"));
-  const form = el("form", { class: "contact-form", onsubmit: (e) => { e.preventDefault(); toast(T("content.me.pass_saved") || "Contraseña actualizada"); } });
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.sec_current") || "Contraseña actual"), el("input", { type: "password" }) ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.sec_new") || "Nueva contraseña"), el("input", { type: "password" }) ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, T("content.me.sec_repeat") || "Repite la nueva contraseña"), el("input", { type: "password" }) ]));
-  form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit" }, T("content.me.sec_update") || "Actualizar contraseña"));
-  wrap.appendChild(form);
+  // V718 · Aura no usa contraseña: el acceso es por email + código de un solo
+  // uso (y, opcionalmente, 2FA o biometría). El antiguo formulario de "cambiar
+  // contraseña" no hacía nada real (solo mostraba un aviso), así que se sustituye
+  // por una tarjeta honesta que explica cómo funciona el acceso y refuerza
+  // la seguridad con las opciones reales de abajo.
+  wrap.appendChild(el("h3", { class: "info-section" }, "Acceso a tu cuenta"));
+  const accCard = el("div", { class: "info-card" });
+  accCard.appendChild(el("p", { style: "margin:0 0 6px;font-size:14px;color:var(--text,#ecedf3)" },
+    "En Aura no necesitas contraseña."));
+  accCard.appendChild(el("p", { class: "muted", style: "margin:0;font-size:13px;line-height:1.5" },
+    "Entras con tu email y un código de un solo uso que te enviamos. Para más seguridad, activa la verificación en 2 pasos o el acceso con huella / Face ID desde las opciones de abajo."));
+  wrap.appendChild(accCard);
 
   wrap.appendChild(el("h3", { class: "info-section" }, T("content.me.sec_2fa") || "Verificación en 2 pasos"));
   const c2 = el("div", { class: "info-card" });
@@ -12935,50 +13014,61 @@ function screenNotificationSettings(root) {
   const loading = el("p", { class: "muted" }, "Cargando…");
   wrap.appendChild(loading);
 
-  const TYPES = [
-    ["matches","💘 Nuevos matches"],
-    ["likes","❤️ Nuevos likes"],
-    ["chats","💬 Mensajes de chat"],
-    ["visits","👀 Visitas a tu perfil"],
-    ["nearby","📍 Alguien cerca de ti"],
-    ["promos","🎁 Ofertas y promociones"],
-    ["news","📰 Novedades de la app"],
-    ["security","🔒 Seguridad de la cuenta"],
+  // V718 · Estas claves son EXACTAMENTE las que lee/gestiona el backend
+  // (features_phase8_notifications.js · PREF_KEYS). Antes la pantalla usaba un
+  // formato channel/types/quiet con PUT que el servidor ignoraba, así que los
+  // ajustes no tenían efecto. Ahora cada interruptor guarda su clave real por POST.
+  const INAPP_TYPES = [
+    ["matches_inapp", "💘 Nuevos matches"],
+    ["likes_inapp", "❤️ Me gusta recibidos"],
+    ["rewards_inapp", "🎁 Recompensas y canjes"],
+  ];
+  const PUSH_TYPES = [
+    ["matches_push", "💘 Nuevos matches"],
+    ["likes_push", "❤️ Me gusta recibidos"],
+    ["chat_push", "💬 Mensajes de chat"],
+    ["rewards_push", "🎁 Recompensas y canjes"],
+    ["admin_push", "📣 Mensajes del equipo"],
   ];
 
   (async () => {
     try {
       const prefs = await fetch("/api/my/notification-prefs", { headers: authHeaders() }).then(r => r.json());
-      const cur = prefs.prefs || {};
+      const cur = (prefs && prefs.prefs) || {};
       loading.remove();
 
       const CARD_STYLE = "background:var(--panel,#14171f);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:14px;padding:14px;margin:12px 0";
       const H4_STYLE = "margin:0 0 8px;color:var(--text,#ecedf3);font-size:15px;font-weight:700";
-      const chanBox = el("div", { style: CARD_STYLE });
-      chanBox.appendChild(el("h4", { style: H4_STYLE }, "¿Dónde quieres recibir avisos?"));
-      const channels = [
-        ["push","🔔 Solo push"],
-        ["email","✉️ Solo email"],
-        ["both","🔔 + ✉️ Ambos"],
-        ["none","🔕 Ninguno"],
-      ];
-      const chanSel = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px" });
-      channels.forEach(([v,l]) => {
-        const b = el("button", { type: "button", class: "btn " + ((cur.channel || "both") === v ? "btn-brand" : "btn-ghost") }, l);
-        b.addEventListener("click", async () => {
-          try {
-            await fetch("/api/my/notification-prefs", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
-              body: JSON.stringify({ channel: v }),
-            });
-            render(screenNotificationSettings);
-          } catch(e){ toast("Error"); }
+
+      // Guarda una única clave real de preferencia (merge en el backend).
+      async function savePref(key, value) {
+        try {
+          const r = await fetch("/api/my/notification-prefs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ [key]: value }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!d.ok) toast("Error");
+        } catch (e) { toast("Error"); }
+      }
+
+      // Construye una tarjeta con interruptores por tipo.
+      function typesCard(title, subtitle, list) {
+        const box = el("div", { style: CARD_STYLE });
+        box.appendChild(el("h4", { style: H4_STYLE }, title));
+        if (subtitle) box.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, subtitle));
+        list.forEach(([k, label], idx) => {
+          const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;cursor:pointer;color:var(--text,#ecedf3)" + (idx < list.length - 1 ? ";border-bottom:1px solid var(--border,#262a36)" : "") });
+          row.appendChild(el("span", { style: "color:var(--text,#ecedf3);font-size:14px" }, label));
+          const cb = el("input", { type: "checkbox" });
+          cb.checked = cur[k] !== false; // por defecto activado
+          cb.addEventListener("change", () => savePref(k, cb.checked));
+          row.appendChild(cb);
+          box.appendChild(row);
         });
-        chanSel.appendChild(b);
-      });
-      chanBox.appendChild(chanSel);
-      wrap.appendChild(chanBox);
+        return box;
+      }
 
       const pushBox = el("div", { style: CARD_STYLE });
       pushBox.appendChild(el("h4", { style: H4_STYLE }, "Push en este dispositivo"));
@@ -13043,52 +13133,19 @@ function screenNotificationSettings(root) {
       refreshPushState();
       wrap.appendChild(pushBox);
 
-      const typesBox = el("div", { style: CARD_STYLE });
-      typesBox.appendChild(el("h4", { style: H4_STYLE }, "¿Qué avisos quieres recibir?"));
-      const types = cur.types || {};
-      TYPES.forEach(([k, label]) => {
-        const row = el("label", { style: "display:flex;align-items:center;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--border,#262a36);cursor:pointer;color:var(--text,#ecedf3)" });
-        row.appendChild(el("span", { style: "color:var(--text,#ecedf3);font-size:14px" }, label));
-        const cb = el("input", { type: "checkbox" });
-        cb.checked = types[k] !== false;
-        cb.addEventListener("change", async () => {
-          try {
-            await fetch("/api/my/notification-prefs", {
-              method: "PUT",
-              headers: { "Content-Type": "application/json", ...authHeaders() },
-              body: JSON.stringify({ type: k, enabled: cb.checked }),
-            });
-          } catch(e) { toast("Error"); }
-        });
-        row.appendChild(cb);
-        typesBox.appendChild(row);
-      });
-      wrap.appendChild(typesBox);
+      // En la campana de la app (in-app).
+      wrap.appendChild(typesCard(
+        "🔔 En la app",
+        "Avisos que verás en la campana dentro de la app.",
+        INAPP_TYPES
+      ));
 
-      const quietBox = el("div", { style: CARD_STYLE });
-      quietBox.appendChild(el("h4", { style: H4_STYLE }, "🌙 No molestar"));
-      quietBox.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 8px" }, "Silencia todos los avisos entre estas horas."));
-      const from = el("input", { type: "time", value: cur.quiet_from || "" });
-      const to = el("input", { type: "time", value: cur.quiet_to || "" });
-      const rowQ = el("div", { style: "display:flex;gap:8px;align-items:center;flex-wrap:wrap" });
-      rowQ.appendChild(el("span", {}, "De"));
-      rowQ.appendChild(from);
-      rowQ.appendChild(el("span", {}, "a"));
-      rowQ.appendChild(to);
-      const saveQ = el("button", { class: "btn btn-brand", type: "button" }, "Guardar");
-      saveQ.addEventListener("click", async () => {
-        try {
-          await fetch("/api/my/notification-prefs", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json", ...authHeaders() },
-            body: JSON.stringify({ quiet_from: from.value || null, quiet_to: to.value || null }),
-          });
-          toast("Guardado");
-        } catch(e) { toast("Error"); }
-      });
-      rowQ.appendChild(saveQ);
-      quietBox.appendChild(rowQ);
-      wrap.appendChild(quietBox);
+      // Fuera de la app (push web). Requiere haber activado el push arriba.
+      wrap.appendChild(typesCard(
+        "📲 Fuera de la app (push)",
+        "Avisos que recibirás aunque tengas la app cerrada.",
+        PUSH_TYPES
+      ));
 
     } catch (e) {
       loading.remove();
