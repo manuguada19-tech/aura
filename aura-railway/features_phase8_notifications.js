@@ -59,11 +59,18 @@ async function migrate(pool) {
   try {
     await pool.query("ALTER TABLE notification_prefs ADD COLUMN likes_inapp TINYINT(1) NOT NULL DEFAULT 1");
   } catch (e) { /* la columna ya existe */ }
+
+  // V717 · Nueva preferencia: push de "like recibido" (fuera de la app).
+  // Additiva y retrocompatible: por defecto activada.
+  try {
+    await pool.query("ALTER TABLE notification_prefs ADD COLUMN likes_push TINYINT(1) NOT NULL DEFAULT 1");
+  } catch (e) { /* la columna ya existe */ }
 }
 
 // V592 · Claves válidas de preferencias (y sus defaults)
 // V631 · likes_inapp añadida (avisos de like recibido en la campana).
-const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push", "likes_inapp"];
+// V717 · likes_push añadida (push de like recibido fuera de la app).
+const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push", "likes_inapp", "likes_push"];
 function prefDefaults() {
   const o = {};
   for (const k of PREF_KEYS) o[k] = true;

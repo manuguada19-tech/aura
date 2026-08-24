@@ -6166,22 +6166,28 @@ app.post("/api/my/like", wrap(async (req, res) => {
     if (isNewLike) {
       (async () => {
         try {
+          const [[meRow]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
+          const meName = meRow?.name || "Alguien";
+          const isSuper = type === "super";
+          const title = isSuper ? "⭐ ¡Super like recibido!" : "❤️ ¡Nuevo like!";
+          const body = isSuper
+            ? `A ${meName} le encantas. Míralo en «Quién me ha dado like».`
+            : `A ${meName} le gustas. Míralo en «Quién me ha dado like».`;
+          // Aviso in-app (campana), respeta la preferencia likes_inapp.
           if (await notifPrefAllows(target, "likes_inapp")) {
-            const [[meRow]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]);
-            const meName = meRow?.name || "Alguien";
-            const isSuper = type === "super";
             await pool.query(
               `INSERT INTO notifications (user_id, type, title, body, icon, data)
                VALUES (?, 'like_received', ?, ?, ?, ?)`,
-              [target,
-               isSuper ? "⭐ ¡Super like recibido!" : "❤️ ¡Nuevo like!",
-               isSuper
-                 ? `A ${meName} le encantas. Míralo en «Quién me ha dado like».`
-                 : `A ${meName} le gustas. Míralo en «Quién me ha dado like».`,
-               isSuper ? "⭐" : "❤️",
+              [target, title, body, isSuper ? "⭐" : "❤️",
                JSON.stringify({ peer_id: me, like_type: type })]
             );
           }
+          // V717 · Push fuera de la app (best-effort), respeta likes_push.
+          // pushToUser ya comprueba la preferencia y omite si el destinatario
+          // no tiene dispositivos suscritos, igual que en matches/chat.
+          await pushToUser(target, {
+            title, body, url: "/", tag: `like-${me}`,
+          }, "likes_push");
         } catch (e) { /* best-effort */ }
       })().catch(() => {});
     }
