@@ -10525,6 +10525,7 @@ app.get("/api/public-config", (req, res) => {
       registrations_open: isTrue("app.registrations_open", true),
       email_verification_required: isTrue("app.email_verification_required", true),
       two_fa_available: isTrue("app.2fa_available", false),
+      webauthn_available: isTrue("security.webauthn_enabled", true),
       maintenance: isTrue("app.maintenance", false),
       access_locked: isTrue("app.access_locked", false),
       private_beta: isTrue("app.access_locked", false),
@@ -10944,7 +10945,7 @@ phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notif
 phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }); // V613 · zonas
 adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 · endpoints admin faltantes
 adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V713 · 2º lote endpoints admin
-webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice }); // V714 · WebAuthn
+webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice, isTrue, logActivity }); // V714 · WebAuthn
 
 (async () => {
   try {

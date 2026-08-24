@@ -6499,8 +6499,9 @@ function screenLogin(root) {
   ]);
   form.appendChild(rememberRow);
   form.appendChild(el("button", { class: "btn btn-brand btn-block", type: "submit", style: "margin-top:8px" }, T("content.login.button")));
-  // V714 · Inicio de sesión con huella / Face ID (solo si el navegador lo soporta)
-  if (WebAuthn.supported()) {
+  // V714 · Inicio de sesión con huella / Face ID (si el navegador lo soporta y
+  // el admin no ha desactivado la función globalmente).
+  if (WebAuthn.supported() && publicConfig?.app?.webauthn_available !== false) {
     const bioBtn = el("button", {
       type: "button", class: "btn btn-block", id: "bioLogin",
       style: "margin-top:8px;background:rgba(255,255,255,.06);border:1px solid var(--border,rgba(255,255,255,.14));display:flex;align-items:center;justify-content:center;gap:8px",
@@ -10550,8 +10551,9 @@ function screenSecurity(root) {
   // esté probado en producción. De momento solo mostramos App autenticadora.
   wrap.appendChild(c2);
 
-  // V714 · Huella digital / Face ID (WebAuthn) — solo si el navegador lo soporta
-  if (WebAuthn.supported()) {
+  // V714 · Huella digital / Face ID (WebAuthn) — si el navegador lo soporta y
+  // el admin no ha desactivado la función globalmente.
+  if (WebAuthn.supported() && publicConfig?.app?.webauthn_available !== false) {
     wrap.appendChild(el("h3", { class: "info-section" }, "Huella digital / Face ID"));
     const cBio = el("div", { class: "info-card" });
     const bioStatus = el("small", { style: "font-size:12px;color:var(--text-muted,#8f95a3)" }, "Comprobando…");

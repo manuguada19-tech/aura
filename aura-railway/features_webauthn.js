@@ -161,13 +161,21 @@ async function migrate(pool) {
     UNIQUE KEY uniq_cred (credential_id),
     INDEX idx_user (user_id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  // Semilla del interruptor global (ON por defecto). INSERT IGNORE respeta el
+  // valor que el admin haya podido fijar antes → no pisa configuración.
+  try {
+    await pool.query("INSERT IGNORE INTO settings (k, v) VALUES ('security.webauthn_enabled', 'true')");
+  } catch { /* la tabla settings ya existe; si falla, isTrue usa el default true */ }
 }
 
 function register(app, pool, helpers) {
   const { wrap, readMyUserId } = helpers;
+  // Interruptor global controlable desde Admin → Configuración → Seguridad.
+  const featureOn = () => (typeof helpers.isTrue === "function" ? helpers.isTrue("security.webauthn_enabled", true) : true);
 
   // === REGISTRO (usuario autenticado) ==============================
   app.post("/api/my/webauthn/register/options", wrap(async (req, res) => {
+    if (!featureOn()) return res.status(403).json({ error: "feature_disabled" });
     const uid = readMyUserId(req);
     if (!uid) return res.status(401).json({ error: "no_user" });
     const [uRows] = await pool.query("SELECT id, email, name FROM users WHERE id=? LIMIT 1", [uid]);
@@ -253,6 +261,7 @@ function register(app, pool, helpers) {
 
   // === LOGIN (público) =============================================
   app.post("/api/webauthn/login/options", wrap(async (req, res) => {
+    if (!featureOn()) return res.status(403).json({ error: "feature_disabled" });
     const email = String(req.body?.email || "").trim().toLowerCase();
     if (!email.includes("@")) return res.status(400).json({ error: "email_required" });
     const [uRows] = await pool.query("SELECT id FROM users WHERE email=? LIMIT 1", [email]);
@@ -272,6 +281,7 @@ function register(app, pool, helpers) {
   }));
 
   app.post("/api/webauthn/login/verify", wrap(async (req, res) => {
+    if (!featureOn()) return res.status(403).json({ error: "feature_disabled" });
     const email = String(req.body?.email || "").trim().toLowerCase();
     const cr = req.body?.credential || {};
     if (!email.includes("@")) return res.status(400).json({ error: "email_required" });
@@ -311,6 +321,53 @@ function register(app, pool, helpers) {
     if (typeof helpers.touchUserDevice === "function") { try { await helpers.touchUserDevice(req, u.id); } catch {} }
     if (typeof helpers.signUserToken !== "function") return res.status(500).json({ error: "no_token_signer" });
     res.json({ ok: true, user: u, auth_token: helpers.signUserToken(u.id) });
+  }));
+
+  // === ADMIN (protegido por requireAdmin en el gate global de /api/admin/*) ===
+  // Resumen para el panel: nº de credenciales, usuarios con biometría, estado.
+  app.get("/api/admin/webauthn/stats", wrap(async (req, res) => {
+    const [[{ credentials }]] = await pool.query("SELECT COUNT(*) credentials FROM webauthn_credentials");
+    const [[{ users }]] = await pool.query("SELECT COUNT(DISTINCT user_id) users FROM webauthn_credentials");
+    res.json({ ok: true, enabled: featureOn(), credentials, users });
+  }));
+
+  // Lista de usuarios con biometría configurada (para revisar/revocar).
+  app.get("/api/admin/webauthn/users", wrap(async (req, res) => {
+    const [rows] = await pool.query(
+      `SELECT c.user_id, u.email, u.name, COUNT(*) devices,
+              MAX(c.created_at) AS last_registered, MAX(c.last_used_at) AS last_used
+         FROM webauthn_credentials c
+         LEFT JOIN users u ON u.id = c.user_id
+        GROUP BY c.user_id, u.email, u.name
+        ORDER BY devices DESC, last_registered DESC
+        LIMIT 500`
+    );
+    res.json({ ok: true, items: rows });
+  }));
+
+  // Dispositivos concretos de un usuario.
+  app.get("/api/admin/webauthn/users/:id", wrap(async (req, res) => {
+    const uid = parseInt(req.params.id, 10) || 0;
+    const [items] = await pool.query(
+      "SELECT id, label, kty, created_at, last_used_at FROM webauthn_credentials WHERE user_id=? ORDER BY id DESC", [uid]);
+    res.json({ ok: true, items });
+  }));
+
+  // Revocar TODAS las credenciales biométricas de un usuario (reset).
+  app.delete("/api/admin/webauthn/users/:id", wrap(async (req, res) => {
+    const uid = parseInt(req.params.id, 10) || 0;
+    const [r] = await pool.execute("DELETE FROM webauthn_credentials WHERE user_id=?", [uid]);
+    if (typeof helpers.logActivity === "function") {
+      try { await helpers.logActivity("admin", `Biometría revocada para user #${uid} (${r.affectedRows || 0} dispositivos)`); } catch {}
+    }
+    res.json({ ok: true, removed: r.affectedRows || 0 });
+  }));
+
+  // Revocar una credencial concreta.
+  app.delete("/api/admin/webauthn/credentials/:id", wrap(async (req, res) => {
+    const cid = parseInt(req.params.id, 10) || 0;
+    await pool.execute("DELETE FROM webauthn_credentials WHERE id=?", [cid]);
+    res.json({ ok: true });
   }));
 }
 

@@ -7490,6 +7490,51 @@ async function viewSettings(root){
     ]);
   }
 
+  // V715 · Gestión de credenciales biométricas (huella / Face ID). Muestra un
+  // resumen y permite revocar la biometría de un usuario concreto por email.
+  function webauthnManageBlock() {
+    const box = el("div", { style: "margin-top:8px;padding:12px;border:1px solid var(--border);border-radius:10px" });
+    const status = el("small", { class: "muted" }, "Cargando estado de biometría…");
+    const list = el("div", { style: "margin-top:8px;display:flex;flex-direction:column;gap:6px" });
+    const refreshBtn = el("button", { type: "button", class: "btn ghost sm" }, "🔄 Actualizar");
+    box.appendChild(el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:8px" }, [
+      el("strong", {}, "Biometría de usuarios"), refreshBtn,
+    ]));
+    box.appendChild(status);
+    box.appendChild(list);
+
+    async function load() {
+      try {
+        const st = await api.get("/api/admin/webauthn/stats");
+        status.textContent = st.enabled
+          ? `Activada · ${st.users || 0} usuario(s) · ${st.credentials || 0} dispositivo(s) registrados`
+          : `⚠ Desactivada globalmente · ${st.users || 0} usuario(s) con credenciales guardadas`;
+        const data = await api.get("/api/admin/webauthn/users");
+        list.innerHTML = "";
+        const items = (data && data.items) || [];
+        if (!items.length) { list.appendChild(el("small", { class: "muted" }, "Ningún usuario tiene biometría configurada todavía.")); return; }
+        items.forEach((it) => {
+          const row = el("div", { style: "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:rgba(255,255,255,.04);border-radius:8px" }, [
+            el("span", { style: "font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis" },
+              `${it.name || "—"} · ${it.email || ("user #" + it.user_id)} · ${it.devices} disp.`),
+          ]);
+          const revoke = el("button", { type: "button", class: "btn ghost sm", style: "color:#ff8ea3" }, "Revocar");
+          revoke.addEventListener("click", async () => {
+            if (!confirm(`¿Revocar la biometría de ${it.email || ("user #" + it.user_id)}? Deberá volver a registrarla.`)) return;
+            revoke.disabled = true;
+            try { const r = await api.del("/api/admin/webauthn/users/" + it.user_id); toast(`Revocados ${r.removed || 0} dispositivos`); load(); }
+            catch (e) { toast(e.message || "Error al revocar"); revoke.disabled = false; }
+          });
+          row.appendChild(revoke);
+          list.appendChild(row);
+        });
+      } catch (e) { status.textContent = "No se pudo cargar el estado de biometría."; }
+    }
+    refreshBtn.addEventListener("click", load);
+    load();
+    return box;
+  }
+
   // V594 · Campo del código de acceso superadmin (antes solo editable en BD).
   // Se muestra oculto tipo contraseña, con 👁 para verlo y 🎲 para regenerar
   // un código nuevo (formato AURA-XXXXXXXX). Se guarda con el submit normal.
@@ -7691,6 +7736,11 @@ async function viewSettings(root){
     toggleField("security.log_ips", "Registrar IPs"),
     toggleField("security.suspicious_detection", "Detección de actividad sospechosa"),
     toggleField("security.daily_backups", "Backups diarios automáticos"),
+    // V715 · Login con huella / Face ID (WebAuthn). Por defecto activo.
+    (s["security.webauthn_enabled"] === undefined
+      ? (() => { const f = toggleField("security.webauthn_enabled", "Login con huella / Face ID (WebAuthn)"); f.querySelector("input").checked = true; return f; })()
+      : toggleField("security.webauthn_enabled", "Login con huella / Face ID (WebAuthn)")),
+    webauthnManageBlock(),
   ]));
 
   // V640 · Selector de proveedor de cobro. Antes "payments.provider" solo se
