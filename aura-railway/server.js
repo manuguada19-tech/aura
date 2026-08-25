@@ -6031,6 +6031,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
+            u.job, u.looking_for, u.relationship, u.interests,
             ${distExpr} AS distance
        FROM users u`;
   if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
@@ -6052,7 +6053,11 @@ app.get("/api/discover", wrap(async (req, res) => {
 
   const [rows] = await pool.query(sql, finalParams);
   // Normaliza distance a número (o null) por si el driver la devuelve como string.
-  for (const r of rows) r.distance = (r.distance == null ? null : Number(r.distance));
+  // V719 · interests se guarda como JSON string → devolver array para la UI.
+  for (const r of rows) {
+    r.distance = (r.distance == null ? null : Number(r.distance));
+    try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+  }
   res.json(rows);
 }));
 
@@ -6112,6 +6117,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
+            u.job, u.looking_for, u.relationship, u.interests,
             ${distExpr} AS distance
        FROM users u`;
   if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
@@ -6135,7 +6141,10 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   finalParams.push(limit);
 
   const [rows] = await pool.query(sql, finalParams);
-  for (const r of rows) r.distance = (r.distance == null ? null : Number(r.distance));
+  for (const r of rows) {
+    r.distance = (r.distance == null ? null : Number(r.distance));
+    try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+  }
   res.json(rows);
 }));
 

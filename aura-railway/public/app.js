@@ -2050,6 +2050,10 @@ function mapApiUser(row) {
     job: row.job || "",
     bio: row.bio || "",
     interests: Array.isArray(row.interests) ? row.interests : [],
+    // V719 · Se preservan para que funcionen los filtros de "qué busca" /
+    // "tipo de relación" y para mostrarlos en la tarjeta y el detalle.
+    looking_for: row.looking_for || "",
+    relationship: row.relationship || "",
     verified: !!row.verified,
     online: !!row.online,
     height: row.height || null,
