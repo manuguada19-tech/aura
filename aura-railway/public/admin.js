@@ -12655,6 +12655,7 @@ async function viewKyc(root) {
   // ── Filtros ──
   const statusSel = el("select", { class: "input" }, [
     el("option", { value: "manual_review", selected: true }, "Pendientes de revisión"),
+    el("option", { value: "in_progress" }, "En proceso (sin terminar)"),
     el("option", { value: "verified" }, "Verificadas"),
     el("option", { value: "rejected" }, "Rechazadas"),
     el("option", { value: "suspended" }, "Suspendidas"),
@@ -12741,6 +12742,7 @@ async function viewKyc(root) {
   const tabsRow = el("div", { class: "kyc-tabs" });
   const TAB_DEFS = [
     { v: "manual_review", label: "Pendientes",  icon: "⏳" },
+    { v: "in_progress",   label: "En proceso",  icon: "🔄" },
     { v: "verified",      label: "Verificados", icon: "✅" },
     { v: "rejected",      label: "Rechazados",  icon: "⛔" },
     { v: "suspended",     label: "Suspendidos", icon: "🔒" },
@@ -12829,19 +12831,27 @@ async function viewKyc(root) {
       const data = await r.json();
       summaryRow.innerHTML = "";
       const s = data.summary || {};
+      // V721 · "all" ahora viene del backend (total real de la tabla) e incluye
+      // las verificaciones en proceso; antes se calculaba sumando solo los 4
+      // estados finales, dejando fuera las pending/doc_ok/selfie_ok/video_ok.
+      const totalAll = (s.all != null)
+        ? s.all
+        : (s.manual||0)+(s.verified||0)+(s.rejected||0)+(s.suspended||0)+(s.in_progress||0);
       summaryRow.appendChild(kpi("Pendientes",  s.manual   || 0, "warn",  "⏳", "manual_review"));
+      summaryRow.appendChild(kpi("En proceso",  s.in_progress || 0, "info", "🔄", "in_progress"));
       summaryRow.appendChild(kpi("Verificados", s.verified || 0, "ok",    "✅", "verified"));
       summaryRow.appendChild(kpi("Rechazados",  s.rejected || 0, "no",    "⛔", "rejected"));
       summaryRow.appendChild(kpi("Suspendidos", s.suspended|| 0, "purple","🔒", "suspended"));
-      summaryRow.appendChild(kpi("Todos",       (s.manual||0)+(s.verified||0)+(s.rejected||0)+(s.suspended||0), "neutral", "📋", "all"));
+      summaryRow.appendChild(kpi("Todos",       totalAll, "neutral", "📋", "all"));
 
       // Actualiza contadores de las tabs.
       const tabCounts = {
         manual_review: s.manual || 0,
+        in_progress:   s.in_progress || 0,
         verified:      s.verified || 0,
         rejected:      s.rejected || 0,
         suspended:     s.suspended || 0,
-        all:           (s.manual||0)+(s.verified||0)+(s.rejected||0)+(s.suspended||0),
+        all:           totalAll,
       };
       tabsRow.querySelectorAll(".kyc-tab-count").forEach(sp => {
         sp.textContent = String(tabCounts[sp.getAttribute("data-tab-count")] ?? "·");
@@ -12914,7 +12924,11 @@ async function viewKyc(root) {
             } }, "🔄 Sincronizar");
             actions.appendChild(bSync);
           }
-          if (row.status === "manual_review") {
+          // V721 · Aprobar/Rechazar disponible también para verificaciones en
+          // proceso (pending/doc_ok/selfie_ok/video_ok), no solo manual_review,
+          // para que el equipo pueda resolver a mano las que no llegan a estado final.
+          const IN_PROGRESS = ["pending", "doc_ok", "selfie_ok", "video_ok"];
+          if (row.status === "manual_review" || IN_PROGRESS.includes(row.status)) {
             const bOk = el("button", { class: "btn small primary", style: "margin-left:6px;",
               onclick: async () => {
                 try { await apiApprove(row.id); toast("Aprobado"); load(); }

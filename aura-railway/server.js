@@ -3079,7 +3079,12 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   const limit = Math.min(500, parseInt(req.query.limit || 100, 10) || 100);
   const clauses = [];
   const args = [];
-  if (status && status !== "all") { clauses.push("status = ?"); args.push(status); }
+  // V721 · "in_progress" agrupa las verificaciones aún no finalizadas
+  // (pending/doc_ok/selfie_ok/video_ok). Antes quedaban invisibles en el admin
+  // porque solo existían pestañas para manual_review/verified/rejected/suspended.
+  if (status === "in_progress") {
+    clauses.push("status IN ('pending','doc_ok','selfie_ok','video_ok')");
+  } else if (status && status !== "all") { clauses.push("status = ?"); args.push(status); }
   if (q) { clauses.push("(email LIKE ? OR ip LIKE ? OR fingerprint LIKE ?)");
            args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
   if (provider === "didit") { clauses.push("provider = 'didit'"); }
@@ -3117,9 +3122,17 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   const [[{ n: totalSuspended }]] = await pool.query(
     "SELECT COUNT(*) n FROM identity_verifications WHERE status='suspended'"
   );
+  // V721 · verificaciones en proceso (no finalizadas) + total real de la tabla.
+  const [[{ n: totalInProgress }]] = await pool.query(
+    "SELECT COUNT(*) n FROM identity_verifications WHERE status IN ('pending','doc_ok','selfie_ok','video_ok')"
+  );
+  const [[{ n: totalAll }]] = await pool.query(
+    "SELECT COUNT(*) n FROM identity_verifications"
+  );
   res.json({ ok: true, rows, summary: {
     manual: totalManual, rejected: totalRejected,
     verified: totalVerified, suspended: totalSuspended,
+    in_progress: totalInProgress, all: totalAll,
   } });
 }));
 
