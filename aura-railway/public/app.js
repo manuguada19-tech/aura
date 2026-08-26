@@ -10507,58 +10507,60 @@ function screenVerifyAccount(root) {
   ])));
   wrap.appendChild(stepsWrap);
 
-  // Preview of the uploaded selfie
-  const previewWrap = el("div", { class: "verify-preview" });
-  const previewImg = el("div", { class: "verify-preview-img" });
-  const previewLabel = el("div", { class: "verify-preview-label" }, T("content.me.verify_preview_empty") || "Aún no has subido ningún selfie");
-  previewWrap.appendChild(previewImg);
-  previewWrap.appendChild(previewLabel);
-  wrap.appendChild(previewWrap);
-
-  // Hidden file input (camera on mobile)
-  const fileInput = el("input", { type: "file", accept: "image/*", capture: "user", style: "display:none" });
+  // V720 · Lanza la verificación REAL (antes era una simulación con setTimeout
+  // que no enviaba nada). Reutiliza el flujo KYC ya existente: /api/verify/id/start
+  // → si el proveedor es Didit redirige a su pasarela; si no, cae al flujo local
+  // por pasos (documento → selfie → vídeo). Usa el email de la sesión.
   const startBtn = el("button", {
     class: "btn btn-brand btn-block",
     type: "button",
-    onclick: () => fileInput.click(),
   }, T("content.me.verify_button") || "Verificar ahora");
 
-  const secondaryBtn = el("button", {
-    class: "btn btn-outline btn-block",
-    type: "button",
-    style: "margin-top:8px",
-    onclick: () => fileInput.click(),
-  }, T("content.me.verify_choose") || "Elegir desde la galería");
+  startBtn.addEventListener("click", async () => {
+    startBtn.disabled = true;
+    startBtn.textContent = T("content.me.verify_progress") || "Iniciando verificación…";
+    const email = (state.user && state.user.email) || "";
+    // El flujo local (screenVerifyDoc/Selfie/Video) lee state.registration.email
+    // para los mensajes de bloqueo; lo garantizamos sin pisar un registro en curso.
+    state.registration = state.registration || {};
+    if (!state.registration.email && email) state.registration.email = email;
+    try {
+      const { r, data } = await kycFetch("/api/verify/id/start", { email });
+      if (r.status === 403 && data.error === "device_blocked") {
+        showBlockedAccount("Este dispositivo no puede verificarse", {
+          kind: "banned", reason: data.reason || "kyc_blocked", email,
+        });
+        return;
+      }
+      if (!r.ok) throw new Error(data.error || "start_error");
+      state.kyc = state.kyc || {};
+      state.kyc.sessionToken = data.session_token;
+      state.kyc.provider = data.provider || "local";
 
-  fileInput.addEventListener("change", (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      previewImg.style.backgroundImage = `url('${ev.target.result}')`;
-      previewImg.classList.add("has");
-      previewLabel.textContent = T("content.me.verify_preview_ready") || "Selfie listo · revisando…";
-      startBtn.disabled = true;
-      startBtn.textContent = T("content.me.verify_progress") || "Enviando para revisión…";
-      startBtn.style.opacity = "0.7";
-      setTimeout(() => {
-        startBtn.disabled = false;
-        startBtn.style.opacity = "1";
-        startBtn.textContent = T("content.me.verify_button") || "Verificar ahora";
-        previewLabel.textContent = T("content.me.verify_sent") || "¡Recibido! Te avisaremos en menos de 24 h.";
-        toast(T("content.me.verify_started") || "Verificación iniciada");
-      }, 1600);
-    };
-    reader.readAsDataURL(file);
-    fileInput.value = "";
+      // Proveedor externo (Didit): guardar token y redirigir a su pasarela.
+      if (data.provider === "didit" && data.redirect_url) {
+        try {
+          localStorage.setItem("aura.kyc.token", data.session_token);
+          localStorage.setItem("aura.kyc.regemail", email || "");
+        } catch {}
+        render(screenVerifyDiditRedirecting);
+        setTimeout(() => { window.location.href = data.redirect_url; }, 400);
+        return;
+      }
+
+      // Fallback local (motor por pasos).
+      render(screenVerifyDoc);
+    } catch (e) {
+      toast("No se pudo iniciar la verificación");
+      startBtn.disabled = false;
+      startBtn.textContent = T("content.me.verify_button") || "Verificar ahora";
+    }
   });
 
   wrap.appendChild(el("div", { class: "info-cta" }, [
     el("div", { class: "info-cta-h" }, T("content.me.verify_cta_h") || "Empieza la verificación"),
     el("div", { class: "info-cta-p" }, T("content.me.verify_cta_p") || "Solo te llevará un minuto."),
     startBtn,
-    secondaryBtn,
-    fileInput,
   ]));
 
   root.appendChild(wrap);
