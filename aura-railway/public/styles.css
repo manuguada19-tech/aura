@@ -3759,6 +3759,22 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
   padding: 3px 8px;
   border-radius: 999px;
 }
+/* V723 · Botón explícito "Hacer principal" en fotos no principales. */
+.photo-set-main {
+  position: absolute;
+  bottom: 6px; left: 6px;
+  background: rgba(0,0,0,0.62);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 0;
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+  transition: background 0.15s ease;
+}
+.photo-set-main:hover { background: linear-gradient(135deg, #ff3b6b, #ff8a3b); }
 
 .reason-item.current {
   color: #ff3b6b;

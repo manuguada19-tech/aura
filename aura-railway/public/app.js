@@ -278,6 +278,7 @@ const contentFallback = {
   /* Photos */
   "content.me.photos_hint": "Añade hasta 6 fotos. La primera será tu foto principal.",
   "content.me.photo_main": "Principal",
+  "content.me.photo_make_main": "★ Principal",
   "content.me.photo_main_set": "Foto principal actualizada",
   "content.me.photo_removed": "Foto eliminada",
   "content.me.photo_add_toast": "Selecciona una foto (demo)",
@@ -10377,7 +10378,7 @@ function screenMyPhotos(root) {
   const grid = el("div", { class: "photos-grid" });
   wrap.appendChild(grid);
 
-  const hint = el("p", { class: "muted", style: "font-size:13px;margin:10px 2px 0" }, "Toca una foto para hacerla principal.");
+  const hint = el("p", { class: "muted", style: "font-size:13px;margin:10px 2px 0" }, "Pulsa ★ Principal (o toca la foto) para elegir tu foto principal. La ✕ solo elimina.");
   wrap.appendChild(hint);
 
   // Hidden file input for the add flow
@@ -10459,8 +10460,19 @@ function screenMyPhotos(root) {
           onclick: (ev) => { ev.stopPropagation(); del(p.id); },
           html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`
         }));
-        if (p.is_primary) cell.appendChild(el("span", { class: "photo-main" }, T("content.me.photo_main") || "Principal"));
-        else cell.addEventListener("click", () => makePrimary(p.id));
+        if (p.is_primary) {
+          cell.appendChild(el("span", { class: "photo-main" }, T("content.me.photo_main") || "Principal"));
+        } else {
+          // V723 · Botón explícito para marcar como principal (además del gesto
+          // de tocar la foto), para que la acción sea evidente y no se confunda
+          // con eliminar. No borra las demás fotos.
+          cell.appendChild(el("button", {
+            class: "photo-set-main",
+            type: "button",
+            onclick: (ev) => { ev.stopPropagation(); makePrimary(p.id); },
+          }, T("content.me.photo_make_main") || "★ Principal"));
+          cell.addEventListener("click", () => makePrimary(p.id));
+        }
       } else {
         cell.appendChild(el("span", { class: "photo-add", html: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>` }));
         cell.addEventListener("click", () => fileInput.click());
