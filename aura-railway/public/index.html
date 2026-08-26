@@ -649,6 +649,46 @@
       });
     }
 
+    // 1b) V724 · Auto-actualización. Si el servidor publica un build nuevo
+    // (nuevo despliegue), la app se recarga sola con los assets frescos, en vez
+    // de quedarse con una versión antigua cargada en memoria/caché. Compara el
+    // build actual (capturado al cargar) con /api/version cada minuto y al
+    // volver a la pestaña. Purga las cachés del SW antes de recargar.
+    (function(){
+      var CHECK_MS = 60000;
+      var currentBuild = null;
+      var reloading = false;
+      async function fetchBuild(){
+        try {
+          var r = await fetch("/api/version", { cache: "no-store" });
+          if (!r.ok) return null;
+          var d = await r.json();
+          return (d && d.build) ? String(d.build) : null;
+        } catch(e){ return null; }
+      }
+      async function purgeAndReload(){
+        if (reloading) return; reloading = true;
+        try {
+          if (window.caches && caches.keys) {
+            var keys = await caches.keys();
+            await Promise.all(keys.map(function(k){ return caches.delete(k); }));
+          }
+        } catch(e){}
+        location.reload();
+      }
+      async function check(){
+        var b = await fetchBuild();
+        if (!b) return;
+        if (currentBuild == null) { currentBuild = b; return; }
+        if (b !== currentBuild) { purgeAndReload(); }
+      }
+      check();
+      setInterval(check, CHECK_MS);
+      document.addEventListener("visibilitychange", function(){
+        if (document.visibilityState === "visible") check();
+      });
+    })();
+
     // 2) Suscripción a Web Push (registrada o anónima)
     async function getPushSubscription(){
       if (!("serviceWorker" in navigator) || !("PushManager" in window)) return null;

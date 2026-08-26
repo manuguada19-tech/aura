@@ -403,6 +403,8 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
 // Public API paths (everything else under /api/ requires admin token)
 const PUBLIC_API = new Set([
   "GET /api/health",
+  // V724 · Versión del build para auto-actualización del cliente (sin auth)
+  "GET /api/version",
   "GET /api/demo",
   "GET /api/content",
   "GET /api/public-config",
@@ -10788,6 +10790,27 @@ app.get("/api/admin-branding", (req, res) => {
 
 // Health
 app.get("/api/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+
+// V724 · Versión del build (para auto-actualización del cliente).
+// Se calcula una sola vez al arrancar, hasheando el contenido de los assets
+// que cambian en cada despliegue. Como Railway reinicia el proceso en cada
+// deploy, el hash cambia justo cuando hay código nuevo, y la app lo detecta
+// para recargarse sola (ver el checker en index.html). Fallback: hora de boot.
+const BUILD_ID = (() => {
+  try {
+    const h = crypto.createHash("sha1");
+    for (const f of ["app.js", "styles.css", "index.html"]) {
+      try { h.update(fs.readFileSync(path.join(__dirname, "public", f))); } catch {}
+    }
+    return h.digest("hex").slice(0, 12);
+  } catch {
+    return String(Date.now());
+  }
+})();
+app.get("/api/version", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, build: BUILD_ID });
+});
 
 async function logActivity(actor, msg) {
   try {
