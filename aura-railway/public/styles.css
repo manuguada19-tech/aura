@@ -3712,17 +3712,28 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
 .photo-cell {
   position: relative;
   aspect-ratio: 3/4;
+  /* V722 · Fallback para WebViews antiguos sin soporte de aspect-ratio:
+     sin esto la celda colapsaba a 0 de alto y la foto no se veía / "no se
+     adaptaba a la cuadrícula". Con aspect-ratio soportado, este mínimo
+     no interfiere (el ratio calcula un alto mayor). */
+  min-height: 38vw;
   border-radius: 12px;
   background: var(--surface-2, #f3f4f7);
   border: 1px dashed var(--card-border, #d1d5db);
   background-size: cover;
   background-position: center;
+  background-repeat: no-repeat;
   display: grid;
   place-items: center;
   color: var(--text-muted, #9ca3af);
   cursor: pointer;
   transition: border-color 0.15s ease;
   overflow: hidden;
+}
+/* En navegadores que sí soportan aspect-ratio, anulamos el mínimo para que
+   el ratio 3/4 mande y las celdas queden perfectas. */
+@supports (aspect-ratio: 3 / 4) {
+  .photo-cell { min-height: 0; }
 }
 .photo-cell.has { border-style: solid; border-color: transparent; }
 .photo-cell:hover { border-color: #ff3b6b; }

@@ -278,6 +278,7 @@ const contentFallback = {
   /* Photos */
   "content.me.photos_hint": "Añade hasta 6 fotos. La primera será tu foto principal.",
   "content.me.photo_main": "Principal",
+  "content.me.photo_main_set": "Foto principal actualizada",
   "content.me.photo_removed": "Foto eliminada",
   "content.me.photo_add_toast": "Selecciona una foto (demo)",
   "content.me.photo_added": "Foto añadida",
@@ -9800,7 +9801,9 @@ function openProfile(u) {
 /* ---- Me / Settings ---- */
 function screenMe(root) {
   root.classList.add("screen-me");
-  const meAvatar = T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
+  // V722 · Usa la foto real del usuario (foto principal). Antes estaba
+  // cableado al avatar demo, por eso el perfil "no cambiaba" al elegir foto.
+  const meAvatar = (state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
   const meName = state.user?.name || T("content.me.default_name") || "";
   const meMail = state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico";
   const meTier = T("content.me.tier_label") || "★ Premium";
@@ -10192,8 +10195,10 @@ function screenEditProfile(root) {
   meSubHeader(root, T("content.me.item_edit_profile") || "Editar perfil");
   const wrap = el("div", { class: "info-wrap" });
   const u = state.user || {};
+  // V722 · La miniatura del perfil muestra la foto real (principal) del
+  // usuario; si aún no tiene ninguna, cae al avatar demo.
   wrap.appendChild(el("div", { class: "edit-avatar" }, [
-    el("div", { class: "me-avatar", style: `background-image:url('${T("content.me.avatar") || "https://i.pravatar.cc/300?img=32"}')` }),
+    el("div", { class: "me-avatar", style: `background-image:url('${(state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32"}')` }),
     el("button", { class: "btn btn-outline btn-sm", type: "button", onclick: () => render(screenMyPhotos) }, T("content.me.change_photo") || "Cambiar foto"),
   ]));
 
@@ -10427,7 +10432,13 @@ function screenMyPhotos(root) {
         headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
       });
       const d = await r.json().catch(() => ({}));
-      if (d.ok && d.photo_url && state.user) state.user.photo = d.photo_url;
+      // V722 · Refleja la nueva foto principal en la sesión y en localStorage
+      // para que el avatar del perfil se actualice al instante.
+      if (d.ok && d.photo_url && state.user) {
+        state.user.photo = d.photo_url;
+        try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      }
+      toast(T("content.me.photo_main_set") || "Foto principal actualizada");
       await load();
     } catch (ex) { toast("Error"); }
     busy = false;
@@ -10466,6 +10477,16 @@ function screenMyPhotos(root) {
       const d = await r.json().catch(() => ({}));
       photos = (d && d.items) || [];
     } catch (ex) { photos = []; }
+    // V722 · La primera foto (servidor: is_primary DESC, id ASC) es la principal.
+    // Mantén la sesión sincronizada para que el avatar del perfil sea correcto
+    // tras añadir/eliminar fotos, no solo al marcar principal manualmente.
+    if (state.user) {
+      const primary = photos.length ? photos[0].url : "";
+      if (primary !== state.user.photo) {
+        state.user.photo = primary;
+        try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      }
+    }
     renderGrid();
   }
   renderGrid();
