@@ -285,6 +285,10 @@ const contentFallback = {
   "content.me.photo_added": "Foto añadida",
   "content.me.photo_add_button": "+ Añadir foto",
   "content.me.photos_full": "Máximo 6 fotos",
+  "content.me.crop_title": "Recorta tu foto principal",
+  "content.me.crop_hint": "Arrastra para mover y usa el control para ampliar. Se usará esta parte como foto de perfil.",
+  "content.me.crop_save": "Usar como principal",
+  "content.me.crop_cancel": "Cancelar",
 
   /* Verify */
   "content.me.verify_hero_title": "Consigue el badge azul",
@@ -10366,6 +10370,125 @@ function downscaleImageFile(file, maxSide = 1000, quality = 0.82) {
   });
 }
 
+// V725 · Modal para recortar la foto principal en formato 3:4. Muestra la
+// imagen completa dentro de un visor con marco fijo (relación de perfil) que
+// se puede arrastrar y ampliar; al confirmar devuelve un data URL recortado
+// (canvas). Devuelve Promise<string|null> (null si el usuario cancela).
+function openPhotoCrop(imageUrl) {
+  return new Promise((resolve) => {
+    const OUT_W = 750, OUT_H = 1000; // salida 3:4
+    let done = false;
+    const finish = (val) => { if (done) return; done = true; try { document.body.removeChild(overlay); } catch {} resolve(val); };
+
+    const overlay = el("div", { class: "photo-crop-overlay" });
+    const box = el("div", { class: "photo-crop-box" });
+    overlay.appendChild(box);
+
+    box.appendChild(el("h3", { class: "photo-crop-title" }, T("content.me.crop_title") || "Recorta tu foto principal"));
+
+    // Visor: marco 3:4 con la imagen posicionada detrás.
+    const viewport = el("div", { class: "photo-crop-viewport" });
+    const img = el("img", { class: "photo-crop-img", alt: "" });
+    img.crossOrigin = "anonymous";
+    img.draggable = false;
+    viewport.appendChild(img);
+    box.appendChild(viewport);
+
+    box.appendChild(el("p", { class: "photo-crop-hint" }, T("content.me.crop_hint") || "Arrastra para mover y usa el control para ampliar. Se usará esta parte como foto de perfil."));
+
+    // Control de zoom.
+    const zoomRow = el("div", { class: "photo-crop-zoomrow" });
+    const zoom = el("input", { type: "range", min: "1", max: "3", step: "0.01", value: "1", class: "photo-crop-zoom" });
+    zoomRow.appendChild(el("span", { class: "photo-crop-zoomic" }, "−"));
+    zoomRow.appendChild(zoom);
+    zoomRow.appendChild(el("span", { class: "photo-crop-zoomic" }, "+"));
+    box.appendChild(zoomRow);
+
+    const actions = el("div", { class: "photo-crop-actions" });
+    const btnCancel = el("button", { class: "btn btn-ghost", type: "button" }, T("content.me.crop_cancel") || "Cancelar");
+    const btnSave = el("button", { class: "btn btn-brand", type: "button" }, T("content.me.crop_save") || "Usar como principal");
+    actions.appendChild(btnCancel);
+    actions.appendChild(btnSave);
+    box.appendChild(actions);
+
+    // Estado de la transformación.
+    let VW = 0, VH = 0, nw = 0, nh = 0, baseScale = 1, scale = 1, offX = 0, offY = 0;
+
+    function clamp() {
+      const dw = nw * baseScale * scale, dh = nh * baseScale * scale;
+      const maxX = Math.max(0, (dw - VW) / 2), maxY = Math.max(0, (dh - VH) / 2);
+      if (offX > maxX) offX = maxX; if (offX < -maxX) offX = -maxX;
+      if (offY > maxY) offY = maxY; if (offY < -maxY) offY = -maxY;
+    }
+    function apply() {
+      const dw = nw * baseScale * scale, dh = nh * baseScale * scale;
+      img.style.width = dw + "px";
+      img.style.height = dh + "px";
+      img.style.transform = `translate(calc(-50% + ${offX}px), calc(-50% + ${offY}px))`;
+    }
+
+    img.onload = () => {
+      nw = img.naturalWidth || 1; nh = img.naturalHeight || 1;
+      const rect = viewport.getBoundingClientRect();
+      VW = rect.width; VH = rect.height;
+      baseScale = Math.max(VW / nw, VH / nh); // cubrir el marco
+      scale = 1; offX = 0; offY = 0;
+      clamp(); apply();
+    };
+    img.src = imageUrl;
+
+    zoom.addEventListener("input", () => {
+      scale = parseFloat(zoom.value) || 1;
+      clamp(); apply();
+    });
+
+    // Arrastre (pointer events: ratón + táctil).
+    let dragging = false, sx = 0, sy = 0, ox0 = 0, oy0 = 0;
+    viewport.addEventListener("pointerdown", (e) => {
+      dragging = true; sx = e.clientX; sy = e.clientY; ox0 = offX; oy0 = offY;
+      try { viewport.setPointerCapture(e.pointerId); } catch {}
+    });
+    viewport.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      offX = ox0 + (e.clientX - sx);
+      offY = oy0 + (e.clientY - sy);
+      clamp(); apply();
+    });
+    const endDrag = () => { dragging = false; };
+    viewport.addEventListener("pointerup", endDrag);
+    viewport.addEventListener("pointercancel", endDrag);
+
+    btnCancel.addEventListener("click", () => finish(null));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) finish(null); });
+
+    btnSave.addEventListener("click", () => {
+      try {
+        const displayScale = baseScale * scale;
+        const dw = nw * displayScale, dh = nh * displayScale;
+        // Esquina sup-izq de la imagen en coords del visor.
+        const imgLeft = VW / 2 + offX - dw / 2;
+        const imgTop = VH / 2 + offY - dh / 2;
+        // Rectángulo del visor mapeado a coords de la imagen natural.
+        const srcX = (0 - imgLeft) / displayScale;
+        const srcY = (0 - imgTop) / displayScale;
+        const srcW = VW / displayScale;
+        const srcH = VH / displayScale;
+        const cnv = document.createElement("canvas");
+        cnv.width = OUT_W; cnv.height = OUT_H;
+        const ctx = cnv.getContext("2d");
+        ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, OUT_W, OUT_H);
+        finish(cnv.toDataURL("image/jpeg", 0.85));
+      } catch (ex) {
+        // Si el canvas queda "tainted" (imagen cross-origin) o falla, usamos la
+        // foto completa como principal (sin recorte) para no bloquear al usuario.
+        finish("");
+      }
+    });
+
+    document.body.appendChild(overlay);
+  });
+}
+
 function screenMyPhotos(root) {
   meSubHeader(root, T("content.me.item_photos") || "Mis fotos");
   const wrap = el("div", { class: "info-wrap" });
@@ -10426,11 +10549,25 @@ function screenMyPhotos(root) {
 
   async function makePrimary(id) {
     if (busy) return;
+    // V725 · Antes de marcarla como principal, abre el recorte 3:4 para que el
+    // usuario elija qué parte de la foto será su avatar. La foto completa sigue
+    // guardada (la cuadrícula la muestra entera); el recorte va en `crop_url`.
+    const ph = photos.find((x) => x.id === id);
+    let crop = "";
+    if (ph && ph.url) {
+      // Devuelve: data URL (recorte), "" (fallo de canvas → sin recorte), o
+      // null (el usuario canceló → no hacemos nada).
+      crop = await openPhotoCrop(ph.url);
+      if (crop === null) return;
+    }
     busy = true;
     try {
+      const body = {};
+      if (crop) body.crop = crop;
       const r = await fetch("/api/my/photos/" + id + "/primary", {
         method: "POST",
         headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+        body: JSON.stringify(body),
       });
       const d = await r.json().catch(() => ({}));
       // V722 · Refleja la nueva foto principal en la sesión y en localStorage

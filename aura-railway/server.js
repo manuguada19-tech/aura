@@ -1126,6 +1126,13 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
+  // recortada que el usuario elige como foto de perfil; la foto original
+  // completa se conserva en `url` (así la cuadrícula la muestra entera).
+  // Aditivo y retrocompatible: si no hay recorte, se usa `url`.
+  try { await pool.execute("ALTER TABLE photos MODIFY COLUMN url LONGTEXT NOT NULL"); } catch (e) {}
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN crop_url LONGTEXT NULL"); } catch (e) { /* ya existe */ }
+
   // V400: Sistema de invitaciones (tester privado / beta cerrada), stream
   // detallado de actividad de cada usuario y campos de moderación de
   // mensajes (soft-delete + auditoría).
@@ -6482,18 +6489,20 @@ function validPhotoData(s) {
 }
 async function syncPrimaryPhoto(uid) {
   // Deja users.photo_url = la foto principal (o la más antigua si no hay flag).
+  // V725 · Usa el recorte 3:4 (crop_url) si existe; si no, la foto completa.
   const [[p]] = await pool.query(
-    "SELECT url FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC LIMIT 1", [uid]
+    "SELECT url, crop_url FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC LIMIT 1", [uid]
   );
-  await pool.execute("UPDATE users SET photo_url=? WHERE id=?", [p ? p.url : null, uid]);
-  return p ? p.url : null;
+  const chosen = p ? (p.crop_url || p.url) : null;
+  await pool.execute("UPDATE users SET photo_url=? WHERE id=?", [chosen, uid]);
+  return chosen;
 }
 
 app.get("/api/my/photos", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [rows] = await pool.query(
-    "SELECT id, url, is_primary FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC", [me]
+    "SELECT id, url, crop_url, is_primary FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC", [me]
   );
   res.json({ ok: true, items: rows });
 }));
@@ -6540,8 +6549,17 @@ app.post("/api/my/photos/:id/primary", wrap(async (req, res) => {
   if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
   const [[own]] = await pool.query("SELECT id FROM photos WHERE id=? AND user_id=? LIMIT 1", [id, me]);
   if (!own) return res.status(404).json({ ok: false, error: "not_found" });
+  // V725 · Recorte 3:4 opcional para la foto de perfil. Si el cliente envía
+  // `crop` (data URL de la zona recortada), se guarda como crop_url; si no,
+  // se limpia el recorte previo y se usará la foto completa.
+  const crop = req.body?.crop;
+  let cropVal = null;
+  if (crop != null) {
+    if (!validPhotoData(crop)) return res.status(400).json({ ok: false, error: "invalid_crop" });
+    cropVal = crop;
+  }
   await pool.execute("UPDATE photos SET is_primary=0 WHERE user_id=?", [me]);
-  await pool.execute("UPDATE photos SET is_primary=1 WHERE id=? AND user_id=?", [id, me]);
+  await pool.execute("UPDATE photos SET is_primary=1, crop_url=? WHERE id=? AND user_id=?", [cropVal, id, me]);
   const url = await syncPrimaryPhoto(me);
   res.json({ ok: true, photo_url: url });
 }));
