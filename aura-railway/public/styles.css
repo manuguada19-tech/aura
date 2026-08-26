@@ -3901,8 +3901,11 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
 }
 
 /* Dark mode */
+/* V725 · Usar background-COLOR, no el shorthand `background`. El shorthand
+   reinicia background-size a `auto`, lo que anulaba nuestro `contain` en modo
+   oscuro y hacía que la foto de la cuadrícula saliera recortada/ampliada. */
 [data-theme="dark"] .photo-cell {
-  background: rgba(255,255,255,0.04);
+  background-color: rgba(255,255,255,0.04);
   border-color: rgba(255,255,255,0.1);
 }
 
