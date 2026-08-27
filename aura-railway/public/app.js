@@ -2492,6 +2492,24 @@ const GPS = {
     } catch {}
     return "prompt";
   },
+  /* --------- ¿La ubicación está realmente ACTIVA? (criterio único) -----
+     V730 · Antes cada aviso (modal de boot, banner de "Cerca de ti", aviso
+     inline de Discover) decidía por su cuenta si la ubicación estaba activa, y
+     dos de ellos exigían browserState === "granted". En iOS Safari / PWA la
+     Permissions API para geolocation NO existe, así que browserPermissionState()
+     SIEMPRE devuelve "prompt" → esos avisos aparecían aunque el usuario ya
+     tuviera la ubicación concedida y estuviéramos reportando su posición.
+     Este helper centraliza el mismo criterio TOLERANTE que usa boot():
+       - "granted" en el navegador  → activa (aunque el server no lo tenga).
+       - consentimiento en server Y navegador != "denied" → activa (iOS).
+       - en cualquier otro caso (denied, o sin consentimiento) → inactiva.
+     Acepta valores ya conocidos para evitar consultas repetidas. */
+  isActive(st, browserState) {
+    const bs = browserState || "prompt";
+    if (bs === "granted") return true;
+    if (st && st.consent_given && bs !== "denied") return true;
+    return false;
+  },
   /* --------- Boot: se llama tras login --------- */
   async boot() {
     if (!state.user?.id) return;
@@ -6944,8 +6962,11 @@ function buildGpsNotice() {
     // vigilante (watchGeoPermission) llamará a refreshGpsNoticeUI() en cuanto
     // lo conozca, evitando un parpadeo cuando ya estaba concedido.
     if (_geoPermWatch.last == null) return null;
-    // Si ya está concedido no mostramos nada.
-    if (_geoPermWatch.last === "granted") return null;
+    // V730 · Criterio único y tolerante (GPS.isActive): en iOS/PWA la Permissions
+    // API no existe y _geoPermWatch.last es siempre "prompt", así que exigir
+    // "granted" mostraba el aviso aunque la ubicación estuviera concedida y
+    // registrada en el servidor. Si isActive() la considera activa, no avisamos.
+    if (GPS.isActive({ consent_given: !!state.gpsConsent }, _geoPermWatch.last)) return null;
     const denied = _geoPermWatch.last === "denied";
     const wrap = el("div", { class: "push-mini gps-inline-notice" + (denied ? " is-denied" : "") }, [
       el("span", { class: "push-mini-ico" }, "📍"),
@@ -6983,7 +7004,8 @@ function refreshGpsNoticeUI() {
     if (!state.user?.id) return;
     const st = _geoPermWatch.last;
     const existing = document.querySelector(".gps-inline-notice");
-    if (st === "granted") { if (existing) existing.remove(); return; }
+    // V730 · Mismo criterio tolerante que buildGpsNotice (GPS.isActive).
+    if (GPS.isActive({ consent_given: !!state.gpsConsent }, st)) { if (existing) existing.remove(); return; }
     if (existing) return;
     const notices = document.querySelector(".discover-notices");
     if (!notices) return;
@@ -7187,7 +7209,10 @@ function screenNearby(root) {
     try {
       const st = await GPS.fetchState();
       const bp = await GPS.browserPermissionState();
-      const active = !!(st && st.consent_given) && bp === "granted";
+      // V730 · Criterio único y tolerante (ver GPS.isActive). En iOS/PWA bp es
+      // siempre "prompt", así que exigir "granted" hacía aparecer el aviso pese
+      // a tener la ubicación activa. Solo lo mostramos si está claramente OFF.
+      const active = GPS.isActive(st, bp);
       if (!active) gpsNotice.style.display = "";
     } catch {}
   })();
