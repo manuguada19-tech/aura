@@ -2873,6 +2873,11 @@ function isRestricted(feature) {
 function kycGateActive() {
   return !!(state.kycGate && state.kycGate.required);
 }
+// V732 · El gate BLOQUEA de verdad solo cuando se ha agotado el margen de
+// cortesía (blocked=true). Mientras queden acciones, se permite usar la app.
+function kycGateBlocked() {
+  return !!(state.kycGate && state.kycGate.required && state.kycGate.blocked);
+}
 // Etiquetas legibles del estado KYC para los avisos.
 function kycStatusLabel(st) {
   return ({
@@ -2881,10 +2886,32 @@ function kycStatusLabel(st) {
     rejected:      "rechazada",
   }[st] || "pendiente");
 }
-// Intercepta una acción sensible. Si el gate está activo, muestra el modal de
-// verificación y devuelve true (la acción NO debe continuar). Si no, false.
+// V732 · "Omitir por ahora": el usuario puede ocultar el aviso. Se guarda la
+// marca de tiempo por usuario y el banner reaparece pasado un intervalo, para
+// seguir recordándole que verifique mientras no lo haga.
+const VERIFY_GATE_REAPPEAR_MS = 60 * 60 * 1000; // 1 h — reaparece cada cierto tiempo
+function _verifyGateDismissKey() {
+  return "aura.verifyGate.dismissed." + ((state.user && state.user.id) || "anon");
+}
+function verifyGateDismissedRecently() {
+  try {
+    const ts = parseInt(localStorage.getItem(_verifyGateDismissKey()) || "0", 10);
+    if (!ts) return false;
+    return (Date.now() - ts) < VERIFY_GATE_REAPPEAR_MS;
+  } catch { return false; }
+}
+function dismissVerifyGateBanner() {
+  try { localStorage.setItem(_verifyGateDismissKey(), String(Date.now())); } catch {}
+  const b = document.getElementById("verifyGateBanner");
+  if (b) b.remove();
+  document.body.classList.remove("has-verify-gate");
+}
+// Intercepta una acción sensible. Solo la BLOQUEA (mostrando el modal y
+// devolviendo true) cuando se ha agotado el margen de cortesía. Mientras queden
+// acciones disponibles, deja pasar (el servidor descuenta el margen).
 function blockIfVerifyRequired() {
   if (!kycGateActive()) return false;
+  if (!kycGateBlocked()) return false; // dentro del margen de cortesía → permitir
   showVerifyGateModal();
   return true;
 }
@@ -2898,50 +2925,77 @@ function startVerifyFlow() {
 // el estilo del banner de restricciones (#restrictionBanner) para coherencia.
 function renderVerifyGateBanner() {
   const existing = document.getElementById("verifyGateBanner");
-  // No mostrar si no hay gate, o si ya hay una suspensión/baneo (ese banner manda).
+  // No mostrar si no hay gate, si hay suspensión/baneo (ese banner manda), o si
+  // el usuario lo omitió hace poco (reaparecerá pasado el intervalo).
   const suspended = (state.restrictions || []).some(r => r._status === "banned" || r._status === "suspended");
-  if (!kycGateActive() || suspended) {
+  if (!kycGateActive() || suspended || verifyGateDismissedRecently()) {
     if (existing) existing.remove();
     document.body.classList.remove("has-verify-gate");
     return;
   }
   document.body.classList.add("has-verify-gate");
-  const st = (state.kycGate && state.kycGate.status) || "pending";
+  const g = state.kycGate || {};
+  const st = g.status || "pending";
   const rejected = st === "rejected";
-  const banner = existing || el("div", { id: "verifyGateBanner", class: "restriction-banner verify-gate-banner" });
+  const blocked = !!g.blocked;
+  const remaining = Number.isFinite(g.grace_remaining) ? g.grace_remaining : null;
+  const banner = existing || el("div", { id: "verifyGateBanner", class: "restriction-banner verify-gate-banner" + (blocked ? " rb-severe" : "") });
+  banner.className = "restriction-banner verify-gate-banner" + (blocked ? " rb-severe" : "");
   banner.innerHTML = "";
+  let title, detail;
+  if (rejected) {
+    title = "Verificación de edad rechazada";
+    detail = blocked
+      ? "Tu verificación fue rechazada y has agotado el margen sin verificar. Dar like y enviar mensajes están bloqueados hasta que la completes."
+      : "Tu verificación fue rechazada. Vuelve a intentarla para no perder el acceso a like y mensajes.";
+  } else if (blocked) {
+    title = "Verifica tu edad para continuar";
+    detail = "Has agotado el margen de uso sin verificar. Dar like y enviar mensajes quedan bloqueados hasta que completes la verificación de edad. El resto de la app sigue disponible.";
+  } else {
+    title = "Verifica tu edad para continuar";
+    detail = `Tu verificación está ${kycStatusLabel(st)}.` +
+      (remaining != null
+        ? ` Te ${remaining === 1 ? "queda" : "quedan"} ${remaining} acción(es) antes de que se limiten el like y los mensajes.`
+        : " Dar like y enviar mensajes se limitará pronto.");
+  }
   banner.appendChild(el("div", { class: "rb-body" }, [
     el("div", { class: "rb-ic" }, "🛡️"),
     el("div", {}, [
-      el("strong", {}, rejected ? "Verificación de edad rechazada" : "Verifica tu edad para continuar"),
-      el("div", { class: "rb-detail" },
-        rejected
-          ? "Tu verificación fue rechazada. Mientras tanto no puedes dar like ni enviar mensajes. Vuelve a intentarlo o contacta con soporte."
-          : `Tu verificación de edad está ${kycStatusLabel(st)}. Para proteger la comunidad, dar like y enviar mensajes queda limitado hasta que se complete.`),
+      el("strong", {}, title),
+      el("div", { class: "rb-detail" }, detail),
     ]),
-    el("button", { class: "rb-close", title: "Verificar", onclick: () => showVerifyGateModal() }, "Verificar"),
+    el("div", { class: "vg-actions" }, [
+      el("button", { class: "rb-close", title: "Verificar", onclick: () => showVerifyGateModal() }, "Verificar"),
+      el("button", { class: "rb-close vg-omit", title: "Omitir por ahora", onclick: () => dismissVerifyGateBanner() }, "Omitir"),
+    ]),
   ]));
   if (!existing) document.body.appendChild(banner);
 }
-// Modal explicativo con acción para verificar (o reintentar).
+// Modal explicativo con acción para verificar (o reintentar) y para omitir.
 function showVerifyGateModal() {
-  const st = (state.kycGate && state.kycGate.status) || "pending";
+  const g = state.kycGate || {};
+  const st = g.status || "pending";
   const rejected = st === "rejected";
+  const blocked = !!g.blocked;
+  const remaining = Number.isFinite(g.grace_remaining) ? g.grace_remaining : null;
   const sheet = el("div", { class: "restriction-sheet verify-gate-sheet" });
-  sheet.appendChild(el("h3", {}, "🛡️ " + (rejected ? "Verificación rechazada" : "Verificación de edad requerida")));
+  sheet.appendChild(el("h3", {}, "🛡️ " + (rejected ? "Verificación rechazada" : "Verificación de edad")));
   sheet.appendChild(el("p", { class: "small" },
     rejected
-      ? "Tu verificación de edad fue rechazada. Para volver a usar el like y el chat necesitas completar de nuevo la verificación. Si crees que es un error, contacta con soporte."
-      : `Tu verificación de edad está ${kycStatusLabel(st)}. Para proteger la comunidad y cumplir la ley, dar like y enviar mensajes queda limitado hasta que se complete. El resto de la app sigue disponible.`));
+      ? "Tu verificación de edad fue rechazada. Para usar el like y el chat sin límite necesitas completar de nuevo la verificación. Si crees que es un error, contacta con soporte."
+      : blocked
+        ? "Has agotado el margen de uso sin verificar. Para volver a dar like y enviar mensajes necesitas completar la verificación de edad. El resto de la app sigue disponible."
+        : `Tu verificación de edad está ${kycStatusLabel(st)}. Puedes seguir usando la app${remaining != null ? `, pero te ${remaining === 1 ? "queda" : "quedan"} ${remaining} acción(es)` : ""} antes de que se limiten el like y los mensajes. Verifícala para no perder el acceso.`));
   sheet.appendChild(el("div", { class: "restriction-item" }, [
-    el("b", {}, "Funciones limitadas ahora"),
+    el("b", {}, blocked ? "Funciones bloqueadas" : "Funciones que se limitarán"),
     el("div", { class: "small" }, "Dar like / super like · Enviar mensajes, stickers, audios y efímeros."),
   ]));
   const actions = el("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:12px;" });
   actions.appendChild(el("button", { class: "btn btn-brand btn-block", onclick: () => startVerifyFlow() },
     rejected ? "Reintentar verificación" : "Verificar ahora"));
   actions.appendChild(el("button", { class: "btn btn-ghost btn-block", onclick: () => { try { modal.close(); } catch {} render(screenAccountStatus); } }, "Ver estado de mi cuenta"));
-  actions.appendChild(el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Ahora no"));
+  // "Omitir por ahora" oculta el aviso hasta que reaparezca pasado el intervalo.
+  actions.appendChild(el("button", { class: "btn btn-ghost btn-block", onclick: () => { dismissVerifyGateBanner(); try { modal.close(); } catch {} } }, "Omitir por ahora"));
   sheet.appendChild(actions);
   modal.open(sheet);
 }
@@ -3050,13 +3104,20 @@ function showRestrictionModal() {
         }
         toast("Acción no disponible: cuenta con restricciones");
       } else if (r.status === 428) {
-        // V731 · Salvaguarda del servidor: verificación de edad requerida. Si el
-        // cliente no lo interceptó antes (p. ej. estado recién cambiado), sync
-        // del estado del gate y mostramos el modal de verificación.
+        // V731/V732 · Salvaguarda del servidor: margen de cortesía agotado y
+        // verificación de edad requerida. Sincroniza el estado del gate como
+        // BLOQUEADO y muestra el modal de verificación.
         const clone = r.clone();
         const data = await clone.json().catch(() => ({}));
         if (data && data.error === "verify_required") {
-          state.kycGate = { required: true, status: data.kyc_status || "pending" };
+          state.kycGate = Object.assign({}, state.kycGate, {
+            required: true,
+            status: data.kyc_status || "pending",
+            blocked: true,
+            grace_remaining: 0,
+          });
+          // El bloqueo real ignora un "omitir" previo: hay que verificar.
+          try { localStorage.removeItem(_verifyGateDismissKey()); } catch {}
           try { renderVerifyGateBanner(); } catch {}
           try { showVerifyGateModal(); } catch {}
         }
@@ -10282,18 +10343,32 @@ function screenAccountStatus(root) {
         ${d.kyc_reason ? `<div class="acc-status-item"><span>Motivo</span><span style="text-align:right;font-size:12.5px;">${d.kyc_reason}</span></div>` : ""}
         ${d.kyc_updated_at ? `<div class="acc-status-item"><span>Última actualización</span><span style="font-size:12.5px;">${new Date(d.kyc_updated_at).toLocaleString()}</span></div>` : ""}
       `;
-      // V731 · Aviso de funciones limitadas cuando la verificación de edad está
-      // pendiente/en revisión/rechazada. Refleja el gate real del servidor.
+      // V731/V732 · Aviso de funciones limitadas cuando la verificación de edad
+      // está pendiente/en revisión/rechazada. Refleja el gate real del servidor,
+      // incluido el margen de cortesía restante y si ya está bloqueado.
       const gateOn = d.kyc_status === "pending" || d.kyc_status === "manual_review" || d.kyc_status === "rejected";
       if (gateOn) {
         const rej = d.kyc_status === "rejected";
+        const g = state.kycGate || {};
+        const blocked = !!g.blocked;
+        const remaining = Number.isFinite(g.grace_remaining) ? g.grace_remaining : null;
+        let msg;
+        if (blocked) {
+          msg = rej
+            ? "Tu verificación fue rechazada y has agotado el margen de uso. Dar like y enviar mensajes están bloqueados hasta que la completes."
+            : "Has agotado el margen de uso sin verificar. Dar like y enviar mensajes están bloqueados hasta que completes la verificación. El resto de la app sigue disponible.";
+        } else if (rej) {
+          msg = "Tu verificación fue rechazada. Reintenta para no perder el acceso a like y mensajes.";
+        } else {
+          msg = (remaining != null
+            ? `Puedes seguir usando la app, pero te ${remaining === 1 ? "queda" : "quedan"} ${remaining} acción(es) antes de que se limiten el like y los mensajes. `
+            : "") + "Verifica tu edad para no perder el acceso.";
+        }
         const warn = el("div", {
-          style: "margin-top:10px;padding:10px 12px;border-radius:10px;background:#fef3c7;color:#92400e;font-size:12.5px;line-height:1.45;",
+          style: `margin-top:10px;padding:10px 12px;border-radius:10px;font-size:12.5px;line-height:1.45;background:${blocked ? "#fee2e2" : "#fef3c7"};color:${blocked ? "#991b1b" : "#92400e"};`,
         }, [
-          el("strong", { style: "display:block;margin-bottom:3px;" }, rej ? "Verificación rechazada" : "Funciones limitadas"),
-          el("span", {}, rej
-            ? "Mientras no completes la verificación no puedes dar like ni enviar mensajes. Puedes reintentarla o contactar con soporte."
-            : "Hasta que se complete tu verificación de edad, dar like y enviar mensajes queda limitado. El resto de la app sigue disponible."),
+          el("strong", { style: "display:block;margin-bottom:3px;" }, blocked ? "Funciones bloqueadas" : (rej ? "Verificación rechazada" : "Funciones limitadas próximamente")),
+          el("span", {}, msg),
         ]);
         boxKyc.appendChild(warn);
         const verifyBtn = el("button", {

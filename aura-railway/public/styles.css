@@ -1475,6 +1475,23 @@ body:has(.blocked-screen) .restriction-banner { display: none !important; }
 }
 /* Si coexistiera con el banner de restricciones, súbelo un poco para no taparlo. */
 body.has-restriction .restriction-banner.verify-gate-banner { bottom: 150px; }
+/* V732 · Cuando el margen de cortesía se agota, el banner de verificación pasa a
+   rojo (rb-severe) para señalar que las funciones ya están bloqueadas. */
+.restriction-banner.verify-gate-banner.rb-severe {
+  background: linear-gradient(135deg, #b91c1c, #ef4444);
+  box-shadow: 0 8px 24px rgba(239, 68, 68, .4);
+}
+/* V732 · Acciones del banner de verificación: "Verificar" + "Omitir" apiladas. */
+.restriction-banner.verify-gate-banner .vg-actions {
+  align-self: center;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.restriction-banner.verify-gate-banner .vg-omit {
+  background: transparent;
+  border-color: rgba(255,255,255,.45);
+  opacity: .9; font-weight: 600;
+}
+.restriction-banner.verify-gate-banner .vg-omit:hover { background: rgba(255,255,255,.18); }
 /* Severe variant: suspension/ban — hace el banner más notorio y persistente. */
 body.account-banned .restriction-banner,
 .restriction-banner.rb-severe {

@@ -1105,6 +1105,17 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V732: contador de "cortesía" para el gate por verificación de edad. Mientras
+  // la verificación esté pendiente/en revisión/rechazada, el usuario dispone de
+  // un número limitado de acciones sensibles (like/super + mensajes) antes de
+  // que se bloqueen hasta verificar. Aditivo: por defecto 0 (nadie afectado
+  // hasta que el gate esté activo, y solo cuenta acciones nuevas desde ahora).
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN kyc_grace_used INT NOT NULL DEFAULT 0",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
+  }
+
   // V718: "Mis fotos" reales. Las fotos se guardan como data URL (el front las
   // reduce antes de subir), por lo que las columnas de URL deben poder alojar
   // cadenas largas. MODIFY es idempotente y retrocompatible (no borra datos).
@@ -1575,6 +1586,11 @@ async function seed() {
     "app.superadmin_access_code": "AURA-0E6A4181",
     "app.email_verification_required": "true",
     "app.2fa_available": "true",
+    // V732 · Margen de "cortesía" del gate por verificación de edad. Número de
+    // acciones sensibles (like/super + mensajes) que un usuario con verificación
+    // pendiente/en revisión/rechazada puede hacer antes de que se bloqueen hasta
+    // verificar. 0 = bloqueo inmediato; vacío/no numérico = 10 por defecto.
+    "kyc.grace_limit": "10",
     "security.max_login_attempts": "5",
     "security.lockout_minutes": "15",
     "security.token_minutes": "60",
@@ -5185,25 +5201,40 @@ async function enforceRestriction(req, res, feature) {
   return false;
 }
 
-/* ---------- V731 · Gate por verificación de edad (KYC) ----------
+/* ---------- V731/V732 · Gate por verificación de edad (KYC) ----------
    Cuando la cuenta tiene una verificación de edad EN CURSO o RECHAZADA se
-   limitan las funciones sensibles (dar like/super y enviar mensajes) hasta que
-   la verificación se complete. Devuelve { required, status }.
+   limitan las funciones sensibles (dar like/super y enviar mensajes).
+
+   V732 · En lugar de un bloqueo total inmediato, se aplica un LÍMITE DE
+   CORTESÍA: el usuario puede realizar hasta `kyc.grace_limit` acciones
+   sensibles (configurable desde admin; por defecto 10) mientras no verifique.
+   Al agotarlo, esas funciones quedan bloqueadas hasta completar la verificación.
+   El contador vive en users.kyc_grace_used y solo cuenta acciones NUEVAS desde
+   que existe el gate → no penaliza retroactivamente a usuarios existentes.
 
    IMPORTANTE (compatibilidad): SOLO se activa si existe un registro de
    verificación cuyo estado consolidado sea pending / manual_review / rejected.
-   Los usuarios SIN verificación ('none') y los ya verificados ('verified') NO
-   quedan limitados, así no se rompe a los usuarios existentes. Las cuentas
-   suspendidas/baneadas se gestionan por el sistema de suspensión de cuenta, no
-   aquí. Se calcula con el MISMO mapeo que /api/my/account-status. */
+   Los usuarios SIN verificación ('none'), los ya verificados ('verified') y los
+   marcados con kyc_bypass NO quedan limitados. Las cuentas suspendidas/baneadas
+   se gestionan por el sistema de suspensión de cuenta, no aquí. */
+function kycGraceLimit() {
+  const n = parseInt(getSetting("kyc.grace_limit", "10"), 10);
+  return (Number.isFinite(n) && n >= 0) ? n : 10;
+}
 async function getKycGateState(userId) {
-  if (!userId) return { required: false, status: "none" };
-  let email = null, verified = 0;
+  const limit = kycGraceLimit();
+  if (!userId) return { required: false, status: "none", gate_limit: limit, grace_used: 0, grace_remaining: limit, blocked: false };
+  let email = null, verified = 0, graceUsed = 0, bypass = 0;
   try {
     const [urow] = await pool.query(
-      "SELECT email, verified FROM users WHERE id=? LIMIT 1", [userId]
+      "SELECT email, verified, kyc_grace_used, kyc_bypass FROM users WHERE id=? LIMIT 1", [userId]
     );
-    if (urow.length) { email = urow[0].email || null; verified = urow[0].verified ? 1 : 0; }
+    if (urow.length) {
+      email = urow[0].email || null;
+      verified = urow[0].verified ? 1 : 0;
+      graceUsed = parseInt(urow[0].kyc_grace_used, 10) || 0;
+      bypass = urow[0].kyc_bypass ? 1 : 0;
+    }
   } catch {}
   let status = "none";
   try {
@@ -5224,21 +5255,43 @@ async function getKycGateState(userId) {
     }
     if (status === "none" && verified) status = "verified";
   } catch {}
-  const required = (status === "pending" || status === "manual_review" || status === "rejected");
-  return { required, status };
+  // El bypass de admin desactiva el gate por completo.
+  const required = !bypass && (status === "pending" || status === "manual_review" || status === "rejected");
+  const remaining = Math.max(0, limit - graceUsed);
+  const blocked = required && remaining <= 0;
+  return { required, status, gate_limit: limit, grace_used: graceUsed, grace_remaining: remaining, blocked };
 }
 // Backstop autoritativo en endpoints sensibles. Responde 428 (Precondition
 // Required) — distinto del 423 de restricciones para que el cliente no muestre
 // el aviso genérico de "cuenta con restricciones", sino el modal de verificación.
+//
+// V732 · Consume una unidad del límite de cortesía de forma ATÓMICA. Mientras
+// queden acciones disponibles la acción se permite (return false). Cuando se
+// agota el margen, se bloquea (428). Si el gate no aplica, no consume nada.
 async function enforceKycGate(req, res) {
   const uid = readMyUserId(req);
   if (!uid) return false;
   const g = await getKycGateState(uid);
-  if (g.required) {
-    res.status(428).json({ error: "verify_required", kyc_status: g.status });
-    return true;
-  }
-  return false;
+  if (!g.required) return false;
+  // Incremento condicional atómico: solo consume si aún queda margen.
+  let consumed = false;
+  try {
+    const [r] = await pool.execute(
+      "UPDATE users SET kyc_grace_used = kyc_grace_used + 1 WHERE id=? AND kyc_grace_used < ?",
+      [uid, g.gate_limit]
+    );
+    consumed = r && r.affectedRows === 1;
+  } catch {}
+  if (consumed) return false; // dentro del margen de cortesía → permitir
+  // Margen agotado → bloquear.
+  res.status(428).json({
+    error: "verify_required",
+    kyc_status: g.status,
+    blocked: true,
+    gate_limit: g.gate_limit,
+    grace_remaining: 0,
+  });
+  return true;
 }
 
 /* ---------- IP-based blocks (suspend/ban por IP) ----------
@@ -6281,10 +6334,11 @@ app.post("/api/my/like", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   if (await enforceRestriction(req, res, "discover")) return;
-  if (await enforceKycGate(req, res)) return; // V731 · verificación de edad requerida
   const target = parseInt(req.body?.target_id, 10);
   const type = ["like", "super", "pass"].includes(req.body?.type) ? req.body.type : "like";
   if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  // V732 · el límite de cortesía solo se consume en like/super, no en "pass" (descartar)
+  if (type !== "pass" && await enforceKycGate(req, res)) return;
 
   // El objetivo debe existir y estar activo
   const [[peer]] = await pool.query(
