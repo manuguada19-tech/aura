@@ -620,13 +620,15 @@
       shown = true;
     });
 
-    // Bucle: cada 5s comprobamos condiciones (login + tiempo transcurrido).
-    // Así el banner aparece aunque el usuario se logue después de la carga.
-    setInterval(tryShow, POLL_MS);
-    // Intento inmediato tras el primer 5s.
-    setTimeout(tryShow, POLL_MS);
-    // Exponemos función global para que la app pueda forzar el banner desde
-    // Ajustes → Instalar como app.
+    // V729 · Banner de instalación automático DESACTIVADO. Molestaba y tapaba
+    // la lista del perfil. La instalación sigue disponible manualmente desde
+    // Ajustes → "Instalar Aura como app" (usa el prompt nativo directamente).
+    // Dejamos la función tryShow y el disparador manual por si se quiere forzar
+    // en el futuro, pero NO se muestra solo.
+    // setInterval(tryShow, POLL_MS);
+    // setTimeout(tryShow, POLL_MS);
+    // Exponemos función global por si en el futuro se quiere forzar el banner
+    // desde Ajustes (actualmente Ajustes usa el prompt nativo directamente).
     window.__auraShowInstallBanner = () => { shown = false; firstLoginAt = 1; tryShow(); };
   })();
   </script>
@@ -859,8 +861,10 @@
     function bootWhenLogged(){
       if (getUserId()) {
         bumpOpens();
-        // Esperar ≥90s antes de mostrar el aviso 2FA
-        setTimeout(twofaReminder, 90000);
+        // V729 · Aviso 2FA automático DESACTIVADO. Molestaba y tapaba la lista
+        // del perfil. La verificación en 2 pasos sigue disponible en
+        // Ajustes → "Contraseña y 2FA". No lanzamos el toast automático.
+        // setTimeout(twofaReminder, 90000);
         return;
       }
       setTimeout(bootWhenLogged, 2000);
