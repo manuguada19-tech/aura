@@ -54,6 +54,37 @@ async function migrate(pool) {
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
+  // Siembra de motivos por defecto SOLO si la tabla está vacía. Sin esto el
+  // <select> "Motivo" del modal de eliminación total llega vacío. Es additivo:
+  // si el admin ya creó motivos propios, no se toca nada.
+  try {
+    const [[{ n }]] = await pool.query("SELECT COUNT(*) n FROM admin_deletion_reasons");
+    if (!n) {
+      const seed = [
+        ["menor_de_edad",        "Menor de edad detectado",              "Tu cuenta Aura ha sido cerrada", 30, 1, 1, 1, 1, 1, 1],
+        ["documento_falso",      "Documento falso o manipulado",         "Tu cuenta Aura ha sido cerrada", 30, 1, 1, 1, 1, 1, 1],
+        ["identidad_no_coincide","La identidad no coincide con el perfil","Tu cuenta Aura ha sido cerrada", 30, 1, 1, 1, 0, 0, 0],
+        ["duplicado",            "Cuenta duplicada",                     "Tu cuenta Aura ha sido cerrada", 30, 1, 1, 1, 0, 1, 0],
+        ["fraude",               "Sospecha de fraude",                   "Tu cuenta Aura ha sido cerrada", 15, 1, 1, 1, 1, 1, 1],
+        ["incumplimiento",       "Incumplimiento de las normas",         "Tu cuenta Aura ha sido cerrada", 30, 1, 1, 1, 0, 0, 0],
+        ["spam_bot",             "Spam / cuenta automatizada",           "Tu cuenta Aura ha sido cerrada", 15, 1, 0, 1, 0, 1, 1],
+        ["peticion_usuario",     "Eliminación a petición del usuario",   "Tu cuenta Aura ha sido eliminada", 0, 1, 0, 0, 0, 0, 0],
+        ["otro",                 "Otro motivo",                          "Tu cuenta Aura ha sido cerrada", 30, 1, 1, 1, 0, 0, 0],
+      ];
+      const body = "Hemos revisado tu cuenta y, conforme a nuestras normas, hemos procedido a su cierre. Si crees que se trata de un error, puedes presentar una apelación desde el enlace incluido en este correo.";
+      for (const s of seed) {
+        try {
+          await pool.execute(
+            `INSERT INTO admin_deletion_reasons
+               (code,label,email_subject,email_body,appeal_days,send_email,allow_appeal,block_email,block_phone,block_device,block_ip)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+            [s[0], s[1], s[2], body, s[3], s[4], s[5], s[6], s[7], s[8], s[9]]
+          );
+        } catch (e) { /* ignora duplicados */ }
+      }
+    }
+  } catch (e) { /* tabla nueva o sin permisos: se reintenta en el próximo arranque */ }
+
   await pool.query(`CREATE TABLE IF NOT EXISTS admin_mod_rules (
     id INT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(160) NOT NULL,

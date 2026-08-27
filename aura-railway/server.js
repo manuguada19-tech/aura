@@ -1191,6 +1191,10 @@ async function migrate() {
   try { await pool.execute("ALTER TABLE messages ADD INDEX idx_msg_time (created_at)"); } catch {}
   try { await pool.execute("ALTER TABLE users ADD COLUMN invite_code VARCHAR(48) NULL"); } catch {}
 
+  // V733 - Bloqueo de re-registro por teléfono (columna additiva en blocked_devices).
+  try { await pool.execute("ALTER TABLE blocked_devices ADD COLUMN phone VARCHAR(30) NULL"); } catch {}
+  try { await pool.execute("ALTER TABLE blocked_devices ADD INDEX idx_phone (phone)"); } catch {}
+
   // V401 - Preferencia de idioma por usuario (para traducir emails y push).
   try { await pool.execute("ALTER TABLE users ADD COLUMN preferred_lang VARCHAR(5) NOT NULL DEFAULT 'es'"); } catch {}
 
@@ -3274,6 +3278,271 @@ app.delete("/api/admin/kyc/blocks/:id", wrap(async (req, res) => {
   await pool.execute("DELETE FROM blocked_devices WHERE id=?", [id]);
   try { await logActivity("kyc", `Bloqueo dispositivo #${id} eliminado`); } catch {}
   res.json({ ok: true });
+}));
+
+/* ------------------------------------------------------------------
+   POST /api/admin/kyc/:id/delete-account  (V733)
+   Eliminación "simple" desde la cola de verificaciones: borra la cuenta
+   de la app (users + verificaciones), envía email con el motivo y, si se
+   pide, avisa de que la apelación puede no ser revisada. NO aplica
+   bloqueos de re-registro (para eso está full-delete). El botón del panel
+   llamaba a esta ruta pero no existía → por eso "no funcionaba".
+------------------------------------------------------------------- */
+const KYC_DELETE_REASONS = {
+  menor_de_edad:        "Menor de edad detectado",
+  documento_falso:      "Documento falso o manipulado",
+  identidad_no_coincide:"La identidad no coincide con el perfil",
+  duplicado:            "Cuenta duplicada",
+  fraude:               "Sospecha de fraude",
+  incumplimiento:       "Incumplimiento de las normas",
+  otro:                 "Otro",
+};
+app.post("/api/admin/kyc/:id/delete-account", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const b = req.body || {};
+  const reasonCode = String(b.reason || "").trim().slice(0, 60);
+  if (!reasonCode) return res.status(400).json({ error: "reason_required" });
+  const detail = String(b.detail || "").trim().slice(0, 1000);
+  const sendEmail = b.send_email !== false;
+  const admin = req.admin?.email || "admin";
+
+  // Cargar la verificación para resolver el usuario/email asociado.
+  const [rows] = await pool.query(
+    "SELECT id, user_id, email FROM identity_verifications WHERE id=? LIMIT 1", [id]
+  );
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  const kv = rows[0];
+  const email = kv.email || null;
+
+  // Resolver user_id: el de la verificación o, si falta, por email.
+  let userId = parseInt(kv.user_id, 10) || 0;
+  if (!userId && email) {
+    try {
+      const [u] = await pool.query("SELECT id FROM users WHERE email=? LIMIT 1", [email]);
+      if (u.length) userId = u[0].id;
+    } catch {}
+  }
+
+  // Nº de sesiones KYC locales asociadas (lo que el panel muestra como "Didit").
+  let diditDeleted = 0;
+  try {
+    const [c] = await pool.query(
+      "SELECT COUNT(*) n FROM identity_verifications WHERE id=? OR (user_id IS NOT NULL AND user_id=?) OR (email IS NOT NULL AND email=?)",
+      [id, userId || 0, email]
+    );
+    diditDeleted = c.length ? (c[0].n || 0) : 0;
+  } catch {}
+
+  const reasonLabel = KYC_DELETE_REASONS[reasonCode] || reasonCode;
+
+  // Email ANTES de purgar (después el usuario ya no existe).
+  let emailSent = false;
+  if (sendEmail && email) {
+    try {
+      const r = await enqueueEmail("account_deleted", userId || null, {
+        user_email: email,
+        reason: reasonLabel,
+        admin_notes: detail || null,
+      });
+      emailSent = !!(r && r.ok);
+    } catch {}
+  }
+
+  // Purga de datos. Si hay usuario, purgeUserData borra users + KYC (por id y
+  // por email). Si es una verificación huérfana (sin cuenta), borramos las
+  // filas de identity_verifications directamente.
+  if (userId) {
+    await purgeUserData(userId, { keepBilling: true });
+  } else {
+    try {
+      await pool.execute(
+        "DELETE FROM identity_verifications WHERE id=? OR (email IS NOT NULL AND email=?)",
+        [id, email]
+      );
+    } catch {}
+  }
+  // Garantiza que esta verificación concreta queda borrada aunque email fuese null.
+  try { await pool.execute("DELETE FROM identity_verifications WHERE id=?", [id]); } catch {}
+
+  try {
+    await logActivity("kyc",
+      `Cuenta eliminada desde KYC #${id} (${email || "sin email"}) motivo=${reasonCode} por ${admin}`);
+  } catch {}
+
+  res.json({ ok: true, didit_deleted: diditDeleted, email_sent: emailSent });
+}));
+
+/* ------------------------------------------------------------------
+   POST /api/admin/users/:id/full-delete  (V733)
+   Eliminación TOTAL con motivo configurable (admin_deletion_reasons):
+     · Borra el usuario y todos sus datos (purgeUserData).
+     · Envía email con el motivo (plantilla del motivo o account_deleted).
+     · Aplica bloqueos de re-registro (email/teléfono/dispositivo/IP).
+   El botón "🧨 Eliminación total" del panel llamaba a esta ruta pero no
+   existía → devolvía 404 y no hacía nada.
+------------------------------------------------------------------- */
+app.post("/api/admin/users/:id/full-delete", wrap(async (req, res) => {
+  const uid = parseInt(req.params.id, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_id" });
+  const b = req.body || {};
+  const admin = req.admin?.email || "admin";
+
+  // Datos del usuario ANTES de purgar (email/teléfono para bloqueos + email).
+  let email = null, phone = null, name = null;
+  try {
+    const [u] = await pool.query("SELECT email, phone, name FROM users WHERE id=? LIMIT 1", [uid]);
+    if (u.length) { email = u[0].email || null; phone = u[0].phone || null; name = u[0].name || null; }
+  } catch {}
+
+  // Última verificación KYC del usuario (para fingerprint/doc_hash/ip del bloqueo).
+  let kv = { ip: null, fingerprint: null, doc_hash: null };
+  try {
+    const [kr] = await pool.query(
+      `SELECT ip, fingerprint, doc_hash FROM identity_verifications
+        WHERE user_id=? OR (email IS NOT NULL AND email=?)
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      [uid, email]
+    );
+    if (kr.length) kv = kr[0];
+  } catch {}
+
+  // Motivo configurable (admin_deletion_reasons). Los overrides del modal
+  // mandan sobre los valores por defecto del motivo.
+  const reasonCode = String(b.reason_code || "").trim().slice(0, 60);
+  let reason = null;
+  if (reasonCode) {
+    try {
+      const [rr] = await pool.query("SELECT * FROM admin_deletion_reasons WHERE code=? LIMIT 1", [reasonCode]);
+      if (rr.length) reason = rr[0];
+    } catch {}
+  }
+  const reasonLabel = reason ? reason.label : (reasonCode || "Cierre de cuenta");
+  const appealDays = Number.isFinite(parseInt(b.appeal_days, 10)) ? parseInt(b.appeal_days, 10)
+                   : (reason ? (reason.appeal_days || 30) : 30);
+
+  const wantEmail  = b.override_email  !== undefined ? !!b.override_email  : (reason ? !!reason.send_email  : true);
+  const wantAppeal = b.override_appeal !== undefined ? !!b.override_appeal : (reason ? !!reason.allow_appeal : true);
+  const ov = b.override_blocks || {};
+  const blkEmail  = ov.email  !== undefined ? !!ov.email  : (reason ? !!reason.block_email  : true);
+  const blkPhone  = ov.phone  !== undefined ? !!ov.phone  : (reason ? !!reason.block_phone  : false);
+  const blkDevice = ov.device !== undefined ? !!ov.device : (reason ? !!reason.block_device : false);
+  const blkIp     = ov.ip     !== undefined ? !!ov.ip     : (reason ? !!reason.block_ip     : false);
+  const adminNotes = String(b.admin_notes || "").trim().slice(0, 1000) || null;
+
+  // 1) Email con el motivo (antes de purgar). Usa la plantilla del motivo si
+  //    existe y está habilitada; si no, cae en account_deleted.
+  let emailSent = false;
+  if (wantEmail && email) {
+    try {
+      let tplId = "account_deleted";
+      if (reasonCode) {
+        try {
+          const [t] = await pool.query("SELECT id FROM email_templates WHERE id=? AND enabled=1 LIMIT 1", [reasonCode]);
+          if (t.length) tplId = reasonCode;
+        } catch {}
+      }
+      const r = await enqueueEmail(tplId, uid, {
+        user_email: email,
+        user_name: name || (email.split("@")[0]),
+        reason: reasonLabel,
+        appeal_days: appealDays,
+        allow_appeal: wantAppeal ? 1 : 0,
+        admin_notes: adminNotes,
+      });
+      emailSent = !!(r && r.ok);
+    } catch {}
+  }
+
+  // 2) La apelación pendiente se inserta DESPUÉS de la purga (purgeUserData
+  //    borra appeals WHERE user_id=?), en el paso 5.
+
+  // 3) Bloqueos de re-registro.
+  const blocksCreated = [];
+  const blockReason = ("full_delete:" + (reasonCode || "otro")).slice(0, 120);
+  // 3a) Email / teléfono / dispositivo (doc+fp) → blocked_devices (usado por KYC).
+  if (blkEmail || blkPhone || blkDevice) {
+    try {
+      await pool.execute(
+        `INSERT INTO blocked_devices (ip, fingerprint, doc_hash, email, phone, reason, notes, created_by, permanent)
+         VALUES (?,?,?,?,?,?,?,?,1)`,
+        [
+          blkDevice ? (kv.ip || null) : null,
+          blkDevice ? (kv.fingerprint || null) : null,
+          blkDevice ? (kv.doc_hash || null) : null,
+          blkEmail ? email : null,
+          blkPhone ? phone : null,
+          blockReason, adminNotes, admin,
+        ]
+      );
+      if (blkEmail && email) blocksCreated.push("email");
+      if (blkPhone && phone) blocksCreated.push("teléfono");
+      if (blkDevice && (kv.ip || kv.fingerprint || kv.doc_hash)) blocksCreated.push("dispositivo");
+    } catch (e) { /* columna phone puede no existir en instancias muy viejas */
+      // Reintento sin phone para no perder el resto de bloqueos.
+      try {
+        await pool.execute(
+          `INSERT INTO blocked_devices (ip, fingerprint, doc_hash, email, reason, notes, created_by, permanent)
+           VALUES (?,?,?,?,?,?,?,1)`,
+          [
+            blkDevice ? (kv.ip || null) : null,
+            blkDevice ? (kv.fingerprint || null) : null,
+            blkDevice ? (kv.doc_hash || null) : null,
+            blkEmail ? email : null,
+            blockReason, adminNotes, admin,
+          ]
+        );
+        if (blkEmail && email) blocksCreated.push("email");
+        if (blkDevice && (kv.ip || kv.fingerprint || kv.doc_hash)) blocksCreated.push("dispositivo");
+      } catch {}
+    }
+  }
+  // 3b) IP → ip_blocks (usado por enforceAccess en login/OTP).
+  if (blkIp && kv.ip) {
+    try {
+      await pool.execute(
+        `INSERT INTO ip_blocks (ip, kind, reason, user_id, created_by) VALUES (?,?,?,?,?)`,
+        [kv.ip, "ban", blockReason, uid, admin]
+      );
+      blocksCreated.push("IP");
+    } catch {}
+  }
+
+  // 4) Nº de sesiones KYC asociadas (informativo para el toast del panel).
+  let diditDeleted = 0;
+  try {
+    const [c] = await pool.query(
+      "SELECT COUNT(*) n FROM identity_verifications WHERE user_id=? OR (email IS NOT NULL AND email=?)",
+      [uid, email]
+    );
+    diditDeleted = c.length ? (c[0].n || 0) : 0;
+  } catch {}
+
+  // 5) Purga total del usuario y sus datos (incluye identity_verifications).
+  await purgeUserData(uid, { keepBilling: true });
+  // 5b) Apelación pendiente tras la purga (para que el usuario pueda recurrir).
+  if (wantAppeal && email) {
+    try {
+      await pool.execute(
+        `INSERT INTO appeals (email, account_status, restriction_reason, message, status)
+         VALUES (?,?,?,?,'open')`,
+        [email, "deleted", reasonLabel,
+         `Cuenta eliminada (${reasonLabel}). Plazo de apelación: ${appealDays} días.`]
+      );
+    } catch {}
+  }
+
+  try {
+    await logActivity("admin",
+      `Eliminación total usuario #${uid} (${email || "sin email"}) motivo=${reasonCode || "-"} bloqueos=[${blocksCreated.join(",") || "ninguno"}] por ${admin}`);
+  } catch {}
+
+  res.json({
+    ok: true,
+    didit_deleted: diditDeleted,
+    email_sent: emailSent,
+    blocks_created: blocksCreated,
+  });
 }));
 
 /* ---- Cleanup cron: verificaciones y fotos > 30 días -------- */
