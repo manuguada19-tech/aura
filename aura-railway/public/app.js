@@ -262,6 +262,13 @@ const contentFallback = {
   "content.me.item_security": "Contraseña y 2FA",
   "content.me.item_blocked": "Usuarios bloqueados",
   "content.me.item_devices": "Dispositivos activos",
+  "content.me.devices_empty": "No hay dispositivos registrados todavía. Aparecerán aquí cuando inicies sesión desde un dispositivo.",
+  "content.me.devices_hint": "Estos son los dispositivos desde los que has iniciado sesión. Elimina los que no reconozcas.",
+  "content.me.device_current": "Este dispositivo",
+  "content.me.device_forget": "Olvidar",
+  "content.me.device_forgotten": "Dispositivo eliminado",
+  "content.me.devices_loading": "Cargando dispositivos…",
+  "content.me.devices_error": "No se pudieron cargar los dispositivos",
   "content.me.item_data": "Descargar mis datos",
   "content.me.item_data_sub": "Exporta un ZIP con toda tu información",
   "content.me.item_help": "Centro de ayuda",
@@ -11694,27 +11701,104 @@ function openNotifSheet() {
   ]);
   modal.open(wrap);
 }
+// V727 · Dispositivos activos REALES (antes eran inventados). Carga la lista
+// desde /api/my/devices — filas creadas por el backend en cada login/heartbeat
+// con IP, user-agent y Client Hints (SO, versión, modelo, navegador).
+function deviceIcon(d) {
+  const mobile = d.ch_mobile === 1 || d.ch_mobile === true || /Móvil|Movil|Mobile/i.test(d.device_name || "");
+  const tablet = /Tablet|iPad/i.test(d.device_name || "") || /iPad|Tablet/i.test(d.user_agent || "");
+  if (tablet) return "📲";
+  if (mobile) return "📱";
+  return "💻";
+}
+function deviceLabel(d) {
+  // Construye "SO versión · Navegador" con Client Hints si están; si no, cae al
+  // device_name genérico (Móvil/PC/Tablet) que el backend derivó del user-agent.
+  const parts = [];
+  if (d.ch_platform) parts.push(d.ch_platform + (d.ch_platform_version ? " " + String(d.ch_platform_version).split(".")[0] : ""));
+  if (d.ch_model) parts.push(d.ch_model);
+  if (d.ch_browser) parts.push(d.ch_browser);
+  if (!parts.length) parts.push(d.device_name || "Dispositivo");
+  return parts.join(" · ");
+}
+function deviceWhen(ts) {
+  if (!ts) return "—";
+  const then = new Date(ts).getTime();
+  if (!Number.isFinite(then)) return "—";
+  const diff = Date.now() - then;
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "Ahora";
+  if (min < 60) return "hace " + min + " min";
+  const h = Math.floor(min / 60);
+  if (h < 24) return "hace " + h + " h";
+  const dd = Math.floor(h / 24);
+  if (dd < 30) return "hace " + dd + " d";
+  const mm = Math.floor(dd / 30);
+  return "hace " + mm + " mes" + (mm > 1 ? "es" : "");
+}
+
 function openDevicesSheet() {
-  const devices = [
-    { name: "iPhone 15 · Safari", loc: "Madrid · Ahora", current: true },
-    { name: "MacBook Pro · Chrome", loc: "Madrid · hace 2h" },
-    { name: "iPad · Safari", loc: "Barcelona · hace 3d" },
-  ];
+  const list = el("div", { class: "filters-body" }, el("div", { class: "muted", style: "padding:12px 4px" }, T("content.me.devices_loading") || "Cargando dispositivos…"));
   const wrap = el("div", {}, [
-    el("div", { class: "sheet-title" }, "Dispositivos activos"),
-    el("div", { class: "filters-body" }, [
-      ...devices.map(d => el("div", { class: "chat-item" }, [
-        el("div", { class: "avatar", style: `background:var(--surface-2);display:grid;place-items:center;font-size:24px` }, "📱"),
-        el("div", { class: "txt" }, [ el("strong", {}, d.name + (d.current ? " (actual)" : "")), el("small", {}, d.loc) ]),
-        !d.current ? el("button", { class: "btn btn-sm btn-outline" }, "Cerrar") : null,
-      ])),
-      el("div", { class: "sheet-actions" }, [
-        el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); toast("Sesión cerrada en todos los dispositivos"); }}, "Cerrar sesión en todos"),
-        el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cerrar"),
-      ]),
+    el("div", { class: "sheet-title" }, T("content.me.item_devices") || "Dispositivos activos"),
+    list,
+    el("div", { class: "sheet-actions" }, [
+      el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("common.close") || "Cerrar"),
     ]),
   ]);
   modal.open(wrap);
+
+  async function refresh() {
+    let items = [];
+    try {
+      const r = await fetch("/api/my/devices", {
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }), cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error("bad");
+      items = d.items || [];
+    } catch (ex) {
+      list.innerHTML = "";
+      list.appendChild(el("div", { class: "muted", style: "padding:12px 4px" }, T("content.me.devices_error") || "No se pudieron cargar los dispositivos"));
+      return;
+    }
+    list.innerHTML = "";
+    if (!items.length) {
+      list.appendChild(el("div", { class: "muted", style: "padding:12px 4px;line-height:1.4" }, T("content.me.devices_empty") || "No hay dispositivos registrados todavía."));
+      return;
+    }
+    list.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:2px 4px 10px;line-height:1.4" }, T("content.me.devices_hint") || "Estos son los dispositivos desde los que has iniciado sesión. Elimina los que no reconozcas."));
+    items.forEach((d) => {
+      const isCurrent = d.is_current === 1 || d.is_current === true;
+      const sub = [deviceWhen(d.last_seen), d.ip].filter(Boolean).join(" · ");
+      const row = el("div", { class: "chat-item" }, [
+        el("div", { class: "avatar", style: "background:var(--surface-2);display:grid;place-items:center;font-size:24px" }, deviceIcon(d)),
+        el("div", { class: "txt" }, [
+          el("strong", {}, deviceLabel(d) + (isCurrent ? " · " + (T("content.me.device_current") || "Este dispositivo") : "")),
+          el("small", {}, sub),
+        ]),
+        isCurrent ? null : el("button", {
+          class: "btn btn-sm btn-outline",
+          type: "button",
+          onclick: async (ev) => {
+            ev.stopPropagation();
+            ev.currentTarget.disabled = true;
+            try {
+              const rr = await fetch("/api/my/devices/" + d.id, {
+                method: "DELETE",
+                headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }),
+              });
+              const dd = await rr.json().catch(() => ({}));
+              if (rr.ok && dd.ok) { toast(T("content.me.device_forgotten") || "Dispositivo eliminado"); await refresh(); }
+              else { toast("No se pudo eliminar"); ev.currentTarget.disabled = false; }
+            } catch (e) { toast("Error"); ev.currentTarget.disabled = false; }
+          },
+        }, T("content.me.device_forget") || "Olvidar"),
+      ]);
+      list.appendChild(row);
+    });
+  }
+  refresh();
 }
 
 /* ---- Subscriptions ---- */

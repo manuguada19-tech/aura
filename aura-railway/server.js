@@ -6565,6 +6565,50 @@ app.post("/api/my/photos/:id/primary", wrap(async (req, res) => {
 }));
 
 /* ============================================================
+   V727 · "Dispositivos activos" REALES para el propio usuario
+   ------------------------------------------------------------
+   Antes la pantalla del perfil mostraba dispositivos INVENTADOS
+   (iPhone 15, MacBook Pro, iPad) escritos a mano en el frontend.
+   Ahora devolvemos las filas reales de la tabla `devices`, que ya
+   se rellena en cada login/heartbeat mediante touchUserDevice
+   (IP, user-agent, Client Hints: SO, versión, modelo, navegador).
+     GET    /api/my/devices        → lista de dispositivos del usuario
+     DELETE /api/my/devices/:id    → olvida/elimina un dispositivo
+
+   Nota de honestidad técnica: las sesiones son tokens HMAC sin
+   estado (no hay revocación en servidor), así que "olvidar" un
+   dispositivo borra su registro pero no invalida un token vivo.
+============================================================ */
+app.get("/api/my/devices", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT id, device_name, ip, user_agent, location, last_seen, is_current,
+            ch_platform, ch_platform_version, ch_model, ch_mobile,
+            ch_browser, ch_browser_version
+       FROM devices WHERE user_id=? ORDER BY is_current DESC, last_seen DESC LIMIT 20`,
+    [me]
+  );
+  res.json({ ok: true, items: rows });
+}));
+
+app.delete("/api/my/devices/:id", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
+  // No permitimos borrar el dispositivo marcado como actual desde aquí (para
+  // eso el usuario usa "Cerrar sesión"): evita dejar la fila actual huérfana.
+  const [[row]] = await pool.query(
+    "SELECT is_current FROM devices WHERE id=? AND user_id=? LIMIT 1", [id, me]
+  );
+  if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+  if (row.is_current) return res.status(400).json({ ok: false, error: "is_current" });
+  await pool.execute("DELETE FROM devices WHERE id=? AND user_id=?", [id, me]);
+  res.json({ ok: true });
+}));
+
+/* ============================================================
    V719 · Editar perfil (persistido en servidor)
    ------------------------------------------------------------
    Antes la pantalla "Editar perfil" solo guardaba en localStorage,
