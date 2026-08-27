@@ -10136,6 +10136,31 @@ function screenAccountStatus(root) {
         ${d.kyc_reason ? `<div class="acc-status-item"><span>Motivo</span><span style="text-align:right;font-size:12.5px;">${d.kyc_reason}</span></div>` : ""}
         ${d.kyc_updated_at ? `<div class="acc-status-item"><span>Última actualización</span><span style="font-size:12.5px;">${new Date(d.kyc_updated_at).toLocaleString()}</span></div>` : ""}
       `;
+      // V728 · Cancelar una verificación enviada por error. Solo tiene sentido
+      // para estados EN CURSO (pendiente / revisión manual); no para verificado,
+      // rechazado o suspendido.
+      if (d.kyc_status === "pending" || d.kyc_status === "manual_review") {
+        const cancelBtn = el("button", {
+          class: "btn btn-outline btn-sm",
+          type: "button",
+          style: "margin-top:8px;",
+        }, "Cancelar verificación");
+        cancelBtn.addEventListener("click", async () => {
+          if (!confirm("¿Cancelar la verificación de edad en curso? Podrás volver a iniciarla cuando quieras.")) return;
+          cancelBtn.disabled = true;
+          try {
+            const rr = await fetch("/api/my/kyc/cancel", {
+              method: "POST",
+              headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+              body: "{}",
+            });
+            const dd = await rr.json().catch(() => ({}));
+            if (rr.ok && dd.ok) { toast("Verificación cancelada"); render(screenAccountStatus); }
+            else { toast("No se pudo cancelar"); cancelBtn.disabled = false; }
+          } catch (e) { toast("Error"); cancelBtn.disabled = false; }
+        });
+        boxKyc.appendChild(cancelBtn);
+      }
 
       // Apelaciones
       const appeals = d.appeals || [];
@@ -11743,7 +11768,7 @@ function openDevicesSheet() {
     el("div", { class: "sheet-title" }, T("content.me.item_devices") || "Dispositivos activos"),
     list,
     el("div", { class: "sheet-actions" }, [
-      el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("common.close") || "Cerrar"),
+      el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.close") || "Cerrar"),
     ]),
   ]);
   modal.open(wrap);
@@ -13895,6 +13920,9 @@ setTimeout(() => { try { checkActivePopup(); } catch {} }, 3500);
 })();
 
 async function screenDeviceSecurity(container) {
+  // V728 · Cabecera con botón de volver (antes esta pantalla no tenía forma de
+  // cerrarse/volver — el usuario quedaba "atrapado" sin una ✕/atrás).
+  if (container && container.appendChild) meSubHeader(container, "Dispositivo perdido o robado");
   const wrap = el("section", { class: "screen-security" });
   // render() ya monta un <div class="screen"> y nos lo pasa como container.
   // Debemos añadir nuestros nodos ahí (no devolverlos).

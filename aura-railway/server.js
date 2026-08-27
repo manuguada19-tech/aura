@@ -5427,6 +5427,42 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
   });
 }));
 
+/* ============================================================
+   V728 · Cancelar una verificación de edad enviada por error
+   ------------------------------------------------------------
+   Si el usuario inició/envió una verificación por error, podía
+   quedar "pendiente" o "en revisión manual" para siempre, y el
+   perfil mostraba "Tu cuenta necesita atención · Verificación de
+   edad pending". Ahora el propio usuario puede cancelarla.
+
+   Sólo se pueden cancelar estados EN CURSO (pending/doc_ok/
+   selfie_ok/video_ok/manual_review). NO se permite cancelar
+   'rejected' ni 'suspended' (son estados de moderación/enforcement
+   que no deben poder limpiarse desde la app), ni 'verified'.
+   Borramos las filas en curso (aditivo, no toca bloqueos ni otras
+   tablas); account-status pasará a 'none' y el aviso desaparece.
+============================================================ */
+app.post("/api/my/kyc/cancel", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  let email = null;
+  try {
+    const [urow] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [me]);
+    if (urow.length) email = urow[0].email || null;
+  } catch {}
+  const [r] = await pool.execute(
+    `DELETE FROM identity_verifications
+       WHERE (user_id=? OR (email IS NOT NULL AND email=?))
+         AND status IN ('pending','doc_ok','selfie_ok','video_ok','manual_review')`,
+    [me, email]
+  );
+  const cancelled = r?.affectedRows || 0;
+  try {
+    await logActivity(String(me), `Usuario canceló verificación de edad en curso (${cancelled} registro/s)`);
+  } catch {}
+  res.json({ ok: true, cancelled });
+}));
+
 /* Registro/actualización del dispositivo del usuario tras login o
    heartbeat. Guarda la IP real (incluye modo demo/local) para que el
    panel de admin pueda mostrarlas y usarlas para asociar bloqueos por
