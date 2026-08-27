@@ -1466,6 +1466,15 @@ body:has(.blocked-screen) .restriction-banner { display: none !important; }
   white-space: nowrap;
 }
 .restriction-banner .rb-close:hover { background: rgba(255,255,255,.35); }
+/* V731 · Variante "verificación de edad requerida". No es una sanción de
+   moderación, sino un requisito legal/edad, así que usamos ámbar en lugar de
+   rojo para diferenciarlo visualmente del banner de restricciones. */
+.restriction-banner.verify-gate-banner {
+  background: linear-gradient(135deg, #b45309, #f59e0b);
+  box-shadow: 0 8px 24px rgba(245, 158, 11, .35);
+}
+/* Si coexistiera con el banner de restricciones, súbelo un poco para no taparlo. */
+body.has-restriction .restriction-banner.verify-gate-banner { bottom: 150px; }
 /* Severe variant: suspension/ban — hace el banner más notorio y persistente. */
 body.account-banned .restriction-banner,
 .restriction-banner.rb-severe {

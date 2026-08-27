@@ -167,6 +167,8 @@ function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
   // V591 · push web al destinatario si está offline (no-op si no llega el helper)
   const notifyNewMessage = typeof helpers.notifyNewMessage === "function" ? helpers.notifyNewMessage : async () => {};
+  // V731 · gate por verificación de edad (no-op si no llega el helper)
+  const enforceKycGate = typeof helpers.enforceKycGate === "function" ? helpers.enforceKycGate : async () => false;
 
   // ============ V569 · Reproducción de nota de voz cifrada ===========
   // El emisor y el receptor de la conversación pueden reproducir su propio
@@ -334,6 +336,7 @@ function register(app, pool, helpers) {
   app.post("/api/my/messages/sticker", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
+    if (await enforceKycGate(req, res)) return; // V731 · verificación de edad requerida
     const plan = await getUserPlan(pool, me);
     if (!(await canUse(pool, me, "stickers_send", "gold", plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: "gold" });
@@ -369,6 +372,7 @@ function register(app, pool, helpers) {
   app.post("/api/my/messages/audio", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
+    if (await enforceKycGate(req, res)) return; // V731 · verificación de edad requerida
     const plan = await getUserPlan(pool, me);
     if (!(await canUse(pool, me, "audio_msg", "gold", plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: "gold" });
@@ -405,6 +409,7 @@ function register(app, pool, helpers) {
   app.post("/api/my/messages/ephemeral", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
+    if (await enforceKycGate(req, res)) return; // V731 · verificación de edad requerida
     const plan = await getUserPlan(pool, me);
     if (!(await canUse(pool, me, "ephemeral_msg", "gold", plan))) {
       return res.status(402).json({ error: "plan_required", required_plan: "gold" });

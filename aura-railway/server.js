@@ -5185,6 +5185,62 @@ async function enforceRestriction(req, res, feature) {
   return false;
 }
 
+/* ---------- V731 · Gate por verificación de edad (KYC) ----------
+   Cuando la cuenta tiene una verificación de edad EN CURSO o RECHAZADA se
+   limitan las funciones sensibles (dar like/super y enviar mensajes) hasta que
+   la verificación se complete. Devuelve { required, status }.
+
+   IMPORTANTE (compatibilidad): SOLO se activa si existe un registro de
+   verificación cuyo estado consolidado sea pending / manual_review / rejected.
+   Los usuarios SIN verificación ('none') y los ya verificados ('verified') NO
+   quedan limitados, así no se rompe a los usuarios existentes. Las cuentas
+   suspendidas/baneadas se gestionan por el sistema de suspensión de cuenta, no
+   aquí. Se calcula con el MISMO mapeo que /api/my/account-status. */
+async function getKycGateState(userId) {
+  if (!userId) return { required: false, status: "none" };
+  let email = null, verified = 0;
+  try {
+    const [urow] = await pool.query(
+      "SELECT email, verified FROM users WHERE id=? LIMIT 1", [userId]
+    );
+    if (urow.length) { email = urow[0].email || null; verified = urow[0].verified ? 1 : 0; }
+  } catch {}
+  let status = "none";
+  try {
+    const [krows] = await pool.query(
+      `SELECT status FROM identity_verifications
+        WHERE user_id=? OR (email IS NOT NULL AND email=?)
+        ORDER BY updated_at DESC, id DESC LIMIT 1`,
+      [userId, email]
+    );
+    if (krows.length) {
+      const raw = krows[0].status || "pending";
+      const map = {
+        verified: "verified", manual_review: "manual_review",
+        rejected: "rejected", suspended: "suspended", pending: "pending",
+        doc_ok: "pending", selfie_ok: "pending", video_ok: "pending",
+      };
+      status = map[raw] || "pending";
+    }
+    if (status === "none" && verified) status = "verified";
+  } catch {}
+  const required = (status === "pending" || status === "manual_review" || status === "rejected");
+  return { required, status };
+}
+// Backstop autoritativo en endpoints sensibles. Responde 428 (Precondition
+// Required) — distinto del 423 de restricciones para que el cliente no muestre
+// el aviso genérico de "cuenta con restricciones", sino el modal de verificación.
+async function enforceKycGate(req, res) {
+  const uid = readMyUserId(req);
+  if (!uid) return false;
+  const g = await getKycGateState(uid);
+  if (g.required) {
+    res.status(428).json({ error: "verify_required", kyc_status: g.status });
+    return true;
+  }
+  return false;
+}
+
 /* ---------- IP-based blocks (suspend/ban por IP) ----------
    Aplica a cualquier método de acceso (email, Google, Apple, Facebook, OTP).
    Se comprueba antes de crear/entrar en la cuenta. */
@@ -5308,7 +5364,12 @@ app.get("/api/my/restrictions", wrap(async (req, res) => {
     );
     if (urow.length) { email = urow[0].email || null; name = urow[0].name || null; }
   } catch {}
-  res.json({ ok: true, restrictions: list, user_email: email, user_name: name });
+  // V731 · Estado del gate por verificación de edad. El cliente sondea este
+  // endpoint cada 5s (refreshRestrictions) y lo usa para limitar like/mensajes
+  // y mostrar el aviso, sin necesidad de una llamada extra.
+  let kyc_gate = { required: false, status: "none" };
+  try { kyc_gate = await getKycGateState(me); } catch {}
+  res.json({ ok: true, restrictions: list, user_email: email, user_name: name, kyc_gate });
 }));
 
 /* — Estado de la cuenta del usuario —
@@ -6220,6 +6281,7 @@ app.post("/api/my/like", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   if (await enforceRestriction(req, res, "discover")) return;
+  if (await enforceKycGate(req, res)) return; // V731 · verificación de edad requerida
   const target = parseInt(req.body?.target_id, 10);
   const type = ["like", "super", "pass"].includes(req.body?.type) ? req.body.type : "like";
   if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
@@ -10766,6 +10828,7 @@ app.post("/api/my/messages", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   if (await enforceRestriction(req, res, "chat_send")) return;
+  if (await enforceKycGate(req, res)) return; // V731 · verificación de edad requerida
   const cid = parseInt(req.body?.conversation_id, 10);
   const body = req.body?.body != null ? String(req.body.body).slice(0, 4000) : null;
   const media_type = ["text","photo","audio"].includes(req.body?.media_type) ? req.body.media_type : "text";
@@ -11240,7 +11303,7 @@ const phaseZones = require("./features_zones"); // V613 · zonas: archivado + mo
 const adminExtra = require("./features_admin_extra"); // V712 · endpoints admin que faltaban
 const adminExtra2 = require("./features_admin_extra2"); // V713 · 2º lote endpoints admin (mod/tickets/pagos/stats/dispositivos)
 const webauthn = require("./features_webauthn"); // V714 · login con huella / Face ID (WebAuthn)
-phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage }); // V591 · +notifyNewMessage
+phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage, enforceKycGate }); // V591 · +notifyNewMessage · V731 · +enforceKycGate
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
