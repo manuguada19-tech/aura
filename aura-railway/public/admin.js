@@ -13611,6 +13611,22 @@ async function viewInvites(root) {
           catch (e) { toast("Error: " + e.message, "err"); }
         }));
       }
+      acts.appendChild(btn("📅 Ampliar validez", "ghost sm", async () => {
+        const ans = prompt(
+          "Ampliar validez del código " + iv.code + ".\n" +
+          "Escribe el nº de DÍAS de validez desde hoy (por ejemplo 30).\n" +
+          "Escribe 0 para que no caduque nunca.",
+          "30"
+        );
+        if (ans === null) return;
+        const days = parseInt(ans, 10);
+        if (!Number.isFinite(days) || days < 0) { toast("Número no válido", "err"); return; }
+        try {
+          const r = await api.post("/api/admin/invites/" + iv.id + "/extend", { days_valid: days });
+          toast(r.expires_at ? "Validez ampliada" : "Sin caducidad");
+          load(); loadStats();
+        } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
+      }));
       acts.appendChild(btn("🗑️ Eliminar", "danger sm", async () => {
         if (!confirm("¿Eliminar definitivamente " + iv.code + "?")) return;
         try { await api.del("/api/admin/invites/" + iv.id); toast("Eliminada"); load(); loadStats(); }

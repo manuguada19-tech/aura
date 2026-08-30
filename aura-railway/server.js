@@ -3126,7 +3126,7 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   args.push(limit);
   const whereSql = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const [rows] = await pool.query(
-    `SELECT id, session_token, email, ip, fingerprint, doc_type,
+    `SELECT id, user_id, session_token, email, ip, fingerprint, doc_type,
             doc_hash, doc_score, selfie_match_score, liveness_score,
             extracted_age, extracted_name, extracted_dob, status,
             manual_attempts, last_reason,
@@ -8888,6 +8888,22 @@ app.post("/api/admin/invites/:id/revoke", wrap(async (req, res) => {
 app.post("/api/admin/invites/:id/restore", wrap(async (req, res) => {
   await pool.execute("UPDATE invites SET revoked=0 WHERE id=?", [req.params.id]);
   res.json({ ok: true });
+}));
+
+// V734 · Ampliar/fijar la fecha de validez de una invitación.
+//   body: { days_valid }  → días desde HOY (0 o vacío = sin caducidad).
+//   La nueva fecha se calcula desde ahora, no desde la caducidad anterior,
+//   así "ampliar" siempre da un plazo útil aunque ya estuviera caducada.
+app.post("/api/admin/invites/:id/extend", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const days = parseInt(req.body?.days_valid, 10);
+  const expiresAt = Number.isFinite(days) && days > 0
+    ? new Date(Date.now() + days * 86400000) : null;
+  await pool.execute("UPDATE invites SET expires_at=? WHERE id=?", [expiresAt, id]);
+  await logActivity("admin",
+    `Invitacion #${id} validez ${expiresAt ? "hasta " + expiresAt.toISOString().slice(0, 10) : "sin caducidad"}`);
+  res.json({ ok: true, expires_at: expiresAt });
 }));
 
 app.delete("/api/admin/invites/:id", wrap(async (req, res) => {
