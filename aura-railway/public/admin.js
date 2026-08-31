@@ -4001,6 +4001,22 @@ async function openUserDrawer(id, onChange) {
       ]);
       liveBox.appendChild(sig);
 
+      // V742 · Privacidad del perfil: qué datos ha ocultado el usuario de su
+      // perfil público. El admin ve todos los datos, pero debe saber cuáles NO
+      // se muestran a otros usuarios para no exponerlos por error.
+      const hiddenLabels = ctx.user?.privacy_hidden_labels || [];
+      if (hiddenLabels.length) {
+        liveBox.appendChild(el("div", { class: "lv2-privacy" }, [
+          el("div", { class: "lv2-privacy-h" }, [
+            el("span", { class: "lv2-privacy-ic", html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10 10 0 0112 20c-7 0-11-8-11-8a19.8 19.8 0 015.06-5.94M9.9 4.24A10 10 0 0112 4c7 0 11 8 11 8a19.8 19.8 0 01-3.16 4.19M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` }),
+            el("strong", {}, "Datos ocultos por el usuario en su perfil público"),
+          ]),
+          el("div", { class: "lv2-privacy-tags" },
+            hiddenLabels.map((lbl) => el("span", { class: "chip xs t-warn" }, "🚫 " + lbl))),
+          el("small", { class: "muted" }, "No se muestran a otros usuarios. Evita exponerlos externamente."),
+        ]));
+      }
+
       // Botones de moderación completos
       const mod = el("div", { class: "lv2-mod-actions" }, [
         btn("⚠ Avisar", "warn xs", () => openUserModerationModal(id, ctx.user.name, "warn", { ip: dev.ip })),

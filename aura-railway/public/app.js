@@ -3297,6 +3297,45 @@ function genderLabel(g) {
   return String(g).charAt(0).toUpperCase() + String(g).slice(1);
 }
 
+// V742 · Datos sensibles que el usuario puede ocultar de su perfil público.
+// Al activar el interruptor, ese dato NO se mostrará a otros usuarios (el equipo
+// de administración sí lo ve, pero sabe que está oculto). key coincide con la
+// clave que entiende el backend.
+const PRIVACY_FIELDS = [
+  { key: "age",         label: "Edad" },
+  { key: "distance",    label: "Distancia y ubicación" },
+  { key: "city",        label: "Ciudad" },
+  { key: "height",      label: "Altura" },
+  { key: "weight",      label: "Peso" },
+  { key: "ethnicity",   label: "Etnia" },
+  { key: "orientation", label: "Orientación" },
+  { key: "job",         label: "Profesión" },
+];
+
+// Construye un bloque de interruptores de privacidad. `state` es un objeto
+// {key:true} que se muta al activar/desactivar; devuelve el elemento DOM.
+function buildPrivacyToggles(current) {
+  const model = current && typeof current === "object" ? current : {};
+  const wrap = el("div", { class: "privacy-block" });
+  wrap.appendChild(el("p", { class: "privacy-intro" },
+    "Elige qué datos NO quieres mostrar en tu perfil público. Lo que ocultes no será visible para otras personas."));
+  PRIVACY_FIELDS.forEach((f) => {
+    const input = el("input", { type: "checkbox", checked: !!model[f.key] || undefined });
+    input.addEventListener("change", () => {
+      if (input.checked) model[f.key] = true; else delete model[f.key];
+    });
+    const row = el("label", { class: "privacy-row" }, [
+      el("span", { class: "privacy-lbl" }, [
+        el("span", { class: "privacy-eye", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10 10 0 0112 20c-7 0-11-8-11-8a19.8 19.8 0 015.06-5.94M9.9 4.24A10 10 0 0112 4c7 0 11 8 11 8a19.8 19.8 0 01-3.16 4.19M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` }),
+        el("span", {}, `Ocultar ${f.label.toLowerCase()}`),
+      ]),
+      el("span", { class: "privacy-switch" }, [ input, el("span", { class: "privacy-slider" }) ]),
+    ]);
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
 // V741 · Formatea una distancia para mostrar. Las coordenadas aproximadas por
 // IP a veces producen valores absurdos (miles de km). Como esta app es de citas
 // locales, ocultamos distancias inverosímiles en vez de mostrar "11338 km".
@@ -6633,6 +6672,13 @@ function screenRegisterProfile(root) {
   const fDesc = el("textarea", { placeholder: "Descripción corta (máx 300)", maxlength: 300 });
   fDesc.value = state.registration.description;
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Descripción"), fDesc ]));
+
+  // V742 · Privacidad: qué datos sensibles NO mostrar en el perfil público.
+  state.registration.privacy = state.registration.privacy || {};
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Privacidad del perfil"),
+    buildPrivacyToggles(state.registration.privacy),
+  ]));
 
   // TODO: reactivar campo Teléfono cuando se integre verificación real por SMS
   // (Firebase Phone Auth gratis hasta 10.000 verificaciones/mes es la opción
@@ -10552,6 +10598,7 @@ function screenEditProfile(root) {
       looking_for: lookingRef.id,
       relationship: relRef.id,
       interests: Array.from(selectedInterests),
+      privacy: privacyModel, // V742 · campos ocultos del perfil público
     };
     try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
     try {
@@ -10637,6 +10684,15 @@ function screenEditProfile(root) {
     intWrap,
   ]));
 
+  // V742 · Privacidad: qué datos sensibles NO mostrar en el perfil público. El
+  // modelo se rellena al cargar el perfil del servidor (más abajo).
+  const privacyModel = Object.assign({}, state.myProfile.privacy || {});
+  const privacyToggles = buildPrivacyToggles(privacyModel);
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Privacidad del perfil"),
+    privacyToggles,
+  ]));
+
   // V719 · Carga el perfil real del servidor y rellena el formulario.
   (async () => {
     try {
@@ -10665,6 +10721,17 @@ function screenEditProfile(root) {
         selectedInterests.clear();
         p.interests.forEach((i) => selectedInterests.add(i));
         intWrap.querySelectorAll(".chip").forEach((x, i) => x.classList.toggle("active", selectedInterests.has(INTERESTS[i])));
+      }
+      // V742 · sincroniza los interruptores de privacidad con lo guardado.
+      if (p.privacy && typeof p.privacy === "object") {
+        Object.keys(privacyModel).forEach((k) => delete privacyModel[k]);
+        Object.keys(p.privacy).forEach((k) => { if (p.privacy[k]) privacyModel[k] = true; });
+        state.myProfile.privacy = Object.assign({}, privacyModel);
+        privacyToggles.querySelectorAll(".privacy-row").forEach((row, i) => {
+          const cb = row.querySelector("input[type=checkbox]");
+          const key = PRIVACY_FIELDS[i] && PRIVACY_FIELDS[i].key;
+          if (cb && key) cb.checked = !!privacyModel[key];
+        });
       }
     } catch (ex) { /* deja los valores por defecto */ }
   })();

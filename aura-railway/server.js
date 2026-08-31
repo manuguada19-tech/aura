@@ -1137,6 +1137,13 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V742: privacidad por campo. El usuario elige qué datos sensibles NO se
+  // muestran en su perfil público (edad, distancia/ubicación, altura, peso,
+  // etnia, orientación, profesión). Se guarda como JSON: {"age":true,...}.
+  // Aditivo y retrocompatible: NULL / vacío = no oculta nada (comportamiento
+  // previo). El admin SÍ ve todos los datos, pero marcados como "ocultos".
+  try { await pool.execute("ALTER TABLE users ADD COLUMN privacy_hidden TEXT NULL"); } catch (e) { /* ya existe */ }
+
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
   // completa se conserva en `url` (así la cuadrícula la muestra entera).
@@ -6513,6 +6520,56 @@ app.get("/api/export/:kind", wrap(async (req, res) => {
   res.send("\uFEFF" + csv);
 }));
 
+// ---- V742 · Privacidad por campo -----------------------------------------
+// Campos que el usuario puede ocultar de su perfil público. La clave coincide
+// con el nombre de la columna/propiedad; `label` es lo que ve el admin.
+const PRIVACY_FIELDS = [
+  { key: "age",         label: "Edad" },
+  { key: "distance",    label: "Distancia / ubicación" },
+  { key: "city",        label: "Ciudad" },
+  { key: "height",      label: "Altura" },
+  { key: "weight",      label: "Peso" },
+  { key: "ethnicity",   label: "Etnia" },
+  { key: "orientation", label: "Orientación" },
+  { key: "job",         label: "Profesión" },
+];
+const PRIVACY_KEYS = new Set(PRIVACY_FIELDS.map((f) => f.key));
+
+// Parsea el JSON almacenado en users.privacy_hidden → objeto {key:true}.
+function parsePrivacy(raw) {
+  if (!raw) return {};
+  let obj = raw;
+  if (typeof raw === "string") { try { obj = JSON.parse(raw); } catch { return {}; } }
+  if (!obj || typeof obj !== "object") return {};
+  const out = {};
+  for (const k of Object.keys(obj)) { if (PRIVACY_KEYS.has(k) && obj[k]) out[k] = true; }
+  return out;
+}
+
+// Sanea un objeto entrante (del cliente) a JSON string válido para guardar.
+function serializePrivacy(input) {
+  const clean = parsePrivacy(input);
+  return JSON.stringify(clean);
+}
+
+// Aplica la privacidad a una fila de perfil que se enviará a OTROS usuarios:
+// pone a null los campos que el dueño ha marcado como ocultos. NO se usa para
+// el propio usuario ni para el admin (ellos ven todo).
+function applyPrivacyToPublicRow(row) {
+  if (!row) return row;
+  const hidden = parsePrivacy(row.privacy_hidden);
+  if (hidden.age) row.age = null;
+  if (hidden.city) row.city = null;
+  if (hidden.distance) { row.distance = null; if ("real_distance" in row) row.real_distance = null; }
+  if (hidden.height) row.height = null;
+  if (hidden.weight) row.weight = null;
+  if (hidden.ethnicity) row.ethnicity = null;
+  if (hidden.orientation) row.orientation = null;
+  if (hidden.job) row.job = null;
+  delete row.privacy_hidden; // nunca exponer la config de privacidad a terceros
+  return row;
+}
+
 // Discover (client)
 app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
@@ -6600,7 +6657,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
-            u.job, u.looking_for, u.relationship, u.interests,
+            u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -6626,6 +6683,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   for (const r of rows) {
     r.distance = (r.distance == null ? null : Number(r.distance));
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+    applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
 }));
@@ -6701,7 +6759,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
-            u.job, u.looking_for, u.relationship, u.interests,
+            u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -6729,6 +6787,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   for (const r of rows) {
     r.distance = (r.distance == null ? null : Number(r.distance));
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+    applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
 }));
@@ -7188,12 +7247,15 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, job, height, gender, looking_for, relationship, interests, photo_url FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, job, height, gender, looking_for, relationship, interests, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   let interests = [];
   try { interests = u.interests ? JSON.parse(u.interests) : []; } catch { interests = []; }
-  res.json({ ok: true, profile: { ...u, interests: Array.isArray(interests) ? interests : [] } });
+  // V742 · privacidad: devolvemos el objeto {campo:true} para pintar los toggles.
+  const privacy = parsePrivacy(u.privacy_hidden);
+  delete u.privacy_hidden;
+  res.json({ ok: true, profile: { ...u, interests: Array.isArray(interests) ? interests : [], privacy } });
 }));
 
 app.post("/api/my/profile", wrap(async (req, res) => {
@@ -7218,6 +7280,8 @@ app.post("/api/my/profile", wrap(async (req, res) => {
     const arr = Array.isArray(b.interests) ? b.interests.filter((x) => typeof x === "string").slice(0, 30) : [];
     sets.push("interests=?"); vals.push(JSON.stringify(arr));
   }
+  // V742 · privacidad por campo: se guarda el JSON saneado {campo:true}.
+  if ("privacy" in b) { sets.push("privacy_hidden=?"); vals.push(serializePrivacy(b.privacy)); }
   if (!sets.length) return res.json({ ok: true, updated: 0 });
   vals.push(me);
   await pool.execute(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, vals);
@@ -9319,13 +9383,21 @@ async function getUserFullContext(uid) {
   // Timeout duro de 4 s → antes que el proxy MuleRun corte a 502.
   const usersRes = await _withTimeout(
     pool.query(
-      `SELECT id, name, email, photo_url, age, gender, plan, status, online, city, country, last_login, created_at
+      `SELECT id, name, email, photo_url, age, gender, plan, status, online, city, country, privacy_hidden, last_login, created_at
          FROM users WHERE id=? LIMIT 1`, [uid]),
     4000, null, "users");
   if (!usersRes) return null;
   const [urows] = usersRes;
   if (!urows.length) return null;
   const u = urows[0];
+  // V742 · Privacidad del usuario: el admin ve SIEMPRE todos los datos, pero
+  // se le informa de qué campos ha ocultado el usuario en su perfil público.
+  {
+    const hidden = parsePrivacy(u.privacy_hidden);
+    u.privacy_hidden_keys = Object.keys(hidden);
+    u.privacy_hidden_labels = PRIVACY_FIELDS.filter((f) => hidden[f.key]).map((f) => f.label);
+    delete u.privacy_hidden;
+  }
   let devices = [];
   const devRes = await _withTimeout(
     pool.query(
