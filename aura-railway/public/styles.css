@@ -1297,39 +1297,47 @@ img { max-width: 100%; display: block; }
   background-repeat: no-repeat; background-position: 14px center; background-size: 16px;
 }
 .results-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px 14px 24px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px 14px 26px;
 }
+/* V741 · Tarjeta rediseñada: anillo degradado permanente (visible sin hover,
+   pensado para táctil), esquinas más suaves y panel de info tipo cristal. */
 .result-card {
-  aspect-ratio: 3/4; border-radius: 20px; background-size: cover; background-position: center;
+  aspect-ratio: 3/4; border-radius: 22px; background-size: cover; background-position: center;
   position: relative; overflow: hidden; color: white;
-  box-shadow: 0 10px 26px rgba(20,22,29,.16);
-  border: 2px solid transparent;
-  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  box-shadow: 0 12px 30px rgba(20,22,29,.20);
+  transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease;
   cursor: pointer;
 }
 .result-card::before {
-  /* Halo/anillo de marca que aparece al pasar o tocar la tarjeta */
+  /* Anillo degradado de marca SIEMPRE visible (no depende del hover) */
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none;
-  border-radius: inherit; opacity: 0; transition: opacity .18s ease;
-  box-shadow: 0 0 0 2px var(--brand-1) inset, 0 0 22px rgba(255,59,107,.35);
+  border-radius: inherit; padding: 2px;
+  background: var(--grad-brand, linear-gradient(135deg,#ff3b6b,#ff8a3b));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: .85; transition: opacity .18s ease;
 }
 .result-card:hover, .result-card:active {
-  transform: translateY(-4px) scale(1.015);
-  box-shadow: 0 16px 34px rgba(255,59,107,.28);
+  transform: translateY(-5px) scale(1.02);
+  box-shadow: 0 18px 40px rgba(255,59,107,.30);
 }
 .result-card:hover::before, .result-card:active::before { opacity: 1; }
 .result-card::after {
   content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, transparent 45%, rgba(0,0,0,.78));
+  background: linear-gradient(180deg, transparent 42%, rgba(0,0,0,.82));
 }
 .result-card .info {
-  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2;
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 2;
+  padding: 8px 11px; border-radius: 15px;
+  background: rgba(18,18,26,.34); backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+  border: 1px solid rgba(255,255,255,.12);
 }
 .result-card .info strong {
-  font-size: 16px; font-weight: 800; display: block;
+  font-size: 15.5px; font-weight: 800; display: block;
   text-shadow: 0 1px 4px rgba(0,0,0,.5);
 }
-.result-card .info small { opacity: .95; font-size: 12.5px; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
+.result-card .info small { opacity: .95; font-size: 12px; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
 .result-card .online {
   position: absolute; top: 10px; right: 10px;
   width: 10px; height: 10px; border-radius: 50%; background: #22c55e;
@@ -1785,28 +1793,31 @@ body.account-suspended .restriction-banner .rb-close {
 .nearby-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
 }
+/* V741 · Igual que .result-card: anillo degradado permanente + esquinas suaves. */
 .nearby-card {
-  position: relative; aspect-ratio: 3 / 4; border-radius: 18px;
+  position: relative; aspect-ratio: 3 / 4; border-radius: 20px;
   background-size: cover; background-position: center;
   overflow: hidden; cursor: pointer;
-  box-shadow: 0 8px 20px rgba(0,0,0,.18);
-  border: 2px solid transparent;
-  transition: transform .18s ease, box-shadow .18s ease;
+  box-shadow: 0 10px 24px rgba(0,0,0,.20);
+  transition: transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s ease;
 }
 .nearby-card::before {
-  /* Anillo de marca al pasar/tocar */
+  /* Anillo degradado de marca SIEMPRE visible (no depende del hover) */
   content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none;
-  border-radius: inherit; opacity: 0; transition: opacity .18s ease;
-  box-shadow: 0 0 0 2px var(--brand-1) inset, 0 0 18px rgba(255,59,107,.35);
+  border-radius: inherit; padding: 2px;
+  background: var(--grad-brand, linear-gradient(135deg,#ff3b6b,#ff8a3b));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  opacity: .82; transition: opacity .18s ease;
 }
 .nearby-card:hover, .nearby-card:active {
   transform: translateY(-4px) scale(1.02);
-  box-shadow: 0 14px 30px rgba(255,59,107,.28);
+  box-shadow: 0 16px 32px rgba(255,59,107,.28);
 }
 .nearby-card:hover::before, .nearby-card:active::before { opacity: 1; }
 .nearby-card::after {
   content: ""; position: absolute; inset: 0;
-  background: linear-gradient(to top, rgba(0,0,0,.8) 0%, rgba(0,0,0,0) 62%);
+  background: linear-gradient(to top, rgba(0,0,0,.82) 0%, rgba(0,0,0,0) 60%);
   pointer-events: none;
 }
 .nearby-status {
@@ -1822,8 +1833,12 @@ body.account-suspended .restriction-banner .rb-close {
 .nearby-status.on .nearby-dot { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,.25); }
 .nearby-status.off .nearby-dot { background: #94a3b8; }
 .nearby-info {
-  position: absolute; bottom: 6px; left: 8px; right: 8px; z-index: 2;
+  position: absolute; bottom: 6px; left: 6px; right: 6px; z-index: 2;
   color: white; line-height: 1.2;
+  padding: 6px 8px; border-radius: 12px;
+  background: rgba(18,18,26,.30); backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.10);
 }
 .nearby-info strong { display: block; font-size: 12.5px; text-shadow: 0 1px 2px rgba(0,0,0,.4); }
 .nearby-info small { display: block; font-size: 10.5px; opacity: .9; }
@@ -3481,27 +3496,37 @@ body.info-open .theme-toggle { display: none; }
 /* ============================================================
    Swipe card: info button
    ============================================================ */
+/* V741 · Pastilla "Ver perfil" (antes era solo un icono, poco descubrible). */
 .swipe-info-btn {
   position: absolute;
   top: 14px;
   right: 14px;
   z-index: 4;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  border: 0;
-  background: rgba(0, 0, 0, 0.5);
+  height: 34px;
+  padding: 0 13px 0 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.42);
   color: #fff;
-  display: grid;
-  place-items: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: .2px;
   cursor: pointer;
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
   transition: transform 0.15s ease, background 0.15s ease;
 }
-.swipe-info-btn:hover {
-  background: rgba(0, 0, 0, 0.7);
-  transform: scale(1.05);
+.swipe-info-btn svg { flex: 0 0 auto; }
+.swipe-info-txt { white-space: nowrap; }
+.swipe-info-btn:hover,
+.swipe-info-btn:active {
+  background: var(--grad-brand, linear-gradient(135deg, #ff3b6b, #ff8a3b));
+  border-color: transparent;
+  transform: scale(1.04);
 }
 
 /* ============================================================

@@ -4543,8 +4543,8 @@ async function popupSegmentToPushDevices(segment, targetIdsCsv) {
     case "free":      clauses.push("user_id IN (SELECT id FROM users WHERE plan IS NULL OR plan='free')"); break;
     case "verified":  clauses.push("user_id IN (SELECT id FROM users WHERE verified=1)"); break;
     case "unverified":clauses.push("user_id IN (SELECT id FROM users WHERE verified=0 OR verified IS NULL)"); break;
-    case "male":      clauses.push("user_id IN (SELECT id FROM users WHERE gender='male')"); break;
-    case "female":    clauses.push("user_id IN (SELECT id FROM users WHERE gender='female')"); break;
+    case "male":      clauses.push("user_id IN (SELECT id FROM users WHERE gender IN ('male','Hombre','hombre','M','m'))"); break;
+    case "female":    clauses.push("user_id IN (SELECT id FROM users WHERE gender IN ('female','Mujer','mujer','F','f'))"); break;
     case "lgbt":      clauses.push("user_id IN (SELECT id FROM users WHERE zone='lgtb')"); break;
     case "new":       clauses.push("user_id IN (SELECT id FROM users WHERE created_at >= NOW() - INTERVAL 30 DAY)"); break;
     case "all":
@@ -4667,8 +4667,8 @@ function matchesUserSegment(u, seg) {
   if (seg === "free")       return !u.plan || u.plan === "free";
   if (seg === "verified")   return u.verified === 1;
   if (seg === "unverified") return !u.verified;
-  if (seg === "male")       return u.gender === "male";
-  if (seg === "female")     return u.gender === "female";
+  if (seg === "male")       return ["male","Hombre","hombre","M","m"].includes(u.gender);
+  if (seg === "female")     return ["female","Mujer","mujer","F","f"].includes(u.gender);
   if (seg === "lgbt")       return u.zone === "lgtb";
   if (seg === "new")        return u.created_at && (Date.now() - new Date(u.created_at).getTime()) < 30*24*3600*1000;
   return true;
@@ -7188,7 +7188,7 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, job, height, looking_for, relationship, interests, photo_url FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, job, height, gender, looking_for, relationship, interests, photo_url FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   let interests = [];
@@ -7210,6 +7210,8 @@ app.post("/api/my/profile", wrap(async (req, res) => {
     const h = parseInt(b.height, 10);
     sets.push("height=?"); vals.push(Number.isFinite(h) && h > 0 && h < 300 ? h : null);
   }
+  // V741 · Género editable desde el perfil (etiquetas en español).
+  if ("gender" in b) { sets.push("gender=?"); vals.push(b.gender ? String(b.gender).slice(0, 30) : null); }
   if ("looking_for" in b) { sets.push("looking_for=?"); vals.push(b.looking_for ? String(b.looking_for).slice(0, 30) : null); }
   if ("relationship" in b) { sets.push("relationship=?"); vals.push(b.relationship ? String(b.relationship).slice(0, 30) : null); }
   if ("interests" in b) {

@@ -3265,6 +3265,50 @@ const RELATIONSHIP_TYPES = [
   { id: "any",       label: "Sin preferencia",      emoji: "🎯" },
 ];
 
+// V741 · Géneros seleccionables en el perfil (etiquetas en español). Se usan
+// tanto al registrarse como al editar el perfil.
+const GENDER_OPTIONS = [
+  "Mujer", "Hombre", "No binario", "Binario", "Género fluido",
+  "Agénero", "Intersexual", "Transgénero", "Prefiero no decirlo",
+];
+
+// V741 · Normaliza cualquier valor de género almacenado (male/female/F/M/NB/
+// Otro/inglés…) a una etiqueta legible en español. Antes se mostraba "male" o
+// "female" tal cual, lo que no quedaba bien.
+function genderLabel(g) {
+  if (g == null || String(g).trim() === "") return "—";
+  const k = String(g).trim().toLowerCase();
+  const map = {
+    "male": "Hombre", "hombre": "Hombre", "m": "Hombre", "man": "Hombre",
+    "female": "Mujer", "mujer": "Mujer", "f": "Mujer", "woman": "Mujer",
+    "nb": "No binario", "non-binary": "No binario", "nonbinary": "No binario",
+    "no binario": "No binario", "no-binario": "No binario",
+    "binario": "Binario", "binary": "Binario",
+    "genderfluid": "Género fluido", "género fluido": "Género fluido",
+    "genero fluido": "Género fluido", "fluido": "Género fluido",
+    "agender": "Agénero", "agénero": "Agénero", "agenero": "Agénero",
+    "intersex": "Intersexual", "intersexual": "Intersexual",
+    "trans": "Transgénero", "transgénero": "Transgénero", "transgenero": "Transgénero",
+    "trans mujer": "Trans mujer", "trans hombre": "Trans hombre",
+    "otro": "Otro", "other": "Otro",
+    "prefiero no decirlo": "Prefiero no decirlo", "prefer not to say": "Prefiero no decirlo",
+  };
+  if (map[k]) return map[k];
+  return String(g).charAt(0).toUpperCase() + String(g).slice(1);
+}
+
+// V741 · Formatea una distancia para mostrar. Las coordenadas aproximadas por
+// IP a veces producen valores absurdos (miles de km). Como esta app es de citas
+// locales, ocultamos distancias inverosímiles en vez de mostrar "11338 km".
+function fmtDistance(km) {
+  if (km == null) return null;
+  const n = Number(km);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n > 500) return null;            // inverosímil para citas locales → ocultar
+  if (n < 1) return "menos de 1 km";
+  return `${Math.round(n)} km`;
+}
+
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
 const pick = (arr) => arr[rand(0, arr.length - 1)];
 const shuffle = (arr) => arr.slice().sort(() => Math.random() - 0.5);
@@ -6550,10 +6594,10 @@ function screenRegisterProfile(root) {
   ]));
   const fName = el("input", { type: "text", required: true, placeholder: "Tu nombre", value: state.registration.name });
   const fBirth = el("input", { type: "date", required: true, value: state.registration.birthDate });
+  // V741 · Lista completa de géneros para todas las zonas (antes hetero solo
+  // ofrecía Mujer/Hombre). Se muestran etiquetas en español.
   const fGender = el("select", { required: true },
-    (state.zone === "lgtb"
-      ? ["Mujer","Hombre","No binario","Trans mujer","Trans hombre","Género fluido","Prefiero no decirlo"]
-      : ["Mujer","Hombre"]).map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
+    GENDER_OPTIONS.map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
   const fOrient = el("select", { required: true },
     (state.zone === "lgtb"
       ? ["Lesbiana","Gay","Bisexual","Pansexual","Asexual","Demisexual","Queer","Prefiero no decirlo"]
@@ -7616,7 +7660,7 @@ function buildNearbySection() {
         // distancia (modo anónimo) sí generamos un valor de relleno.
         const isReal = !!u._real;
         let distLabel;
-        if (typeof u.distance === "number") distLabel = `${u.distance} km`;
+        if (typeof u.distance === "number") distLabel = fmtDistance(u.distance);
         else if (isReal) distLabel = null;
         else distLabel = `${Math.floor(Math.random()*15)+1} km`;
         const looking = LOOKING_FOR_OPTIONS.find(l => l.id === u.looking_for);
@@ -7852,7 +7896,7 @@ function buildSwipeCard(u, depth = 0) {
   card.appendChild(el("div", { class: "stamp nope" }, "NO"));
   // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
   // profesión; se omiten con elegancia en lugar de mostrar "null".
-  const locText = [u.city || "", (u.distance != null ? `${u.distance} km` : "")].filter(Boolean).join(" · ");
+  const locText = [u.city || "", (fmtDistance(u.distance) || "")].filter(Boolean).join(" · ");
   const bodyChildren = [
     el("h3", {}, [
       `${u.name}${u.age != null ? ", " + u.age : ""}`,
@@ -7867,13 +7911,15 @@ function buildSwipeCard(u, depth = 0) {
     bodyChildren.push(el("div", { class: "tags" }, u.interests.slice(0,3).map(t => el("span", { class: "tag" }, t))));
   }
   card.appendChild(el("div", { class: "swipe-card-body" }, bodyChildren));
-  // Info button — opens the full profile detail
+  // Info button — abre el detalle del perfil. V741 · Ahora es una pastilla con
+  // texto "Ver perfil" para que se entienda claramente que sirve para consultar
+  // el perfil (antes era solo un icono y no era descubrible).
   const infoBtn = el("button", {
     class: "swipe-info-btn",
     type: "button",
-    "aria-label": "Ver detalles del perfil",
+    "aria-label": "Ver perfil completo",
     onclick: (ev) => { ev.stopPropagation(); openProfileDetail(u); },
-    html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg>`
+    html: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg><span class="swipe-info-txt">Ver perfil</span>`
   });
   card.appendChild(infoBtn);
   card.addEventListener("click", (e) => {
@@ -8065,7 +8111,7 @@ function renderResults(grid, filter = "") {
   }
   filtered.forEach(u => {
     const isFav = state.favorites.has(u.id);
-    const meta = [u.city || "", (u.distance != null ? `${u.distance} km` : (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
+    const meta = [u.city || "", (fmtDistance(u.distance) || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
     const card = el("div", { class: "result-card", style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
       el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
@@ -9102,7 +9148,7 @@ function screenProfileDetail(root, u, opts = {}) {
   ]));
 
   // Quick meta chips
-  const pdLoc = [u.city || "", (u.distance != null ? `${u.distance} km` : "")].filter(Boolean).join(" · ");
+  const pdLoc = [u.city || "", (fmtDistance(u.distance) || "")].filter(Boolean).join(" · ");
   wrap.appendChild(el("div", { class: "pd-meta" }, [
     pdLoc ? el("div", { class: "pd-meta-item" }, [
       el("span", { class: "pd-meta-ic", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>` }),
@@ -9131,12 +9177,13 @@ function screenProfileDetail(root, u, opts = {}) {
   }
 
   // Extra details
-  const genderLabel = ({ F: "Mujer", M: "Hombre", NB: "No binario" }[u.gender]) || u.gender || "—";
+  const gLabel = genderLabel(u.gender);
+  const pdDist = fmtDistance(u.distance);
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
-    el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, genderLabel) ]),
+    el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, gLabel) ]),
     u.city ? el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]) : null,
-    (u.distance != null) ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", {}, `${u.distance} km`) ]) : null,
+    pdDist ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", {}, pdDist) ]) : null,
     el("div", { class: "pd-row" }, [ el("span", {}, "Verificación"), el("b", {}, u.verified ? "Verificado ✓" : "Sin verificar") ]),
   ]));
 
@@ -9975,7 +10022,7 @@ function openProfile(u) {
         u.verified ? el("span", { style: "background:#3b82f6;color:white;border-radius:50%;width:22px;height:22px;display:inline-grid;place-items:center;margin-left:6px;font-size:13px" }, "✓") : null,
       ]),
       el("div", { class: "profile-meta" },
-        [u.job || "", u.city || "", (u.distance != null ? `${u.distance} km` : "")]
+        [u.job || "", u.city || "", (fmtDistance(u.distance) || "")]
           .filter(Boolean)
           .flatMap((t, i) => i === 0 ? [t] : [el("span", { class: "dot" }, "·"), t])
       ),
@@ -10501,6 +10548,7 @@ function screenEditProfile(root) {
       city: cityInp.value.trim(),
       job: jobInp.value.trim(),
       height: parseInt(heightInp.value, 10) || null,
+      gender: genderInp.value,
       looking_for: lookingRef.id,
       relationship: relRef.id,
       interests: Array.from(selectedInterests),
@@ -10529,6 +10577,15 @@ function screenEditProfile(root) {
   jobField.appendChild(el("label", {}, T("content.me.field_job") || "Profesión")); jobField.appendChild(jobInp); form.appendChild(jobField);
   const heightField = el("div", { class: "field" }); const heightInp = el("input", { type: "number", value: u.height || "" });
   heightField.appendChild(el("label", {}, T("content.me.field_height") || "Altura (cm)")); heightField.appendChild(heightInp); form.appendChild(heightField);
+
+  // V741 · Género (etiquetas en español). El valor almacenado se normaliza para
+  // preseleccionar la opción correcta aunque estuviera guardado como male/female.
+  const curGender = genderLabel(u.gender);
+  const genderInp = el("select", {},
+    GENDER_OPTIONS.map(g => el("option", { value: g, selected: g === curGender || undefined }, g)));
+  const genderField = el("div", { class: "field" });
+  genderField.appendChild(el("label", {}, T("content.me.field_gender") || "Género"));
+  genderField.appendChild(genderInp); form.appendChild(genderField);
 
   // Qué estoy buscando
   const lookingRef = { id: state.myProfile.looking_for || "serious" };
@@ -10594,6 +10651,7 @@ function screenEditProfile(root) {
       if (p.city != null) cityInp.value = p.city;
       if (p.job != null) jobInp.value = p.job;
       if (p.height != null) heightInp.value = p.height;
+      if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
       const setChip = (wrapEl, ref, id) => {
         if (!id) return;
         ref.id = id;
