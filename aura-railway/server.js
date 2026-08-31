@@ -6575,7 +6575,7 @@ function applyPrivacyToPublicRow(row) {
   const hidden = parsePrivacy(row.privacy_hidden);
   if (hidden.age) row.age = null;
   if (hidden.city) row.city = null;
-  if (hidden.distance) { row.distance = null; if ("real_distance" in row) row.real_distance = null; }
+  if (hidden.distance) { row.distance = null; if ("real_distance" in row) row.real_distance = null; if ("gps_ok" in row) row.gps_ok = null; }
   if (hidden.height) row.height = null;
   if (hidden.weight) row.weight = null;
   if (hidden.ethnicity) row.ethnicity = null;
@@ -6673,6 +6673,7 @@ app.get("/api/discover", wrap(async (req, res) => {
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -6697,6 +6698,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   // V719 · interests se guarda como JSON string → devolver array para la UI.
   for (const r of rows) {
     r.distance = (r.distance == null ? null : Number(r.distance));
+    r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
@@ -6775,6 +6777,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -6801,6 +6804,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   const [rows] = await pool.query(sql, finalParams);
   for (const r of rows) {
     r.distance = (r.distance == null ? null : Number(r.distance));
+    r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }

@@ -8731,3 +8731,19 @@ body.welcome-desktop .hero-desktop .welcome-foot,
   body.welcome-desktop .dw-below .welcome-step-p { display: none !important; }
   body.welcome-desktop .dw-below .welcome-step { padding: 8px 12px !important; }
 }
+
+/* V744 · Aviso "GPS no permitido" en las tarjetas y el detalle del perfil.
+   Se aplica al texto de ubicación cuando el usuario tiene la localización
+   desactivada (no se inventan kilómetros). Tono ámbar sutil para que se
+   distinga de la distancia real sin resultar agresivo. */
+.gps-off,
+.gps-off b,
+.pd-meta-item.gps-off,
+.pd-meta-item.gps-off span {
+  color: #d97706 !important;
+}
+.nearby-info small.gps-off,
+.result-card .info small.gps-off {
+  color: #fbbf24 !important;
+  font-weight: 600;
+}

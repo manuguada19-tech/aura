@@ -2060,6 +2060,9 @@ function mapApiUser(row) {
     // Distancia real en km calculada por el backend (Haversine sobre GPS
     // con consentimiento). Es null si no hay coords de ambos usuarios.
     distance: (typeof row.distance === "number" ? row.distance : (row.distance != null ? Number(row.distance) : null)),
+    // V744 · gps_ok viene del backend: true = ese usuario tiene GPS activo (distancia real);
+    // false = ubicación desactivada por el usuario; null = campo distancia oculto por privacidad.
+    gps_ok: (row.gps_ok === true || row.gps_ok === false ? row.gps_ok : (row.gps_ok == null ? null : !!row.gps_ok)),
     job: row.job || "",
     bio: row.bio || "",
     interests: Array.isArray(row.interests) ? row.interests : [],
@@ -3346,6 +3349,24 @@ function fmtDistance(km) {
   if (n > 500) return null;            // inverosímil para citas locales → ocultar
   if (n < 1) return "menos de 1 km";
   return `${Math.round(n)} km`;
+}
+
+// V744 · Etiqueta de ubicación por tarjeta. Devuelve { text, off } donde:
+//   · off=false → distancia REAL (GPS de ambos) lista para mostrar; text puede
+//     ser null si el backend no da km fiables.
+//   · off=true  → el usuario tiene la ubicación DESACTIVADA (gps_ok=false); se
+//     muestra "GPS no permitido" en lugar de inventar kilómetros.
+// Nunca inventamos km para usuarios reales: si gps_ok es false, avisamos; si el
+// campo está oculto por privacidad (gps_ok=null) o falta distancia, no ponemos km.
+function locDistanceInfo(u) {
+  if (!u || !u._real) {
+    // Demo/anónimo: mantiene el relleno visual existente (no son datos reales).
+    const km = fmtDistance(u && u.distance);
+    return { text: km, off: false };
+  }
+  if (u.gps_ok === false) return { text: "GPS no permitido", off: true };
+  const km = fmtDistance(u.distance);
+  return { text: km, off: false };
 }
 
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
@@ -7704,11 +7725,12 @@ function buildNearbySection() {
         // Distancia real: si el backend no la conoce (sin GPS de ambos), no
         // inventamos km; mostramos sólo la ciudad. Para perfiles demo sin
         // distancia (modo anónimo) sí generamos un valor de relleno.
+        // V744 · Distancia real por tarjeta o aviso "GPS no permitido" si el
+        // usuario tiene la ubicación desactivada. Nunca inventamos km para reales.
         const isReal = !!u._real;
-        let distLabel;
-        if (typeof u.distance === "number") distLabel = fmtDistance(u.distance);
-        else if (isReal) distLabel = null;
-        else distLabel = `${Math.floor(Math.random()*15)+1} km`;
+        const li = locDistanceInfo(u);
+        let distLabel = li.text;
+        if (!isReal && !distLabel) distLabel = `${Math.floor(Math.random()*15)+1} km`;
         const looking = LOOKING_FOR_OPTIONS.find(l => l.id === u.looking_for);
         const card = el("div", { class: "nearby-card", style: `background-image:url('${u.photo}')` }, [
           el("div", { class: "nearby-status " + (u.online ? "on" : "off") }, [
@@ -7718,7 +7740,7 @@ function buildNearbySection() {
           looking ? el("div", { class: "nearby-badge" }, `${looking.emoji} ${looking.label}`) : null,
           el("div", { class: "nearby-info" }, [
             el("strong", {}, `${u.name}, ${u.age}`),
-            el("small", {}, distLabel ? `${u.city} · ${distLabel}` : (u.city || "")),
+            el("small", { class: li.off ? "gps-off" : "" }, distLabel ? `${u.city ? u.city + " · " : ""}${distLabel}` : (u.city || "")),
           ]),
         ]);
         card.addEventListener("click", () => openProfileDetail(u));
@@ -7942,14 +7964,17 @@ function buildSwipeCard(u, depth = 0) {
   card.appendChild(el("div", { class: "stamp nope" }, "NO"));
   // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
   // profesión; se omiten con elegancia en lugar de mostrar "null".
-  const locText = [u.city || "", (fmtDistance(u.distance) || "")].filter(Boolean).join(" · ");
+  // V744 · Ubicación: distancia real o aviso "GPS no permitido" (ubicación
+  // desactivada por el usuario). No se inventan km para perfiles reales.
+  const li = locDistanceInfo(u);
+  const locText = [u.city || "", (li.text || "")].filter(Boolean).join(" · ");
   const bodyChildren = [
     el("h3", {}, [
       `${u.name}${u.age != null ? ", " + u.age : ""}`,
       u.verified ? el("span", { class: "verified", title: "Verificado" }, "✓") : null,
     ]),
     el("div", { class: "meta" }, [
-      locText ? el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/>`), ` ${locText}` ]) : null,
+      locText ? el("span", { class: li.off ? "gps-off" : "" }, [ svgIcon(`<path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/>`), ` ${locText}` ]) : null,
       u.job ? el("span", {}, [ svgIcon(`<path fill="currentColor" d="M12 3l2.9 6.1L21 10l-4.7 4.4L17.8 21 12 17.8 6.2 21l1.5-6.6L3 10l6.1-.9z"/>`), u.job ]) : null,
     ]),
   ];
@@ -8157,7 +8182,9 @@ function renderResults(grid, filter = "") {
   }
   filtered.forEach(u => {
     const isFav = state.favorites.has(u.id);
-    const meta = [u.city || "", (fmtDistance(u.distance) || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
+    // V744 · Distancia real o "GPS no permitido" por tarjeta (ubicación desactivada).
+    const li = locDistanceInfo(u);
+    const meta = [u.city || "", (li.text || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
     const card = el("div", { class: "result-card", style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
       el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
@@ -8165,7 +8192,7 @@ function renderResults(grid, filter = "") {
       ]),
       el("div", { class: "info" }, [
         el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
-        el("small", {}, meta),
+        el("small", { class: li.off ? "gps-off" : "" }, meta),
       ]),
     ]);
     card.addEventListener("click", () => openProfile(u));
@@ -9193,10 +9220,11 @@ function screenProfileDetail(root, u, opts = {}) {
     ]),
   ]));
 
-  // Quick meta chips
-  const pdLoc = [u.city || "", (fmtDistance(u.distance) || "")].filter(Boolean).join(" · ");
+  // Quick meta chips — V744 · distancia real o "GPS no permitido".
+  const pdLi = locDistanceInfo(u);
+  const pdLoc = [u.city || "", (pdLi.text || "")].filter(Boolean).join(" · ");
   wrap.appendChild(el("div", { class: "pd-meta" }, [
-    pdLoc ? el("div", { class: "pd-meta-item" }, [
+    pdLoc ? el("div", { class: "pd-meta-item" + (pdLi.off ? " gps-off" : "") }, [
       el("span", { class: "pd-meta-ic", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7z"/><circle cx="12" cy="9" r="2.5"/></svg>` }),
       el("span", {}, pdLoc),
     ]) : null,
@@ -9224,12 +9252,14 @@ function screenProfileDetail(root, u, opts = {}) {
 
   // Extra details
   const gLabel = genderLabel(u.gender);
-  const pdDist = fmtDistance(u.distance);
+  // V744 · Fila de distancia: km reales, o "GPS no permitido" si el usuario
+  // tiene la ubicación desactivada. Si está oculta por privacidad, no se pinta.
+  const pdDist = pdLi.off ? "GPS no permitido" : fmtDistance(u.distance);
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
     el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, gLabel) ]),
     u.city ? el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]) : null,
-    pdDist ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", {}, pdDist) ]) : null,
+    pdDist ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", { class: pdLi.off ? "gps-off" : "" }, pdDist) ]) : null,
     el("div", { class: "pd-row" }, [ el("span", {}, "Verificación"), el("b", {}, u.verified ? "Verificado ✓" : "Sin verificar") ]),
   ]));
 
@@ -10068,7 +10098,8 @@ function openProfile(u) {
         u.verified ? el("span", { style: "background:#3b82f6;color:white;border-radius:50%;width:22px;height:22px;display:inline-grid;place-items:center;margin-left:6px;font-size:13px" }, "✓") : null,
       ]),
       el("div", { class: "profile-meta" },
-        [u.job || "", u.city || "", (fmtDistance(u.distance) || "")]
+        // V744 · km reales o "GPS no permitido" (ubicación desactivada).
+        [u.job || "", u.city || "", (locDistanceInfo(u).text || "")]
           .filter(Boolean)
           .flatMap((t, i) => i === 0 ? [t] : [el("span", { class: "dot" }, "·"), t])
       ),
