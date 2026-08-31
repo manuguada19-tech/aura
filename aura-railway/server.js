@@ -6501,48 +6501,61 @@ app.get("/api/discover", wrap(async (req, res) => {
   // Coordenadas del usuario actual (sólo si dio consentimiento GPS y hay
   // una captura). Si no las hay, el comportamiento es EXACTO al anterior:
   // no se calcula distancia ni se filtra por ella.
-  let myLat = null, myLng = null;
+  // V738 · Distinguimos DOS tipos de coordenadas:
+  //   · GPS real (user_gps con consentimiento) → sirve para FILTRAR por radio.
+  //   · Aproximada por IP (users.lat/lng)      → SOLO para MOSTRAR distancia.
+  // La aproximada NUNCA excluye a nadie: si filtrásemos por ella dejaríamos
+  // el feed vacío, porque la IP sitúa a todos en el centroide de su ciudad.
+  let myLat = null, myLng = null;         // display (GPS o IP)
+  let myRealLat = null, myRealLng = null; // solo GPS real
   if (me) {
     try {
-      // V736 · Coords GPS con consentimiento y, si no hay, respaldo aproximado
-      // por IP (users.lat/lng). Así siempre que sea posible mostramos distancia.
       const [[g]] = await pool.query(
-        `SELECT COALESCE(gps.lat, u.lat) AS lat, COALESCE(gps.lng, u.lng) AS lng
+        `SELECT gps.lat AS glat, gps.lng AS glng, u.lat AS ulat, u.lng AS ulng
            FROM users u
            LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
           WHERE u.id=? LIMIT 1`,
         [me]
       );
-      if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
+      if (g) {
+        if (g.glat != null && g.glng != null) { myRealLat = Number(g.glat); myRealLng = Number(g.glng); }
+        const dl = (g.glat != null ? g.glat : g.ulat);
+        const dg = (g.glng != null ? g.glng : g.ulng);
+        if (dl != null && dg != null) { myLat = Number(dl); myLng = Number(dg); }
+      }
     } catch { /* sin coords → seguimos sin distancia */ }
   }
-  const hasGeo = Number.isFinite(myLat) && Number.isFinite(myLng);
+  const hasGeo = Number.isFinite(myLat) && Number.isFinite(myLng);           // para mostrar
+  const hasRealGeo = Number.isFinite(myRealLat) && Number.isFinite(myRealLng); // para filtrar
   const distanceKm = parseInt(f.distance_km, 10);
 
-  // Haversine en SQL (radio Tierra = 6371 km). LEAST(1,…) evita NaN por
-  // redondeo de coma flotante. V736 · La distancia usa el GPS del candidato y,
-  // si no lo tiene, su coord aproximada por IP (u.lat/u.lng); si no hay ninguna
-  // es NULL (perfil sin ubicación → sigue apareciendo, al final).
+  // Distancia MOSTRADA: usa GPS del candidato y, si no lo tiene, su coord IP.
   const distExpr = hasGeo
     ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(g.lat, u.lat))) * COS(RADIANS(COALESCE(g.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(g.lat, u.lat))))), 1)"
     : "NULL";
+  // Distancia REAL (solo GPS de ambos): se usa para el filtro de radio.
+  const realDistExpr = hasRealGeo
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    : null;
+
   const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
+  if (hasRealGeo) selectParams.push(myRealLat, myRealLng, myRealLat);
 
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests,
-            ${distExpr} AS distance
-       FROM users u`;
+            ${distExpr} AS distance`;
+  if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
+  sql += ` FROM users u`;
   if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
   sql += ` WHERE ${where.join(" AND ")}`;
 
-  // Filtro por distancia: sólo excluye a quien tiene distancia CONOCIDA y
-  // fuera de rango. Los perfiles sin GPS (distance NULL) siguen visibles
-  // para no vaciar el feed mientras se adopta el GPS.
+  // Filtro por radio: SOLO entre usuarios con GPS real en ambos lados. Quien no
+  // tenga GPS real (real_distance NULL) siempre pasa (nunca se excluye por IP).
   let havingParam = null;
-  if (hasGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
-    sql += " HAVING distance IS NULL OR distance <= ?";
+  if (hasRealGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
+    sql += " HAVING real_distance IS NULL OR real_distance <= ?";
     havingParam = distanceKm;
   }
   sql += " ORDER BY u.online DESC, u.verified DESC, RAND() LIMIT ?";
@@ -6597,39 +6610,51 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
   if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
 
-  // Coordenadas del usuario actual: GPS con consentimiento y, si no, respaldo
-  // aproximado por IP (users.lat/lng). V736.
-  let myLat = null, myLng = null;
+  // Coordenadas del usuario actual. V738 · GPS real (para filtrar por radio) e
+  // IP aproximada (solo para mostrar distancia; nunca excluye).
+  let myLat = null, myLng = null;         // display (GPS o IP)
+  let myRealLat = null, myRealLng = null; // solo GPS real
   try {
     const [[g]] = await pool.query(
-      `SELECT COALESCE(gps.lat, u.lat) AS lat, COALESCE(gps.lng, u.lng) AS lng
+      `SELECT gps.lat AS glat, gps.lng AS glng, u.lat AS ulat, u.lng AS ulng
          FROM users u
          LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
         WHERE u.id=? LIMIT 1`,
       [me]
     );
-    if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
+    if (g) {
+      if (g.glat != null && g.glng != null) { myRealLat = Number(g.glat); myRealLng = Number(g.glng); }
+      const dl = (g.glat != null ? g.glat : g.ulat);
+      const dg = (g.glng != null ? g.glng : g.ulng);
+      if (dl != null && dg != null) { myLat = Number(dl); myLng = Number(dg); }
+    }
   } catch { /* sin coords → sin distancia */ }
   const hasGeo = Number.isFinite(myLat) && Number.isFinite(myLng);
+  const hasRealGeo = Number.isFinite(myRealLat) && Number.isFinite(myRealLng);
   const distanceKm = parseInt(f.distance_km, 10);
 
   const distExpr = hasGeo
     ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(g.lat, u.lat))) * COS(RADIANS(COALESCE(g.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(g.lat, u.lat))))), 1)"
     : "NULL";
+  const realDistExpr = hasRealGeo
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    : null;
   const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
+  if (hasRealGeo) selectParams.push(myRealLat, myRealLng, myRealLat);
 
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests,
-            ${distExpr} AS distance
-       FROM users u`;
+            ${distExpr} AS distance`;
+  if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
+  sql += ` FROM users u`;
   if (hasGeo) sql += " LEFT JOIN user_gps g ON g.user_id = u.id AND g.consent_given=1 AND g.revoked_at IS NULL";
   sql += ` WHERE ${where.join(" AND ")}`;
 
   let havingParam = null;
-  if (hasGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
-    sql += " HAVING distance IS NULL OR distance <= ?";
+  if (hasRealGeo && Number.isFinite(distanceKm) && distanceKm > 0) {
+    sql += " HAVING real_distance IS NULL OR real_distance <= ?";
     havingParam = distanceKm;
   }
   // Cercanía primero: los que tienen distancia conocida y menor, arriba; los
