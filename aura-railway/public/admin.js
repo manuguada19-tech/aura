@@ -15641,6 +15641,7 @@ async function openFullDeleteModal(userId, userEmail, userName) {
 
     body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf" }, "Motivo:"));
     const sel = el("select", { style: "width:100%;padding:10px;background:#0f1220;border:1px solid #2a2f45;color:#fff;border-radius:8px;margin-top:4px" });
+    sel.appendChild(el("option", { value: "" }, "— Elige un motivo —"));
     reasons.forEach(rr => sel.appendChild(el("option", { value: rr.code }, rr.label)));
     body.appendChild(sel);
 
@@ -15670,6 +15671,15 @@ async function openFullDeleteModal(userId, userEmail, userName) {
     body.appendChild(el("label", { style: "font-size:12px;color:#9aa4bf;margin-top:10px;display:block" }, "Notas al usuario (opcional):"));
     body.appendChild(notesInput);
 
+    // Confirmación de seguridad: hay que teclear el email exacto para habilitar
+    // el borrado. Evita eliminaciones irreversibles por error.
+    const confirmInput = el("input", { type: "text", autocomplete: "off",
+      placeholder: userEmail || "escribe el email del usuario",
+      style: "width:100%;padding:10px;background:#0f1220;border:1px solid #7f1d1d;color:#fff;border-radius:8px;margin-top:10px;box-sizing:border-box" });
+    body.appendChild(el("label", { style: "font-size:12px;color:#fca5a5;margin-top:10px;display:block" },
+      `Para confirmar, escribe el email del usuario (${userEmail || "sin email"}):`));
+    body.appendChild(confirmInput);
+
     function refreshDetails() {
       const rr = reasons.find(x => x.code === sel.value);
       if (!rr) { detailsBox.innerHTML = ""; return; }
@@ -15691,6 +15701,10 @@ async function openFullDeleteModal(userId, userEmail, userName) {
     footer.appendChild(el("button", { class: "di-btn", type: "button", onclick: () => overlay.remove() }, "Cancelar"));
     const confirmBtn = el("button", { class: "di-btn danger", type: "button" }, "🗑 Eliminar definitivamente");
     confirmBtn.addEventListener("click", async () => {
+      if (!sel.value) { toast("Elige un motivo", "err"); return; }
+      if (confirmInput.value.trim().toLowerCase() !== String(userEmail || "").toLowerCase()) {
+        toast("El email no coincide", "err"); return;
+      }
       if (!confirm(`¿Confirmar eliminación total de ${userEmail}? Esto NO se puede deshacer.`)) return;
       confirmBtn.disabled = true; confirmBtn.textContent = "Eliminando…";
       try {
