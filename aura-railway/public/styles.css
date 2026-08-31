@@ -1297,22 +1297,39 @@ img { max-width: 100%; display: block; }
   background-repeat: no-repeat; background-position: 14px center; background-size: 16px;
 }
 .results-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px 14px 20px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 14px 14px 24px;
 }
 .result-card {
-  aspect-ratio: 3/4; border-radius: 16px; background-size: cover; background-position: center;
+  aspect-ratio: 3/4; border-radius: 20px; background-size: cover; background-position: center;
   position: relative; overflow: hidden; color: white;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 10px 26px rgba(20,22,29,.16);
+  border: 2px solid transparent;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+  cursor: pointer;
 }
+.result-card::before {
+  /* Halo/anillo de marca que aparece al pasar o tocar la tarjeta */
+  content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  border-radius: inherit; opacity: 0; transition: opacity .18s ease;
+  box-shadow: 0 0 0 2px var(--brand-1) inset, 0 0 22px rgba(255,59,107,.35);
+}
+.result-card:hover, .result-card:active {
+  transform: translateY(-4px) scale(1.015);
+  box-shadow: 0 16px 34px rgba(255,59,107,.28);
+}
+.result-card:hover::before, .result-card:active::before { opacity: 1; }
 .result-card::after {
   content: ""; position: absolute; inset: 0;
-  background: linear-gradient(180deg, transparent 55%, rgba(0,0,0,.7));
+  background: linear-gradient(180deg, transparent 45%, rgba(0,0,0,.78));
 }
 .result-card .info {
-  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 2;
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2;
 }
-.result-card .info strong { font-size: 15px; font-weight: 800; display: block; }
-.result-card .info small { opacity: .9; font-size: 12px; }
+.result-card .info strong {
+  font-size: 16px; font-weight: 800; display: block;
+  text-shadow: 0 1px 4px rgba(0,0,0,.5);
+}
+.result-card .info small { opacity: .95; font-size: 12.5px; text-shadow: 0 1px 3px rgba(0,0,0,.5); }
 .result-card .online {
   position: absolute; top: 10px; right: 10px;
   width: 10px; height: 10px; border-radius: 50%; background: #22c55e;
@@ -1766,18 +1783,30 @@ body.account-suspended .restriction-banner .rb-close {
 .nearby-head h5 { margin: 0; color: var(--text-soft); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .nearby-count { font-size: 11px; color: var(--text-muted); }
 .nearby-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
 }
 .nearby-card {
-  position: relative; aspect-ratio: 3 / 4; border-radius: 14px;
+  position: relative; aspect-ratio: 3 / 4; border-radius: 18px;
   background-size: cover; background-position: center;
-  overflow: hidden; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,.15);
-  transition: transform .15s ease;
+  overflow: hidden; cursor: pointer;
+  box-shadow: 0 8px 20px rgba(0,0,0,.18);
+  border: 2px solid transparent;
+  transition: transform .18s ease, box-shadow .18s ease;
 }
-.nearby-card:hover { transform: translateY(-1px); }
+.nearby-card::before {
+  /* Anillo de marca al pasar/tocar */
+  content: ""; position: absolute; inset: 0; z-index: 3; pointer-events: none;
+  border-radius: inherit; opacity: 0; transition: opacity .18s ease;
+  box-shadow: 0 0 0 2px var(--brand-1) inset, 0 0 18px rgba(255,59,107,.35);
+}
+.nearby-card:hover, .nearby-card:active {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 14px 30px rgba(255,59,107,.28);
+}
+.nearby-card:hover::before, .nearby-card:active::before { opacity: 1; }
 .nearby-card::after {
   content: ""; position: absolute; inset: 0;
-  background: linear-gradient(to top, rgba(0,0,0,.75) 0%, rgba(0,0,0,0) 60%);
+  background: linear-gradient(to top, rgba(0,0,0,.8) 0%, rgba(0,0,0,0) 62%);
   pointer-events: none;
 }
 .nearby-status {

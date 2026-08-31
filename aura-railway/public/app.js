@@ -7849,7 +7849,7 @@ function buildSwipeCard(u, depth = 0) {
   }
   card.appendChild(indicators);
   card.appendChild(el("div", { class: "stamp like" }, "LIKE"));
-  card.appendChild(el("div", { class: "stamp nope" }, "NOPE"));
+  card.appendChild(el("div", { class: "stamp nope" }, "NO"));
   // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
   // profesión; se omiten con elegancia en lugar de mostrar "null".
   const locText = [u.city || "", (u.distance != null ? `${u.distance} km` : "")].filter(Boolean).join(" · ");

@@ -5850,6 +5850,23 @@ app.post("/api/my/kyc/cancel", wrap(async (req, res) => {
    heartbeat. Guarda la IP real (incluye modo demo/local) para que el
    panel de admin pueda mostrarlas y usarlas para asociar bloqueos por
    IP. Reutiliza filas existentes basándose en (user_id, user_agent). */
+// V736 · Relleno de coordenadas aproximadas por IP (geoip-lite) SOLO si el
+// usuario aún no tiene coords GPS reales. Así "Cerca de ti"/"Explorar" pueden
+// mostrar una distancia orientativa aunque no se haya concedido el permiso de
+// ubicación precisa. No sobrescribe coords GPS existentes (additivo/seguro).
+async function fillApproxGeoFromIp(req, uid) {
+  if (!uid) return;
+  try {
+    const ip = clientIp(req);
+    const geo = await _geoLookup(ip);
+    if (!geo || geo.lat == null || geo.lon == null) return;
+    await pool.execute(
+      "UPDATE users SET lat=?, lng=? WHERE id=? AND (lat IS NULL OR lng IS NULL)",
+      [Number(geo.lat), Number(geo.lon), uid]
+    );
+  } catch (e) { /* geo opcional → nunca romper login */ }
+}
+
 async function touchUserDevice(req, uid) {
   if (!uid) return;
   try {
@@ -6451,8 +6468,13 @@ app.get("/api/discover", wrap(async (req, res) => {
   let myLat = null, myLng = null;
   if (me) {
     try {
+      // V736 · Coords GPS con consentimiento y, si no hay, respaldo aproximado
+      // por IP (users.lat/lng). Así siempre que sea posible mostramos distancia.
       const [[g]] = await pool.query(
-        "SELECT lat, lng FROM user_gps WHERE user_id=? AND consent_given=1 AND revoked_at IS NULL LIMIT 1",
+        `SELECT COALESCE(gps.lat, u.lat) AS lat, COALESCE(gps.lng, u.lng) AS lng
+           FROM users u
+           LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
+          WHERE u.id=? LIMIT 1`,
         [me]
       );
       if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
@@ -6462,10 +6484,11 @@ app.get("/api/discover", wrap(async (req, res) => {
   const distanceKm = parseInt(f.distance_km, 10);
 
   // Haversine en SQL (radio Tierra = 6371 km). LEAST(1,…) evita NaN por
-  // redondeo de coma flotante. La distancia sale del user_gps del candidato;
-  // si no tiene coords, es NULL (perfil sin GPS → sigue apareciendo).
+  // redondeo de coma flotante. V736 · La distancia usa el GPS del candidato y,
+  // si no lo tiene, su coord aproximada por IP (u.lat/u.lng); si no hay ninguna
+  // es NULL (perfil sin ubicación → sigue apareciendo, al final).
   const distExpr = hasGeo
-    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(g.lat, u.lat))) * COS(RADIANS(COALESCE(g.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(g.lat, u.lat))))), 1)"
     : "NULL";
   const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
 
@@ -6538,11 +6561,15 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
   if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
 
-  // Coordenadas del usuario actual (sólo con consentimiento GPS vigente).
+  // Coordenadas del usuario actual: GPS con consentimiento y, si no, respaldo
+  // aproximado por IP (users.lat/lng). V736.
   let myLat = null, myLng = null;
   try {
     const [[g]] = await pool.query(
-      "SELECT lat, lng FROM user_gps WHERE user_id=? AND consent_given=1 AND revoked_at IS NULL LIMIT 1",
+      `SELECT COALESCE(gps.lat, u.lat) AS lat, COALESCE(gps.lng, u.lng) AS lng
+         FROM users u
+         LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
+        WHERE u.id=? LIMIT 1`,
       [me]
     );
     if (g && g.lat != null && g.lng != null) { myLat = Number(g.lat); myLng = Number(g.lng); }
@@ -6551,7 +6578,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   const distanceKm = parseInt(f.distance_km, 10);
 
   const distExpr = hasGeo
-    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(g.lat)) * COS(RADIANS(g.lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(g.lat)))), 1)"
+    ? "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(g.lat, u.lat))) * COS(RADIANS(COALESCE(g.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(g.lat, u.lat))))), 1)"
     : "NULL";
   const selectParams = hasGeo ? [myLat, myLng, myLat] : [];
 
@@ -9753,6 +9780,7 @@ app.post("/api/login", wrap(async (req, res) => {
   }
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
   await touchUserDevice(req, rows[0].id);
+  await fillApproxGeoFromIp(req, rows[0].id); // V736
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
@@ -9786,6 +9814,7 @@ app.post("/api/login/otp-verify", wrap(async (req, res) => {
   clearLoginFails(email);
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
   await touchUserDevice(req, rows[0].id);
+  await fillApproxGeoFromIp(req, rows[0].id); // V736
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login (OTP) ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login_otp", { detail: rows[0].email, req }); } catch {}
@@ -10054,6 +10083,7 @@ app.post("/api/2fa/login-verify", wrap(async (req, res) => {
   await pool.execute("UPDATE user_2fa SET last_used_at=NOW() WHERE user_id=?", [u.id]);
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
   await touchUserDevice(req, u.id);
+  await fillApproxGeoFromIp(req, u.id); // V736
   try { await logStream(u.id, usedRecovery ? "2fa_login_recovery" : "2fa_login_ok", { req }); } catch {}
   res.json({ ok: true, user: u, used_recovery: usedRecovery, auth_token: signUserToken(u.id) });
 }));
