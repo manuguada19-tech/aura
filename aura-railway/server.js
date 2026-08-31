@@ -2822,8 +2822,41 @@ async function applyDiditDecision(verId, dec) {
     }
   }
 
+  // V739 · Propagar el resultado al SELLO de la cuenta de usuario. Antes el
+  // estado "verified" solo vivía en identity_verifications y NO marcaba
+  // users.verified, por lo que una cuenta verificada por KYC podía seguir
+  // apareciendo sin el sello.
+  try { await recomputeAccountVerified(verId); }
+  catch (e) { console.warn("[kyc] propagar verified falló:", e.message); }
+
   try { await logActivity("kyc", `Verificación #${verId} (Didit) → ${mapped}`); } catch {}
   return mapped;
+}
+
+// V739 · Recalcula users.verified para la IDENTIDAD dueña de una verificación.
+// El sello queda a 1 si la persona conserva AL MENOS una verificación aprobada,
+// y a 0 si no le queda ninguna. Así un intento rechazado NUNCA quita el sello a
+// una cuenta que ya tiene otra verificación válida (evita fallos entre intentos
+// del mismo usuario y entre usuarios). Resuelve por user_id o, si falta, email.
+async function recomputeAccountVerified(verId) {
+  const [[v]] = await pool.query(
+    "SELECT user_id, email FROM identity_verifications WHERE id=? LIMIT 1", [verId]
+  );
+  if (!v) return;
+  let hasVerified = false;
+  if (v.user_id != null) {
+    const [[c]] = await pool.query(
+      "SELECT COUNT(*) n FROM identity_verifications WHERE user_id=? AND status='verified'", [v.user_id]
+    );
+    hasVerified = (c?.n || 0) > 0;
+    await pool.execute("UPDATE users SET verified=? WHERE id=?", [hasVerified ? 1 : 0, v.user_id]);
+  } else if (v.email) {
+    const [[c]] = await pool.query(
+      "SELECT COUNT(*) n FROM identity_verifications WHERE email=? AND status='verified'", [v.email]
+    );
+    hasVerified = (c?.n || 0) > 0;
+    await pool.execute("UPDATE users SET verified=? WHERE email=?", [hasVerified ? 1 : 0, v.email]);
+  }
 }
 
 /* ---- WEBHOOK Didit -----------------------------------------
@@ -3106,14 +3139,10 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   const decision = String(req.query.decision || "").trim();  // Didit: Approved | Declined | In Review
   const range    = String(req.query.range    || "").trim();  // "24h" | "7d" | "30d"
   const limit = Math.min(500, parseInt(req.query.limit || 100, 10) || 100);
+  // Filtros que NO dependen del estado. El filtro por estado se aplica DESPUÉS
+  // de colapsar por identidad, sobre el estado efectivo de cada persona.
   const clauses = [];
   const args = [];
-  // V721 · "in_progress" agrupa las verificaciones aún no finalizadas
-  // (pending/doc_ok/selfie_ok/video_ok). Antes quedaban invisibles en el admin
-  // porque solo existían pestañas para manual_review/verified/rejected/suspended.
-  if (status === "in_progress") {
-    clauses.push("status IN ('pending','doc_ok','selfie_ok','video_ok')");
-  } else if (status && status !== "all") { clauses.push("status = ?"); args.push(status); }
   if (q) { clauses.push("(email LIKE ? OR ip LIKE ? OR fingerprint LIKE ?)");
            args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
   if (provider === "didit") { clauses.push("provider = 'didit'"); }
@@ -3123,9 +3152,8 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   if (range === "24h") clauses.push("updated_at >= NOW() - INTERVAL 1 DAY");
   else if (range === "7d") clauses.push("updated_at >= NOW() - INTERVAL 7 DAY");
   else if (range === "30d") clauses.push("updated_at >= NOW() - INTERVAL 30 DAY");
-  args.push(limit);
   const whereSql = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-  const [rows] = await pool.query(
+  const [allRows] = await pool.query(
     `SELECT id, user_id, session_token, email, ip, fingerprint, doc_type,
             doc_hash, doc_score, selfie_match_score, liveness_score,
             extracted_age, extracted_name, extracted_dob, status,
@@ -3135,34 +3163,58 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
             created_at, updated_at
        FROM identity_verifications
       ${whereSql}
-      ORDER BY updated_at DESC
-      LIMIT ?`,
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 5000`,
     args
   );
-  const [[{ n: totalManual }]] = await pool.query(
-    "SELECT COUNT(*) n FROM identity_verifications WHERE status='manual_review'"
-  );
-  const [[{ n: totalRejected }]] = await pool.query(
-    "SELECT COUNT(*) n FROM identity_verifications WHERE status='rejected'"
-  );
-  const [[{ n: totalVerified }]] = await pool.query(
-    "SELECT COUNT(*) n FROM identity_verifications WHERE status='verified'"
-  );
-  const [[{ n: totalSuspended }]] = await pool.query(
-    "SELECT COUNT(*) n FROM identity_verifications WHERE status='suspended'"
-  );
-  // V721 · verificaciones en proceso (no finalizadas) + total real de la tabla.
-  const [[{ n: totalInProgress }]] = await pool.query(
-    "SELECT COUNT(*) n FROM identity_verifications WHERE status IN ('pending','doc_ok','selfie_ok','video_ok')"
-  );
-  const [[{ n: totalAll }]] = await pool.query(
-    "SELECT COUNT(*) n FROM identity_verifications"
-  );
-  res.json({ ok: true, rows, summary: {
-    manual: totalManual, rejected: totalRejected,
-    verified: totalVerified, suspended: totalSuspended,
-    in_progress: totalInProgress, all: totalAll,
-  } });
+
+  // V739 · Colapsar por IDENTIDAD (user_id; si no, email; si no, la propia fila).
+  // Un mismo usuario puede lanzar varias sesiones de verificación (varios
+  // intentos) y cada una creaba una fila, por lo que el mismo email aparecía
+  // repetido. Aquí mostramos SOLO una fila por persona, con su ESTADO EFECTIVO
+  // (el de mayor prioridad: si tiene una verificación aprobada, sale como
+  // verificado aunque haya intentos pendientes). No se borra nada: los intentos
+  // siguen en la BD para auditoría; solo se limpia la vista del panel.
+  const STATUS_PRIO = {
+    verified: 6, manual_review: 5,
+    pending: 4, doc_ok: 4, selfie_ok: 4, video_ok: 4,
+    suspended: 2, rejected: 1,
+  };
+  const prioOf = (s) => STATUS_PRIO[s] || 3;
+  const groups = new Map();
+  for (const r of allRows) {
+    const key = r.user_id != null ? `u:${r.user_id}`
+      : (r.email ? `e:${String(r.email).toLowerCase()}` : `r:${r.id}`);
+    const cur = groups.get(key);
+    if (!cur) { groups.set(key, { rep: r, count: 1 }); continue; }
+    cur.count++;
+    const better = prioOf(r.status) > prioOf(cur.rep.status)
+      || (prioOf(r.status) === prioOf(cur.rep.status)
+          && new Date(r.updated_at).getTime() > new Date(cur.rep.updated_at).getTime());
+    if (better) cur.rep = r;
+  }
+  const collapsed = [...groups.values()].map(g => ({ ...g.rep, dup_count: g.count }));
+
+  // Contadores de las pestañas: por PERSONA (estado efectivo), no por intento.
+  const isInProgress = (s) => ["pending", "doc_ok", "selfie_ok", "video_ok"].includes(s);
+  const summary = { manual: 0, rejected: 0, verified: 0, suspended: 0, in_progress: 0, all: collapsed.length };
+  for (const r of collapsed) {
+    if (r.status === "manual_review") summary.manual++;
+    else if (r.status === "rejected") summary.rejected++;
+    else if (r.status === "verified") summary.verified++;
+    else if (r.status === "suspended") summary.suspended++;
+    else if (isInProgress(r.status)) summary.in_progress++;
+  }
+
+  // Filtrar por la pestaña pedida (sobre el estado efectivo de cada persona).
+  let filtered = collapsed;
+  if (status === "in_progress") filtered = collapsed.filter(r => isInProgress(r.status));
+  else if (status && status !== "all") filtered = collapsed.filter(r => r.status === status);
+
+  filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+  const rows = filtered.slice(0, limit);
+
+  res.json({ ok: true, rows, summary });
 }));
 
 /* ---- ADMIN: detalle de una verificación --------------------
@@ -3225,6 +3277,8 @@ app.post("/api/admin/kyc/:id/approve", wrap(async (req, res) => {
       WHERE id=?`,
     [admin, id]
   );
+  // V739 · Propagar el sello a la cuenta de usuario.
+  try { await recomputeAccountVerified(id); } catch (e) { console.warn("[kyc] approve verified:", e.message); }
   try { await logActivity("kyc", `Verificación #${id} aprobada por ${admin}`); } catch {}
   res.json({ ok: true });
 }));
@@ -3251,6 +3305,8 @@ app.post("/api/admin/kyc/:id/reject", wrap(async (req, res) => {
      VALUES (?,?,?,?,?,?,1)`,
     [r.ip, r.fingerprint, r.doc_hash, r.email, reason, admin]
   );
+  // V739 · Recalcular sello: se retira solo si no le queda ninguna verificación válida.
+  try { await recomputeAccountVerified(id); } catch (e) { console.warn("[kyc] reject verified:", e.message); }
   try { await logActivity("kyc", `Verificación #${id} rechazada + dispositivo bloqueado por ${admin}`); } catch {}
   res.json({ ok: true });
 }));

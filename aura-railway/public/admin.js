@@ -12887,7 +12887,7 @@ async function viewKyc(root) {
             <td>${statusBadge(row.status)}</td>
             <td>${decCell}</td>
             <td class="mono">${row.didit_country || "—"}</td>
-            <td>${row.manual_attempts || 0}</td>
+            <td>${(row.dup_count && row.dup_count > 1) ? `<span title="Sesiones de verificación de esta persona">${row.dup_count} sesiones</span>` : (row.manual_attempts || 0)}</td>
             <td class="mono" style="font-size:11px;">${row.ip || "—"}</td>
             <td style="font-size:11.5px;">${row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}</td>
             <td class="ta-right"></td>`;
