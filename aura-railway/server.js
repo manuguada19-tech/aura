@@ -5867,6 +5867,42 @@ async function fillApproxGeoFromIp(req, uid) {
   } catch (e) { /* geo opcional → nunca romper login */ }
 }
 
+// V737 · Backfill único: rellena coords aproximadas (users.lat/lng) para los
+// usuarios que YA existían antes de V736, usando la IP de su último dispositivo
+// conocido. Solo toca filas con lat/lng NULL (no pisa coords GPS reales). Es
+// idempotente y no bloquea el arranque si falla.
+async function backfillUserGeoFromDevices() {
+  try {
+    if (!_geoipLite) return; // sin base geoip no hay nada que hacer
+    const [rows] = await pool.query(
+      `SELECT u.id AS uid, (
+         SELECT d.ip FROM devices d
+          WHERE d.user_id = u.id AND d.ip IS NOT NULL AND d.ip <> ''
+          ORDER BY d.last_seen DESC LIMIT 1
+       ) AS ip
+       FROM users u
+      WHERE u.lat IS NULL OR u.lng IS NULL
+      LIMIT 5000`
+    );
+    let filled = 0;
+    for (const r of rows) {
+      if (!r.ip) continue;
+      const geo = await _geoLookup(r.ip);
+      if (!geo || geo.lat == null || geo.lon == null) continue;
+      try {
+        await pool.execute(
+          "UPDATE users SET lat=?, lng=? WHERE id=? AND (lat IS NULL OR lng IS NULL)",
+          [Number(geo.lat), Number(geo.lon), r.uid]
+        );
+        filled++;
+      } catch { /* seguir con el resto */ }
+    }
+    if (filled) console.log("[V737] coords aprox. rellenadas para", filled, "usuarios");
+  } catch (e) {
+    console.warn("[backfillUserGeoFromDevices] omitido:", e.message);
+  }
+}
+
 async function touchUserDevice(req, uid) {
   if (!uid) return;
   try {
@@ -11688,6 +11724,7 @@ webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, 
 (async () => {
   try {
     await migrate();
+    await backfillUserGeoFromDevices(); // V737 · coords aprox. por IP para usuarios ya existentes
     await seed();
     await repairDuplicateDemo();
     await ensureDemoUser();

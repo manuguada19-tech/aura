@@ -4048,14 +4048,14 @@ async function openUserDrawer(id, onChange) {
           gpsRow.appendChild(el("span", { class: "chip xs" }, `Actualizado ${gps.stale_minutes != null ? gps.stale_minutes + " min" : "—"}`));
           gpsRow.appendChild(el("span", { class: "chip xs" }, `${(+gps.lat).toFixed(5)}, ${(+gps.lng).toFixed(5)}`));
         } else if (gps.revoked_at) {
-          gpsRow.appendChild(el("span", { class: "chip xs t-warn" }, "🚫 GPS revocado"));
+          gpsRow.appendChild(el("span", { class: "chip xs t-warn" }, "🚫 GPS NO PERMITIDO"));
         } else {
-          gpsRow.appendChild(el("span", { class: "chip xs t-warn" }, "🚫 GPS no autorizado"));
+          gpsRow.appendChild(el("span", { class: "chip xs t-warn" }, "🚫 GPS NO PERMITIDO"));
         }
         liveBox.appendChild(gpsRow);
       } else {
         const gpsRow = el("div", { class: "lv2-gps-row" });
-        gpsRow.appendChild(el("span", { class: "chip xs" }, "GPS no solicitado aún"));
+        gpsRow.appendChild(el("span", { class: "chip xs t-warn" }, "🚫 GPS NO PERMITIDO"));
         liveBox.appendChild(gpsRow);
       }
 
