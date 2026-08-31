@@ -5807,8 +5807,23 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
       kyc_reason = krows[0].last_reason || null;
       kyc_updated_at = krows[0].updated_at || null;
     }
-    // Si no hay registro KYC pero el usuario está marcado como verificado.
-    if (kyc_status === "none" && verified) kyc_status = "verified";
+    // V743 · Una cuenta ya verificada NO debe mostrar "necesita atención".
+    // El aviso salía porque tomábamos SOLO la fila más reciente: si el usuario
+    // tenía varias sesiones de verificación (p. ej. 2 fotos/intentos) y la
+    // última quedó pending/manual_review/rejected, se mostraba el banner aunque
+    // otra sesión ya estuviera verificada y la cuenta tuviera el sello. Si
+    // existe cualquier verificación 'verified' (o el sello users.verified=1),
+    // el estado efectivo es "verified".
+    let hasVerifiedKyc = false;
+    try {
+      const [[vc]] = await pool.query(
+        `SELECT COUNT(*) n FROM identity_verifications
+           WHERE (user_id=? OR (email IS NOT NULL AND email=?)) AND status='verified'`,
+        [me, email]
+      );
+      hasVerifiedKyc = (vc?.n || 0) > 0;
+    } catch {}
+    if (verified || hasVerifiedKyc) kyc_status = "verified";
     // Si la cuenta está suspendida/baneada, reflejarlo.
     if (uStatus === "suspended") kyc_status = kyc_status === "verified" ? "verified" : "suspended";
   } catch {}
