@@ -2074,6 +2074,9 @@ function mapApiUser(row) {
     relationship: row.relationship || "",
     verified: !!row.verified,
     online: !!row.online,
+    // V761 · Actividad reciente: segundos desde la última conexión (last_login).
+    // El backend lo calcula en SQL. null = desconocido (no se muestra nada).
+    last_active_secs: (row.last_active_secs == null ? null : Number(row.last_active_secs)),
     height: row.height || null,
     weight: row.weight || null,
     photos, photo,
@@ -3388,6 +3391,33 @@ function locDistanceInfo(u) {
   if (u.gps_ok === false) return { text: "No comparte su ubicación", off: true };
   const km = fmtDistance(u.distance);
   return { text: km, off: false };
+}
+
+// V761 · Estado de actividad reciente para la tarjeta de Explorar y el detalle.
+// Devuelve { show, level, text }:
+//   · level "online"  → activo ahora (verde)
+//   · level "recent"  → activo en la última hora (verde suave)
+//   · level "today"   → activo hoy / últimos días (ámbar)
+//   · level "old"     → hace tiempo (gris)
+//   · show=false      → no hay dato fiable (perfil demo o sin last_login).
+function activityInfo(u) {
+  if (!u) return { show: false };
+  if (u.online) return { show: true, level: "online", text: "Activa ahora" };
+  // Solo mostramos "última vez" con perfiles reales que traen el dato del backend.
+  if (!u._real || u.last_active_secs == null || !Number.isFinite(u.last_active_secs)) {
+    return { show: false };
+  }
+  const s = Math.max(0, u.last_active_secs);
+  const min = Math.floor(s / 60);
+  if (min < 5)  return { show: true, level: "online", text: "Activa hace un momento" };
+  if (min < 60) return { show: true, level: "recent", text: `Activa hace ${min} min` };
+  const h = Math.floor(min / 60);
+  if (h < 24)   return { show: true, level: "today", text: `Activa hace ${h} h` };
+  const d = Math.floor(h / 24);
+  if (d === 1)  return { show: true, level: "old", text: "Activa ayer" };
+  if (d < 7)    return { show: true, level: "old", text: `Activa hace ${d} días` };
+  if (d < 30)   return { show: true, level: "old", text: `Activa hace ${Math.floor(d / 7)} sem` };
+  return { show: true, level: "old", text: "Sin actividad reciente" };
 }
 
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
@@ -8297,7 +8327,16 @@ function buildSwipeCard(u, depth = 0) {
   // desactivada por el usuario). No se inventan km para perfiles reales.
   const li = locDistanceInfo(u);
   const locText = [u.city || "", (li.text || "")].filter(Boolean).join(" · ");
+  // V761 · Insignia de actividad reciente (activa ahora / última vez).
+  const act = activityInfo(u);
+  const actBadge = act.show
+    ? el("div", { class: "swipe-activity act-" + act.level }, [
+        el("span", { class: "act-dot" }),
+        el("span", {}, act.text),
+      ])
+    : null;
   const bodyChildren = [
+    actBadge,
     el("h3", {}, [
       `${u.name}${u.age != null ? ", " + u.age : ""}`,
       u.verified ? el("span", { class: "verified", title: "Verificado" }, "✓") : null,
@@ -9868,10 +9907,15 @@ function screenProfileDetail(root, u, opts = {}) {
       `${u.name}${u.age != null ? ", " + u.age : ""}`,
       u.verified ? el("span", { class: "pd-verified", title: "Perfil verificado" }, "✓") : null,
     ]),
-    el("div", { class: "pd-status" }, [
-      el("span", { class: "pd-dot-online" + (u.online ? " on" : "") }),
-      u.online ? "Activa ahora" : "Última vez hace unos minutos",
-    ]),
+    el("div", { class: "pd-status" }, (function () {
+      // V761 · Estado de actividad real (activa ahora / última vez). Si no hay
+      // dato fiable, mantenemos el punto de estado online/offline sin texto inventado.
+      const a = activityInfo(u);
+      return [
+        el("span", { class: "pd-dot-online" + (u.online ? " on" : "") + (a.show ? " act-" + a.level : "") }),
+        a.show ? a.text : (u.online ? "Activa ahora" : "Desconectada"),
+      ];
+    })()),
   ]));
 
   // Quick meta chips — V744 · distancia real o "GPS no permitido".

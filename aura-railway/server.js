@@ -6825,6 +6825,7 @@ app.get("/api/discover", wrap(async (req, res) => {
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
@@ -6968,6 +6969,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
