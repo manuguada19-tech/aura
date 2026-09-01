@@ -6868,16 +6868,16 @@ function screenRegisterProfile(root) {
   const fEx = optSelect(EXERCISE_OPTIONS, state.registration.exercise);
   const fSmoke = optSelect(SMOKE_OPTIONS, state.registration.smoke);
   const fDrink = optSelect(DRINK_OPTIONS, state.registration.drink);
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Trabajo · opcional"), fJob ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Trabajo (opcional)"), fJob ]));
   form.appendChild(el("div", { class: "field-row" }, [
-    el("div", { class: "field" }, [ el("label", {}, "Estudios · opcional"), fEdu ]),
-    el("div", { class: "field" }, [ el("label", {}, "Mascotas · opcional"), fPets ]),
+    el("div", { class: "field" }, [ el("label", {}, "Estudios (opcional)"), fEdu ]),
+    el("div", { class: "field" }, [ el("label", {}, "Mascotas (opcional)"), fPets ]),
   ]));
   form.appendChild(el("div", { class: "field-row" }, [
-    el("div", { class: "field" }, [ el("label", {}, "Ejercicio · opcional"), fEx ]),
-    el("div", { class: "field" }, [ el("label", {}, "Fuma · opcional"), fSmoke ]),
+    el("div", { class: "field" }, [ el("label", {}, "Ejercicio (opcional)"), fEx ]),
+    el("div", { class: "field" }, [ el("label", {}, "Fuma (opcional)"), fSmoke ]),
   ]));
-  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Bebe · opcional"), fDrink ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Bebe (opcional)"), fDrink ]));
 
   // V776 · Preguntas de perfil (rompehielos). Máx 6. Se guarda solo si hay
   // respuesta. Selector de frase + campo de respuesta + botón eliminar.
@@ -6902,7 +6902,7 @@ function screenRegisterProfile(root) {
     renderRegPrompts();
   } }, "＋ Añadir pregunta");
   form.appendChild(el("div", { class: "field" }, [
-    el("label", {}, "Preguntas de perfil (rompehielos) · opcional"),
+    el("label", {}, "Preguntas de perfil · rompehielos (opcional)"),
     regPromptsWrap, addRegPrompt,
   ]));
 
@@ -9413,7 +9413,7 @@ function openFilters() {
       });
       row.appendChild(c);
     });
-    wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, title + " · opcional"), row ]));
+    wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, title + " (opcional)"), row ]));
     return sel;
   }
   const selEdu = buildLifestyleFilter("Estudios", EDUCATION_OPTIONS, state.filters.education);
@@ -12072,7 +12072,7 @@ function screenEditProfile(root) {
   heightField.appendChild(el("label", {}, T("content.me.field_height") || "Altura (cm)")); heightField.appendChild(heightInp); form.appendChild(heightField);
   // V776 · Peso (opcional).
   const weightField = el("div", { class: "field" }); const weightInp = el("input", { type: "number", value: u.weight || "", min: 40, max: 300 });
-  weightField.appendChild(el("label", {}, "Peso (kg) · opcional")); weightField.appendChild(weightInp); form.appendChild(weightField);
+  weightField.appendChild(el("label", {}, "Peso en kg (opcional)")); weightField.appendChild(weightInp); form.appendChild(weightField);
 
   // V741 · Género (etiquetas en español). El valor almacenado se normaliza para
   // preseleccionar la opción correcta aunque estuviera guardado como male/female.
@@ -12167,11 +12167,11 @@ function screenEditProfile(root) {
     form.appendChild(field);
     return rowWrap;
   }
-  const petsWrap = buildSingleSelect("Mascotas · opcional", PETS_OPTIONS, petsRef);
-  const smokeWrap = buildSingleSelect("¿Fumas? · opcional", SMOKE_OPTIONS, smokeRef);
-  const drinkWrap = buildSingleSelect("¿Bebes? · opcional", DRINK_OPTIONS, drinkRef);
-  const eduWrap = buildSingleSelect("Estudios · opcional", EDUCATION_OPTIONS, eduRef);
-  const exWrap = buildSingleSelect("Ejercicio · opcional", EXERCISE_OPTIONS, exRef);
+  const petsWrap = buildSingleSelect("Mascotas (opcional)", PETS_OPTIONS, petsRef);
+  const smokeWrap = buildSingleSelect("¿Fumas? (opcional)", SMOKE_OPTIONS, smokeRef);
+  const drinkWrap = buildSingleSelect("¿Bebes? (opcional)", DRINK_OPTIONS, drinkRef);
+  const eduWrap = buildSingleSelect("Estudios (opcional)", EDUCATION_OPTIONS, eduRef);
+  const exWrap = buildSingleSelect("Ejercicio (opcional)", EXERCISE_OPTIONS, exRef);
 
   // V776 · Preguntas de perfil / rompehielos (opcional). El usuario elige una
   // pregunta y escribe una respuesta corta. Hasta 6. Se guardan como {q,a}.
@@ -12201,7 +12201,7 @@ function screenEditProfile(root) {
     renderPrompts();
   } }, "+ Añadir pregunta");
   form.appendChild(el("div", { class: "field" }, [
-    el("label", {}, "Preguntas de perfil (rompehielos) · opcional"),
+    el("label", {}, "Preguntas de perfil · rompehielos (opcional)"),
     el("small", { class: "field-hint", style: "display:block;margin:-2px 0 8px;color:var(--text-soft)" }, "Responde alguna frase para romper el hielo. Deja la respuesta vacía para no mostrarla."),
     promptsList,
     addPromptBtn,
