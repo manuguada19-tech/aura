@@ -1970,7 +1970,24 @@ app.get("/api/users/:id", wrap(async (req, res) => {
     );
     activity = a;
   } catch {}
-  res.json({ ...rows[0], devices, photos, activity });
+  // V786 · Provincia y zona horaria. La tabla users no guarda estos campos, así
+  // que los derivamos de la IP del dispositivo más reciente vía geoip-lite (local,
+  // sin llamadas externas). Solo rellenamos cuando el valor no viene ya en la fila.
+  let province = rows[0].province || "";
+  let timezone = rows[0].timezone || "";
+  try {
+    if ((!province || !timezone) && devices.length) {
+      const dev = devices.find((d) => d.ip) || null;
+      if (dev && dev.ip) {
+        const geo = await _geoLookup(dev.ip);
+        if (geo) {
+          if (!province) province = _regionName(geo.country_code || geo.country, geo.region) || "";
+          if (!timezone) timezone = geo.tz || "";
+        }
+      }
+    }
+  } catch {}
+  res.json({ ...rows[0], province, timezone, devices, photos, activity });
 }));
 
 app.patch("/api/users/:id", wrap(async (req, res) => {
@@ -9946,6 +9963,25 @@ async function _geoLookup(ip) {
   } catch (e) { /* ignore */ }
   _geoCache.set(ipn, info);
   return info;
+}
+
+// V786 · Traduce el código de subdivisión ISO-3166-2 que devuelve geoip-lite
+// (p.ej. "MD", "CT") a un nombre legible. Solo mapeamos España (app en español);
+// para otros países o códigos desconocidos devolvemos el código tal cual.
+const _ES_REGIONS = {
+  AN: "Andalucía", AR: "Aragón", AS: "Asturias", CB: "Cantabria",
+  CE: "Ceuta", CL: "Castilla y León", CM: "Castilla-La Mancha",
+  CN: "Canarias", CT: "Cataluña", EX: "Extremadura", GA: "Galicia",
+  IB: "Islas Baleares", MC: "Murcia", MD: "Madrid", ML: "Melilla",
+  NC: "Navarra", PV: "País Vasco", RI: "La Rioja", VC: "Comunidad Valenciana",
+};
+function _regionName(countryCode, regionCode) {
+  const rc = String(regionCode || "").trim();
+  if (!rc) return "";
+  if (String(countryCode || "").toUpperCase() === "ES" && _ES_REGIONS[rc.toUpperCase()]) {
+    return _ES_REGIONS[rc.toUpperCase()];
+  }
+  return rc;
 }
 
 // Motivos de moderación estandarizados. Se exponen al panel de admin.
