@@ -1251,6 +1251,25 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V782: mismo blindaje para el RESTO de columnas que solo vivían en el
+  // CREATE TABLE. Así ninguna base de datos antigua se queda sin ellas (evita
+  // repetir el fallo del peso). Todo idempotente y retrocompatible.
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN age INT NULL",
+    "ALTER TABLE users ADD COLUMN birth_date DATE NULL",
+    "ALTER TABLE users ADD COLUMN gender VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN orientation VARCHAR(40) NULL",
+    "ALTER TABLE users ADD COLUMN zone ENUM('hetero','lgtb') NOT NULL DEFAULT 'hetero'",
+    "ALTER TABLE users ADD COLUMN city VARCHAR(120) NULL",
+    "ALTER TABLE users ADD COLUMN country VARCHAR(80) NULL",
+    "ALTER TABLE users ADD COLUMN lat DECIMAL(9,6) NULL",
+    "ALTER TABLE users ADD COLUMN lng DECIMAL(9,6) NULL",
+    "ALTER TABLE users ADD COLUMN bio TEXT NULL",
+    "ALTER TABLE users ADD COLUMN photo_url VARCHAR(500) NULL",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
+  }
+
   // V742: privacidad por campo. El usuario elige qué datos sensibles NO se
   // muestran en su perfil público (edad, distancia/ubicación, altura, peso,
   // etnia, orientación, profesión). Se guarda como JSON: {"age":true,...}.
