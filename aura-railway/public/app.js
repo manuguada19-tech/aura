@@ -8624,7 +8624,11 @@ function switchRow(label, checked, onChange) {
 
 /* ---- Likes ---- */
 function screenLikes(root) {
-  root.appendChild(topbar("Te gustan", null, null));
+  // V755 · El título "Te gustan" era incorrecto: sugería "personas que a ti te
+  // gustan", pero el contenido son los likes que TE HAN DADO + tus favoritos.
+  // Usamos "Likes" (igual que la pestaña inferior); las sub-pestañas ya
+  // aclaran el sentido ("Te dieron like" / "Favoritos").
+  root.appendChild(topbar("Likes", null, null));
   const tabs = el("div", { class: "likes-tabs" }, [
     el("button", { class: "likes-tab active" }, "Te dieron like"),
     el("button", { class: "likes-tab" }, "Favoritos"),
@@ -8721,8 +8725,12 @@ function screenLikes(root) {
   }
 
   async function renderLikesTab() {
+    // V755 · El botón "Actualiza a Premium" se ocultaba/mostraba mal: aparecía
+    // ya DURANTE el "Cargando…" (antes de saber si hay likes) y también cuando
+    // no había NADA bloqueado. Ahora lo mantenemos oculto mientras carga y solo
+    // lo mostramos si de verdad hay perfiles difuminados que desbloquear.
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Cargando…</h3></div>`;
-    premiumCta.style.display = "";
+    premiumCta.style.display = "none";
     let users = await datingApi.likesReceived();
     // V637 · Sin datos reales → estado vacío en la app real; demo solo en preview.
     if (!users) users = isPreviewMode() ? generateUsers(8, { zone: state.zone }) : [];
@@ -8735,11 +8743,14 @@ function screenLikes(root) {
     // Tease Premium: para usuarios Free, sólo se ven los 2 primeros.
     const plan = (state.user && state.user.plan) || "free";
     const unlockedAll = plan !== "free";
+    let hasBlurred = false;
     users.forEach((u, i) => {
       const blurred = !unlockedAll && i >= 2;
+      if (blurred) hasBlurred = true;
       grid.appendChild(likeCard(u, blurred));
     });
-    premiumCta.style.display = unlockedAll ? "none" : "";
+    // Solo tiene sentido invitar a Premium si hay algo bloqueado que ver.
+    premiumCta.style.display = hasBlurred ? "" : "none";
   }
 
   async function renderFavoritesTab() {
