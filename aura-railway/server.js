@@ -1239,6 +1239,18 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V778: garantizar que weight/height/ethnicity existan como columnas. Estaban
+  // solo en el CREATE TABLE, así que las bases de datos creadas ANTES de que se
+  // añadieran no las tenían y los guardados de "peso" se perdían en silencio.
+  // Migración aditiva e idempotente (si ya existen, el try/catch lo ignora).
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN height INT NULL",
+    "ALTER TABLE users ADD COLUMN weight INT NULL",
+    "ALTER TABLE users ADD COLUMN ethnicity VARCHAR(60) NULL",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
+  }
+
   // V742: privacidad por campo. El usuario elige qué datos sensibles NO se
   // muestran en su perfil público (edad, distancia/ubicación, altura, peso,
   // etnia, orientación, profesión). Se guarda como JSON: {"age":true,...}.
