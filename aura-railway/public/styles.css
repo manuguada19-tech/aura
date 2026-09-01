@@ -2575,6 +2575,16 @@ body.app-open .theme-toggle {
   .app-viewport .screen-profile-detail,
   .app-viewport .screen-me,
   .app-viewport .screen-me-sub { overflow-y: auto !important; -webkit-overflow-scrolling: touch; }
+  /* V747 · En móvil la foto del perfil ocupaba 3/4 (muy alta) y tapaba toda la
+     pantalla: el nombre y los detalles quedaban ocultos y no era evidente que
+     había que hacer scroll. Limitamos su altura para que asome el inicio de la
+     ficha bajo la foto y, junto al aviso "desliza para ver el perfil", se
+     entienda que hay más contenido. */
+  .screen-profile-detail .pd-gallery {
+    aspect-ratio: auto;
+    height: 58vh;
+    max-height: 58vh;
+  }
   .theme-toggle { right: 10px; top: 10px; }
   body:has(#tabbar:not([hidden])) .theme-toggle,
   body.app-open .theme-toggle {
@@ -3656,6 +3666,33 @@ body.info-open .theme-toggle { display: none; }
 }
 .pd-dot.active { background: #fff; }
 
+/* V747 · Aviso "desliza para ver el perfil" superpuesto sobre el borde inferior
+   de la foto. La foto es alta (3/4) y el resto del perfil queda debajo; este
+   indicador deja claro que hay más contenido. Desaparece al hacer scroll. */
+.pd-scroll-hint {
+  position: absolute;
+  left: 50%; bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  font-size: 12px; font-weight: 600;
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  cursor: pointer;
+  border: 1px solid rgba(255,255,255,0.25);
+  animation: pdHintBob 1.6s ease-in-out infinite;
+  transition: opacity 0.25s ease;
+}
+.pd-scroll-hint-ic { display: inline-flex; }
+@keyframes pdHintBob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(4px); }
+}
+.pd-scrolled .pd-scroll-hint { opacity: 0; pointer-events: none; }
+
 .pd-name {
   padding: 18px 20px 4px;
 }
@@ -3766,13 +3803,22 @@ body.info-open .theme-toggle { display: none; }
   bottom: 20px;
   transform: translateX(-50%);
   display: flex;
-  gap: 14px;
+  align-items: flex-start;
+  gap: 16px;
   z-index: 20;
-  padding: 8px 14px;
+  padding: 10px 18px 8px;
   background: var(--surface, #fff);
   border: 1px solid var(--card-border, #e5e7eb);
-  border-radius: 999px;
+  border-radius: 24px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.12);
+}
+/* V747 · Cada acción es una columna: botón + leyenda debajo. */
+.pd-act-item {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.pd-act-cap {
+  font-size: 10.5px; font-weight: 600; line-height: 1;
+  color: var(--text-muted, #6b7280); white-space: nowrap;
 }
 .pd-act {
   border: 0;

@@ -9204,6 +9204,18 @@ function screenProfileDetail(root, u, opts = {}) {
   });
   gallery.appendChild(photoEl);
   gallery.appendChild(dots);
+  // V747 · Indicador de "desliza para ver el perfil". La foto es alta y el resto
+  // del perfil queda debajo; este aviso, superpuesto sobre el borde inferior de
+  // la foto, deja claro que hay más contenido. Se oculta al hacer scroll.
+  const scrollHint = el("div", { class: "pd-scroll-hint", "aria-hidden": "true" }, [
+    el("span", { class: "pd-scroll-hint-txt" }, "Desliza para ver el perfil"),
+    el("span", { class: "pd-scroll-hint-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>` }),
+  ]);
+  gallery.appendChild(scrollHint);
+  // Al pulsar el aviso, baja suavemente hasta la ficha (nombre/detalles).
+  scrollHint.addEventListener("click", () => {
+    try { root.scrollTo({ top: gallery.offsetHeight - 40, behavior: "smooth" }); } catch { root.scrollTop = gallery.offsetHeight; }
+  });
   // Tap left/right to change photo
   photoEl.addEventListener("click", (e) => {
     const rect = photoEl.getBoundingClientRect();
@@ -9275,22 +9287,28 @@ function screenProfileDetail(root, u, opts = {}) {
   // Actions
   const returnTab = backTo === "likes" ? "likes" : "discover";
   const pdReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
+  // V747 · Cada acción lleva su LEYENDA debajo para que se entienda qué hace.
+  const pdActItem = (btn, label) => el("div", { class: "pd-act-item" }, [
+    btn, el("span", { class: "pd-act-cap" }, label),
+  ]);
   wrap.appendChild(el("div", { class: "pd-actions" }, [
-    el("button", {
+    pdActItem(el("button", {
       class: "pd-act pd-act-pass",
       type: "button",
-      "aria-label": "Descartar",
+      "aria-label": "No me gusta",
+      title: "No me gusta",
       onclick: () => {
         toast(`Descartaste a ${u.name}`);
         if (pdReal) datingApi.react(u.id, "pass");
         document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
       },
       html: `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>`
-    }),
-    el("button", {
+    }), "No me gusta"),
+    pdActItem(el("button", {
       class: "pd-act pd-act-super",
       type: "button",
       "aria-label": "Super Like",
+      title: "Super Like",
       onclick: async () => {
         toast(`✦ Super Like enviado a ${u.name}`);
         document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
@@ -9300,11 +9318,12 @@ function screenProfileDetail(root, u, opts = {}) {
         }
       },
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z"/></svg>`
-    }),
-    el("button", {
+    }), "Super Like"),
+    pdActItem(el("button", {
       class: "pd-act pd-act-like",
       type: "button",
       "aria-label": "Me gusta",
+      title: "Me gusta",
       onclick: async () => {
         document.body.classList.remove("profile-open");
         showApp();
@@ -9329,10 +9348,18 @@ function screenProfileDetail(root, u, opts = {}) {
         else { toast(`Le diste like a ${u.name}`); routeTab("discover"); }
       },
       html: `<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`
-    }),
+    }), "Me gusta"),
   ]));
 
   root.appendChild(wrap);
+  // V747 · Oculta el aviso de scroll en cuanto el usuario empieza a desplazar.
+  const onScroll = () => {
+    if (root.scrollTop > 24) {
+      root.classList.add("pd-scrolled");
+      root.removeEventListener("scroll", onScroll);
+    }
+  };
+  root.addEventListener("scroll", onScroll, { passive: true });
   hideApp();
 }
 
