@@ -7755,12 +7755,16 @@ async function openNearbyMap() {
   }).setView([start.lat, start.lng], 13);
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
-  // Teselas atractivas tipo Grindr: oscuras en tema oscuro, claras (voyager) en claro.
+  // V762 · Teselas SIN clave: usamos Esri (ArcGIS) Canvas Dark/Light Gray.
+  //   CARTO empezó a exigir cuenta/API key y bloqueaba las teselas desde
+  //   citasaura.es → el mapa mostraba "API key required". Esri no requiere
+  //   clave para uso web. OJO: Esri usa el orden {z}/{y}/{x} (fila antes que
+  //   columna), NO {z}/{x}/{y} como OSM/CARTO.
   const dark = (state.theme || "dark") === "dark";
   const tileUrl = dark
-    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-    : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-  L.tileLayer(tileUrl, { maxZoom: 20, subdomains: "abcd", attribution: "" }).addTo(map);
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+  L.tileLayer(tileUrl, { maxZoom: 16, attribution: "" }).addTo(map);
 
   const markers = L.layerGroup().addTo(map);
   let searchCircle = null;
