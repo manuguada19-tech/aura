@@ -7911,6 +7911,18 @@ async function openNearbyMap() {
     ? { lat: first.center.lat, lng: first.center.lng }
     : { lat: start.lat, lng: start.lng };
 
+  // V766 · Punto azul de "mi ubicación" (estilo Google Maps) para saber dónde
+  // está el usuario respecto al resto de personas. Se coloca en myLocation
+  // (GPS con consentimiento o aproximación por IP que devuelve el backend) y se
+  // queda fijo, por debajo de los pines de personas.
+  const meIcon = L.divIcon({ className: "map-me-wrap",
+    html: '<div class="map-me"><span class="map-me-pulse"></span><span class="map-me-dot"></span></div>',
+    iconSize: [24, 24], iconAnchor: [12, 12] });
+  const meMarker = L.marker([myLocation.lat, myLocation.lng], {
+    icon: meIcon, interactive: false, keyboard: false, zIndexOffset: -1000,
+  }).addTo(map);
+  meMarker.bindTooltip("Tú estás aquí", { direction: "top", offset: [0, -10], className: "map-me-tip" });
+
   // V764 · Marcador que el usuario "suelta" al tocar el mapa para buscar en ese
   // punto exacto (además del arrastre). Se dibuja donde tocó.
   let pointerMarker = null;

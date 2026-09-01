@@ -9119,6 +9119,33 @@ body.map-open { overflow: hidden; }
 .map-search-go:active { transform: scale(.92); }
 .map-search-go.loading { opacity: .6; pointer-events: none; }
 
+/* V766 · Punto azul "mi ubicación" (estilo Google Maps) */
+.map-me-wrap { background: none; border: 0; }
+.map-me { position: relative; width: 24px; height: 24px; }
+.map-me-dot {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #2a7dff; border: 3px solid #fff;
+  box-shadow: 0 0 0 1px rgba(42,125,255,.4), 0 2px 6px rgba(0,0,0,.4);
+}
+.map-me-pulse {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 24px; height: 24px; border-radius: 50%;
+  background: rgba(42,125,255,.30);
+  animation: mapMePulse 2s ease-out infinite;
+}
+@keyframes mapMePulse {
+  0% { transform: translate(-50%, -50%) scale(.6); opacity: .7; }
+  100% { transform: translate(-50%, -50%) scale(2.6); opacity: 0; }
+}
+.map-me-tip {
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  color: var(--text); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px; font-size: 11px; font-weight: 700; padding: 3px 8px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.25);
+}
+.map-me-tip::before { display: none; }
+
 /* V764 · Puntero que se "suelta" al tocar el mapa para buscar en ese punto */
 .map-pointer-wrap { background: none; border: 0; }
 .map-pointer {
