@@ -400,7 +400,7 @@ function register(app, pool, helpers) {
     // Filtros premium (permitidos desde Premium)
     // V748 · Añadidos city/cities (ubicación) y ethnicities (multi-etnia) al
     // conjunto básico — se aplican en /api/discover y /api/my/nearby.
-    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities"];
+    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities","looking_for","relationship","interests"];
     // Filtros avanzados (solo Oro+)
     const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages","height_min","height_max"];
     const finalFilters = {};

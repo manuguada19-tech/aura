@@ -1757,6 +1757,7 @@ const state = {
     ageMin: 21, ageMax: 40, distance: 50,
     genders: ["Todos"], onlyVerified: false, onlyOnline: false,
     cities: [], ethnicities: [], // V748 · ubicación (multi) y etnia (multi)
+    lookingFor: "any", relationship: "any", interests: [], // V757 · más filtros
   },
   favorites: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
@@ -3287,6 +3288,12 @@ const RELATIONSHIP_TYPES = [
 const GENDER_OPTIONS = [
   "Mujer", "Hombre", "No binario", "Binario", "Género fluido",
   "Agénero", "Intersexual", "Transgénero", "Prefiero no decirlo",
+];
+// V757 · Etnias seleccionables (mismo listado que en el registro). El usuario
+// puede fijarla en su perfil y así aparece como faceta del filtro de etnia.
+const ETHNICITY_OPTIONS = [
+  "Prefiero no decirlo", "Latina/o", "Caucásica/o", "Asiática/o",
+  "Afrodescendiente", "Árabe", "Mixta/o",
 ];
 
 // V741 · Normaliza cualquier valor de género almacenado (male/female/F/M/NB/
@@ -8471,6 +8478,47 @@ function openFilters() {
   ethGroup.appendChild(ethRow);
   wrap.appendChild(ethGroup);
 
+  // ---- V757 · Más filtros: qué busca / tipo de relación / intereses ----
+  // Selección única (radio) para "qué busca" y "tipo de relación"; multi para
+  // intereses. "Cualquiera"/"Sin preferencia" = sin filtro.
+  const lookingRef = { id: state.filters.lookingFor || "any" };
+  const lookingRow = el("div", { class: "chip-row" });
+  [{ id: "any", label: "Cualquiera", emoji: "🎯" }, ...LOOKING_FOR_OPTIONS].forEach(o => {
+    const c = el("button", { class: "chip selectable" + (lookingRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      lookingRef.id = o.id;
+      lookingRow.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+      c.classList.add("active");
+    });
+    lookingRow.appendChild(c);
+  });
+  wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Qué busca"), lookingRow ]));
+
+  const relRef = { id: state.filters.relationship || "any" };
+  const relRow = el("div", { class: "chip-row" });
+  RELATIONSHIP_TYPES.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (relRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      relRef.id = o.id;
+      relRow.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+      c.classList.add("active");
+    });
+    relRow.appendChild(c);
+  });
+  wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Tipo de relación"), relRow ]));
+
+  const selInterests = new Set(state.filters.interests || []);
+  const intRow = el("div", { class: "chip-row" });
+  INTERESTS.forEach(i => {
+    const c = el("button", { class: "chip selectable" + (selInterests.has(i) ? " active" : ""), type: "button" }, i);
+    c.addEventListener("click", () => {
+      if (selInterests.has(i)) { selInterests.delete(i); c.classList.remove("active"); }
+      else { selInterests.add(i); c.classList.add("active"); }
+    });
+    intRow.appendChild(c);
+  });
+  wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Intereses (uno o más)"), intRow ]));
+
   // Facetas reales (ciudades/etnias disponibles). Rellenan ubicación y etnia.
   let facetCities = [], facetEth = [];
   function renderCityResults() {
@@ -8593,6 +8641,10 @@ function openFilters() {
       // Ubicación / etnia (multi).
       state.filters.cities = Array.from(citySelected);
       state.filters.ethnicities = Array.from(ethSelected);
+      // V757 · Más filtros: qué busca / tipo de relación / intereses.
+      state.filters.lookingFor = lookingRef.id || "any";
+      state.filters.relationship = relRef.id || "any";
+      state.filters.interests = Array.from(selInterests);
       datingApi.saveFilters({
         age_min: state.filters.ageMin,
         age_max: state.filters.ageMax,
@@ -8600,6 +8652,9 @@ function openFilters() {
         gender: genderVal,
         cities: state.filters.cities,
         ethnicities: state.filters.ethnicities,
+        looking_for: state.filters.lookingFor,
+        relationship: state.filters.relationship,
+        interests: state.filters.interests,
       });
       modal.close(); toast("Filtros aplicados");
       const grid = $("#resultsGrid");
@@ -10967,6 +11022,7 @@ function screenEditProfile(root) {
       job: jobInp.value.trim(),
       height: parseInt(heightInp.value, 10) || null,
       gender: genderInp.value,
+      ethnicity: ethInp.value || null,
       looking_for: lookingRef.id,
       relationship: relRef.id,
       interests: Array.from(selectedInterests),
@@ -11005,6 +11061,16 @@ function screenEditProfile(root) {
   const genderField = el("div", { class: "field" });
   genderField.appendChild(el("label", {}, T("content.me.field_gender") || "Género"));
   genderField.appendChild(genderInp); form.appendChild(genderField);
+
+  // V757 · Etnia (opcional). Alimenta el filtro de etnia del buscador.
+  const curEth = (u.ethnicity && String(u.ethnicity)) || "";
+  const ethInp = el("select", {}, [
+    el("option", { value: "", selected: !curEth || undefined }, "Sin especificar"),
+    ...ETHNICITY_OPTIONS.map(e => el("option", { value: e, selected: e === curEth || undefined }, e)),
+  ]);
+  const ethField = el("div", { class: "field" });
+  ethField.appendChild(el("label", {}, "Etnia (opcional)"));
+  ethField.appendChild(ethInp); form.appendChild(ethField);
 
   // Qué estoy buscando
   const lookingRef = { id: state.myProfile.looking_for || "serious" };
@@ -11080,6 +11146,7 @@ function screenEditProfile(root) {
       if (p.job != null) jobInp.value = p.job;
       if (p.height != null) heightInp.value = p.height;
       if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
+      if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
       const setChip = (wrapEl, ref, id) => {
         if (!id) return;
         ref.id = id;

@@ -6709,6 +6709,27 @@ function applyFacetFilter(where, params, column, value) {
   for (const v of list) params.push(v);
 }
 
+// V757 · Filtros adicionales comunes a /api/discover y /api/my/nearby:
+//   · looking_for / relationship: comparación exacta (ignora "any"/vacío).
+//   · interests: coincide si el perfil tiene AL MENOS UNO de los elegidos
+//     (interests se guarda como JSON array de strings). Si el perfil no tiene
+//     intereses (NULL) queda excluido SOLO cuando el usuario filtra por interés
+//     (opt-in). Aditivo y retrocompatible: sin filtros, no añade condiciones.
+function applyPreferenceFilters(where, params, f) {
+  if (!f) return;
+  const lf = f.looking_for;
+  if (lf && lf !== "any" && String(lf).trim()) { where.push("u.looking_for = ?"); params.push(String(lf).trim()); }
+  const rel = f.relationship;
+  if (rel && rel !== "any" && String(rel).trim()) { where.push("u.relationship = ?"); params.push(String(rel).trim()); }
+  let ints = Array.isArray(f.interests) ? f.interests : (f.interests != null ? [f.interests] : []);
+  ints = ints.map(v => String(v == null ? "" : v).trim()).filter(Boolean).slice(0, 30);
+  if (ints.length) {
+    const ors = ints.map(() => "JSON_CONTAINS(u.interests, ?)");
+    where.push(`(u.interests IS NOT NULL AND (${ors.join(" OR ")}))`);
+    for (const v of ints) params.push(JSON.stringify(v));
+  }
+}
+
 app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
   const me = readMyUserId(req); // puede ser null (anónimo)
@@ -6753,6 +6774,8 @@ app.get("/api/discover", wrap(async (req, res) => {
   applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
   // V748 · Filtro de etnia — multi-selección (`ethnicities`). Vacío = sin filtro.
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
+  // V757 · Filtros adicionales: qué busca, tipo de relación e intereses.
+  applyPreferenceFilters(where, params, f);
 
   // ---- Geolocalización (función 4) ----
   // Coordenadas del usuario actual (sólo si dio consentimiento GPS y hay
@@ -6907,6 +6930,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   // V748 · Mismos filtros de ubicación/etnia que /api/discover.
   applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
+  applyPreferenceFilters(where, params, f); // V757 · qué busca / relación / intereses
 
   // Coordenadas del usuario actual. V738 · GPS real (para filtrar por radio) e
   // IP aproximada (solo para mostrar distancia; nunca excluye).
@@ -7544,7 +7568,7 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, job, height, gender, looking_for, relationship, interests, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, job, height, gender, ethnicity, looking_for, relationship, interests, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   let interests = [];
@@ -7571,6 +7595,8 @@ app.post("/api/my/profile", wrap(async (req, res) => {
   }
   // V741 · Género editable desde el perfil (etiquetas en español).
   if ("gender" in b) { sets.push("gender=?"); vals.push(b.gender ? String(b.gender).slice(0, 30) : null); }
+  // V757 · Etnia editable desde el perfil (alimenta el filtro de etnia).
+  if ("ethnicity" in b) { sets.push("ethnicity=?"); vals.push(b.ethnicity ? String(b.ethnicity).slice(0, 40) : null); }
   if ("looking_for" in b) { sets.push("looking_for=?"); vals.push(b.looking_for ? String(b.looking_for).slice(0, 30) : null); }
   if ("relationship" in b) { sets.push("relationship=?"); vals.push(b.relationship ? String(b.relationship).slice(0, 30) : null); }
   if ("interests" in b) {
