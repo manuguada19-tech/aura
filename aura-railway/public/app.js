@@ -7585,7 +7585,7 @@ async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
   if (!(datingApi._authed && datingApi._authed())) return null;
   try {
     const z = state.zone || "hetero";
-    const qs = new URLSearchParams({ zone: z, radius_km: String(radiusKm || 50), limit: "80" });
+    const qs = new URLSearchParams({ zone: z, radius_km: String(radiusKm || 50), limit: "120" });
     if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
       qs.set("lat", String(centerLat)); qs.set("lng", String(centerLng));
     }
@@ -7595,19 +7595,108 @@ async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
   } catch { return null; }
 }
 
+// V759 · Usuario FICTICIO de prueba: se coloca cerca del centro del mapa con
+// una ubicación claramente marcada como ficticia. Sirve para probar el mapa
+// aunque no haya usuarios reales cerca. Nunca se guarda ni se envía al backend.
+function makeTestMapUser(center) {
+  return {
+    id: "test_demo",
+    name: "Perfil de prueba",
+    age: 27,
+    gender: "Mujer",
+    city: "Ubicación ficticia (prueba)",
+    photo: "https://i.pravatar.cc/300?img=47",
+    verified: true,
+    online: true,
+    gps_ok: true,
+    distance: 1.2,
+    lat: center.lat + 0.010,
+    lng: center.lng + 0.013,
+    _test: true,
+  };
+}
+
+// Coincidencia tolerante de género para los filtros rápidos del mapa.
+function mapGenderMatches(sel, g) {
+  if (!sel || sel === "todos") return true;
+  const v = String(g || "").toLowerCase();
+  if (sel === "Mujer") return v.startsWith("muj") || v === "f" || v === "female" || v.startsWith("chic");
+  if (sel === "Hombre") return v.startsWith("hom") || v === "m" || v === "male" || v.startsWith("chic") === false && (v.startsWith("hom") || v === "m");
+  return true;
+}
+
 async function openNearbyMap() {
   const overlay = el("div", { class: "map-overlay" });
+
+  // Estado de filtros rápidos del mapa (cliente). El radio re-consulta al backend.
+  const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: 25, showTest: true };
+  let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
+
+  // ---- Barra superior (glass) ----
   overlay.appendChild(el("div", { class: "map-topbar" }, [
-    el("button", { class: "icon-btn", type: "button", "aria-label": "Cerrar mapa",
+    el("button", { class: "map-icon-btn", type: "button", "aria-label": "Cerrar mapa",
       onclick: () => { try { overlay.remove(); } catch {} document.body.classList.remove("map-open"); },
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
-    el("div", { class: "map-title" }, "Cerca en el mapa"),
-    el("span"),
+    el("div", { class: "map-title" }, "Explora en el mapa"),
+    el("span", { style: "width:40px" }),
   ]));
+
+  // ---- Barra de filtros (chips) ----
+  const genderSeg = el("div", { class: "map-seg" });
+  const genderOpts = [
+    { v: "todos", label: "Todos" },
+    { v: "Mujer", label: "Mujeres" },
+    { v: "Hombre", label: "Hombres" },
+  ];
+  const genderBtns = genderOpts.map(o => {
+    const b = el("button", { class: "map-seg-btn" + (mapFilters.gender === o.v ? " active" : ""), type: "button" }, o.label);
+    b.addEventListener("click", () => {
+      mapFilters.gender = o.v;
+      genderBtns.forEach(x => x.classList.toggle("active", x === b));
+      repaint();
+    });
+    return b;
+  });
+  genderBtns.forEach(b => genderSeg.appendChild(b));
+
+  const onlineChip = el("button", { class: "map-chip" + (mapFilters.onlyOnline ? " active" : ""), type: "button" }, [
+    el("span", { class: "map-chip-dot" }), "En línea",
+  ]);
+  onlineChip.addEventListener("click", () => {
+    mapFilters.onlyOnline = !mapFilters.onlyOnline;
+    onlineChip.classList.toggle("active", mapFilters.onlyOnline);
+    repaint();
+  });
+
+  const radiusWrap = el("div", { class: "map-radius" });
+  const radiusChips = [5, 10, 25, 50, 100].map(km => {
+    const c = el("button", { class: "map-chip" + (mapFilters.radiusKm === km ? " active" : ""), type: "button" }, km + " km");
+    c.addEventListener("click", () => {
+      mapFilters.radiusKm = km;
+      radiusChips.forEach(x => x.classList.toggle("active", x === c));
+      searchHere();
+    });
+    return c;
+  });
+  radiusChips.forEach(c => radiusWrap.appendChild(c));
+
+  const filterbar = el("div", { class: "map-filterbar" }, [
+    genderSeg,
+    el("div", { class: "map-filterbar-row" }, [ onlineChip, radiusWrap ]),
+  ]);
+  overlay.appendChild(filterbar);
+
   const mapEl = el("div", { class: "map-canvas", id: "nearbyMapCanvas" });
   overlay.appendChild(mapEl);
-  const hint = el("div", { class: "map-hint" }, "Toca o arrastra el mapa para buscar en esa zona · ubicaciones aproximadas");
-  overlay.appendChild(hint);
+
+  // Botón flotante "mi ubicación"
+  const locateBtn = el("button", { class: "map-locate", type: "button", "aria-label": "Centrar en mi ubicación",
+    html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>` });
+  overlay.appendChild(locateBtn);
+
+  const legend = el("div", { class: "map-legend" }, "Toca o arrastra el mapa para explorar esa zona · ubicaciones aproximadas");
+  overlay.appendChild(legend);
+
   document.body.appendChild(overlay);
   document.body.classList.add("map-open");
 
@@ -7624,37 +7713,67 @@ async function openNearbyMap() {
   const L = window.L;
   // Centro inicial: intenta la ubicación real; si no, un centro por defecto (Madrid).
   let start = { lat: 40.4168, lng: -3.7038 };
-  const first = await fetchNearbyMap(null, null, 50);
+  const first = await fetchNearbyMap(null, null, mapFilters.radiusKm);
   if (first && first.center && Number.isFinite(first.center.lat)) {
     start = { lat: first.center.lat, lng: first.center.lng };
   }
-  const map = L.map(mapEl, { zoomControl: true, attributionControl: true }).setView([start.lat, start.lng], 12);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap',
-  }).addTo(map);
+  lastData = first;
+
+  const map = L.map(mapEl, {
+    zoomControl: false,
+    attributionControl: false, // sin "publicidad"/atribución sobre el mapa
+  }).setView([start.lat, start.lng], 13);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+
+  // Teselas atractivas tipo Grindr: oscuras en tema oscuro, claras (voyager) en claro.
+  const dark = (state.theme || "dark") === "dark";
+  const tileUrl = dark
+    ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+    : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+  L.tileLayer(tileUrl, { maxZoom: 20, subdomains: "abcd", attribution: "" }).addTo(map);
 
   const markers = L.layerGroup().addTo(map);
   let searchCircle = null;
 
-  function radiusForZoom(z) {
-    // Radio aproximado (km) según el nivel de zoom, acotado a 1–200.
-    const r = Math.round(40000 / Math.pow(2, z));
-    return Math.min(200, Math.max(2, r));
+  function pinIcon(u) {
+    const cls = ["map-pin"];
+    if (u.online) cls.push("on");
+    if (u._test) cls.push("test");
+    const dot = u.online ? '<span class="map-pin-dot"></span>' : "";
+    const tag = u._test ? '<span class="map-pin-tag">Prueba</span>' : "";
+    const html = `<div class="${cls.join(" ")}" style="background-image:url('${u.photo || ""}')">${dot}${tag}<span class="map-pin-stem"></span></div>`;
+    return L.divIcon({ className: "map-pin-wrap", html, iconSize: [50, 62], iconAnchor: [25, 60] });
   }
 
-  function paintUsers(data) {
+  function openTestSheet() {
+    const sheet = el("div", {}, [
+      el("div", { class: "sheet-title" }, "Perfil de prueba (ficticio)"),
+      el("div", { class: "sheet-body" }, "Este perfil y su ubicación son ficticios y solo sirven para probar el mapa. No corresponde a ninguna persona real."),
+      el("div", { class: "sheet-actions" }, [
+        el("button", { class: "btn btn-brand btn-block", "data-close": true }, "Entendido"),
+      ]),
+    ]);
+    try { modal.open(sheet); } catch {}
+  }
+
+  function repaint() {
     markers.clearLayers();
-    const list = (data && Array.isArray(data.users)) ? data.users : [];
-    hint.textContent = list.length
-      ? `${list.length} personas en esta zona · ubicaciones aproximadas`
-      : "Nadie por aquí. Prueba a mover el mapa o ampliar los filtros.";
+    let list = (lastData && Array.isArray(lastData.users)) ? lastData.users.slice() : [];
+    // Inserta el usuario ficticio de prueba cerca del centro actual del mapa.
+    if (mapFilters.showTest) {
+      const c = map.getCenter();
+      list.unshift(makeTestMapUser({ lat: c.lat, lng: c.lng }));
+    }
+    // Filtros de cliente: género y "solo en línea".
+    list = list.filter(u => mapGenderMatches(mapFilters.gender, u.gender) && (!mapFilters.onlyOnline || u.online));
+    const realCount = list.filter(u => !u._test).length;
+    legend.textContent = realCount
+      ? `${realCount} ${realCount === 1 ? "persona" : "personas"} en esta zona · ubicaciones aproximadas`
+      : "Nadie real por aquí todavía · se muestra un perfil de prueba ficticio";
     list.forEach(u => {
-      const html = `<div class="map-pin ${u.online ? "on" : ""}" style="background-image:url('${u.photo || ""}')">${u.online ? '<span class="map-pin-dot"></span>' : ""}</div>`;
-      const icon = L.divIcon({ className: "map-pin-wrap", html, iconSize: [42, 42], iconAnchor: [21, 21] });
-      const m = L.marker([u.lat, u.lng], { icon }).addTo(markers);
+      const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => {
-        // Abre la ficha del perfil real (con datos mínimos ya disponibles).
+        if (u._test) { openTestSheet(); return; }
         const uu = mapApiUser({
           id: u.id, name: u.name, age: u.age, gender: u.gender, city: u.city,
           photo_url: u.photo, verified: u.verified, online: u.online,
@@ -7670,24 +7789,40 @@ async function openNearbyMap() {
   function drawCircle(center, radiusKm) {
     if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
     searchCircle = L.circle([center.lat, center.lng], {
-      radius: radiusKm * 1000, color: "#ff3b6b", weight: 1.5, opacity: 0.6, fillColor: "#ff3b6b", fillOpacity: 0.08,
+      radius: radiusKm * 1000, color: "#ff3b6b", weight: 1.5, opacity: 0.55,
+      fillColor: "#ff3b6b", fillOpacity: 0.07,
     }).addTo(map);
   }
 
   let searchTimer = null;
   async function searchHere() {
     const c = map.getCenter();
-    const radiusKm = radiusForZoom(map.getZoom());
-    drawCircle({ lat: c.lat, lng: c.lng }, radiusKm);
-    const data = await fetchNearbyMap(c.lat, c.lng, radiusKm);
-    if (data) paintUsers(data);
+    drawCircle({ lat: c.lat, lng: c.lng }, mapFilters.radiusKm);
+    const data = await fetchNearbyMap(c.lat, c.lng, mapFilters.radiusKm);
+    if (data) { lastData = data; repaint(); }
   }
+
   // Primera pintura con los datos ya cargados.
-  if (first) { drawCircle(start, 50); paintUsers(first); }
+  drawCircle(start, mapFilters.radiusKm);
+  repaint();
+
   map.on("moveend", () => {
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(searchHere, 350);
   });
+
+  locateBtn.addEventListener("click", () => {
+    if (first && first.center && Number.isFinite(first.center.lat)) {
+      map.setView([first.center.lat, first.center.lng], 14, { animate: true });
+    } else if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 14, { animate: true }),
+        () => toast("No se pudo obtener tu ubicación"),
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    }
+  });
+
   // Recalcula el tamaño tras insertarse en el DOM.
   setTimeout(() => { try { map.invalidateSize(); } catch {} }, 120);
 }
@@ -14858,7 +14993,7 @@ async function maybePromptForPushAnon() {
     function closeTopOverlay() {
       // V758 · Mapa "Cerca de ti" a pantalla completa
       const mapOv = document.querySelector(".map-overlay");
-      if (mapOv) { const b = mapOv.querySelector(".map-topbar .icon-btn"); if (b) { try { b.click(); return true; } catch {} } try { mapOv.remove(); document.body.classList.remove("map-open"); } catch {} return true; }
+      if (mapOv) { const b = mapOv.querySelector(".map-topbar .map-icon-btn"); if (b) { try { b.click(); return true; } catch {} } try { mapOv.remove(); document.body.classList.remove("map-open"); } catch {} return true; }
       // Lector de política/términos (sobre el modal de consentimiento GPS)
       const reader = document.querySelector(".gps-reader-overlay");
       if (reader) { const b = reader.querySelector(".gps-reader-back"); if (b) { try { b.click(); return true; } catch {} } try { reader.remove(); } catch {} return true; }

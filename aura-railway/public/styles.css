@@ -8898,9 +8898,11 @@ body.welcome-desktop .hero-desktop .welcome-foot,
 
 /* V758 · Botón "Buscar en el mapa" en la pestaña Cerca de ti */
 .nearby-map-bar { padding: 10px 16px 0; }
-.nearby-map-btn { display: flex; align-items: center; justify-content: center; }
+.nearby-map-btn { display: flex; align-items: center; justify-content: center; gap: 8px; }
 
-/* V758 · Mapa "Cerca de ti" (estilo Grindr) — overlay a pantalla completa */
+/* V759 · Mapa "Explora en el mapa" (estilo Grindr, más atractivo) --------
+   Overlay a pantalla completa con barra superior glass, barra de filtros
+   flotante, pines teardrop con foto y botón de "mi ubicación". */
 .map-overlay {
   position: fixed; inset: 0; z-index: 4000;
   display: flex; flex-direction: column;
@@ -8908,39 +8910,159 @@ body.welcome-desktop .hero-desktop .welcome-foot,
   padding-top: env(safe-area-inset-top, 0);
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
+body.map-open { overflow: hidden; }
+
+/* Barra superior "glass" translúcida sobre el mapa */
 .map-topbar {
+  position: relative; z-index: 20;
   display: grid; grid-template-columns: 44px 1fr 44px; align-items: center;
-  padding: 6px 8px; border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
-.map-topbar .icon-btn {
+.map-icon-btn {
   width: 40px; height: 40px; display: grid; place-items: center;
-  background: none; border: 0; color: var(--text); border-radius: 10px; cursor: pointer;
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--text); border-radius: 50%; cursor: pointer;
+  transition: transform .12s ease, background .12s ease;
 }
-.map-title { text-align: center; font-weight: 700; font-size: 15px; color: var(--text); }
-.map-canvas { flex: 1; width: 100%; min-height: 0; background: #ddd; }
-.map-hint {
-  padding: 8px 14px; font-size: 12px; line-height: 1.35;
-  color: var(--text-muted); text-align: center;
-  background: var(--surface); border-top: 1px solid var(--border);
+.map-icon-btn:active { transform: scale(.92); }
+.map-title {
+  text-align: center; font-weight: 800; font-size: 15px; letter-spacing: .2px;
+  color: var(--text);
 }
-.map-error { padding: 40px 24px; text-align: center; color: var(--text-soft); }
+
+/* Barra de filtros flotante bajo la topbar */
+.map-filterbar {
+  position: relative; z-index: 20;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.map-filterbar-row {
+  display: flex; align-items: center; gap: 8px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.map-filterbar-row::-webkit-scrollbar { display: none; }
+
+/* Segmento de género (Todos / Mujeres / Hombres) */
+.map-seg {
+  display: flex; gap: 4px; padding: 4px;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 999px;
+}
+.map-seg-btn {
+  flex: 1; padding: 8px 6px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--text-soft);
+  font-weight: 700; font-size: 13px; cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.map-seg-btn.active {
+  color: #fff;
+  background: linear-gradient(135deg, #ff5c8a, #ff3b6b);
+  box-shadow: 0 4px 12px rgba(255,59,107,.35);
+}
+
+/* Chips de filtro (en línea, radio de km) */
+.map-radius { display: flex; align-items: center; gap: 6px; }
+.map-chip {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  padding: 8px 12px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  color: var(--text-soft); font-weight: 700; font-size: 13px;
+  transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.map-chip.active {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, #ff5c8a, #ff3b6b);
+  box-shadow: 0 4px 12px rgba(255,59,107,.30);
+}
+.map-chip-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.25);
+}
+
+/* Lienzo del mapa */
+.map-canvas { flex: 1; width: 100%; min-height: 0; background: var(--bg); }
+.map-error { padding: 40px 24px; text-align: center; color: var(--text-soft); margin: auto; }
 .map-error strong { display: block; color: var(--text); margin-bottom: 6px; }
 
-/* Pines de foto sobre el mapa */
+/* Botón flotante "mi ubicación" */
+.map-locate {
+  position: absolute; right: 14px; bottom: 84px; z-index: 30;
+  width: 46px; height: 46px; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: 0 6px 18px rgba(0,0,0,.30);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  transition: transform .12s ease;
+}
+.map-locate:active { transform: scale(.92); }
+
+/* Leyenda inferior flotante */
+.map-legend {
+  position: absolute; left: 12px; right: 12px; bottom: 16px; z-index: 25;
+  padding: 9px 14px; border-radius: 14px; text-align: center;
+  font-size: 12px; line-height: 1.35; font-weight: 600;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  box-shadow: 0 6px 18px rgba(0,0,0,.25);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  pointer-events: none;
+}
+
+/* Pines teardrop con foto */
 .map-pin-wrap { background: none; border: 0; }
 .map-pin {
-  width: 42px; height: 42px; border-radius: 50%;
+  width: 50px; height: 50px; border-radius: 50%;
   background-size: cover; background-position: center;
   background-color: var(--surface);
-  border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  border: 3px solid #fff;
+  box-shadow: 0 4px 12px rgba(0,0,0,.45);
   position: relative; cursor: pointer;
+  transition: transform .12s ease;
+}
+.map-pin:hover { transform: translateY(-2px) scale(1.04); }
+.map-pin-stem {
+  position: absolute; left: 50%; bottom: -9px; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 11px solid #fff;
+  filter: drop-shadow(0 3px 2px rgba(0,0,0,.35));
 }
 .map-pin.on { border-color: #22c55e; }
+.map-pin.on .map-pin-stem { border-top-color: #22c55e; }
+.map-pin.test { border-color: #f59e0b; }
+.map-pin.test .map-pin-stem { border-top-color: #f59e0b; }
 .map-pin-dot {
-  position: absolute; right: -1px; top: -1px;
-  width: 12px; height: 12px; border-radius: 50%;
+  position: absolute; right: -2px; top: -2px;
+  width: 13px; height: 13px; border-radius: 50%;
   background: #22c55e; border: 2px solid #fff;
 }
+.map-pin-tag {
+  position: absolute; left: 50%; top: -14px; transform: translateX(-50%);
+  padding: 2px 7px; border-radius: 999px; white-space: nowrap;
+  font-size: 10px; font-weight: 800; letter-spacing: .3px; color: #1a1200;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  box-shadow: 0 2px 6px rgba(0,0,0,.3);
+}
 /* Asegura que los controles de Leaflet queden sobre el overlay */
-.map-overlay .leaflet-container { font: inherit; }
+.map-overlay .leaflet-container { font: inherit; background: var(--bg); }
+.map-overlay .leaflet-control-zoom { margin: 0 14px 84px 0 !important; border: 0; }
+.map-overlay .leaflet-control-zoom a {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
