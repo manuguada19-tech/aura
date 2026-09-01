@@ -7760,12 +7760,16 @@ async function openNearbyMap() {
   // V764 · Buscador por ciudad/provincia (geocodificación sin clave con
   // Nominatim/OpenStreetMap). Permite saltar a cualquier localidad de España.
   const searchInput = el("input", { class: "map-search-input", type: "search",
-    placeholder: "Buscar ciudad o provincia…", "aria-label": "Buscar ciudad o provincia",
+    placeholder: "Ciudad, provincia, centro comercial o lugar…", "aria-label": "Buscar ciudad, provincia o lugar",
     autocomplete: "off", autocapitalize: "words", enterkeyhint: "search" });
   const searchGo = el("button", { class: "map-search-go", type: "button", "aria-label": "Buscar",
     html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>` });
   const searchBar = el("div", { class: "map-searchbar" }, [ searchInput, searchGo ]);
   overlay.appendChild(searchBar);
+  // V771 · Lista de sugerencias con autorrelleno (ciudades, provincias, centros
+  // comerciales y puntos de interés). Se rellena mientras el usuario escribe.
+  const searchSuggest = el("div", { class: "map-search-suggest", hidden: true });
+  overlay.appendChild(searchSuggest);
 
   // Botón flotante "mi ubicación"
   const locateBtn = el("button", { class: "map-locate", type: "button", "aria-label": "Centrar en mi ubicación",
@@ -7943,8 +7947,8 @@ async function openNearbyMap() {
     legend.textContent = realCount
       ? `${realCount} ${realCount === 1 ? "persona" : "personas"} en esta zona · toca un pin o usa la cuadrícula`
       : (testUser
-          ? "Nadie real por aquí todavía · se muestra la cuenta de prueba"
-          : "Nadie por aquí todavía · arrastra o busca por ciudad");
+          ? "No hay usuarios reales por ahora · se muestra la cuenta de prueba"
+          : "No hay usuarios reales por ahora · arrastra o busca por ciudad");
     list.forEach(u => {
       const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => openUserSheet(u));
@@ -8058,33 +8062,130 @@ async function openNearbyMap() {
   }
 
   // V764 · Geocodificación por ciudad/provincia (Nominatim / OpenStreetMap, sin
-  // clave). Salta el mapa a la localidad y busca allí; si no hay nadie, avisa y
-  // redirige a mi ubicación.
+  // clave). V771 · Ampliada a AUTOCOMPLETADO con sugerencias seleccionables que
+  // incluyen ciudades, provincias, centros comerciales y puntos de interés.
+  //   · Mientras el usuario escribe (con debounce) pedimos varias coincidencias
+  //     a Nominatim y las mostramos en un desplegable.
+  //   · Al tocar una sugerencia (o Enter / botón buscar) saltamos a ese lugar.
+  // Icono por tipo de lugar para que la lista sea fácil de leer.
+  function placeIcon(item) {
+    const cls = (item.class || "").toLowerCase();
+    const typ = (item.type || "").toLowerCase();
+    if (cls === "shop" || typ === "mall" || typ === "supermarket" || typ === "department_store") return "🛍️";
+    if (typ === "city" || typ === "town" || typ === "municipality") return "🏙️";
+    if (typ === "administrative" || typ === "province" || typ === "state" || typ === "county") return "🗺️";
+    if (typ === "village" || typ === "hamlet" || typ === "suburb" || typ === "neighbourhood") return "🏘️";
+    if (cls === "tourism" || cls === "leisure" || cls === "historic") return "📸";
+    if (cls === "amenity") return "📍";
+    return "📍";
+  }
+  // Título corto y subtítulo (contexto) a partir del display_name de Nominatim.
+  function placeLabels(item) {
+    const parts = String(item.display_name || "").split(",").map(s => s.trim()).filter(Boolean);
+    const title = (item.namedetails && item.namedetails.name) || parts[0] || item.display_name || "Lugar";
+    const context = parts.slice(1).join(", ");
+    return { title, context };
+  }
+
+  function hideSuggest() {
+    searchSuggest.hidden = true;
+    searchSuggest.innerHTML = "";
+  }
+  // Salta el mapa a un lugar concreto y busca allí; si no hay nadie, avisa.
+  async function goToPlace(lat, lng, zoom) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    hideSuggest();
+    try { searchInput.blur(); } catch {}
+    suppressMoveSearch = true;
+    map.setView([lat, lng], zoom || 13, { animate: true });
+    dropPointer(lat, lng);
+    await searchAt(lat, lng, { recenterIfEmpty: true });
+  }
+
+  // Pinta la lista de sugerencias seleccionables.
+  function renderSuggestions(arr) {
+    searchSuggest.innerHTML = "";
+    if (!arr || !arr.length) { hideSuggest(); return; }
+    arr.forEach((item) => {
+      const lat = parseFloat(item.lat), lng = parseFloat(item.lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      const { title, context } = placeLabels(item);
+      const row = el("button", { class: "map-suggest-item", type: "button" }, [
+        el("span", { class: "map-suggest-ic" }, placeIcon(item)),
+        el("span", { class: "map-suggest-txt" }, [
+          el("strong", {}, title),
+          context ? el("small", {}, context) : null,
+        ]),
+      ]);
+      // Un zoom más cercano para POIs (centros comerciales, monumentos) que para
+      // ciudades/provincias, para que el lugar quede bien encuadrado.
+      const t = (item.type || "").toLowerCase();
+      const isPoi = !["city","town","municipality","administrative","province","state","county","village","hamlet","suburb","neighbourhood"].includes(t);
+      row.addEventListener("click", () => { goToPlace(lat, lng, isPoi ? 15 : 12); });
+      searchSuggest.appendChild(row);
+    });
+    searchSuggest.hidden = false;
+  }
+
+  // Consulta a Nominatim y devuelve varias coincidencias, sesgadas a la zona
+  // visible del mapa para priorizar lugares cercanos (centros comerciales, POIs).
+  let _suggestSeq = 0;
+  async function fetchSuggestions(term) {
+    const seq = ++_suggestSeq;
+    let viewboxParam = "";
+    try {
+      const b = map.getBounds();
+      // left,top,right,bottom (lon/lat) — sesga sin excluir (bounded=0).
+      viewboxParam = `&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}&bounded=0`;
+    } catch {}
+    const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=0&namedetails=1&limit=7&countrycodes=es&accept-language=es"
+      + viewboxParam + "&q=" + encodeURIComponent(term);
+    try {
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const arr = res.ok ? await res.json() : [];
+      if (seq !== _suggestSeq) return; // llegó una respuesta más nueva
+      renderSuggestions(Array.isArray(arr) ? arr : []);
+    } catch {
+      if (seq === _suggestSeq) hideSuggest();
+    }
+  }
+
+  // Busca y salta a la MEJOR coincidencia (Enter o botón de la lupa).
   async function searchCity(q) {
     const term = String(q || "").trim();
     if (!term) return;
     searchGo.classList.add("loading");
     try {
-      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=es&accept-language=es&q=" + encodeURIComponent(term);
+      const url = "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=es&accept-language=es&q=" + encodeURIComponent(term);
       const res = await fetch(url, { headers: { "Accept": "application/json" } });
       const arr = res.ok ? await res.json() : [];
-      if (!arr || !arr.length) { toast("No se encontró esa ciudad o provincia"); return; }
+      if (!arr || !arr.length) { toast("No se encontró ese lugar"); return; }
       const lat = parseFloat(arr[0].lat), lng = parseFloat(arr[0].lon);
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) { toast("No se encontró esa ciudad o provincia"); return; }
-      suppressMoveSearch = true;
-      map.setView([lat, lng], 12, { animate: true });
-      dropPointer(lat, lng);
-      try { searchInput.blur(); } catch {}
-      await searchAt(lat, lng, { recenterIfEmpty: true });
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) { toast("No se encontró ese lugar"); return; }
+      await goToPlace(lat, lng, 12);
     } catch {
-      toast("No se pudo buscar la ciudad ahora mismo");
+      toast("No se pudo buscar ahora mismo");
     } finally {
       searchGo.classList.remove("loading");
     }
   }
+
+  // Autocompletado con debounce mientras se escribe (mín. 3 caracteres).
+  let suggestTimer = null;
+  searchInput.addEventListener("input", () => {
+    const term = searchInput.value.trim();
+    if (suggestTimer) clearTimeout(suggestTimer);
+    if (term.length < 3) { hideSuggest(); return; }
+    suggestTimer = setTimeout(() => fetchSuggestions(term), 320);
+  });
   searchGo.addEventListener("click", () => searchCity(searchInput.value));
   searchInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); searchCity(searchInput.value); }
+    if (e.key === "Enter") { e.preventDefault(); if (suggestTimer) clearTimeout(suggestTimer); searchCity(searchInput.value); }
+    else if (e.key === "Escape") { hideSuggest(); }
+  });
+  // Al tocar fuera del buscador se oculta la lista.
+  overlay.addEventListener("click", (e) => {
+    if (!searchBar.contains(e.target) && !searchSuggest.contains(e.target)) hideSuggest();
   });
 
   // V764 · Tocar el mapa: suelta un puntero en ese punto y busca allí. Si no hay
@@ -11127,10 +11228,31 @@ function screenMe(root) {
   const meName = state.user?.name || T("content.me.default_name") || "";
   const meMail = state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico";
   const meTier = T("content.me.tier_label") || "★ Premium";
+  // V771 · Distintivo azul junto al nombre si la cuenta está verificada. Se pinta
+  // con el sello local (state.user.verified) y, además, se confirma con el
+  // servidor de forma asíncrona por si el sello local aún no estaba puesto.
+  const meNameRow = el("div", { class: "me-name-row" }, [
+    el("h3", { class: "me-name" }, meName),
+  ]);
+  const meVerifiedBadge = el("span", {
+    class: "me-verified-badge", title: "Cuenta verificada",
+    style: (state.user && state.user.verified) ? "" : "display:none",
+    html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`,
+  });
+  meNameRow.appendChild(meVerifiedBadge);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      const ok = !!d && d.kyc_status === "verified";
+      try { if (state.user) state.user.verified = ok; } catch {}
+      meVerifiedBadge.style.display = ok ? "" : "none";
+    } catch {}
+  })();
   root.appendChild(el("div", { class: "me-hero" }, [
     el("div", { class: "me-avatar tappable", style: `background-image:url('${meAvatar}')`, title: "Ver foto", role: "button", tabindex: "0", onclick: () => openAvatarViewer(meAvatar) }),
     el("div", {}, [
-      el("h3", { class: "me-name" }, meName),
+      meNameRow,
       el("div", { class: "me-mail" }, meMail),
       el("span", { class: "me-tier" }, meTier),
     ]),
@@ -12120,6 +12242,62 @@ function screenMyPhotos(root) {
 function screenVerifyAccount(root) {
   meSubHeader(root, T("content.me.item_verify") || "Verificar cuenta");
   const wrap = el("div", { class: "info-wrap" });
+  root.appendChild(wrap);
+  hideApp();
+
+  // V771 · Si la cuenta YA está verificada, no tiene sentido mostrar el flujo de
+  // "empezar verificación": enseñamos una pantalla de estado ("Ya estás
+  // verificado") con el distintivo azul. Solo si NO está verificada mostramos el
+  // CTA para conseguir el badge. Mientras se consulta el estado, pintamos un
+  // esqueleto ligero para evitar parpadeos.
+  wrap.appendChild(el("div", { class: "info-hero" }, [
+    el("div", { class: "info-hero-ic", html: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/></svg>` }),
+    el("p", { class: "info-hero-sub" }, "Comprobando el estado de tu verificación…"),
+  ]));
+
+  (async () => {
+    let verified = false;
+    try {
+      const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      verified = !!d && d.kyc_status === "verified";
+    } catch { verified = false; }
+    // Sincroniza el sello local para que el badge azul aparezca en el perfil.
+    try { if (state.user) state.user.verified = verified; } catch {}
+    wrap.innerHTML = "";
+    if (verified) { renderVerifiedState(wrap); }
+    else { renderVerifyCta(wrap); }
+  })();
+}
+
+// V771 · Pantalla atractiva de "Ya estás verificado" (cuenta con el badge azul).
+function renderVerifiedState(wrap) {
+  wrap.appendChild(el("div", { class: "verify-ok-hero" }, [
+    el("div", { class: "verify-ok-badge", html: `<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>` }),
+    el("h2", { class: "info-hero-title" }, "Ya estás verificado"),
+    el("p", { class: "info-hero-sub" }, "Tu identidad está confirmada. El distintivo azul aparece junto a tu nombre para que los demás sepan que eres una persona real."),
+  ]));
+  wrap.appendChild(el("div", { class: "verify-ok-namecard" }, [
+    el("span", { class: "verify-ok-name" }, (state.user && state.user.name) || "Tu perfil"),
+    el("span", { class: "verify-ok-check", title: "Verificado", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>` }),
+  ]));
+  const perks = [
+    { ic: "🛡️", h: "Perfil de confianza", p: "Los demás ven que tu identidad está verificada." },
+    { ic: "💬", h: "Sin límites por verificar", p: "Da like y chatea sin bloqueos de verificación." },
+    { ic: "🔎", h: "Filtro de verificados", p: "Puedes filtrar para ver solo perfiles verificados." },
+  ];
+  const list = el("div", { class: "verify-ok-perks" });
+  perks.forEach(p => list.appendChild(el("div", { class: "verify-ok-perk" }, [
+    el("div", { class: "verify-ok-perk-ic" }, p.ic),
+    el("div", {}, [ el("strong", {}, p.h), el("small", {}, p.p) ]),
+  ])));
+  wrap.appendChild(list);
+  wrap.appendChild(el("button", { class: "btn btn-brand btn-block", style: "margin-top:16px",
+    type: "button", onclick: () => routeTab("me") }, "Volver a mi perfil"));
+}
+
+// V771 · CTA original para CONSEGUIR el badge azul (solo si NO está verificada).
+function renderVerifyCta(wrap) {
   wrap.appendChild(infoHero(
     `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/><path d="M9 12l2 2 4-4"/></svg>`,
     T("content.me.verify_hero_title") || "Consigue el badge azul",
@@ -12192,9 +12370,6 @@ function screenVerifyAccount(root) {
     el("div", { class: "info-cta-p" }, T("content.me.verify_cta_p") || "Solo te llevará un minuto."),
     startBtn,
   ]));
-
-  root.appendChild(wrap);
-  hideApp();
 }
 
 /* — Modo invisible —
@@ -15289,7 +15464,15 @@ async function maybePromptForPushAnon() {
    ================================================================ */
 (function installStandaloneBackGuard() {
   try {
-    const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+    // V771 · Detección de "app instalada" más amplia. Antes solo mirábamos
+    // display-mode: standalone y navigator.standalone; algunos lanzadores/WebView
+    // reportan fullscreen o minimal-ui (o aún no han fijado el display-mode en el
+    // instante del arranque), y en esos casos el guard NO se instalaba, por lo
+    // que "Atrás" salía directo de la app SIN preguntar. Ahora cubrimos también
+    // fullscreen y minimal-ui.
+    const mm = (q) => { try { return window.matchMedia && window.matchMedia(q).matches; } catch { return false; } };
+    const standalone = mm("(display-mode: standalone)") || mm("(display-mode: fullscreen)")
+      || mm("(display-mode: minimal-ui)") || window.navigator.standalone === true;
     if (!standalone) return;
     if (window.__auraBackGuard) return;
     window.__auraBackGuard = true;
