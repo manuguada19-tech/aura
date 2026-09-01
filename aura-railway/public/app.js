@@ -7484,7 +7484,7 @@ function screenDiscover(root) {
       buildSwipeStack(),
     ]),
     el("div", { class: "action-row" }, [
-      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => rewindLast(), "Rebobinar"),
+      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => rewindLast(), "Volver"),
       actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
       actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
       actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
@@ -8175,7 +8175,7 @@ let _rewindBusy = false;
 async function rewindLast() {
   if (_rewindBusy) return;
   const last = _lastSwipe;
-  if (!last || !last.user) { toast("No hay ninguna acción reciente que rebobinar"); return; }
+  if (!last || !last.user) { toast("No hay ninguna acción reciente que deshacer"); return; }
 
   // Usuario demo / anónimo: no hay nada que deshacer en el servidor; sólo
   // reinsertamos la tarjeta visualmente si el stack sigue disponible.
@@ -8197,9 +8197,9 @@ async function rewindLast() {
     }
     // Errores conocidos → aviso claro.
     if (res && res.status === 402) { _rewindBusy = false; openRewindPaywall(); return; }
-    if (res && res.status === 409) { toast(res.message || "No puedes rebobinar: ya habéis chateado"); return; }
-    if (res && res.status === 404) { toast("No hay ninguna acción reciente que rebobinar"); _lastSwipe = null; return; }
-    toast("No se pudo rebobinar. Inténtalo de nuevo.");
+    if (res && res.status === 409) { toast(res.message || "No puedes volver atrás: ya habéis chateado"); return; }
+    if (res && res.status === 404) { toast("No hay ninguna acción reciente que deshacer"); _lastSwipe = null; return; }
+    toast("No se pudo volver atrás. Inténtalo de nuevo.");
   } finally {
     _rewindBusy = false;
   }
@@ -8225,7 +8225,7 @@ function openRewindPaywall() {
   const sheet = el("div", { class: "premium-lock-sheet" });
   sheet.appendChild(el("div", { class: "plm-hero" }, [
     el("div", { class: "plm-hero-ic" }, "↩︎"),
-    el("h3", { class: "plm-h" }, "Rebobinar es Premium"),
+    el("h3", { class: "plm-h" }, "Volver atrás es Premium"),
     el("p", { class: "plm-p" }, "Con un plan de pago puedes deshacer tu última acción y volver a ver ese perfil."),
   ]));
   sheet.appendChild(el("button", {
