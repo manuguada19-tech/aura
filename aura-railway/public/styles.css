@@ -8895,3 +8895,52 @@ body.welcome-desktop .hero-desktop .welcome-foot,
   color: #fbbf24 !important;
   font-weight: 600;
 }
+
+/* V758 · Botón "Buscar en el mapa" en la pestaña Cerca de ti */
+.nearby-map-bar { padding: 10px 16px 0; }
+.nearby-map-btn { display: flex; align-items: center; justify-content: center; }
+
+/* V758 · Mapa "Cerca de ti" (estilo Grindr) — overlay a pantalla completa */
+.map-overlay {
+  position: fixed; inset: 0; z-index: 4000;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+.map-topbar {
+  display: grid; grid-template-columns: 44px 1fr 44px; align-items: center;
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.map-topbar .icon-btn {
+  width: 40px; height: 40px; display: grid; place-items: center;
+  background: none; border: 0; color: var(--text); border-radius: 10px; cursor: pointer;
+}
+.map-title { text-align: center; font-weight: 700; font-size: 15px; color: var(--text); }
+.map-canvas { flex: 1; width: 100%; min-height: 0; background: #ddd; }
+.map-hint {
+  padding: 8px 14px; font-size: 12px; line-height: 1.35;
+  color: var(--text-muted); text-align: center;
+  background: var(--surface); border-top: 1px solid var(--border);
+}
+.map-error { padding: 40px 24px; text-align: center; color: var(--text-soft); }
+.map-error strong { display: block; color: var(--text); margin-bottom: 6px; }
+
+/* Pines de foto sobre el mapa */
+.map-pin-wrap { background: none; border: 0; }
+.map-pin {
+  width: 42px; height: 42px; border-radius: 50%;
+  background-size: cover; background-position: center;
+  background-color: var(--surface);
+  border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.35);
+  position: relative; cursor: pointer;
+}
+.map-pin.on { border-color: #22c55e; }
+.map-pin-dot {
+  position: absolute; right: -1px; top: -1px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #22c55e; border: 2px solid #fff;
+}
+/* Asegura que los controles de Leaflet queden sobre el overlay */
+.map-overlay .leaflet-container { font: inherit; }

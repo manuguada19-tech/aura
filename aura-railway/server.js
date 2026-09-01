@@ -7002,6 +7002,112 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   res.json(rows);
 }));
 
+// V758 · GET /api/my/nearby-map → usuarios cerca de un PUNTO del mapa, con
+// coordenadas APROXIMADAS (estilo Grindr) para elegir gente por ubicación.
+// ------------------------------------------------------------------------------
+// Privacidad (importante):
+//   · Se EXCLUYE a quien ocultó su ubicación/distancia (privacy_hidden.distance).
+//   · Las coordenadas devueltas se DIFUMINAN con un jitter determinista por
+//     usuario (~300 m) para no revelar la dirección exacta de nadie.
+//   · Usa las coords GPS con consentimiento y, si no, la aproximada por IP.
+// El "centro" es el punto que el usuario toca/arrastra en el mapa (lat/lng); si
+// no se envía, se usa la ubicación propia. Aplica los mismos filtros guardados.
+app.get("/api/my/nearby-map", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (await enforceRestriction(req, res, "discover")) return;
+  const zone = req.query.zone === "lgtb" ? "lgtb" : "hetero";
+  const limit = Math.min(120, Math.max(1, parseInt(req.query.limit, 10) || 80));
+  const radiusKm = Math.min(500, Math.max(1, parseInt(req.query.radius_km, 10) || 50));
+
+  // Filtros guardados (edad / género / ubicación / etnia / preferencias).
+  let f = {};
+  try {
+    const [[row]] = await pool.query("SELECT payload FROM user_filters WHERE user_id=? LIMIT 1", [me]);
+    if (row && row.payload) f = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
+  } catch { f = {}; }
+
+  // Centro del mapa: punto elegido (query) o, si no, la ubicación del usuario.
+  let cLat = Number(req.query.lat), cLng = Number(req.query.lng);
+  if (!Number.isFinite(cLat) || !Number.isFinite(cLng)) {
+    try {
+      const [[g]] = await pool.query(
+        `SELECT gps.lat AS glat, gps.lng AS glng, u.lat AS ulat, u.lng AS ulng
+           FROM users u
+           LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
+          WHERE u.id=? LIMIT 1`, [me]);
+      if (g) {
+        const dl = (g.glat != null ? g.glat : g.ulat);
+        const dg = (g.glng != null ? g.glng : g.ulng);
+        if (dl != null && dg != null) { cLat = Number(dl); cLng = Number(dg); }
+      }
+    } catch {}
+  }
+  if (!Number.isFinite(cLat) || !Number.isFinite(cLng)) {
+    return res.json({ ok: true, center: null, radius_km: radiusKm, users: [] });
+  }
+
+  const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
+  const params = [zone];
+  where.push("u.id <> ?"); params.push(me);
+  where.push("u.id NOT IN (SELECT target_id FROM blocks WHERE user_id = ?)"); params.push(me);
+  where.push("u.id NOT IN (SELECT user_id FROM blocks WHERE target_id = ?)"); params.push(me);
+  // Solo candidatos con alguna coordenada (GPS con consentimiento o IP).
+  where.push("(gps.lat IS NOT NULL OR u.lat IS NOT NULL)");
+
+  const ageMin = parseInt(f.age_min, 10);
+  const ageMax = parseInt(f.age_max, 10);
+  if (Number.isFinite(ageMin) && ageMin > 0) { where.push("(u.age IS NULL OR u.age >= ?)"); params.push(ageMin); }
+  if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
+  if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
+  applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
+  applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
+  applyPreferenceFilters(where, params, f);
+
+  const distExpr = "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(gps.lat, u.lat))) * COS(RADIANS(COALESCE(gps.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(gps.lat, u.lat))))), 1)";
+  const sql =
+    `SELECT u.id, u.name, u.age, u.gender, u.city, u.photo_url, u.verified, u.online,
+            u.privacy_hidden,
+            COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
+            (gps.lat IS NOT NULL) AS gps_ok,
+            ${distExpr} AS distance
+       FROM users u
+       LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
+      WHERE ${where.join(" AND ")}
+     HAVING distance <= ?
+      ORDER BY distance ASC LIMIT ?`;
+  const finalParams = [cLat, cLng, cLat, ...params, radiusKm, limit];
+
+  const [rows] = await pool.query(sql, finalParams);
+  const users = [];
+  for (const r of rows) {
+    // Respeta la privacidad: quien ocultó su ubicación NO aparece en el mapa.
+    const hidden = parsePrivacy(r.privacy_hidden);
+    if (hidden.distance) continue;
+    const lat = Number(r.clat), lng = Number(r.clng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    // Difuminado determinista por usuario (~300 m) para no exponer la dirección.
+    const seed = (Number(r.id) * 2654435761) >>> 0;
+    const jLat = (((seed & 0xffff) / 0xffff) - 0.5) * 0.006;        // ±~330 m
+    const jLng = ((((seed >>> 16) & 0xffff) / 0xffff) - 0.5) * 0.006;
+    users.push({
+      id: r.id,
+      name: r.name || "Alguien",
+      age: (hidden.age ? null : (r.age != null ? r.age : null)),
+      gender: r.gender || "",
+      city: (hidden.city ? null : (r.city || "")),
+      photo: r.photo_url || null,
+      verified: !!r.verified,
+      online: !!r.online,
+      gps_ok: !!r.gps_ok,
+      distance: (r.distance == null ? null : Number(r.distance)),
+      lat: Number((lat + jLat).toFixed(5)),
+      lng: Number((lng + jLng).toFixed(5)),
+    });
+  }
+  res.json({ ok: true, center: { lat: cLat, lng: cLng }, radius_km: radiusKm, users });
+}));
+
 /* ============================================================
    Likes / Pass / Superlike + creación de match  (V-like-match)
    ------------------------------------------------------------

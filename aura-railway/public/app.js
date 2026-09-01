@@ -7536,11 +7536,160 @@ function screenNearby(root) {
     try { localStorage.removeItem(GPS._prefKey()); } catch {}
     GPS.showPrompt(true);
   };
+  // V758 · Botón para abrir el mapa (estilo Grindr): elige un punto y busca
+  // personas cerca de esa ubicación.
+  const mapBar = el("div", { class: "nearby-map-bar" }, [
+    el("button", { class: "btn btn-outline btn-block nearby-map-btn", type: "button", onclick: () => openNearbyMap() }, [
+      el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px;margin-right:6px"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>` }),
+      "Buscar en el mapa",
+    ]),
+  ]);
+  root.appendChild(mapBar);
   const adTop = buildAdSlot("nearby-top");
   if (adTop) root.appendChild(adTop);
   root.appendChild(buildNearbySection());
   const adBot = buildAdSlot("nearby-bottom");
   if (adBot) root.appendChild(adBot);
+}
+
+/* ---- V758 · Mapa "Cerca de ti" (estilo Grindr) ----------------------
+   Muestra un mapa (Leaflet + OpenStreetMap) donde el usuario puede tocar o
+   arrastrar para elegir un PUNTO y buscar personas cercanas a esa ubicación.
+   Las coordenadas de cada persona vienen APROXIMADAS/difuminadas del backend
+   (nunca exactas) y quien ocultó su ubicación no aparece. */
+let _leafletLoading = null;
+function ensureLeaflet() {
+  if (window.L) return Promise.resolve(true);
+  if (_leafletLoading) return _leafletLoading;
+  _leafletLoading = new Promise((resolve) => {
+    try {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      css.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+      css.crossOrigin = "";
+      document.head.appendChild(css);
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      s.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+      s.crossOrigin = "";
+      s.onload = () => resolve(!!window.L);
+      s.onerror = () => resolve(false);
+      document.head.appendChild(s);
+    } catch { resolve(false); }
+  });
+  return _leafletLoading;
+}
+
+async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
+  if (!(datingApi._authed && datingApi._authed())) return null;
+  try {
+    const z = state.zone || "hetero";
+    const qs = new URLSearchParams({ zone: z, radius_km: String(radiusKm || 50), limit: "80" });
+    if (Number.isFinite(centerLat) && Number.isFinite(centerLng)) {
+      qs.set("lat", String(centerLat)); qs.set("lng", String(centerLng));
+    }
+    const r = await fetch(`/api/my/nearby-map?${qs.toString()}`, { headers: datingApi.headers(), cache: "no-store" });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch { return null; }
+}
+
+async function openNearbyMap() {
+  const overlay = el("div", { class: "map-overlay" });
+  overlay.appendChild(el("div", { class: "map-topbar" }, [
+    el("button", { class: "icon-btn", type: "button", "aria-label": "Cerrar mapa",
+      onclick: () => { try { overlay.remove(); } catch {} document.body.classList.remove("map-open"); },
+      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
+    el("div", { class: "map-title" }, "Cerca en el mapa"),
+    el("span"),
+  ]));
+  const mapEl = el("div", { class: "map-canvas", id: "nearbyMapCanvas" });
+  overlay.appendChild(mapEl);
+  const hint = el("div", { class: "map-hint" }, "Toca o arrastra el mapa para buscar en esa zona · ubicaciones aproximadas");
+  overlay.appendChild(hint);
+  document.body.appendChild(overlay);
+  document.body.classList.add("map-open");
+
+  const ok = await ensureLeaflet();
+  if (!ok || !window.L) {
+    mapEl.innerHTML = "";
+    mapEl.appendChild(el("div", { class: "map-error" }, [
+      el("strong", {}, "No se pudo cargar el mapa"),
+      el("small", {}, "Revisa tu conexión e inténtalo de nuevo."),
+    ]));
+    return;
+  }
+
+  const L = window.L;
+  // Centro inicial: intenta la ubicación real; si no, un centro por defecto (Madrid).
+  let start = { lat: 40.4168, lng: -3.7038 };
+  const first = await fetchNearbyMap(null, null, 50);
+  if (first && first.center && Number.isFinite(first.center.lat)) {
+    start = { lat: first.center.lat, lng: first.center.lng };
+  }
+  const map = L.map(mapEl, { zoomControl: true, attributionControl: true }).setView([start.lat, start.lng], 12);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap',
+  }).addTo(map);
+
+  const markers = L.layerGroup().addTo(map);
+  let searchCircle = null;
+
+  function radiusForZoom(z) {
+    // Radio aproximado (km) según el nivel de zoom, acotado a 1–200.
+    const r = Math.round(40000 / Math.pow(2, z));
+    return Math.min(200, Math.max(2, r));
+  }
+
+  function paintUsers(data) {
+    markers.clearLayers();
+    const list = (data && Array.isArray(data.users)) ? data.users : [];
+    hint.textContent = list.length
+      ? `${list.length} personas en esta zona · ubicaciones aproximadas`
+      : "Nadie por aquí. Prueba a mover el mapa o ampliar los filtros.";
+    list.forEach(u => {
+      const html = `<div class="map-pin ${u.online ? "on" : ""}" style="background-image:url('${u.photo || ""}')">${u.online ? '<span class="map-pin-dot"></span>' : ""}</div>`;
+      const icon = L.divIcon({ className: "map-pin-wrap", html, iconSize: [42, 42], iconAnchor: [21, 21] });
+      const m = L.marker([u.lat, u.lng], { icon }).addTo(markers);
+      m.on("click", () => {
+        // Abre la ficha del perfil real (con datos mínimos ya disponibles).
+        const uu = mapApiUser({
+          id: u.id, name: u.name, age: u.age, gender: u.gender, city: u.city,
+          photo_url: u.photo, verified: u.verified, online: u.online,
+          distance: u.distance, gps_ok: u.gps_ok,
+        });
+        try { overlay.remove(); } catch {}
+        document.body.classList.remove("map-open");
+        openProfileDetail(uu, { backTo: "nearby" });
+      });
+    });
+  }
+
+  function drawCircle(center, radiusKm) {
+    if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
+    searchCircle = L.circle([center.lat, center.lng], {
+      radius: radiusKm * 1000, color: "#ff3b6b", weight: 1.5, opacity: 0.6, fillColor: "#ff3b6b", fillOpacity: 0.08,
+    }).addTo(map);
+  }
+
+  let searchTimer = null;
+  async function searchHere() {
+    const c = map.getCenter();
+    const radiusKm = radiusForZoom(map.getZoom());
+    drawCircle({ lat: c.lat, lng: c.lng }, radiusKm);
+    const data = await fetchNearbyMap(c.lat, c.lng, radiusKm);
+    if (data) paintUsers(data);
+  }
+  // Primera pintura con los datos ya cargados.
+  if (first) { drawCircle(start, 50); paintUsers(first); }
+  map.on("moveend", () => {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = setTimeout(searchHere, 350);
+  });
+  // Recalcula el tamaño tras insertarse en el DOM.
+  setTimeout(() => { try { map.invalidateSize(); } catch {} }, 120);
 }
 
 /* ---- Ad slot (only rendered on Free plan) ---------------------------
@@ -9508,9 +9657,10 @@ function openProfileDetail(u, opts = {}) {
 function screenProfileDetail(root, u, opts = {}) {
   root.classList.add("screen-profile-detail");
   document.body.classList.add("profile-open");
-  const backTo = opts && opts.backTo; // "chat" | "likes" | undefined
+  const backTo = opts && opts.backTo; // "chat" | "likes" | "nearby" | undefined
   const backLabel = backTo === "chat" ? "Volver al chat"
                   : backTo === "likes" ? "Volver a likes"
+                  : backTo === "nearby" ? "Volver a cerca de ti"
                   : "Volver a descubrir";
   const backHandler = () => {
     document.body.classList.remove("profile-open");
@@ -9519,6 +9669,9 @@ function screenProfileDetail(root, u, opts = {}) {
     } else if (backTo === "likes") {
       showApp();
       routeTab("likes");
+    } else if (backTo === "nearby") {
+      showApp();
+      routeTab("nearby");
     } else {
       showApp();
       routeTab("discover");
@@ -14703,6 +14856,9 @@ async function maybePromptForPushAnon() {
 
     // Cierra la capa/overlay superpuesta más reciente. Devuelve true si cerró algo.
     function closeTopOverlay() {
+      // V758 · Mapa "Cerca de ti" a pantalla completa
+      const mapOv = document.querySelector(".map-overlay");
+      if (mapOv) { const b = mapOv.querySelector(".map-topbar .icon-btn"); if (b) { try { b.click(); return true; } catch {} } try { mapOv.remove(); document.body.classList.remove("map-open"); } catch {} return true; }
       // Lector de política/términos (sobre el modal de consentimiento GPS)
       const reader = document.querySelector(".gps-reader-overlay");
       if (reader) { const b = reader.querySelector(".gps-reader-back"); if (b) { try { b.click(); return true; } catch {} } try { reader.remove(); } catch {} return true; }
