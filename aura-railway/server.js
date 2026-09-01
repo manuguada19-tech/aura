@@ -11867,12 +11867,49 @@ app.post("/api/my/messages", wrap(async (req, res) => {
 }));
 
 // Demo credentials shown in the app welcome screen
-app.get("/api/demo", (req, res) => {
+app.get("/api/demo", wrap(async (req, res) => {
+  // V768 · Además de los datos básicos, devolvemos el PERFIL PÚBLICO real de la
+  // cuenta de prueba (prueba@aura.app) para que el "usuario de prueba" del mapa
+  // sea EXACTAMENTE ese perfil (misma foto, nombre, edad, ciudad, bio…), y no
+  // uno inventado en el cliente. Campos públicos y no sensibles solamente.
+  let profile = null;
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, age, gender, orientation, city, height, weight,
+              bio, job, looking_for, relationship, interests, photo_url, verified, online
+         FROM users WHERE email='prueba@aura.app' LIMIT 1`
+    );
+    if (rows.length) {
+      const r = rows[0];
+      let interests = [];
+      try { interests = r.interests ? (Array.isArray(r.interests) ? r.interests : JSON.parse(r.interests)) : []; }
+      catch { interests = []; }
+      profile = {
+        id: r.id,
+        name: r.name || "Usuario de Prueba",
+        age: (r.age != null ? Number(r.age) : null),
+        gender: r.gender || "",
+        orientation: r.orientation || "",
+        city: r.city || "",
+        height: r.height || null,
+        weight: r.weight || null,
+        bio: r.bio || "",
+        job: r.job || "",
+        looking_for: r.looking_for || "",
+        relationship: r.relationship || "",
+        interests: Array.isArray(interests) ? interests : [],
+        photo_url: r.photo_url || null,
+        verified: !!r.verified,
+        online: !!r.online,
+      };
+    }
+  } catch {}
   res.json({
     user: { email: "prueba@aura.app", name: "Usuario de Prueba", note: "Cuenta de demostración con plan Premium." },
     admin: { email: "admin@aura.app", name: "Alex Ramos", note: "Cuenta de administrador (Super Admin)." },
+    profile,
   });
-});
+}));
 
 // Public config: safe, non-sensitive runtime flags for the app
 app.get("/api/public-config", (req, res) => {

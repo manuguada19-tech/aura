@@ -7628,27 +7628,43 @@ async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
 // V759 · Usuario FICTICIO de prueba: se coloca cerca del centro del mapa con
 // una ubicación claramente marcada como ficticia. Sirve para probar el mapa
 // aunque no haya usuarios reales cerca. Nunca se guarda ni se envía al backend.
-function makeTestMapUser(center) {
-  // V767 · El perfil ficticio del mapa usa la MISMA foto que la cuenta de
-  // prueba real de la app (prueba@aura.app → i.pravatar.cc img=15). Antes usaba
-  // img=12 (la del admin), por lo que la cara del pin no coincidía con la del
-  // "usuario de prueba" que se ve en el resto de la app.
-  const photo = "https://i.pravatar.cc/600?img=15";
+// V768 · Perfil público REAL de la cuenta de prueba (prueba@aura.app) traído
+// del backend (/api/demo). Se cachea una vez por sesión para que el "usuario de
+// prueba" del mapa sea EXACTAMENTE ese perfil (misma foto, nombre, edad…).
+let _demoProfileCache = undefined; // undefined = sin intentar; null = no disponible
+async function fetchDemoProfile() {
+  if (_demoProfileCache !== undefined) return _demoProfileCache;
+  try {
+    const r = await fetch("/api/demo", { cache: "no-store" });
+    const data = r.ok ? await r.json() : null;
+    _demoProfileCache = (data && data.profile && (data.profile.photo_url || data.profile.name)) ? data.profile : null;
+  } catch { _demoProfileCache = null; }
+  return _demoProfileCache;
+}
+
+function makeTestMapUser(center, realProfile) {
+  // V768 · Usa el perfil REAL de la cuenta de prueba si el backend lo devolvió;
+  // si no, cae a valores por defecto. Así el pin del mapa coincide siempre con
+  // el "usuario de prueba" creado en la app. La ubicación SÍ es ficticia (se
+  // calcula sobre el centro del mapa): esa cuenta no comparte GPS real.
+  const p = realProfile || null;
+  const photo = (p && p.photo_url) ? p.photo_url : "https://i.pravatar.cc/600?img=15";
+  const interests = (p && Array.isArray(p.interests) && p.interests.length) ? p.interests : ["Pruebas", "Mapas", "Demo"];
   return {
     id: "test_demo",
-    name: "Perfil de prueba",
-    age: 28,
-    gender: "Hombre",
+    name: (p && p.name) ? p.name : "Usuario de Prueba",
+    age: (p && p.age != null) ? p.age : 28,
+    gender: (p && p.gender) ? p.gender : "Otro",
     city: "Ubicación ficticia (prueba)",
     photo,
     photos: [photo],
-    bio: "Soy un perfil ficticio de prueba. Mi ubicación es simulada y no corresponde a ninguna persona real; solo sirvo para probar el mapa.",
-    job: "Demostración",
-    interests: ["Pruebas", "Mapas", "Demo"],
-    looking_for: "any",
-    relationship: "any",
-    verified: true,
-    online: true,
+    bio: (p && p.bio) ? p.bio : "Cuenta de demostración. Mi ubicación en el mapa es simulada y no corresponde a una posición real.",
+    job: (p && p.job) ? p.job : "Demostración",
+    interests,
+    looking_for: (p && p.looking_for) ? p.looking_for : "any",
+    relationship: (p && p.relationship) ? p.relationship : "any",
+    verified: (p && p.verified != null) ? !!p.verified : true,
+    online: (p && p.online != null) ? !!p.online : true,
     gps_ok: true,
     distance: 1.2,
     lat: center.lat + 0.010,
@@ -7749,8 +7765,30 @@ async function openNearbyMap() {
     html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>` });
   overlay.appendChild(locateBtn);
 
-  const legend = el("div", { class: "map-legend" }, "Toca el mapa para buscar en ese punto · arrastra para explorar · busca por ciudad arriba");
+  const legend = el("div", { class: "map-legend" }, "Arrastra el círculo para buscar en otra zona · o busca por ciudad arriba");
   overlay.appendChild(legend);
+
+  // V768 · Aviso grande en pantalla (unos segundos) cuando no hay nadie cerca.
+  const notice = el("div", { class: "map-notice", hidden: true });
+  overlay.appendChild(notice);
+  let noticeTimer = null;
+  function showMapNotice(text, ms) {
+    return new Promise((resolve) => {
+      if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
+      notice.textContent = text;
+      notice.hidden = false;
+      // reinicia la animación de entrada
+      notice.classList.remove("show");
+      // force reflow para que la transición vuelva a dispararse
+      void notice.offsetWidth;
+      notice.classList.add("show");
+      noticeTimer = setTimeout(() => {
+        notice.classList.remove("show");
+        setTimeout(() => { notice.hidden = true; }, 250);
+        resolve();
+      }, ms || 2600);
+    });
+  }
 
   document.body.appendChild(overlay);
   document.body.classList.add("map-open");
@@ -7778,7 +7816,10 @@ async function openNearbyMap() {
   // vez sobre el centro inicial). Antes se recalculaba en cada repaint() a
   // partir del centro del mapa, por lo que "saltaba" al arrastrar. No es
   // ubicación en tiempo real: es un punto fijo de demostración.
-  const testUser = makeTestMapUser(start);
+  // V768 · Se rellena con el perfil REAL de la cuenta de prueba (prueba@aura.app)
+  // que devuelve /api/demo, para que coincida con el de la app.
+  const demoProfile = await fetchDemoProfile();
+  const testUser = makeTestMapUser(start, demoProfile);
 
   const map = L.map(mapEl, {
     zoomControl: false,
@@ -7898,12 +7939,41 @@ async function openNearbyMap() {
     });
   }
 
+  // V768 · Círculo de búsqueda ARRASTRABLE. Se dibuja con un asa central
+  // (marcador) que el usuario puede arrastrar; al soltar, busca en esa zona.
+  // El círculo en sí sigue el asa mientras se arrastra.
+  let circleHandle = null;
+  function circleHandleIcon() {
+    return L.divIcon({ className: "map-circle-handle-wrap",
+      html: '<div class="map-circle-handle"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg></div>',
+      iconSize: [34, 34], iconAnchor: [17, 17] });
+  }
   function drawCircle(center, radiusKm) {
     if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
     searchCircle = L.circle([center.lat, center.lng], {
       radius: radiusKm * 1000, color: "#ff3b6b", weight: 1.5, opacity: 0.55,
       fillColor: "#ff3b6b", fillOpacity: 0.07,
     }).addTo(map);
+    // Asa arrastrable en el centro del círculo.
+    if (!circleHandle) {
+      circleHandle = L.marker([center.lat, center.lng], {
+        icon: circleHandleIcon(), draggable: true, zIndexOffset: 800,
+        title: "Arrastra para buscar en otra zona",
+      }).addTo(map);
+      circleHandle.on("drag", (e) => {
+        const ll = e.target.getLatLng();
+        if (searchCircle) { try { searchCircle.setLatLng(ll); } catch {} }
+      });
+      circleHandle.on("dragend", (e) => {
+        const ll = e.target.getLatLng();
+        // Al arrastrar el círculo buscamos en esa zona; si no hay nadie, aviso
+        // en pantalla y vuelta a mi ubicación.
+        suppressMoveSearch = true;
+        searchAt(ll.lat, ll.lng, { recenterIfEmpty: true, fromHandle: true });
+      });
+    } else {
+      try { circleHandle.setLatLng([center.lat, center.lng]); } catch {}
+    }
   }
 
   // V764 · "Mi ubicación": punto fijo al que redirigir cuando una búsqueda no
@@ -7940,8 +8010,8 @@ async function openNearbyMap() {
   let searchTimer = null;
   let suppressMoveSearch = false; // evita re-buscar tras un setView programático
 
-  // Busca en un punto concreto. Si recenterIfEmpty y no hay NADIE real, avisa y
-  // redirige a mi ubicación.
+  // Busca en un punto concreto. Si recenterIfEmpty y no hay NADIE real, muestra
+  // un aviso en pantalla unos segundos y luego vuelve a la zona del usuario.
   async function searchAt(lat, lng, opts) {
     opts = opts || {};
     drawCircle({ lat, lng }, mapFilters.radiusKm);
@@ -7949,7 +8019,10 @@ async function openNearbyMap() {
     if (data) { lastData = data; repaint(); }
     const realCount = (data && Array.isArray(data.users)) ? data.users.length : 0;
     if (opts.recenterIfEmpty && realCount === 0) {
-      toast("No hay nadie por esa zona · te llevo a tu ubicación");
+      // V768 · Aviso grande en pantalla (unos segundos) indicando que no hay
+      // nadie cerca y que se volverá a la zona del usuario. Al terminar el
+      // aviso, recentramos.
+      await showMapNotice("No hay nadie por esta zona. Volviendo a tu ubicación…", 2600);
       suppressMoveSearch = true;
       map.setView([myLocation.lat, myLocation.lng], 13, { animate: true });
       dropPointer(myLocation.lat, myLocation.lng);
