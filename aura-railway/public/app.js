@@ -7629,13 +7629,20 @@ async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
 // una ubicación claramente marcada como ficticia. Sirve para probar el mapa
 // aunque no haya usuarios reales cerca. Nunca se guarda ni se envía al backend.
 function makeTestMapUser(center) {
+  const photo = "https://i.pravatar.cc/600?img=47";
   return {
     id: "test_demo",
     name: "Perfil de prueba",
     age: 27,
     gender: "Mujer",
     city: "Ubicación ficticia (prueba)",
-    photo: "https://i.pravatar.cc/300?img=47",
+    photo,
+    photos: [photo],
+    bio: "Soy un perfil ficticio de prueba. Mi ubicación es simulada y no corresponde a ninguna persona real; solo sirvo para probar el mapa.",
+    job: "Demostración",
+    interests: ["Pruebas", "Mapas", "Demo"],
+    looking_for: "any",
+    relationship: "any",
     verified: true,
     online: true,
     gps_ok: true,
@@ -7724,6 +7731,12 @@ async function openNearbyMap() {
     html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>` });
   overlay.appendChild(locateBtn);
 
+  // V763 · Botón flotante "cuadrícula": muestra las personas cercanas en rejilla.
+  const gridBtn = el("button", { class: "map-grid-btn", type: "button", "aria-label": "Ver personas en cuadrícula",
+    html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>` });
+  gridBtn.addEventListener("click", () => openGridSheet());
+  overlay.appendChild(gridBtn);
+
   const legend = el("div", { class: "map-legend" }, "Toca o arrastra el mapa para explorar esa zona · ubicaciones aproximadas");
   overlay.appendChild(legend);
 
@@ -7748,6 +7761,12 @@ async function openNearbyMap() {
     start = { lat: first.center.lat, lng: first.center.lng };
   }
   lastData = first;
+
+  // V763 · Usuario ficticio de prueba con ubicación FIJA (calculada una sola
+  // vez sobre el centro inicial). Antes se recalculaba en cada repaint() a
+  // partir del centro del mapa, por lo que "saltaba" al arrastrar. No es
+  // ubicación en tiempo real: es un punto fijo de demostración.
+  const testUser = makeTestMapUser(start);
 
   const map = L.map(mapEl, {
     zoomControl: false,
@@ -7779,12 +7798,76 @@ async function openNearbyMap() {
     return L.divIcon({ className: "map-pin-wrap", html, iconSize: [50, 62], iconAnchor: [25, 60] });
   }
 
-  function openTestSheet() {
+  // Cierra el mapa y abre el detalle del perfil (real o de prueba).
+  function openUserProfile(u) {
+    const uu = mapApiUser({
+      id: u.id, name: u.name, age: u.age, gender: u.gender, city: u.city,
+      photo_url: u.photo, photos: u.photos, verified: u.verified, online: u.online,
+      distance: u.distance, gps_ok: u.gps_ok, bio: u.bio, job: u.job,
+      interests: u.interests, looking_for: u.looking_for, relationship: u.relationship,
+    });
+    // El perfil de prueba no es "real" (id no numérico): así el detalle no
+    // intenta dar like/pasar contra el backend.
+    if (u._test) uu._real = false;
+    try { overlay.remove(); } catch {}
+    document.body.classList.remove("map-open");
+    openProfileDetail(uu, { backTo: "nearby" });
+  }
+
+  // V763 · Hoja de acciones al tocar un pin: "Ver perfil" + (si es de prueba)
+  // aviso de que es ficticio. Antes el pin de prueba solo mostraba un aviso de
+  // texto y no dejaba abrir su perfil; ahora sí abre el perfil de prueba.
+  function openUserSheet(u) {
+    const avatar = el("div", { class: "map-sheet-ava", style: `background-image:url('${u.photo || ""}')` });
+    const badge = u._test
+      ? el("span", { class: "map-sheet-badge" }, "Perfil ficticio de prueba")
+      : (u.online ? el("span", { class: "map-sheet-badge on" }, "En línea") : null);
+    const distTxt = (typeof u.distance === "number") ? `a ${u.distance} km` : "";
     const sheet = el("div", {}, [
-      el("div", { class: "sheet-title" }, "Perfil de prueba (ficticio)"),
-      el("div", { class: "sheet-body" }, "Este perfil y su ubicación son ficticios y solo sirven para probar el mapa. No corresponde a ninguna persona real."),
+      el("div", { class: "map-sheet-head" }, [
+        avatar,
+        el("div", { class: "map-sheet-info" }, [
+          el("div", { class: "map-sheet-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+          el("div", { class: "map-sheet-sub" }, [ u.city || "", distTxt ].filter(Boolean).join(" · ")),
+          badge,
+        ]),
+      ]),
+      u._test ? el("div", { class: "sheet-body" }, "Este perfil y su ubicación son ficticios y solo sirven para probar el mapa. No corresponde a ninguna persona real.") : null,
       el("div", { class: "sheet-actions" }, [
-        el("button", { class: "btn btn-brand btn-block", "data-close": true }, "Entendido"),
+        el("button", { class: "btn btn-brand btn-block", onclick: () => { try { modal.close(); } catch {} openUserProfile(u); } }, "Ver perfil"),
+        el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cerrar"),
+      ]),
+    ]);
+    try { modal.open(sheet); } catch {}
+  }
+
+  // Lista visible en el mapa según filtros (incluye el usuario de prueba fijo).
+  function visibleList() {
+    let list = (lastData && Array.isArray(lastData.users)) ? lastData.users.slice() : [];
+    if (mapFilters.showTest) list.unshift(testUser);
+    return list.filter(u => mapGenderMatches(mapFilters.gender, u.gender) && (!mapFilters.onlyOnline || u.online));
+  }
+
+  // V763 · Cuadrícula tipo Grindr con las personas cercanas del mapa. Se abre
+  // desde el botón "Cuadrícula" y desde la hoja cuando hay varias personas.
+  function openGridSheet() {
+    const list = visibleList();
+    const grid = el("div", { class: "map-grid" });
+    list.forEach(u => {
+      const cell = el("button", { class: "map-grid-cell" + (u._test ? " test" : ""), type: "button",
+        style: `background-image:url('${u.photo || ""}')`,
+        onclick: () => { try { modal.close(); } catch {} openUserProfile(u); } }, [
+        u.online ? el("span", { class: "map-grid-dot" }) : null,
+        u._test ? el("span", { class: "map-grid-tag" }, "Prueba") : null,
+        el("span", { class: "map-grid-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+      ]);
+      grid.appendChild(cell);
+    });
+    const sheet = el("div", {}, [
+      el("div", { class: "sheet-title" }, `Personas cerca (${list.length})`),
+      list.length ? grid : el("div", { class: "sheet-body" }, "No hay nadie que coincida con los filtros en esta zona."),
+      el("div", { class: "sheet-actions" }, [
+        el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cerrar"),
       ]),
     ]);
     try { modal.open(sheet); } catch {}
@@ -7792,31 +7875,14 @@ async function openNearbyMap() {
 
   function repaint() {
     markers.clearLayers();
-    let list = (lastData && Array.isArray(lastData.users)) ? lastData.users.slice() : [];
-    // Inserta el usuario ficticio de prueba cerca del centro actual del mapa.
-    if (mapFilters.showTest) {
-      const c = map.getCenter();
-      list.unshift(makeTestMapUser({ lat: c.lat, lng: c.lng }));
-    }
-    // Filtros de cliente: género y "solo en línea".
-    list = list.filter(u => mapGenderMatches(mapFilters.gender, u.gender) && (!mapFilters.onlyOnline || u.online));
+    const list = visibleList();
     const realCount = list.filter(u => !u._test).length;
     legend.textContent = realCount
-      ? `${realCount} ${realCount === 1 ? "persona" : "personas"} en esta zona · ubicaciones aproximadas`
+      ? `${realCount} ${realCount === 1 ? "persona" : "personas"} en esta zona · toca un pin o usa la cuadrícula`
       : "Nadie real por aquí todavía · se muestra un perfil de prueba ficticio";
     list.forEach(u => {
       const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
-      m.on("click", () => {
-        if (u._test) { openTestSheet(); return; }
-        const uu = mapApiUser({
-          id: u.id, name: u.name, age: u.age, gender: u.gender, city: u.city,
-          photo_url: u.photo, verified: u.verified, online: u.online,
-          distance: u.distance, gps_ok: u.gps_ok,
-        });
-        try { overlay.remove(); } catch {}
-        document.body.classList.remove("map-open");
-        openProfileDetail(uu, { backTo: "nearby" });
-      });
+      m.on("click", () => openUserSheet(u));
     });
   }
 
