@@ -2599,13 +2599,13 @@ body.account-suspended .restriction-banner .rb-close {
   display: grid; place-items: center;
   transition: none;
 }
-/* When the tabbar is visible (main app), park the toggle above it on the left */
+/* V756 · Dentro de la app el botón flotante de tema tapaba el botón "Volver"
+   (acción izquierda de Explorar) y otros controles. Como el tema también se
+   cambia desde Perfil → Tema, ocultamos el botón flotante cuando la app está
+   abierta (tabbar visible). Sigue visible en bienvenida/onboarding. */
 body:has(#tabbar:not([hidden])) .theme-toggle,
 body.app-open .theme-toggle {
-  right: auto;
-  top: auto;
-  left: 14px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 78px);
+  display: none !important;
 }
 
 /* Empty state */
@@ -2651,8 +2651,7 @@ body.app-open .theme-toggle {
   .theme-toggle { right: 10px; top: 10px; }
   body:has(#tabbar:not([hidden])) .theme-toggle,
   body.app-open .theme-toggle {
-    left: 10px; right: auto; top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 74px);
+    display: none !important;
   }
 
   /* Compact welcome/hero para móvil.

@@ -8346,18 +8346,19 @@ function toggleFav(u, btn) {
 }
 
 /* ---- Filters modal ---- V748 · rediseño completo ---- */
-// Mapa etiqueta visible → valor guardado en users.gender. El usuario ve
-// "Chicas/Chicos"; el backend sigue filtrando por "Mujer/Hombre".
+// Mapa etiqueta visible → valor guardado en users.gender. V756 · El usuario ve
+// "Mujeres/Hombres" (antes "Chicas/Chicos"); el backend sigue filtrando por
+// "Mujer/Hombre" para no romper datos existentes.
 const GENDER_FILTER_OPTS = {
   hetero: [
     { label: "Todos", value: "todos" },
-    { label: "Chicas", value: "Mujer" },
-    { label: "Chicos", value: "Hombre" },
+    { label: "Mujeres", value: "Mujer" },
+    { label: "Hombres", value: "Hombre" },
   ],
   lgtb: [
     { label: "Todos", value: "todos" },
-    { label: "Chicas", value: "Mujer" },
-    { label: "Chicos", value: "Hombre" },
+    { label: "Mujeres", value: "Mujer" },
+    { label: "Hombres", value: "Hombre" },
     { label: "No binario", value: "No binario" },
     { label: "Trans", value: "Trans" },
     { label: "Género fluido", value: "Género fluido" },
@@ -8378,7 +8379,12 @@ function openFilters() {
 
   const zone = state.zone === "lgtb" ? "lgtb" : "hetero";
 
-  // ---- Género (Chicas/Chicos) con "Todos" mutuamente excluyente ----
+  // ---- Género (selección única tipo radio) ----
+  // V756 · Antes se podían marcar varios chips a la vez (p. ej. Mujeres +
+  // Hombres) y quedaban ambos activos, lo que confundía; además el backend solo
+  // usaba el primero. Ahora es selección ÚNICA: al pulsar un chip se activa solo
+  // ese y se desmarcan los demás. "Todos" equivale a AMBOS (mujeres y hombres)
+  // en hetero, y a todas las identidades en la zona LGTB.
   const genderOpts = GENDER_FILTER_OPTS[zone] || GENDER_FILTER_OPTS.hetero;
   const genderChips = [];
   const grpGenderRow = el("div", { class: "chip-row" });
@@ -8389,24 +8395,16 @@ function openFilters() {
     const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
     c._value = opt.value;
     c.addEventListener("click", () => {
-      if (opt.value === "todos") {
-        // "Todos" limpia el resto y se marca solo.
-        genderChips.forEach(x => x.classList.toggle("active", x === c));
-      } else {
-        c.classList.toggle("active");
-        // Al pulsar cualquier género concreto se DESMARCA "Todos".
-        const todos = genderChips.find(x => x._value === "todos");
-        if (todos) todos.classList.remove("active");
-        // Si no queda ninguno concreto activo, vuelve a marcarse "Todos".
-        const anyConcrete = genderChips.some(x => x._value !== "todos" && x.classList.contains("active"));
-        if (!anyConcrete && todos) todos.classList.add("active");
-      }
+      // Radio: solo un chip activo a la vez.
+      genderChips.forEach(x => x.classList.toggle("active", x === c));
     });
     genderChips.push(c);
     grpGenderRow.appendChild(c);
   });
   wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, zone === "lgtb" ? "Género e identidad" : "Género"),
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
+      zone === "lgtb" ? "Elige una identidad o «Todos» para verlas todas." : "«Todos» muestra mujeres y hombres."),
     grpGenderRow,
   ]));
 
