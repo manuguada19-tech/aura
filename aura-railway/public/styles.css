@@ -1234,8 +1234,8 @@ img { max-width: 100%; display: block; }
    SVG sin tamaño explícito (viewBox 24x24) → sin esta regla salían enormes
    (tamaño intrínseco 300x150). Los fijamos pequeños, alineados con el texto. */
 .swipe-card-body .meta span svg { width: 15px; height: 15px; flex: 0 0 auto; }
-.swipe-card-body .meta span.gps-off { color: #fbbf24; font-weight: 600; }
-.swipe-card-body .meta span.gps-off svg { color: #fbbf24; }
+.swipe-card-body .meta span.gps-off { color: #ffd24a; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.9); }
+.swipe-card-body .meta span.gps-off svg { color: #ffd24a; }
 .swipe-card-body .tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .swipe-card-body .tag {
   background: rgba(255,255,255,.16); backdrop-filter: blur(4px);
@@ -8934,10 +8934,15 @@ body.welcome-desktop .hero-desktop .welcome-foot,
 .pd-meta-item.gps-off span {
   color: #d97706 !important;
 }
+/* V774 · El ámbar sobre la tarjeta con foto + glass quedaba ilegible (bajo
+   contraste, y el small heredaba opacity .9). Subimos a un ámbar más claro,
+   forzamos opacidad total y añadimos sombra para que se lea en móvil y PC. */
 .nearby-info small.gps-off,
 .result-card .info small.gps-off {
-  color: #fbbf24 !important;
-  font-weight: 600;
+  color: #ffd24a !important;
+  font-weight: 700;
+  opacity: 1 !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.8);
 }
 
 /* V758 · Botón "Buscar en el mapa" en la pestaña Cerca de ti */
