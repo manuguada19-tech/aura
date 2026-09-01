@@ -7440,6 +7440,10 @@ function goToPermissionsInProfile(opts) {
 }
 
 function screenDiscover(root) {
+  // V752 · Marca la pantalla para el fix del hueco inferior (padding-bottom).
+  // Nota: el detalle de perfil comparte data-section="discover" pero SÍ scrollea,
+  // por eso usamos una clase propia y no el atributo de sección.
+  root.classList.add("screen-discover");
   // V607 · Aviso persistente de notificaciones. Se construye ANTES del stack.
   let pushNotice = null;
   try { pushNotice = buildPushNotice(); } catch {}

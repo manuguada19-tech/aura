@@ -5588,6 +5588,16 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
   body:has(#tabbar:not([hidden])) .app-viewport .screen:not(.screen-hero) {
     padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tab-height, 62px) + 12px);
   }
+  /* V752 · Explorar es de ALTURA FIJA: llena el viewport exacto (topbar + pila
+     flex:1 + fila de acciones), NO hace scroll. El padding-bottom de arriba
+     (var(--tab-height)) se pensó para pantallas scrollables cuya tabbar podía
+     tapar el contenido; pero desde V581 la tabbar es hermana flex y NO se
+     superpone, así que en Explorar ese padding solo empujaba el contenido hacia
+     arriba dejando un HUECO vacío grande sobre la tabbar. Lo anulamos aquí: la
+     pila crece y la fila de acciones queda pegada justo encima de la tabbar. */
+  body:has(#tabbar:not([hidden])) .app-viewport .screen.screen-discover {
+    padding-bottom: env(safe-area-inset-bottom, 0px) !important;
+  }
   /* Welcome/hero: ocupa como mínimo el 100%, pero puede crecer si el
      contenido excede (modo invite/pruebas privadas). */
   .app-viewport .screen.screen-hero {
