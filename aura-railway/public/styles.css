@@ -1171,9 +1171,14 @@ img { max-width: 100%; display: block; }
   font-size: 12px; font-weight: 600; border: 1px solid var(--border);
 }
 .discover-stack {
-  position: relative; flex: 1;
-  aspect-ratio: 3/4.4;
-  max-height: 62vh;
+  /* V749 · La pila de tarjetas RELLENA todo el alto disponible (flex:1) en
+     CUALQUIER contexto (móvil, PWA, webview y el marco del escritorio). Antes
+     tenía aspect-ratio:3/4.4 + max-height:62vh en la regla base, y esos topes
+     seguían aplicándose cuando la media query de móvil no casaba (p. ej.
+     webviews que reportan pointer:fine), dejando un HUECO enorme vacío debajo
+     de la tarjeta. Sin topes, la tarjeta ocupa desde la topbar hasta la fila de
+     acciones y el hueco desaparece. */
+  position: relative; flex: 1 1 auto; min-height: 0;
   margin: 0 auto; width: 100%;
 }
 .swipe-card {
