@@ -8936,13 +8936,24 @@ body.welcome-desktop .hero-desktop .welcome-foot,
 }
 /* V774 · El ámbar sobre la tarjeta con foto + glass quedaba ilegible (bajo
    contraste, y el small heredaba opacity .9). Subimos a un ámbar más claro,
-   forzamos opacidad total y añadimos sombra para que se lea en móvil y PC. */
+   forzamos opacidad total y añadimos sombra para que se lea en móvil y PC.
+   V775 · Además el texto de aviso ("Madrid · No comparte su ubicación") es
+   largo y la tarjeta lo truncaba con puntos suspensivos ("Madrid · No co…").
+   Para el caso de ubicación oculta permitimos hasta 2 líneas (sin ellipsis)
+   para que se lea entero; el nombre sigue en una sola línea. */
 .nearby-info small.gps-off,
 .result-card .info small.gps-off {
   color: #ffd24a !important;
   font-weight: 700;
   opacity: 1 !important;
   text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.8);
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 /* V758 · Botón "Buscar en el mapa" en la pestaña Cerca de ti */
