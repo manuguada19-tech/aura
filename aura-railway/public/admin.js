@@ -940,13 +940,14 @@ $("#themeBtn").addEventListener("click", () => {
       <div class="notif-actions">
         <button type="button" class="notif-clear" title="Marcar todas como leídas">Marcar leídas</button>
         <button type="button" class="notif-purge" title="Borrar todas las notificaciones">Vaciar</button>
+        <button type="button" class="notif-close" title="Cerrar" aria-label="Cerrar">×</button>
       </div>`;
     pop.appendChild(header);
 
     const list = document.createElement("ul");
     list.className = "notif-list";
     if (!items.length) {
-      list.innerHTML = `<li class="notif-empty">Sin actividad reciente</li>`;
+      list.innerHTML = `<li class="notif-empty">No hay actividad para mostrar ni eliminar.</li>`;
     } else {
       items.slice(0, 20).forEach(a => {
         const li = document.createElement("li");
@@ -985,7 +986,7 @@ $("#themeBtn").addEventListener("click", () => {
       render();
     });
     header.querySelector(".notif-purge").addEventListener("click", async () => {
-      if (!items.length) return;
+      if (!items.length) { toast("No hay actividad para visualizar ni eliminar"); return; }
       if (!confirm("¿Borrar TODAS las notificaciones? Esto vacía el registro de actividad reciente.")) return;
       try {
         await api.del("/api/activity");
@@ -994,10 +995,13 @@ $("#themeBtn").addEventListener("click", () => {
         lastSeenId = 0;
         try { localStorage.setItem("aura-admin-notif-seen", "0"); } catch(_) {}
         updateBadge();
-        render();
         try { window.__adminDashboardRefresh?.(); } catch(_) {}
+        // Sin actividad → avisamos y cerramos el popover solo.
+        toast("Notificaciones vaciadas");
+        close();
       } catch { /* silent */ }
     });
+    header.querySelector(".notif-close").addEventListener("click", () => close());
     // Delete individual notification
     list.querySelectorAll(".notif-del").forEach(delBtn => {
       delBtn.addEventListener("click", async (ev) => {
@@ -1015,8 +1019,9 @@ $("#themeBtn").addEventListener("click", () => {
           }
           li.remove();
           updateBadge();
-          if (!items.length) render();
           try { window.__adminDashboardRefresh?.(); } catch(_) {}
+          // Si era la última, avisamos y cerramos el popover solo.
+          if (!items.length) { toast("No queda actividad. Se cierra el aviso."); close(); }
         } catch { /* silent */ }
       });
     });
@@ -1040,6 +1045,8 @@ $("#themeBtn").addEventListener("click", () => {
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (pop) { close(); return; }
+    // Sin actividad: no abrimos un popover vacío, solo avisamos.
+    if (!items.length) { toast("No hay actividad para visualizar ni eliminar"); return; }
     // Mark as read visually when opened (do NOT persist until user clicks "leídas")
     render();
   });

@@ -375,6 +375,13 @@ body[data-sb-mode="overlay"] .sidebar-close { display: flex; }
   border-radius: 8px; cursor: pointer;
 }
 .notif-purge:hover { background: rgba(239,68,68,.1); border-color: #dc2626; }
+.notif-close {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-soft); font-size: 16px; line-height: 1;
+  width: 28px; height: 28px; padding: 0; border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.notif-close:hover { color: var(--text); background: var(--panel); border-color: var(--brand-1); }
 .notif-item { position: relative; }
 .notif-del {
   background: transparent; border: none; color: var(--text-soft);
