@@ -3440,6 +3440,12 @@ const tabbar = $("#tabbar");
 
 let _lastScreenFn = null;
 let _lastScreenOpts = null;
+// V751 · Memoria del scroll del menú "Yo" (perfil). Cuando el usuario entra en
+// una sub-sección (Editar perfil, Mis fotos, Suscripción…) y vuelve atrás, no
+// queremos que la lista de ajustes vuelva al principio: guardamos aquí la
+// posición y la restauramos al re-pintar screenMe. Se resetea al salir del
+// menú (cambiar de pestaña) para que una futura entrada limpia empiece arriba.
+let _meScrollTop = 0;
 const SECTION_MAP = {
   screenWelcome: "welcome",
   screenRegisterEmail: "welcome", screenRegisterOTP: "welcome",
@@ -3815,6 +3821,10 @@ function routeTab(tab) {
   try { stopChatPolling(); } catch {}
   document.body.classList.remove("chat-open");
   document.body.classList.remove("profile-open");
+  // V751 · Al salir del menú de perfil (cambiar a otra pestaña) olvidamos la
+  // posición de scroll guardada, para que la próxima entrada empiece arriba.
+  // Volver a "me" desde una sub-sección NO resetea (así se conserva la posición).
+  if (tab !== "me") _meScrollTop = 0;
   // Ensure the bottom tabbar is visible when landing on a tab screen
   // (it gets hidden while inside a chat, profile detail or onboarding).
   tabbar.hidden = false;
@@ -10447,6 +10457,9 @@ function openProfile(u) {
 /* ---- Me / Settings ---- */
 function screenMe(root) {
   root.classList.add("screen-me");
+  // V751 · Recuerda la posición de scroll del menú de perfil mientras el
+  // usuario navega por él, para restaurarla al volver de una sub-sección.
+  root.addEventListener("scroll", () => { _meScrollTop = root.scrollTop || 0; }, { passive: true });
   // V722 · Usa la foto real del usuario (foto principal). Antes estaba
   // cableado al avatar demo, por eso el perfil "no cambiaba" al elegir foto.
   const meAvatar = (state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
@@ -10665,6 +10678,17 @@ function screenMe(root) {
     });
   });
   root.appendChild(list);
+  // V751 · Restaura la posición de scroll guardada al volver de una
+  // sub-sección del perfil. Doble rAF para asegurar que el layout ya midió la
+  // altura real de la lista antes de aplicar el scrollTop.
+  if (_meScrollTop > 0) {
+    const y = _meScrollTop;
+    try {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { root.scrollTop = y; } catch {}
+      }));
+    } catch { try { root.scrollTop = y; } catch {} }
+  }
 }
 
 /* ======================= "Yo" — Sub-pantallas ======================= */
@@ -14562,6 +14586,148 @@ async function maybePromptForPushAnon() {
     if (standalone) setTimeout(() => { try { maybePromptForPushAnon(); } catch {} }, 6000);
     window.addEventListener("appinstalled", () => {
       setTimeout(() => { try { maybePromptForPushAnon(); } catch {} }, 3000);
+    });
+  } catch {}
+})();
+
+/* ================================================================
+   V751 · Guarda del botón "Atrás" en modo instalado (PWA standalone)
+   ----------------------------------------------------------------
+   Problema: cuando Aura está instalada como app (standalone), el botón
+   físico "Atrás" de Android (o el gesto) sale de la aplicación por
+   completo, porque no hay más historial que consumir. Los usuarios se
+   salían sin querer a cada rato.
+
+   Solución: mantenemos SIEMPRE una entrada "trampa" en el historial.
+   Al pulsar Atrás, en vez de salir, navegamos DENTRO de la app usando
+   los mismos botones de retroceso que ya tiene cada pantalla (así el
+   comportamiento es idéntico a tocar el botón en pantalla):
+     1. Si hay una capa/overlay abierta → la cerramos.
+     2. Si estamos en un chat → volver a Chats.
+     3. Si estamos en un perfil (detalle) → volver atrás.
+     4. Si hay un botón "atrás" propio en la cabecera → pulsarlo
+        (sub-secciones del perfil, info, ajustes…).
+     5. Si estamos en una pestaña que no es Explorar → ir a Explorar.
+     6. Si ya estamos en la portada (Explorar) → pedir confirmación
+        ("pulsa atrás otra vez") antes de salir de verdad.
+
+   Sólo se activa en standalone: en el navegador normal el botón Atrás
+   sigue funcionando como siempre (100% retrocompatible).
+   ================================================================ */
+(function installStandaloneBackGuard() {
+  try {
+    const standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+    if (!standalone) return;
+    if (window.__auraBackGuard) return;
+    window.__auraBackGuard = true;
+
+    // Cierra la capa/overlay superpuesta más reciente. Devuelve true si cerró algo.
+    function closeTopOverlay() {
+      // Lector de política/términos (sobre el modal de consentimiento GPS)
+      const reader = document.querySelector(".gps-reader-overlay");
+      if (reader) { const b = reader.querySelector(".gps-reader-back"); if (b) { try { b.click(); return true; } catch {} } try { reader.remove(); } catch {} return true; }
+      // Visor de foto de perfil a pantalla completa
+      const av = document.querySelector(".avatar-viewer");
+      if (av) { const b = av.querySelector(".avatar-viewer-close"); if (b) { try { b.click(); return true; } catch {} } try { av.remove(); } catch {} return true; }
+      // Recorte de foto
+      const crop = document.querySelector(".photo-crop-overlay");
+      if (crop) { try { crop.remove(); } catch {} return true; }
+      // Hojas / paywalls / menús / filtros (sistema #modal)
+      const m = document.getElementById("modal");
+      if (m && !m.hidden) { try { modal.close(); } catch {} return true; }
+      // Consentimiento de ubicación (scrim + modal montados en body)
+      if (document.querySelector(".gps-consent-modal")) {
+        try { document.querySelectorAll(".gps-consent-scrim, .gps-consent-modal").forEach((n) => n.remove()); } catch {}
+        return true;
+      }
+      // 2FA / popups / avisos push in-app
+      for (const sel of [".twofa-overlay", "#auraPopup", "#auraPushInApp", "#auraPushSoft", "#adminLoginModal"]) {
+        const n = document.querySelector(sel);
+        if (n) { try { n.remove(); } catch {} return true; }
+      }
+      return false;
+    }
+
+    // Ejecuta "una navegación hacia atrás" dentro de la app. Devuelve true si
+    // manejó el retroceso; false si ya estamos en la portada (intención de salir).
+    function handleBack() {
+      // 1. Overlays superpuestos
+      if (closeTopOverlay()) return true;
+      // 2. Chat abierto → pulsar su botón atrás (vuelve a Chats)
+      if (document.body.classList.contains("chat-open")) {
+        const b = document.querySelector(".chat-header .icon-btn");
+        if (b) { try { b.click(); return true; } catch {} }
+        try { stopChatPolling(); } catch {}
+        document.body.classList.remove("chat-open");
+        try { routeTab("chats"); } catch {}
+        return true;
+      }
+      // 3. Detalle de perfil → pulsar su botón atrás propio
+      if (document.body.classList.contains("profile-open")) {
+        const b = document.querySelector(".pd-back");
+        if (b) { try { b.click(); return true; } catch {} }
+        document.body.classList.remove("profile-open");
+        try { showApp(); } catch {}
+        return true;
+      }
+      // 4. Botón "atrás" propio de la cabecera (sub-secciones del perfil, info…)
+      //    Sólo el PRIMER hijo del topbar es el botón de retroceso; si es un
+      //    <span> (sin retroceso) no coincide y seguimos con el siguiente caso.
+      const hdrBack = viewport.querySelector(".screen > .topbar > .icon-btn:first-child");
+      if (hdrBack) { try { hdrBack.click(); return true; } catch {} }
+      // 4b. Sub-pantalla del menú "Yo" sin topbar estándar (p. ej. Suscripción,
+      //     que usa un botón atrás propio flotante). Detectamos que estamos en
+      //     una pantalla de sección "profile" que NO es el propio menú y
+      //     volvemos al menú de perfil (conservando su scroll → tarea V751).
+      try {
+        const curName = _lastScreenFn && _lastScreenFn.name;
+        if (curName && curName !== "screenMe" && SECTION_MAP[curName] === "profile") {
+          routeTab("me");
+          return true;
+        }
+      } catch {}
+      // 5. Pestaña principal distinta de Explorar → ir a Explorar
+      if (state && state.user && state.user.id && state.currentTab && state.currentTab !== "discover") {
+        try {
+          const btn = tabbar.querySelector('.tab[data-tab="discover"]');
+          if (btn) $$(".tab", tabbar).forEach((b) => b.classList.toggle("active", b === btn));
+          state.currentTab = "discover";
+          routeTab("discover");
+        } catch {}
+        return true;
+      }
+      // 6. Ya en portada → intención de salir
+      return false;
+    }
+
+    let exitArmed = false;
+    let exitTimer = null;
+    const arm = () => { try { history.pushState({ auraBackGuard: true }, ""); } catch {} };
+
+    // Cebamos la trampa: siempre debe haber una entrada que consumir.
+    arm();
+
+    window.addEventListener("popstate", () => {
+      const handled = handleBack();
+      if (handled) {
+        exitArmed = false;
+        if (exitTimer) { clearTimeout(exitTimer); exitTimer = null; }
+        arm(); // re-armar la trampa para el siguiente "atrás"
+        return;
+      }
+      // Estamos en la portada. Doble pulsación para salir de verdad.
+      if (exitArmed) {
+        exitArmed = false;
+        if (exitTimer) { clearTimeout(exitTimer); exitTimer = null; }
+        // No re-armamos: dejamos que el siguiente back salga. Como ya
+        // consumimos la trampa, un back más cierra la PWA.
+        try { history.back(); } catch {}
+        return;
+      }
+      exitArmed = true;
+      try { toast("Pulsa «Atrás» otra vez para salir de Aura"); } catch {}
+      arm(); // seguimos dentro
+      exitTimer = setTimeout(() => { exitArmed = false; exitTimer = null; }, 2200);
     });
   } catch {}
 })();
