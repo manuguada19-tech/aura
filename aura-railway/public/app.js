@@ -7675,7 +7675,11 @@ async function openNearbyMap() {
       onclick: () => { try { overlay.remove(); } catch {} document.body.classList.remove("map-open"); },
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
     el("div", { class: "map-title" }, "Explora en el mapa"),
-    el("span", { style: "width:40px" }),
+    // V764 · Botón de cuadrícula visible en la barra superior (antes flotaba
+    // abajo-derecha y se solapaba con el zoom, no se encontraba).
+    el("button", { class: "map-icon-btn", type: "button", "aria-label": "Ver personas en cuadrícula", title: "Cuadrícula",
+      onclick: () => openGridSheet(),
+      html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>` }),
   ]));
 
   // ---- Barra de filtros (chips) ----
@@ -7726,18 +7730,22 @@ async function openNearbyMap() {
   const mapEl = el("div", { class: "map-canvas", id: "nearbyMapCanvas" });
   overlay.appendChild(mapEl);
 
+  // V764 · Buscador por ciudad/provincia (geocodificación sin clave con
+  // Nominatim/OpenStreetMap). Permite saltar a cualquier localidad de España.
+  const searchInput = el("input", { class: "map-search-input", type: "search",
+    placeholder: "Buscar ciudad o provincia…", "aria-label": "Buscar ciudad o provincia",
+    autocomplete: "off", autocapitalize: "words", enterkeyhint: "search" });
+  const searchGo = el("button", { class: "map-search-go", type: "button", "aria-label": "Buscar",
+    html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>` });
+  const searchBar = el("div", { class: "map-searchbar" }, [ searchInput, searchGo ]);
+  overlay.appendChild(searchBar);
+
   // Botón flotante "mi ubicación"
   const locateBtn = el("button", { class: "map-locate", type: "button", "aria-label": "Centrar en mi ubicación",
     html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>` });
   overlay.appendChild(locateBtn);
 
-  // V763 · Botón flotante "cuadrícula": muestra las personas cercanas en rejilla.
-  const gridBtn = el("button", { class: "map-grid-btn", type: "button", "aria-label": "Ver personas en cuadrícula",
-    html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>` });
-  gridBtn.addEventListener("click", () => openGridSheet());
-  overlay.appendChild(gridBtn);
-
-  const legend = el("div", { class: "map-legend" }, "Toca o arrastra el mapa para explorar esa zona · ubicaciones aproximadas");
+  const legend = el("div", { class: "map-legend" }, "Toca el mapa para buscar en ese punto · arrastra para explorar · busca por ciudad arriba");
   overlay.appendChild(legend);
 
   document.body.appendChild(overlay);
@@ -7894,13 +7902,94 @@ async function openNearbyMap() {
     }).addTo(map);
   }
 
-  let searchTimer = null;
-  async function searchHere() {
-    const c = map.getCenter();
-    drawCircle({ lat: c.lat, lng: c.lng }, mapFilters.radiusKm);
-    const data = await fetchNearbyMap(c.lat, c.lng, mapFilters.radiusKm);
-    if (data) { lastData = data; repaint(); }
+  // V764 · "Mi ubicación": punto fijo al que redirigir cuando una búsqueda no
+  // encuentra a nadie. Es el centro que devolvió el backend (GPS o IP-aprox).
+  const myLocation = (first && first.center && Number.isFinite(first.center.lat))
+    ? { lat: first.center.lat, lng: first.center.lng }
+    : { lat: start.lat, lng: start.lng };
+
+  // V764 · Marcador que el usuario "suelta" al tocar el mapa para buscar en ese
+  // punto exacto (además del arrastre). Se dibuja donde tocó.
+  let pointerMarker = null;
+  function pointerIcon() {
+    return L.divIcon({ className: "map-pointer-wrap",
+      html: '<div class="map-pointer"><span class="map-pointer-pulse"></span></div>',
+      iconSize: [26, 26], iconAnchor: [13, 13] });
   }
+  function dropPointer(lat, lng) {
+    if (pointerMarker) { try { map.removeLayer(pointerMarker); } catch {} }
+    pointerMarker = L.marker([lat, lng], { icon: pointerIcon(), interactive: false, keyboard: false }).addTo(map);
+  }
+
+  let searchTimer = null;
+  let suppressMoveSearch = false; // evita re-buscar tras un setView programático
+
+  // Busca en un punto concreto. Si recenterIfEmpty y no hay NADIE real, avisa y
+  // redirige a mi ubicación.
+  async function searchAt(lat, lng, opts) {
+    opts = opts || {};
+    drawCircle({ lat, lng }, mapFilters.radiusKm);
+    const data = await fetchNearbyMap(lat, lng, mapFilters.radiusKm);
+    if (data) { lastData = data; repaint(); }
+    const realCount = (data && Array.isArray(data.users)) ? data.users.length : 0;
+    if (opts.recenterIfEmpty && realCount === 0) {
+      toast("No hay nadie por esa zona · te llevo a tu ubicación");
+      suppressMoveSearch = true;
+      map.setView([myLocation.lat, myLocation.lng], 13, { animate: true });
+      dropPointer(myLocation.lat, myLocation.lng);
+      drawCircle(myLocation, mapFilters.radiusKm);
+      const back = await fetchNearbyMap(myLocation.lat, myLocation.lng, mapFilters.radiusKm);
+      if (back) { lastData = back; repaint(); }
+    }
+  }
+
+  // Búsqueda al arrastrar (centro del mapa), sin recentrado automático.
+  async function searchHere() {
+    if (suppressMoveSearch) { suppressMoveSearch = false; return; }
+    const c = map.getCenter();
+    await searchAt(c.lat, c.lng, { recenterIfEmpty: false });
+  }
+
+  // V764 · Geocodificación por ciudad/provincia (Nominatim / OpenStreetMap, sin
+  // clave). Salta el mapa a la localidad y busca allí; si no hay nadie, avisa y
+  // redirige a mi ubicación.
+  async function searchCity(q) {
+    const term = String(q || "").trim();
+    if (!term) return;
+    searchGo.classList.add("loading");
+    try {
+      const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=es&accept-language=es&q=" + encodeURIComponent(term);
+      const res = await fetch(url, { headers: { "Accept": "application/json" } });
+      const arr = res.ok ? await res.json() : [];
+      if (!arr || !arr.length) { toast("No se encontró esa ciudad o provincia"); return; }
+      const lat = parseFloat(arr[0].lat), lng = parseFloat(arr[0].lon);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) { toast("No se encontró esa ciudad o provincia"); return; }
+      suppressMoveSearch = true;
+      map.setView([lat, lng], 12, { animate: true });
+      dropPointer(lat, lng);
+      try { searchInput.blur(); } catch {}
+      await searchAt(lat, lng, { recenterIfEmpty: true });
+    } catch {
+      toast("No se pudo buscar la ciudad ahora mismo");
+    } finally {
+      searchGo.classList.remove("loading");
+    }
+  }
+  searchGo.addEventListener("click", () => searchCity(searchInput.value));
+  searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); searchCity(searchInput.value); }
+  });
+
+  // V764 · Tocar el mapa: suelta un puntero en ese punto y busca allí. Si no hay
+  // nadie, avisa y redirige a mi ubicación.
+  map.on("click", (e) => {
+    const { lat, lng } = e.latlng || {};
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    dropPointer(lat, lng);
+    suppressMoveSearch = true;
+    map.setView([lat, lng], map.getZoom(), { animate: true });
+    searchAt(lat, lng, { recenterIfEmpty: true });
+  });
 
   // Primera pintura con los datos ya cargados.
   drawCircle(start, mapFilters.radiusKm);
@@ -7912,15 +8001,10 @@ async function openNearbyMap() {
   });
 
   locateBtn.addEventListener("click", () => {
-    if (first && first.center && Number.isFinite(first.center.lat)) {
-      map.setView([first.center.lat, first.center.lng], 14, { animate: true });
-    } else if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => map.setView([pos.coords.latitude, pos.coords.longitude], 14, { animate: true }),
-        () => toast("No se pudo obtener tu ubicación"),
-        { enableHighAccuracy: true, timeout: 8000 }
-      );
-    }
+    suppressMoveSearch = true;
+    map.setView([myLocation.lat, myLocation.lng], 14, { animate: true });
+    dropPointer(myLocation.lat, myLocation.lng);
+    searchAt(myLocation.lat, myLocation.lng, { recenterIfEmpty: false });
   });
 
   // Recalcula el tamaño tras insertarse en el DOM.

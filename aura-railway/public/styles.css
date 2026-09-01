@@ -2608,6 +2608,13 @@ body.account-suspended .restriction-banner .rb-close {
 }
 @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } }
 
+/* V764 · Cuando el mapa a pantalla completa (.map-overlay, z-index:4000) está
+   abierto, sus hojas de acciones (tocar un pin, cuadrícula) usan el modal
+   normal, que tenía z-index:60 y quedaba DETRÁS del mapa → "al pulsar en el
+   usuario no sale nada". Subimos el modal por encima del mapa mientras está
+   abierto. */
+body.map-open .modal { z-index: 4100; }
+
 /* Theme toggle — default top-right (welcome/onboarding). Moves to bottom-left
    when the app tabbar is visible so it doesn't collide with topbar filters. */
 .theme-toggle {
@@ -9087,19 +9094,52 @@ body.map-open { overflow: hidden; }
   color: var(--text); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
-/* V763 · Botón flotante "cuadrícula" (encima del de ubicación) */
-.map-grid-btn {
-  position: absolute; right: 14px; bottom: 140px; z-index: 30;
-  width: 46px; height: 46px; border-radius: 50%;
-  display: grid; place-items: center; cursor: pointer;
-  color: var(--text);
-  background: color-mix(in srgb, var(--surface) 88%, transparent);
+/* V764 · Buscador por ciudad/provincia flotante sobre el mapa */
+.map-searchbar {
+  position: absolute; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0) + 156px);
+  z-index: 30; display: flex; align-items: center; gap: 6px;
+  padding: 5px 5px 5px 14px; border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  box-shadow: 0 6px 18px rgba(0,0,0,.30);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  transition: transform .12s ease;
+  box-shadow: 0 6px 18px rgba(0,0,0,.28);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
 }
-.map-grid-btn:active { transform: scale(.92); }
+.map-search-input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  color: var(--text); font-size: 14px; font-weight: 600;
+}
+.map-search-input::placeholder { color: var(--text-soft); font-weight: 500; }
+.map-search-go {
+  flex: 0 0 auto; width: 38px; height: 38px; border-radius: 50%; border: 0;
+  display: grid; place-items: center; cursor: pointer; color: #fff;
+  background: linear-gradient(135deg, #ff5c8a, #ff3b6b);
+  box-shadow: 0 4px 12px rgba(255,59,107,.35);
+  transition: transform .12s ease, opacity .12s ease;
+}
+.map-search-go:active { transform: scale(.92); }
+.map-search-go.loading { opacity: .6; pointer-events: none; }
+
+/* V764 · Puntero que se "suelta" al tocar el mapa para buscar en ese punto */
+.map-pointer-wrap { background: none; border: 0; }
+.map-pointer {
+  position: relative; width: 26px; height: 26px;
+}
+.map-pointer::after {
+  content: ""; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #ff3b6b; border: 3px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+}
+.map-pointer-pulse {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 26px; height: 26px; border-radius: 50%;
+  background: rgba(255,59,107,.35);
+  animation: mapPointerPulse 1.6s ease-out infinite;
+}
+@keyframes mapPointerPulse {
+  0% { transform: translate(-50%, -50%) scale(.5); opacity: .8; }
+  100% { transform: translate(-50%, -50%) scale(2.2); opacity: 0; }
+}
 
 /* V763 · Cabecera de la hoja de acciones al tocar un pin */
 .map-sheet-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
