@@ -1766,6 +1766,8 @@ const state = {
     lookingFor: "any", relationship: "any", interests: [], // V757 · más filtros
     // V776 · filtros opcionales de estilo de vida (multi, exact-match).
     pets: [], smoke: [], drink: [], education: [], exercise: [],
+    // V788 · rangos de altura (cm) y peso (kg). 0/vacío = sin filtro.
+    heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
   },
   favorites: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
@@ -9333,6 +9335,30 @@ function openFilters() {
     distPresets,
   ]));
 
+  // ---- Altura (cm): rango mín/máx (opcional, 0/vacío = sin filtro) ----
+  const hMinInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 120, max: 230, value: state.filters.heightMin || "", placeholder: "—", "aria-label": "Altura mínima" });
+  const hMaxInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 120, max: 230, value: state.filters.heightMax || "", placeholder: "—", "aria-label": "Altura máxima" });
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Altura (cm)"),
+    el("div", { class: "num-range" }, [
+      el("label", { class: "num-field" }, [ el("span", {}, "Mínima"), hMinInp ]),
+      el("span", { class: "num-sep" }, "—"),
+      el("label", { class: "num-field" }, [ el("span", {}, "Máxima"), hMaxInp ]),
+    ]),
+  ]));
+
+  // ---- Peso (kg): rango mín/máx (opcional, 0/vacío = sin filtro) ----
+  const wMinInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 35, max: 250, value: state.filters.weightMin || "", placeholder: "—", "aria-label": "Peso mínimo" });
+  const wMaxInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 35, max: 250, value: state.filters.weightMax || "", placeholder: "—", "aria-label": "Peso máximo" });
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Peso (kg)"),
+    el("div", { class: "num-range" }, [
+      el("label", { class: "num-field" }, [ el("span", {}, "Mínimo"), wMinInp ]),
+      el("span", { class: "num-sep" }, "—"),
+      el("label", { class: "num-field" }, [ el("span", {}, "Máximo"), wMaxInp ]),
+    ]),
+  ]));
+
   // ---- Ubicación: buscador entre las ciudades de usuarios reales ----
   const cityGroup = el("div", { class: "filter-group" });
   cityGroup.appendChild(el("h5", {}, "Ubicación"));
@@ -9575,6 +9601,14 @@ function openFilters() {
       let dkm = parseInt(distInp.value, 10);
       if (!Number.isFinite(dkm) || dkm < 1) dkm = 50; dkm = Math.min(500, dkm);
       state.filters.distance = dkm;
+      // V788 · Altura (120–230 cm) y peso (35–250 kg). Vacío/0 = sin filtro.
+      const rangeVal = (raw, lo, hi) => { const n = parseInt(raw, 10); if (!Number.isFinite(n) || n <= 0) return 0; return Math.min(hi, Math.max(lo, n)); };
+      let hMin = rangeVal(hMinInp.value, 120, 230), hMax = rangeVal(hMaxInp.value, 120, 230);
+      if (hMin && hMax && hMin > hMax) { const t = hMin; hMin = hMax; hMax = t; }
+      let wMin = rangeVal(wMinInp.value, 35, 250), wMax = rangeVal(wMaxInp.value, 35, 250);
+      if (wMin && wMax && wMin > wMax) { const t = wMin; wMin = wMax; wMax = t; }
+      state.filters.heightMin = hMin; state.filters.heightMax = hMax;
+      state.filters.weightMin = wMin; state.filters.weightMax = wMax;
       // Género: chips activos → valores guardados. "Todos" o vacío = sin filtro.
       const activeGender = genderChips.filter(x => x.classList.contains("active"));
       const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
@@ -9608,6 +9642,11 @@ function openFilters() {
         exercise: state.filters.exercise,
         smoke: state.filters.smoke,
         drink: state.filters.drink,
+        // V788 · rangos de altura/peso (0 = sin filtro).
+        height_min: state.filters.heightMin || 0,
+        height_max: state.filters.heightMax || 0,
+        weight_min: state.filters.weightMin || 0,
+        weight_max: state.filters.weightMax || 0,
       });
       modal.close(); toast("Filtros aplicados");
       const grid = $("#resultsGrid");

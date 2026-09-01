@@ -402,9 +402,11 @@ function register(app, pool, helpers) {
     // conjunto básico — se aplican en /api/discover y /api/my/nearby.
     // V776 · Añadidos filtros opcionales de estilo de vida (multi, exact-match):
     // education/pets/exercise/smoke/drink. Se aplican en applyPreferenceFilters.
-    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities","looking_for","relationship","interests","education","pets","exercise","smoke","drink"];
+    // V788 · Altura y peso (rangos) pasan a filtros BÁSICOS: se muestran en la
+    // hoja de filtros para todos los usuarios, igual que edad o distancia.
+    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities","looking_for","relationship","interests","education","pets","exercise","smoke","drink","height_min","height_max","weight_min","weight_max"];
     // Filtros avanzados (solo Oro+)
-    const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages","height_min","height_max"];
+    const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages"];
     const finalFilters = {};
     for (const k of basic) if (k in filters) finalFilters[k] = filters[k];
     if (planAtLeast(plan, "gold")) {

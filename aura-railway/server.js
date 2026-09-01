@@ -6865,6 +6865,17 @@ function applyPreferenceFilters(where, params, f) {
     where.push(`(${col} IN (${list.map(() => "?").join(",")}))`);
     for (const v of list) params.push(v);
   }
+  // V788 · Filtros de rango de altura (cm) y peso (kg). Opcionales: vacío o 0 =
+  //   sin filtro. El perfil sin dato (NULL) SIEMPRE pasa (no se excluye a quien
+  //   no lo ha declarado), igual que edad. Aditivo y retrocompatible.
+  const applyRange = (col, minRaw, maxRaw, lo, hi) => {
+    const mn = parseInt(minRaw, 10);
+    const mx = parseInt(maxRaw, 10);
+    if (Number.isFinite(mn) && mn >= lo) { where.push(`(${col} IS NULL OR ${col} >= ?)`); params.push(mn); }
+    if (Number.isFinite(mx) && mx > 0 && mx <= hi) { where.push(`(${col} IS NULL OR ${col} <= ?)`); params.push(mx); }
+  };
+  applyRange("u.height", f.height_min, f.height_max, 120, 230);
+  applyRange("u.weight", f.weight_min, f.weight_max, 35, 250);
 }
 
 app.get("/api/discover", wrap(async (req, res) => {
