@@ -15072,7 +15072,6 @@ async function maybePromptForPushAnon() {
     }
 
     let _exiting = false;        // bloquea el listener mientras cerramos la PWA
-    let _exitDialogOpen = false; // evita diálogos de salida duplicados
     const arm = () => { try { history.pushState({ auraBackGuard: true }, ""); } catch {} };
 
     // Sale de verdad de la PWA. Al abrir el diálogo hay una trampa armada, por
@@ -15100,29 +15099,38 @@ async function maybePromptForPushAnon() {
     }
 
     // Diálogo de confirmación de salida (mismo estilo que el resto de sheets).
+    // La detección de "ya abierto" NO usa un flag propio (que podía quedarse
+    // pegado si el usuario cerraba el diálogo tocando el fondo o con Esc, y
+    // entonces no se volvía a mostrar y la app salía sin preguntar). En su
+    // lugar comprobamos el DOM: si el modal está abierto y contiene nuestra
+    // hoja de salida, no abrimos otra.
+    function isExitDialogOpen() {
+      try {
+        const m = document.getElementById("modal");
+        return !!(m && !m.hidden && m.querySelector(".aura-exit-sheet"));
+      } catch { return false; }
+    }
     function askExitConfirm() {
-      if (_exitDialogOpen) return;
-      _exitDialogOpen = true;
+      if (isExitDialogOpen()) return;
       // Re-armamos la trampa para que, si el usuario pulsa "Atrás" con el
       // diálogo abierto, se CIERRE el diálogo (lo detecta closeTopOverlay) en
       // vez de salir de la app.
       arm();
-      const sheet = el("div", {}, [
+      const sheet = el("div", { class: "aura-exit-sheet" }, [
         el("div", { class: "sheet-title" }, "¿Salir de Aura?"),
         el("div", { class: "sheet-body" }, "Vas a cerrar la aplicación. ¿Seguro que quieres salir?"),
         el("div", { class: "sheet-actions" }, [
           el("button", {
             class: "btn btn-danger btn-block",
-            onclick: () => { _exitDialogOpen = false; try { modal.close(); } catch {} doExit(); },
+            onclick: () => { try { modal.close(); } catch {} doExit(); },
           }, "Salir"),
           el("button", {
             class: "btn btn-outline btn-block",
             "data-close": true,
-            onclick: () => { _exitDialogOpen = false; },
           }, "Seguir en Aura"),
         ]),
       ]);
-      try { modal.open(sheet); } catch { _exitDialogOpen = false; }
+      try { modal.open(sheet); } catch {}
     }
 
     // Cebamos la trampa: siempre debe haber una entrada que consumir.
@@ -15134,11 +15142,12 @@ async function maybePromptForPushAnon() {
       if (handled) {
         // Cualquier navegación hacia atrás cierra también el diálogo de salida
         // si estaba abierto (closeTopOverlay ya cerró el modal).
-        _exitDialogOpen = false;
         arm(); // re-armar la trampa para el siguiente "atrás"
         return;
       }
       // Estamos en la portada (Explorar) → pedir confirmación antes de salir.
+      // askExitConfirm() re-arma la trampa SIEMPRE que se muestre el diálogo,
+      // así el historial nunca se agota y la app no puede salir sin preguntar.
       askExitConfirm();
     });
   } catch {}
