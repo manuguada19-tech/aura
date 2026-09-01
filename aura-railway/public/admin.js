@@ -3145,12 +3145,28 @@ async function openUserDrawer(id, onChange) {
     { v: "asexual",  l: "Asexual" },
     { v: "other",    l: "Otra" },
   ];
+  // V787 · Etnia como desplegable (mismo listado que usa la app en registro y
+  // perfil), para no tener que escribirla a mano. Los valores coinciden con lo
+  // que guarda la app (strings en español).
+  const ETHNICITY_OPTIONS = [
+    { v: "",                 l: "— Sin especificar —" },
+    { v: "Prefiero no decirlo", l: "Prefiero no decirlo" },
+    { v: "Latina/o",         l: "Latina/o" },
+    { v: "Caucásica/o",      l: "Caucásica/o" },
+    { v: "Asiática/o",       l: "Asiática/o" },
+    { v: "Afrodescendiente", l: "Afrodescendiente" },
+    { v: "Árabe",            l: "Árabe" },
+    { v: "Mixta/o",          l: "Mixta/o" },
+  ];
   // Preserve unrecognized values so we don't silently overwrite legacy data.
   if (u.gender && !GENDER_OPTIONS.some(o => o.v === u.gender)) {
     GENDER_OPTIONS.push({ v: u.gender, l: u.gender });
   }
   if (u.orientation && !ORIENTATION_OPTIONS.some(o => o.v === u.orientation)) {
     ORIENTATION_OPTIONS.push({ v: u.orientation, l: u.orientation });
+  }
+  if (u.ethnicity && !ETHNICITY_OPTIONS.some(o => o.v === u.ethnicity)) {
+    ETHNICITY_OPTIONS.push({ v: u.ethnicity, l: u.ethnicity });
   }
   form.appendChild(el("div", { class: "grid-2" }, [
     field("Género", el("select", { class: "input", name: "gender" },
@@ -3165,7 +3181,8 @@ async function openUserDrawer(id, onChange) {
   form.appendChild(el("div", { class: "grid-3" }, [
     field("Altura (cm)", el("input", { class: "input", name: "height", type: "number", value: u.height||"" })),
     field("Peso (kg)", el("input", { class: "input", name: "weight", type: "number", value: u.weight||"" })),
-    field("Etnia", el("input", { class: "input", name: "ethnicity", value: u.ethnicity||"" })),
+    field("Etnia", el("select", { class: "input", name: "ethnicity" },
+      ETHNICITY_OPTIONS.map(o => el("option", { value: o.v, selected: (u.ethnicity || "") === o.v }, o.l)))),
   ]));
   form.appendChild(field("Bio", el("textarea", { class: "input", name: "bio", rows: 3 }, u.bio||"")));
 
