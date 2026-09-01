@@ -1205,6 +1205,12 @@ img { max-width: 100%; display: block; }
 }
 .swipe-card-body .meta { display: flex; gap: 10px; margin: 6px 0 10px; opacity: .95; font-size: 14px; }
 .swipe-card-body .meta span { display: inline-flex; align-items: center; gap: 4px; }
+/* V744 · Los iconos del bloque meta (ubicación / profesión) se generan con un
+   SVG sin tamaño explícito (viewBox 24x24) → sin esta regla salían enormes
+   (tamaño intrínseco 300x150). Los fijamos pequeños, alineados con el texto. */
+.swipe-card-body .meta span svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.swipe-card-body .meta span.gps-off { color: #fbbf24; font-weight: 600; }
+.swipe-card-body .meta span.gps-off svg { color: #fbbf24; }
 .swipe-card-body .tags { display: flex; gap: 6px; flex-wrap: wrap; }
 .swipe-card-body .tag {
   background: rgba(255,255,255,.16); backdrop-filter: blur(4px);

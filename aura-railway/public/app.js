@@ -3364,7 +3364,7 @@ function locDistanceInfo(u) {
     const km = fmtDistance(u && u.distance);
     return { text: km, off: false };
   }
-  if (u.gps_ok === false) return { text: "GPS no permitido", off: true };
+  if (u.gps_ok === false) return { text: "No comparte su ubicación", off: true };
   const km = fmtDistance(u.distance);
   return { text: km, off: false };
 }
@@ -7679,10 +7679,13 @@ function buildNearbySection() {
     const f = state.nearbyFilters;
     return pool.filter(u => {
       if (u.age < f.ageMin || u.age > f.ageMax) return false;
-      // La distancia sólo excluye a quien tiene distancia conocida y fuera del
-      // radio. Los usuarios reales sin GPS (distance null) no se descartan aquí,
-      // igual que en el backend (HAVING distance IS NULL OR <= ?).
-      if (typeof u.distance === "number" && u.distance > f.distance) return false;
+      // La distancia sólo excluye a quien tiene distancia REAL (GPS de ambos)
+      // y fuera del radio. V744 · Si el usuario no comparte su ubicación
+      // (gps_ok === false) su "distance" es aproximada por IP y NO debe
+      // descartarlo: igual que en el backend, se muestra con el aviso "No
+      // comparte su ubicación". Los reales sin distancia (null) tampoco caen.
+      if (u._real && u.gps_ok === false) { /* no filtrar por distancia aproximada */ }
+      else if (typeof u.distance === "number" && u.distance > f.distance) return false;
       if (f.onlyOnline && !u.online) return false;
       if (f.looking_for !== "any" && u.looking_for !== f.looking_for) return false;
       if (f.relationship !== "any" && u.relationship !== f.relationship) return false;
@@ -9254,7 +9257,7 @@ function screenProfileDetail(root, u, opts = {}) {
   const gLabel = genderLabel(u.gender);
   // V744 · Fila de distancia: km reales, o "GPS no permitido" si el usuario
   // tiene la ubicación desactivada. Si está oculta por privacidad, no se pinta.
-  const pdDist = pdLi.off ? "GPS no permitido" : fmtDistance(u.distance);
+  const pdDist = pdLi.off ? "No comparte su ubicación" : fmtDistance(u.distance);
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
     el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, gLabel) ]),
