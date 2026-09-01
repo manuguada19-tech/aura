@@ -12184,6 +12184,24 @@ app.get("/api/version", (req, res) => {
   res.json({ ok: true, build: BUILD_ID });
 });
 
+// V783 · Telemetría mínima de cliente. Solo acepta una lista blanca de eventos
+// (p. ej. confirmar que el guard del botón "Atrás" se instala en móviles reales)
+// y los registra en el stream de actividad que ya ve el admin. Sin datos
+// sensibles: solo un nombre de evento y un detalle corto saneado.
+const CLIENT_EVENTS = new Set(["backguard_installed", "backguard_exit_prompt"]);
+app.post("/api/client-event", express.json({ limit: "4kb" }), (req, res) => {
+  try {
+    const ev = String((req.body && req.body.event) || "").slice(0, 40);
+    if (!CLIENT_EVENTS.has(ev)) return res.status(204).end();
+    const detail = req.body && req.body.detail ? String(req.body.detail).slice(0, 120) : null;
+    let uid = null;
+    try { uid = parseInt(req.get("X-User-Id"), 10) || null; } catch {}
+    logStream(uid, ev, { detail, req }).catch(() => {});
+  } catch {}
+  res.set("Cache-Control", "no-store");
+  res.status(204).end();
+});
+
 async function logActivity(actor, msg) {
   try {
     await pool.execute("INSERT INTO activity (actor, action) VALUES (?,?)", [actor, msg]);

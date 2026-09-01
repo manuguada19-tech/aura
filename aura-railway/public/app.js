@@ -16011,6 +16011,7 @@ async function maybePromptForPushAnon() {
         ]),
       ]);
       try { modal.open(sheet); } catch {}
+      try { reportEvent("backguard_exit_prompt"); } catch {}
     }
 
     // V779 · Instalación real del guard. Antes se ejecutaba UNA sola vez al
@@ -16019,9 +16020,24 @@ async function maybePromptForPushAnon() {
     // `return` y el guard NO se instalaba nunca → "Atrás" salía sin preguntar.
     // Ahora la instalación es idempotente y se dispara en cuanto se detecta el
     // modo instalado, con reintentos y escuchando el cambio de display-mode.
+    // V783 · Telemetría mínima: confirma en producción (sobre móviles reales)
+    // que el guard se instaló y que el diálogo de salida llega a mostrarse. Sin
+    // datos sensibles; se ignora cualquier error de red.
+    function reportEvent(ev, detail) {
+      try {
+        const body = JSON.stringify({ event: ev, detail: detail || null });
+        if (navigator.sendBeacon) {
+          navigator.sendBeacon("/api/client-event", new Blob([body], { type: "application/json" }));
+        } else {
+          fetch("/api/client-event", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+        }
+      } catch {}
+    }
+
     function install() {
       if (window.__auraBackGuard) return;
       window.__auraBackGuard = true;
+      try { reportEvent("backguard_installed", (window.navigator && navigator.platform) || ""); } catch {}
       // Cebamos la trampa: siempre debe haber una entrada que consumir.
       arm();
       window.addEventListener("popstate", () => {
