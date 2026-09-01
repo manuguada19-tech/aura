@@ -157,6 +157,19 @@ function recordLoginFail(email) {
   loginAttempts.set(email, rec);
 }
 function clearLoginFails(email) { loginAttempts.delete(email); }
+// V785 · Rate-limit por IP para endpoints de autenticación, SIEMPRE activo
+// (independiente del flag global security.rate_limit). El lockout por email ya
+// existía, pero un atacante podía rotar emails desde una misma IP. Esto frena
+// el abuso por IP sin afectar el uso normal (un humano no hace >20 intentos/min).
+const authIpBuckets = new Map(); // ip -> { count, resetAt }
+function authIpAllow(ip) {
+  const now = Date.now();
+  let b = authIpBuckets.get(ip);
+  if (!b || b.resetAt < now) { b = { count: 0, resetAt: now + 60000 }; authIpBuckets.set(ip, b); }
+  b.count++;
+  if (authIpBuckets.size > 10000) { for (const [k, v] of authIpBuckets) { if (v.resetAt < now) authIpBuckets.delete(k); } }
+  return b.count <= 20; // máx 20 intentos de auth por minuto y por IP
+}
 
 /* ---------- Admin auth (DB-backed, multi-instance-safe) ---------- */
 const crypto = require("crypto");
@@ -3784,6 +3797,24 @@ async function kycCleanup() {
 }
 setInterval(kycCleanup, 6 * 60 * 60 * 1000); // cada 6 h
 setTimeout(kycCleanup, 30 * 1000);
+
+/* ---- Cleanup cron: purga del stream de actividad > 90 días -----------
+   V785 · activity_stream crece sin parar (cada login, evento, telemetría…).
+   Si no se poda, la tabla engorda y el "monitor en vivo" del admin se
+   ralentiza. Borramos los eventos con más de 90 días. Configurable vía
+   settings (activity.retention_days); 0 o vacío desactiva la purga. */
+async function activityStreamCleanup() {
+  try {
+    const days = parseInt(getSetting("activity.retention_days", "90"), 10);
+    if (!Number.isFinite(days) || days <= 0) return; // desactivado
+    await pool.execute(
+      "DELETE FROM activity_stream WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+      [days]
+    );
+  } catch (e) { console.warn("activity_stream cleanup failed:", e.message); }
+}
+setInterval(activityStreamCleanup, 12 * 60 * 60 * 1000); // cada 12 h
+setTimeout(activityStreamCleanup, 60 * 1000);
 
 app.get("/api/admin/waitlist", wrap(async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
@@ -10506,6 +10537,7 @@ function isReviewDeniedFor(email) {
 app.post("/api/login", wrap(async (req, res) => {
   const email = String(req.body?.email || "").toLowerCase();
   if (!email) return res.status(400).json({ error: "email_required" });
+  if (!authIpAllow(clientIp(req))) return res.status(429).json({ error: "rate_limited" }); // V785
   if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes","15"),10) });
@@ -10568,6 +10600,7 @@ app.post("/api/login/otp-verify", wrap(async (req, res) => {
   const email = String(req.body?.email || "").trim().toLowerCase();
   const code = String(req.body?.code || "").trim();
   if (!email.includes("@") || !/^\d{6}$/.test(code)) return res.status(400).json({ ok: false, error: "bad_input" });
+  if (!authIpAllow(clientIp(req))) return res.status(429).json({ error: "rate_limited" }); // V785
   if (isReviewDeniedFor(email)) return res.status(403).json({ error: "review_mode" });
   if (isAccessLockedFor(email)) return res.status(403).json({ error: "access_locked" });
   if (loginLocked(email)) return res.status(429).json({ error: "locked", retry_minutes: parseInt(getSetting("security.lockout_minutes", "15"), 10) });
@@ -12189,14 +12222,37 @@ app.get("/api/version", (req, res) => {
 // y los registra en el stream de actividad que ya ve el admin. Sin datos
 // sensibles: solo un nombre de evento y un detalle corto saneado.
 const CLIENT_EVENTS = new Set(["backguard_installed", "backguard_exit_prompt"]);
+// V785 · Anti-abuso del endpoint de telemetría: limitamos por IP a unos pocos
+// eventos por minuto (evita que alguien infle la tabla activity_stream) y
+// deduplicamos el mismo (ip,evento) dentro de una ventana corta. En memoria,
+// suficiente para telemetría; no persiste ni bloquea nada crítico.
+const clientEvRl = new Map();      // ip -> { count, resetAt }
+const clientEvSeen = new Map();    // ip|ev -> timestamp
+function clientEvAllow(ip, ev) {
+  const now = Date.now();
+  let b = clientEvRl.get(ip);
+  if (!b || b.resetAt < now) { b = { count: 0, resetAt: now + 60000 }; clientEvRl.set(ip, b); }
+  b.count++;
+  if (b.count > 10) return false;            // máx 10 eventos/min por IP
+  const key = ip + "|" + ev;
+  const last = clientEvSeen.get(key) || 0;
+  if (now - last < 30000) return false;       // mismo evento: 1 cada 30 s
+  clientEvSeen.set(key, now);
+  // Limpieza perezosa para que los mapas no crezcan sin fin.
+  if (clientEvSeen.size > 5000) { for (const [k, t] of clientEvSeen) { if (now - t > 300000) clientEvSeen.delete(k); } }
+  return true;
+}
 app.post("/api/client-event", express.json({ limit: "4kb" }), (req, res) => {
   try {
     const ev = String((req.body && req.body.event) || "").slice(0, 40);
     if (!CLIENT_EVENTS.has(ev)) return res.status(204).end();
-    const detail = req.body && req.body.detail ? String(req.body.detail).slice(0, 120) : null;
-    let uid = null;
-    try { uid = parseInt(req.get("X-User-Id"), 10) || null; } catch {}
-    logStream(uid, ev, { detail, req }).catch(() => {});
+    const ip = clientIp(req);
+    if (clientEvAllow(ip, ev)) {
+      const detail = req.body && req.body.detail ? String(req.body.detail).slice(0, 120) : null;
+      let uid = null;
+      try { uid = parseInt(req.get("X-User-Id"), 10) || null; } catch {}
+      logStream(uid, ev, { detail, req }).catch(() => {});
+    }
   } catch {}
   res.set("Cache-Control", "no-store");
   res.status(204).end();
