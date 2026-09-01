@@ -3375,6 +3375,36 @@ function fmtDistance(km) {
   return `${Math.round(n)} km`;
 }
 
+// V772 · Distancia real en km entre dos puntos GPS (fórmula de Haversine).
+// Se usa para calcular la distancia REAL del pin de prueba del mapa respecto
+// al punto azul (mi ubicación), en vez de un valor fijo inventado.
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const R = 6371; // radio terrestre en km
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// V772 · Reverse-geocoding SIN clave (Nominatim/OSM): devuelve el nombre de la
+// ciudad/municipio de un punto GPS. Se usa para que el pin de prueba del mapa
+// muestre la ciudad REAL donde se coloca (p. ej. Guadalajara) en lugar de la
+// ciudad guardada en su ficha (p. ej. Madrid), que no coincide con su posición.
+async function reverseGeocodeCity(lat, lng) {
+  try {
+    const url = "https://nominatim.openstreetmap.org/reverse?format=jsonv2&accept-language=es&zoom=12&lat="
+      + encodeURIComponent(lat) + "&lon=" + encodeURIComponent(lng);
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) return null;
+    const d = await res.json();
+    const a = (d && d.address) ? d.address : {};
+    return a.city || a.town || a.village || a.municipality || a.county
+      || a.state_district || a.state || null;
+  } catch { return null; }
+}
+
 // V744 · Etiqueta de ubicación por tarjeta. Devuelve { text, off } donde:
 //   · off=false → distancia REAL (GPS de ambos) lista para mostrar; text puede
 //     ser null si el backend no da km fiables.
@@ -7657,12 +7687,19 @@ function makeTestMapUser(center, realProfile) {
   const photo = p.photo_url
     || (p.id != null ? `https://i.pravatar.cc/600?u=${p.id}` : "https://i.pravatar.cc/600?img=15");
   const interests = (Array.isArray(p.interests) && p.interests.length) ? p.interests : [];
+  // V772 · El pin se coloca cerca del punto azul (tu ubicación real). Por eso
+  // NO usamos la ciudad de su ficha (p. ej. "Madrid"), que no coincide con su
+  // posición en el mapa. Dejamos city vacía y distance null: openNearbyMap las
+  // rellena con la ciudad REAL (reverse-geocoding de su posición) y la
+  // distancia REAL (Haversine desde el punto azul), como en Explorar.
+  const lat = center.lat + 0.010;
+  const lng = center.lng + 0.013;
   return {
     id: (p.id != null ? p.id : "test_demo"),
     name: p.name || "Usuario de prueba",
     age: (p.age != null) ? p.age : null,
     gender: p.gender || "",
-    city: p.city || "Ubicación ficticia (prueba)",
+    city: "",
     photo,
     photos: [photo],
     bio: p.bio || "Cuenta de prueba. Su ubicación en el mapa es simulada.",
@@ -7673,9 +7710,9 @@ function makeTestMapUser(center, realProfile) {
     verified: (p.verified != null) ? !!p.verified : true,
     online: (p.online != null) ? !!p.online : false,
     gps_ok: true,
-    distance: 1.2,
-    lat: center.lat + 0.010,
-    lng: center.lng + 0.013,
+    distance: null,
+    lat,
+    lng,
     _test: true,
   };
 }
@@ -7888,7 +7925,8 @@ async function openNearbyMap() {
     const badge = u._test
       ? el("span", { class: "map-sheet-badge" }, "Perfil ficticio de prueba")
       : (u.online ? el("span", { class: "map-sheet-badge on" }, "En línea") : null);
-    const distTxt = (typeof u.distance === "number") ? `a ${u.distance} km` : "";
+    const distLabel = fmtDistance(u.distance);
+    const distTxt = distLabel ? `a ${distLabel}` : "";
     const sheet = el("div", {}, [
       el("div", { class: "map-sheet-head" }, [
         avatar,
@@ -8002,6 +8040,24 @@ async function openNearbyMap() {
   const myLocation = (first && first.center && Number.isFinite(first.center.lat))
     ? { lat: first.center.lat, lng: first.center.lng }
     : { lat: start.lat, lng: start.lng };
+
+  // V772 · Sincroniza la ubicación del pin de prueba con dónde está REALMENTE
+  // colocado en el mapa (cerca del punto azul), no con su ficha de la BD:
+  //   · Distancia REAL en km desde el punto azul (Haversine).
+  //   · Ciudad REAL por reverse-geocoding de su posición (p. ej. Guadalajara),
+  //     no la ciudad guardada en su perfil (p. ej. Madrid).
+  // Así "Cerca de ti" (mapa) y la hoja de detalle muestran datos coherentes con
+  // el lugar donde se encuentra, igual que Explorar hace con perfiles reales.
+  if (testUser) {
+    try {
+      const km = haversineKm(myLocation.lat, myLocation.lng, testUser.lat, testUser.lng);
+      if (Number.isFinite(km)) testUser.distance = Math.max(0.1, km);
+    } catch {}
+    // Ciudad real (asíncrono): al resolver, repintamos para reflejarla.
+    reverseGeocodeCity(testUser.lat, testUser.lng).then((cityName) => {
+      if (cityName) { testUser.city = cityName; try { repaint(); } catch {} }
+    }).catch(() => {});
+  }
 
   // V766 · Punto azul de "mi ubicación" (estilo Google Maps) para saber dónde
   // está el usuario respecto al resto de personas. Se coloca en myLocation
