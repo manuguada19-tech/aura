@@ -1758,6 +1758,8 @@ const state = {
     genders: ["Todos"], onlyVerified: false, onlyOnline: false,
     cities: [], ethnicities: [], // V748 · ubicación (multi) y etnia (multi)
     lookingFor: "any", relationship: "any", interests: [], // V757 · más filtros
+    // V776 · filtros opcionales de estilo de vida (multi, exact-match).
+    pets: [], smoke: [], drink: [], education: [], exercise: [],
   },
   favorites: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
@@ -1768,6 +1770,8 @@ const state = {
     name: "", birthDate: "1998-05-14", gender: "", orientation: "",
     city: "Madrid", province: "Madrid", country: "España",
     height: 172, weight: 68, ethnicity: "",
+    // V776 · campos opcionales de estilo de vida + rompehielos.
+    pets: "", smoke: "", drink: "", education: "", exercise: "", job: "", prompts: [],
     description: "", phone: "", photos: [],
   },
 };
@@ -2079,6 +2083,18 @@ function mapApiUser(row) {
     last_active_secs: (row.last_active_secs == null ? null : Number(row.last_active_secs)),
     height: row.height || null,
     weight: row.weight || null,
+    // V776 · Campos opcionales de estilo de vida + etnia + prompts (rompehielos).
+    ethnicity: row.ethnicity || "",
+    pets: row.pets || "",
+    smoke: row.smoke || "",
+    drink: row.drink || "",
+    education: row.education || "",
+    exercise: row.exercise || "",
+    prompts: (() => {
+      let p = row.prompts;
+      if (typeof p === "string") { try { p = JSON.parse(p); } catch { p = []; } }
+      return Array.isArray(p) ? p.filter(x => x && String(x.a || "").trim()) : [];
+    })(),
     photos, photo,
     _real: true,
   };
@@ -3298,6 +3314,66 @@ const ETHNICITY_OPTIONS = [
   "Prefiero no decirlo", "Latina/o", "Caucásica/o", "Asiática/o",
   "Afrodescendiente", "Árabe", "Mixta/o",
 ];
+
+// V776 · Campos OPCIONALES de estilo de vida. Mismo formato {id,label,emoji}
+// que LOOKING_FOR_OPTIONS para reutilizar el patrón de chips. El `id` es lo que
+// se guarda (coincide con lo que filtra el backend) y `label` lo que se muestra.
+const PETS_OPTIONS = [
+  { id: "dog",    label: "Perro",       emoji: "🐕" },
+  { id: "cat",    label: "Gato",        emoji: "🐈" },
+  { id: "other",  label: "Otra mascota", emoji: "🐾" },
+  { id: "none",   label: "Sin mascotas", emoji: "🚫" },
+  { id: "want",   label: "Quiero tener", emoji: "🐣" },
+];
+const SMOKE_OPTIONS = [
+  { id: "no",       label: "No fumo",     emoji: "🚭" },
+  { id: "yes",      label: "Fumo",        emoji: "🚬" },
+  { id: "sometimes",label: "A veces",     emoji: "💨" },
+  { id: "quitting", label: "Lo estoy dejando", emoji: "🌱" },
+];
+const DRINK_OPTIONS = [
+  { id: "no",       label: "No bebo",     emoji: "🚫" },
+  { id: "social",   label: "Socialmente", emoji: "🥂" },
+  { id: "sometimes",label: "A veces",     emoji: "🍷" },
+  { id: "yes",      label: "Bebo",        emoji: "🍺" },
+];
+const EDUCATION_OPTIONS = [
+  { id: "secondary",  label: "Secundaria",       emoji: "🎓" },
+  { id: "vocational", label: "FP",               emoji: "🛠️" },
+  { id: "university", label: "Universidad",      emoji: "🎓" },
+  { id: "postgrad",   label: "Máster/Doctorado", emoji: "📚" },
+  { id: "other",      label: "Otros",            emoji: "✏️" },
+];
+const EXERCISE_OPTIONS = [
+  { id: "daily",     label: "A diario",  emoji: "🏋️" },
+  { id: "often",     label: "A menudo",  emoji: "🏃" },
+  { id: "sometimes", label: "A veces",   emoji: "🚶" },
+  { id: "never",     label: "Nunca",     emoji: "🛋️" },
+];
+// V776 · Preguntas de perfil / rompehielos: frases cortas para que el usuario
+// complete. Se guardan como array de {q,a}. El usuario elige cuáles responder.
+const PROFILE_PROMPTS = [
+  "Un plan perfecto para mí es…",
+  "Nunca podría vivir sin…",
+  "Mi mayor manía es…",
+  "Me haces reír si…",
+  "El mejor viaje de mi vida fue…",
+  "Mi debilidad es…",
+  "Sabré que hay conexión cuando…",
+  "Dos verdades y una mentira:",
+  "Mi canción del momento es…",
+  "Domingo ideal:",
+];
+
+// V776 · Devuelve la etiqueta legible de un id de opción de estilo de vida.
+// Acepta el array de opciones y el id guardado; si no coincide, devuelve el
+// propio valor (retrocompatibilidad con datos antiguos escritos como texto).
+function lifestyleLabel(options, id) {
+  if (id == null || String(id).trim() === "") return "";
+  const o = options.find(x => x.id === id);
+  if (o) return `${o.emoji} ${o.label}`;
+  return String(id);
+}
 
 // V741 · Normaliza cualquier valor de género almacenado (male/female/F/M/NB/
 // Otro/inglés…) a una etiqueta legible en español. Antes se mostraba "male" o
@@ -6781,6 +6857,55 @@ function screenRegisterProfile(root) {
     .map(v => el("option", { value: v }, v)));
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Etnia"), fEth ]));
 
+  // V776 · Campos opcionales de estilo de vida + rompehielos. Todos con una
+  // opción vacía "Sin especificar" para que sean 100% opcionales.
+  const optSelect = (options, current) => el("select", {},
+    [el("option", { value: "", selected: !current || undefined }, "Sin especificar")]
+      .concat(options.map(o => el("option", { value: o.id, selected: o.id === current || undefined }, `${o.emoji} ${o.label}`))));
+  const fJob = el("input", { type: "text", placeholder: "Opcional", maxlength: 60, value: state.registration.job || "" });
+  const fEdu = optSelect(EDUCATION_OPTIONS, state.registration.education);
+  const fPets = optSelect(PETS_OPTIONS, state.registration.pets);
+  const fEx = optSelect(EXERCISE_OPTIONS, state.registration.exercise);
+  const fSmoke = optSelect(SMOKE_OPTIONS, state.registration.smoke);
+  const fDrink = optSelect(DRINK_OPTIONS, state.registration.drink);
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Trabajo · opcional"), fJob ]));
+  form.appendChild(el("div", { class: "field-row" }, [
+    el("div", { class: "field" }, [ el("label", {}, "Estudios · opcional"), fEdu ]),
+    el("div", { class: "field" }, [ el("label", {}, "Mascotas · opcional"), fPets ]),
+  ]));
+  form.appendChild(el("div", { class: "field-row" }, [
+    el("div", { class: "field" }, [ el("label", {}, "Ejercicio · opcional"), fEx ]),
+    el("div", { class: "field" }, [ el("label", {}, "Fuma · opcional"), fSmoke ]),
+  ]));
+  form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Bebe · opcional"), fDrink ]));
+
+  // V776 · Preguntas de perfil (rompehielos). Máx 6. Se guarda solo si hay
+  // respuesta. Selector de frase + campo de respuesta + botón eliminar.
+  const regPrompts = Array.isArray(state.registration.prompts) ? state.registration.prompts.slice(0, 6) : [];
+  const regPromptsWrap = el("div", { class: "prompts-edit" });
+  function renderRegPrompts() {
+    regPromptsWrap.innerHTML = "";
+    regPrompts.forEach((p, idx) => {
+      const qSel = el("select", { class: "prompt-q" },
+        PROFILE_PROMPTS.map(txt => el("option", { value: txt, selected: txt === p.q || undefined }, txt)));
+      qSel.addEventListener("change", () => { regPrompts[idx].q = qSel.value; });
+      const aInp = el("input", { class: "prompt-a", type: "text", maxlength: 280, placeholder: "Tu respuesta…", value: p.a || "" });
+      aInp.addEventListener("input", () => { regPrompts[idx].a = aInp.value; });
+      const del = el("button", { type: "button", class: "prompt-del", "aria-label": "Eliminar", onclick: () => { regPrompts.splice(idx, 1); renderRegPrompts(); } }, "×");
+      regPromptsWrap.appendChild(el("div", { class: "prompt-item" }, [qSel, aInp, del]));
+    });
+  }
+  renderRegPrompts();
+  const addRegPrompt = el("button", { type: "button", class: "btn btn-ghost btn-sm", onclick: () => {
+    if (regPrompts.length >= 6) return toast("Máximo 6 preguntas");
+    regPrompts.push({ q: PROFILE_PROMPTS[0], a: "" });
+    renderRegPrompts();
+  } }, "＋ Añadir pregunta");
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Preguntas de perfil (rompehielos) · opcional"),
+    regPromptsWrap, addRegPrompt,
+  ]));
+
   const fDesc = el("textarea", { placeholder: "Descripción corta (máx 300)", maxlength: 300 });
   fDesc.value = state.registration.description;
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Descripción"), fDesc ]));
@@ -6806,6 +6931,10 @@ function screenRegisterProfile(root) {
       gender: fGender.value, orientation: fOrient.value,
       city: fCity.value, province: fProv.value, country: fCountry.value,
       height: +fHeight.value, weight: +fWeight.value, ethnicity: fEth.value,
+      // V776 · campos opcionales de estilo de vida + rompehielos.
+      job: fJob.value.trim(), education: fEdu.value, pets: fPets.value,
+      exercise: fEx.value, smoke: fSmoke.value, drink: fDrink.value,
+      prompts: regPrompts.filter(p => p && String(p.a || "").trim()).map(p => ({ q: p.q, a: p.a })),
       description: fDesc.value, phone: "",
     });
     render(screenRegisterPhotos);
@@ -7707,6 +7836,11 @@ function makeTestMapUser(center, realProfile) {
     interests,
     looking_for: p.looking_for || "any",
     relationship: p.relationship || "any",
+    // V776 · Campos opcionales del perfil de prueba para el detalle desde el mapa.
+    height: p.height || null, weight: p.weight || null, ethnicity: p.ethnicity || "",
+    pets: p.pets || "", smoke: p.smoke || "", drink: p.drink || "",
+    education: p.education || "", exercise: p.exercise || "",
+    prompts: Array.isArray(p.prompts) ? p.prompts : [],
     verified: (p.verified != null) ? !!p.verified : true,
     online: (p.online != null) ? !!p.online : false,
     gps_ok: true,
@@ -7908,6 +8042,11 @@ async function openNearbyMap() {
       photo_url: u.photo, photos: u.photos, verified: u.verified, online: u.online,
       distance: u.distance, gps_ok: u.gps_ok, bio: u.bio, job: u.job,
       interests: u.interests, looking_for: u.looking_for, relationship: u.relationship,
+      // V776 · Campos opcionales de estilo de vida + prompts, para que el detalle
+      // abierto desde el mapa muestre la ficha completa.
+      height: u.height, weight: u.weight, ethnicity: u.ethnicity,
+      pets: u.pets, smoke: u.smoke, drink: u.drink,
+      education: u.education, exercise: u.exercise, prompts: u.prompts,
     });
     // El perfil de prueba no es "real" (id no numérico): así el detalle no
     // intenta dar like/pasar contra el backend.
@@ -9260,6 +9399,29 @@ function openFilters() {
   });
   wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Intereses (uno o más)"), intRow ]));
 
+  // ---- V776 · Filtros opcionales de estilo de vida (multi-selección) ----
+  // Cada grupo permite marcar una o varias opciones. Vacío = sin filtro.
+  // Devuelven un Set con los ids marcados; el backend filtra con IN(...).
+  function buildLifestyleFilter(title, options, current) {
+    const sel = new Set((Array.isArray(current) ? current : []).map(String));
+    const row = el("div", { class: "chip-row" });
+    options.forEach(o => {
+      const c = el("button", { class: "chip selectable" + (sel.has(o.id) ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+      c.addEventListener("click", () => {
+        if (sel.has(o.id)) { sel.delete(o.id); c.classList.remove("active"); }
+        else { sel.add(o.id); c.classList.add("active"); }
+      });
+      row.appendChild(c);
+    });
+    wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, title + " · opcional"), row ]));
+    return sel;
+  }
+  const selEdu = buildLifestyleFilter("Estudios", EDUCATION_OPTIONS, state.filters.education);
+  const selPets = buildLifestyleFilter("Mascotas", PETS_OPTIONS, state.filters.pets);
+  const selEx = buildLifestyleFilter("Ejercicio", EXERCISE_OPTIONS, state.filters.exercise);
+  const selSmoke = buildLifestyleFilter("Fuma", SMOKE_OPTIONS, state.filters.smoke);
+  const selDrink = buildLifestyleFilter("Bebe", DRINK_OPTIONS, state.filters.drink);
+
   // Facetas reales (ciudades/etnias disponibles). Rellenan ubicación y etnia.
   // V773 · `facetsLoaded` distingue "aún cargando" de "cargado y vacío": antes
   // se mostraba "No hay usuarios registrados con ese filtro" en cuanto la lista
@@ -9419,6 +9581,12 @@ function openFilters() {
       state.filters.lookingFor = lookingRef.id || "any";
       state.filters.relationship = relRef.id || "any";
       state.filters.interests = Array.from(selInterests);
+      // V776 · Filtros opcionales de estilo de vida (multi).
+      state.filters.education = Array.from(selEdu);
+      state.filters.pets = Array.from(selPets);
+      state.filters.exercise = Array.from(selEx);
+      state.filters.smoke = Array.from(selSmoke);
+      state.filters.drink = Array.from(selDrink);
       datingApi.saveFilters({
         age_min: state.filters.ageMin,
         age_max: state.filters.ageMax,
@@ -9429,6 +9597,11 @@ function openFilters() {
         looking_for: state.filters.lookingFor,
         relationship: state.filters.relationship,
         interests: state.filters.interests,
+        education: state.filters.education,
+        pets: state.filters.pets,
+        exercise: state.filters.exercise,
+        smoke: state.filters.smoke,
+        drink: state.filters.drink,
       });
       modal.close(); toast("Filtros aplicados");
       const grid = $("#resultsGrid");
@@ -10404,13 +10577,45 @@ function screenProfileDetail(root, u, opts = {}) {
   // V744 · Fila de distancia: km reales, o "GPS no permitido" si el usuario
   // tiene la ubicación desactivada. Si está oculta por privacidad, no se pinta.
   const pdDist = pdLi.off ? "No comparte su ubicación" : fmtDistance(u.distance);
+  // V776 · Etiquetas legibles de los campos de estilo de vida (opcionales).
+  const petsTxt = lifestyleLabel(PETS_OPTIONS, u.pets);
+  const smokeTxt = lifestyleLabel(SMOKE_OPTIONS, u.smoke);
+  const drinkTxt = lifestyleLabel(DRINK_OPTIONS, u.drink);
+  const eduTxt = lifestyleLabel(EDUCATION_OPTIONS, u.education);
+  const exTxt = lifestyleLabel(EXERCISE_OPTIONS, u.exercise);
+  const heightTxt = (u.height != null && Number(u.height) > 0) ? `${u.height} cm` : "";
+  const weightTxt = (u.weight != null && Number(u.weight) > 0) ? `${u.weight} kg` : "";
+  const ethTxt = lifestyleLabel(ETHNICITY_OPTIONS, u.ethnicity);
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
     el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, gLabel) ]),
     u.city ? el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]) : null,
     pdDist ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", { class: pdLi.off ? "gps-off" : "" }, pdDist) ]) : null,
+    heightTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Altura"), el("b", {}, heightTxt) ]) : null,
+    weightTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Peso"), el("b", {}, weightTxt) ]) : null,
+    ethTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Etnia"), el("b", {}, ethTxt) ]) : null,
+    eduTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Estudios"), el("b", {}, eduTxt) ]) : null,
+    petsTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Mascotas"), el("b", {}, petsTxt) ]) : null,
+    exTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Ejercicio"), el("b", {}, exTxt) ]) : null,
+    smokeTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Fuma"), el("b", {}, smokeTxt) ]) : null,
+    drinkTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Bebe"), el("b", {}, drinkTxt) ]) : null,
     el("div", { class: "pd-row" }, [ el("span", {}, "Verificación"), el("b", {}, u.verified ? "Verificado ✓" : "Sin verificar") ]),
   ]));
+
+  // V776 · Preguntas de perfil (rompehielos). Se muestran como tarjetas con la
+  // frase/pregunta y la respuesta del usuario.
+  if (Array.isArray(u.prompts) && u.prompts.length) {
+    wrap.appendChild(el("h3", { class: "pd-section" }, "Rompehielos"));
+    const pc = el("div", { class: "pd-prompts" });
+    u.prompts.forEach((p) => {
+      if (!p || !String(p.a || "").trim()) return;
+      pc.appendChild(el("div", { class: "pd-prompt-card" }, [
+        p.q ? el("div", { class: "pd-prompt-q" }, p.q) : null,
+        el("div", { class: "pd-prompt-a" }, p.a),
+      ]));
+    });
+    wrap.appendChild(pc);
+  }
 
   // Actions
   const returnTab = backTo === "likes" ? "likes" : "discover";
@@ -11825,11 +12030,20 @@ function screenEditProfile(root) {
       city: cityInp.value.trim(),
       job: jobInp.value.trim(),
       height: parseInt(heightInp.value, 10) || null,
+      weight: parseInt(weightInp.value, 10) || null, // V776
       gender: genderInp.value,
       ethnicity: ethInp.value || null,
       looking_for: lookingRef.id,
       relationship: relRef.id,
       interests: Array.from(selectedInterests),
+      // V776 · Campos opcionales de estilo de vida ("" = sin dato).
+      pets: petsRef.id || null,
+      smoke: smokeRef.id || null,
+      drink: drinkRef.id || null,
+      education: eduRef.id || null,
+      exercise: exRef.id || null,
+      // V776 · Prompts: solo los que tengan respuesta no vacía.
+      prompts: promptModel.filter(p => String(p.a || "").trim()).map(p => ({ q: p.q, a: p.a.trim() })),
       privacy: privacyModel, // V742 · campos ocultos del perfil público
     };
     try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
@@ -11856,6 +12070,9 @@ function screenEditProfile(root) {
   jobField.appendChild(el("label", {}, T("content.me.field_job") || "Profesión")); jobField.appendChild(jobInp); form.appendChild(jobField);
   const heightField = el("div", { class: "field" }); const heightInp = el("input", { type: "number", value: u.height || "" });
   heightField.appendChild(el("label", {}, T("content.me.field_height") || "Altura (cm)")); heightField.appendChild(heightInp); form.appendChild(heightField);
+  // V776 · Peso (opcional).
+  const weightField = el("div", { class: "field" }); const weightInp = el("input", { type: "number", value: u.weight || "", min: 40, max: 300 });
+  weightField.appendChild(el("label", {}, "Peso (kg) · opcional")); weightField.appendChild(weightInp); form.appendChild(weightField);
 
   // V741 · Género (etiquetas en español). El valor almacenado se normaliza para
   // preseleccionar la opción correcta aunque estuviera guardado como male/female.
@@ -11926,6 +12143,70 @@ function screenEditProfile(root) {
     intWrap,
   ]));
 
+  // V776 · Campos OPCIONALES de estilo de vida (selección única, se puede
+  // deseleccionar tocando de nuevo → queda sin dato). Cada grupo tiene su ref
+  // {id} que empieza vacío y se rellena al cargar el perfil del servidor.
+  const petsRef = { id: u.pets || "" };
+  const smokeRef = { id: u.smoke || "" };
+  const drinkRef = { id: u.drink || "" };
+  const eduRef = { id: u.education || "" };
+  const exRef = { id: u.exercise || "" };
+  function buildSingleSelect(label, options, ref) {
+    const rowWrap = el("div", { class: "chip-row" });
+    options.forEach(o => {
+      const c = el("button", { class: "chip selectable" + (ref.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+      c.addEventListener("click", () => {
+        const wasActive = ref.id === o.id;
+        rowWrap.querySelectorAll(".chip").forEach(x => x.classList.remove("active"));
+        if (wasActive) { ref.id = ""; }        // toca de nuevo = deseleccionar
+        else { ref.id = o.id; c.classList.add("active"); }
+      });
+      rowWrap.appendChild(c);
+    });
+    const field = el("div", { class: "field" }, [ el("label", {}, label), rowWrap ]);
+    form.appendChild(field);
+    return rowWrap;
+  }
+  const petsWrap = buildSingleSelect("Mascotas · opcional", PETS_OPTIONS, petsRef);
+  const smokeWrap = buildSingleSelect("¿Fumas? · opcional", SMOKE_OPTIONS, smokeRef);
+  const drinkWrap = buildSingleSelect("¿Bebes? · opcional", DRINK_OPTIONS, drinkRef);
+  const eduWrap = buildSingleSelect("Estudios · opcional", EDUCATION_OPTIONS, eduRef);
+  const exWrap = buildSingleSelect("Ejercicio · opcional", EXERCISE_OPTIONS, exRef);
+
+  // V776 · Preguntas de perfil / rompehielos (opcional). El usuario elige una
+  // pregunta y escribe una respuesta corta. Hasta 6. Se guardan como {q,a}.
+  const promptModel = Array.isArray(u.prompts) ? u.prompts.slice(0, 6).map(p => ({ q: String(p.q || ""), a: String(p.a || "") })) : [];
+  const promptsList = el("div", { class: "prompts-edit" });
+  function renderPrompts() {
+    promptsList.innerHTML = "";
+    promptModel.forEach((p, idx) => {
+      const sel = el("select", { class: "prompt-q" },
+        PROFILE_PROMPTS.map(q => el("option", { value: q, selected: q === p.q || undefined }, q)));
+      if (!PROFILE_PROMPTS.includes(p.q) && p.q) {
+        sel.insertBefore(el("option", { value: p.q, selected: true }, p.q), sel.firstChild);
+      }
+      sel.addEventListener("change", () => { p.q = sel.value; });
+      const ans = el("input", { type: "text", class: "prompt-a", maxlength: 280, value: p.a, placeholder: "Tu respuesta…" });
+      ans.addEventListener("input", () => { p.a = ans.value; });
+      const del = el("button", { type: "button", class: "prompt-del", title: "Quitar", onclick: () => { promptModel.splice(idx, 1); renderPrompts(); } }, "×");
+      promptsList.appendChild(el("div", { class: "prompt-item" }, [ sel, ans, del ]));
+    });
+  }
+  renderPrompts();
+  const addPromptBtn = el("button", { class: "btn btn-outline btn-sm", type: "button", onclick: () => {
+    if (promptModel.length >= 6) { toast("Máximo 6 preguntas"); return; }
+    const used = new Set(promptModel.map(p => p.q));
+    const next = PROFILE_PROMPTS.find(q => !used.has(q)) || PROFILE_PROMPTS[0];
+    promptModel.push({ q: next, a: "" });
+    renderPrompts();
+  } }, "+ Añadir pregunta");
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Preguntas de perfil (rompehielos) · opcional"),
+    el("small", { class: "field-hint", style: "display:block;margin:-2px 0 8px;color:var(--text-soft)" }, "Responde alguna frase para romper el hielo. Deja la respuesta vacía para no mostrarla."),
+    promptsList,
+    addPromptBtn,
+  ]));
+
   // V742 · Privacidad: qué datos sensibles NO mostrar en el perfil público. El
   // modelo se rellena al cargar el perfil del servidor (más abajo).
   const privacyModel = Object.assign({}, state.myProfile.privacy || {});
@@ -11949,8 +12230,26 @@ function screenEditProfile(root) {
       if (p.city != null) cityInp.value = p.city;
       if (p.job != null) jobInp.value = p.job;
       if (p.height != null) heightInp.value = p.height;
+      if (p.weight != null) weightInp.value = p.weight; // V776
       if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
       if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
+      // V776 · Rellena los grupos de estilo de vida (selección única).
+      const setSingle = (wrapEl, ref, options, id) => {
+        ref.id = id || "";
+        const idx = options.findIndex(o => o.id === ref.id);
+        wrapEl.querySelectorAll(".chip").forEach((x, i) => x.classList.toggle("active", i === idx));
+      };
+      setSingle(petsWrap, petsRef, PETS_OPTIONS, p.pets);
+      setSingle(smokeWrap, smokeRef, SMOKE_OPTIONS, p.smoke);
+      setSingle(drinkWrap, drinkRef, DRINK_OPTIONS, p.drink);
+      setSingle(eduWrap, eduRef, EDUCATION_OPTIONS, p.education);
+      setSingle(exWrap, exRef, EXERCISE_OPTIONS, p.exercise);
+      // V776 · Rellena las preguntas de perfil guardadas.
+      if (Array.isArray(p.prompts)) {
+        promptModel.length = 0;
+        p.prompts.slice(0, 6).forEach(pr => { if (pr && String(pr.a || "").trim()) promptModel.push({ q: String(pr.q || ""), a: String(pr.a || "") }); });
+        renderPrompts();
+      }
       const setChip = (wrapEl, ref, id) => {
         if (!id) return;
         ref.id = id;

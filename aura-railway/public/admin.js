@@ -3082,6 +3082,71 @@ async function openUserDrawer(id, onChange) {
     field("Etnia", el("input", { class: "input", name: "ethnicity", value: u.ethnicity||"" })),
   ]));
   form.appendChild(field("Bio", el("textarea", { class: "input", name: "bio", rows: 3 }, u.bio||"")));
+
+  // V776 · Campos opcionales de estilo de vida + rompehielos, sincronizados con
+  // el perfil del usuario (mismas columnas: job/education/pets/exercise/smoke/
+  // drink/prompts). Se autoguardan vía FormData → PATCH /api/users/:id. Los
+  // <select> incluyen una opción vacía para poder "borrar" el dato.
+  const LIFESTYLE_ADMIN = {
+    education: [ { v:"secondary", l:"🎓 Secundaria" }, { v:"vocational", l:"🛠️ FP" }, { v:"university", l:"🎓 Universidad" }, { v:"postgrad", l:"📚 Postgrado" }, { v:"other", l:"✍️ Otros" } ],
+    pets: [ { v:"dog", l:"🐶 Perro" }, { v:"cat", l:"🐱 Gato" }, { v:"other", l:"🐾 Otra" }, { v:"none", l:"🚫 Ninguna" }, { v:"want", l:"💭 Quiero" } ],
+    exercise: [ { v:"daily", l:"🏃 A diario" }, { v:"often", l:"💪 A menudo" }, { v:"sometimes", l:"🚶 A veces" }, { v:"never", l:"🛋️ Nunca" } ],
+    smoke: [ { v:"no", l:"🚭 No" }, { v:"yes", l:"🚬 Sí" }, { v:"sometimes", l:"🍃 A veces" }, { v:"quitting", l:"⏳ Dejándolo" } ],
+    drink: [ { v:"no", l:"🚱 No" }, { v:"social", l:"🥂 Social" }, { v:"sometimes", l:"🍺 A veces" }, { v:"yes", l:"🍷 Sí" } ],
+  };
+  const lifeSelect = (name, current) => {
+    const opts = [ el("option", { value: "", selected: !current }, "— Sin especificar —") ]
+      .concat((LIFESTYLE_ADMIN[name] || []).map(o => el("option", { value: o.v, selected: (current || "") === o.v }, o.l)));
+    // Conserva valores no reconocidos para no sobrescribir datos previos.
+    if (current && !(LIFESTYLE_ADMIN[name] || []).some(o => o.v === current)) {
+      opts.push(el("option", { value: current, selected: true }, current));
+    }
+    return el("select", { class: "input", name }, opts);
+  };
+  form.appendChild(field("Trabajo", el("input", { class: "input", name: "job", value: u.job||"" })));
+  form.appendChild(el("div", { class: "grid-2" }, [
+    field("Estudios", lifeSelect("education", u.education)),
+    field("Mascotas", lifeSelect("pets", u.pets)),
+  ]));
+  form.appendChild(el("div", { class: "grid-3" }, [
+    field("Ejercicio", lifeSelect("exercise", u.exercise)),
+    field("Fuma", lifeSelect("smoke", u.smoke)),
+    field("Bebe", lifeSelect("drink", u.drink)),
+  ]));
+
+  // V776 · Preguntas de perfil (rompehielos). Editor JSON amigable: cada fila
+  // tiene pregunta + respuesta + eliminar. Se serializa a JSON en un campo
+  // oculto `prompts` que se envía en el PATCH. Máx 6.
+  let adminPrompts = [];
+  try {
+    const raw = typeof u.prompts === "string" ? JSON.parse(u.prompts) : u.prompts;
+    if (Array.isArray(raw)) adminPrompts = raw.filter(p => p && typeof p === "object").map(p => ({ q: String(p.q||""), a: String(p.a||"") }));
+  } catch {}
+  const promptsHidden = el("input", { type: "hidden", name: "prompts" });
+  const promptsWrap = el("div", { class: "admin-prompts", style: "display:flex;flex-direction:column;gap:8px" });
+  function syncPromptsHidden() {
+    promptsHidden.value = JSON.stringify(adminPrompts.filter(p => String(p.a||"").trim()));
+  }
+  function renderAdminPrompts() {
+    promptsWrap.innerHTML = "";
+    adminPrompts.forEach((p, i) => {
+      const q = el("input", { class: "input", type: "text", placeholder: "Pregunta/frase", value: p.q||"", style: "flex:1 1 40%" });
+      q.addEventListener("input", () => { adminPrompts[i].q = q.value; syncPromptsHidden(); });
+      const a = el("input", { class: "input", type: "text", placeholder: "Respuesta", value: p.a||"", style: "flex:1 1 45%" });
+      a.addEventListener("input", () => { adminPrompts[i].a = a.value; syncPromptsHidden(); });
+      const del = el("button", { class: "btn btn-ghost", type: "button", title: "Eliminar", style: "flex:0 0 auto", onclick: () => { adminPrompts.splice(i,1); renderAdminPrompts(); syncPromptsHidden(); saveUserFields(false); } }, "×");
+      promptsWrap.appendChild(el("div", { style: "display:flex;gap:6px;align-items:center" }, [q, a, del]));
+    });
+    if (!adminPrompts.length) promptsWrap.appendChild(el("small", { class: "muted" }, "Sin preguntas."));
+  }
+  renderAdminPrompts();
+  syncPromptsHidden();
+  const addPromptBtn = el("button", { class: "btn btn-ghost", type: "button", style: "margin-top:6px", onclick: () => {
+    if (adminPrompts.length >= 6) { toast("Máximo 6 preguntas"); return; }
+    adminPrompts.push({ q: "", a: "" }); renderAdminPrompts(); syncPromptsHidden();
+  } }, "＋ Añadir pregunta");
+  form.appendChild(el("label", { class: "field" }, [ el("span", {}, "Preguntas de perfil (rompehielos)"), promptsWrap, promptsHidden, addPromptBtn ]));
+
   const PLAN_LABELS = { free: "Gratis", premium: "Premium", gold: "Oro", platinum: "Platino" };
   const STATUS_LABELS = { active: "Activo", suspended: "Suspendido", banned: "Baneado", unverified: "Sin verificar" };
   form.appendChild(el("div", { class: "grid-2" }, [

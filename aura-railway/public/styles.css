@@ -3903,6 +3903,73 @@ body.info-open .theme-toggle { display: none; }
 .pd-details .pd-row span { color: var(--text-muted, #6b7280); }
 .pd-details .pd-row b { color: var(--text, #14161d); font-weight: 600; }
 
+/* V776 · Preguntas de perfil (rompehielos) en el detalle de perfil */
+.pd-prompts {
+  padding: 0 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pd-prompt-card {
+  padding: 12px 14px;
+  background: var(--surface, #fff);
+  border: 1px solid var(--card-border, #e5e7eb);
+  border-radius: 14px;
+}
+.pd-prompt-q {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--brand-1, #ff3b6b);
+  margin-bottom: 4px;
+}
+.pd-prompt-a {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--text, #14161d);
+}
+
+/* V776 · Editor de preguntas de perfil (registro y edición) */
+.prompts-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.prompt-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--card-border, #e5e7eb);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  position: relative;
+}
+.prompt-item .prompt-q,
+.prompt-item .prompt-a {
+  width: 100%;
+}
+.prompt-item .prompt-del {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255,59,107,0.12);
+  color: var(--brand-1, #ff3b6b);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+[data-theme="dark"] .pd-prompt-card,
+[data-theme="dark"] .prompt-item {
+  background: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.10);
+}
+[data-theme="dark"] .pd-prompt-a { color: #eef; }
+
 .pd-actions {
   position: fixed;
   left: 50%;

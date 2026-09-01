@@ -1224,6 +1224,21 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V776: campos OPCIONALES de estilo de vida para enriquecer el perfil y los
+  // filtros (mascotas, fuma, bebe, estudios, ejercicio/hábitos) + "prompts"
+  // (preguntas de perfil / rompehielos) guardados como JSON array de {q,a}.
+  // Todo aditivo y retrocompatible: NULL = sin dato (comportamiento previo).
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN pets VARCHAR(40) NULL",
+    "ALTER TABLE users ADD COLUMN smoke VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN drink VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN education VARCHAR(60) NULL",
+    "ALTER TABLE users ADD COLUMN exercise VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN prompts TEXT NULL",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
+  }
+
   // V742: privacidad por campo. El usuario elige qué datos sensibles NO se
   // muestran en su perfil público (edad, distancia/ubicación, altura, peso,
   // etnia, orientación, profesión). Se guarda como JSON: {"age":true,...}.
@@ -1915,7 +1930,10 @@ app.get("/api/users/:id", wrap(async (req, res) => {
 }));
 
 app.patch("/api/users/:id", wrap(async (req, res) => {
-  const fields = ["name","email","age","gender","orientation","zone","city","country","height","weight","ethnicity","bio","plan","status","verified","role"];
+  // V776 · Nuevos campos opcionales editables desde el panel: pets/smoke/drink/
+  // education/exercise (cadenas cortas). `prompts` (JSON) se trata aparte porque
+  // el panel puede enviarlo como string JSON desde un formulario.
+  const fields = ["name","email","age","gender","orientation","zone","city","country","height","weight","ethnicity","bio","plan","status","verified","role","job","looking_for","relationship","pets","smoke","drink","education","exercise"];
   // V597 · El rol solo puede cambiar a uno de los valores válidos del ENUM.
   // Si llega un valor desconocido lo ignoramos para no corromper la columna.
   const VALID_ROLES = ["user","moderator","admin","superadmin"];
@@ -1932,6 +1950,17 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
     } catch {}
   }
   for (const f of fields) if (f in req.body) { updates.push(`${f}=?`); params.push(req.body[f]); }
+  // V776 · prompts (JSON): admite array o string JSON. Se sanea a [{q,a}].
+  if ("prompts" in req.body) {
+    let arr = req.body.prompts;
+    if (typeof arr === "string") { try { arr = JSON.parse(arr); } catch { arr = []; } }
+    if (!Array.isArray(arr)) arr = [];
+    arr = arr
+      .filter(p => p && typeof p === "object" && String(p.a || "").trim())
+      .slice(0, 6)
+      .map(p => ({ q: String(p.q || "").slice(0, 120), a: String(p.a || "").slice(0, 280) }));
+    updates.push("prompts=?"); params.push(JSON.stringify(arr));
+  }
   if (!updates.length) return res.json({ ok: true });
   params.push(req.params.id);
   await pool.execute(`UPDATE users SET ${updates.join(", ")} WHERE id=?`, params);
@@ -6728,6 +6757,21 @@ function applyPreferenceFilters(where, params, f) {
     where.push(`(u.interests IS NOT NULL AND (${ors.join(" OR ")}))`);
     for (const v of ints) params.push(JSON.stringify(v));
   }
+  // V776 · Filtros OPCIONALES de estilo de vida (multi-selección por campo).
+  //   pets / smoke / drink / education / exercise → IN (...). Vacío = sin filtro.
+  //   El perfil sin dato (NULL) queda excluido SOLO si el usuario filtra por ese
+  //   campo (opt-in), como con intereses. Aditivo y retrocompatible.
+  const lifestyle = [
+    ["pets", "u.pets"], ["smoke", "u.smoke"], ["drink", "u.drink"],
+    ["education", "u.education"], ["exercise", "u.exercise"],
+  ];
+  for (const [key, col] of lifestyle) {
+    let list = Array.isArray(f[key]) ? f[key] : (f[key] != null ? [f[key]] : []);
+    list = list.map(v => String(v == null ? "" : v).trim()).filter(Boolean).slice(0, 20);
+    if (!list.length) continue;
+    where.push(`(${col} IN (${list.map(() => "?").join(",")}))`);
+    for (const v of list) params.push(v);
+  }
 }
 
 app.get("/api/discover", wrap(async (req, res) => {
@@ -6825,6 +6869,7 @@ app.get("/api/discover", wrap(async (req, res) => {
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
@@ -6993,6 +7038,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
@@ -7093,7 +7139,9 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
   const distExpr = "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(gps.lat, u.lat))) * COS(RADIANS(COALESCE(gps.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(gps.lat, u.lat))))), 1)";
   const sql =
     `SELECT u.id, u.name, u.age, u.gender, u.city, u.photo_url, u.verified, u.online,
-            u.privacy_hidden,
+            u.privacy_hidden, u.bio, u.job, u.height, u.weight, u.ethnicity,
+            u.looking_for, u.relationship, u.interests,
+            u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
             (gps.lat IS NOT NULL) AS gps_ok,
             ${distExpr} AS distance
@@ -7116,6 +7164,11 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
     const seed = (Number(r.id) * 2654435761) >>> 0;
     const jLat = (((seed & 0xffff) / 0xffff) - 0.5) * 0.006;        // ±~330 m
     const jLng = ((((seed >>> 16) & 0xffff) / 0xffff) - 0.5) * 0.006;
+    // V776 · prompts (rompehielos) como array de {q,a}.
+    let prompts = [];
+    try { prompts = r.prompts ? (typeof r.prompts === "string" ? JSON.parse(r.prompts) : r.prompts) : []; } catch { prompts = []; }
+    let interests = [];
+    try { interests = r.interests ? (typeof r.interests === "string" ? JSON.parse(r.interests) : r.interests) : []; } catch { interests = []; }
     users.push({
       id: r.id,
       name: r.name || "Alguien",
@@ -7127,6 +7180,16 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       online: !!r.online,
       gps_ok: !!r.gps_ok,
       distance: (r.distance == null ? null : Number(r.distance)),
+      // V776 · Campos opcionales para que el detalle abierto desde el mapa
+      // muestre la misma ficha que en Explorar / Cerca de ti.
+      bio: r.bio || "", job: r.job || "",
+      height: r.height || null, weight: r.weight || null,
+      ethnicity: r.ethnicity || "",
+      looking_for: r.looking_for || "any", relationship: r.relationship || "any",
+      interests: Array.isArray(interests) ? interests : [],
+      pets: r.pets || "", smoke: r.smoke || "", drink: r.drink || "",
+      education: r.education || "", exercise: r.exercise || "",
+      prompts: Array.isArray(prompts) ? prompts : [],
       lat: Number((lat + jLat).toFixed(5)),
       lng: Number((lng + jLng).toFixed(5)),
     });
@@ -7700,11 +7763,15 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, job, height, gender, ethnicity, looking_for, relationship, interests, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   let interests = [];
   try { interests = u.interests ? JSON.parse(u.interests) : []; } catch { interests = []; }
+  // V776 · prompts (preguntas de perfil / rompehielos): JSON array de {q,a}.
+  let prompts = [];
+  try { prompts = u.prompts ? JSON.parse(u.prompts) : []; } catch { prompts = []; }
+  u.prompts = Array.isArray(prompts) ? prompts : [];
   // V742 · privacidad: devolvemos el objeto {campo:true} para pintar los toggles.
   const privacy = parsePrivacy(u.privacy_hidden);
   delete u.privacy_hidden;
@@ -7724,6 +7791,26 @@ app.post("/api/my/profile", wrap(async (req, res) => {
   if ("height" in b) {
     const h = parseInt(b.height, 10);
     sets.push("height=?"); vals.push(Number.isFinite(h) && h > 0 && h < 300 ? h : null);
+  }
+  // V776 · Peso opcional editable desde el perfil.
+  if ("weight" in b) {
+    const w = parseInt(b.weight, 10);
+    sets.push("weight=?"); vals.push(Number.isFinite(w) && w > 0 && w < 500 ? w : null);
+  }
+  // V776 · Campos de estilo de vida (opcionales). Cadenas cortas saneadas.
+  if ("pets" in b) { sets.push("pets=?"); vals.push(b.pets ? String(b.pets).slice(0, 40) : null); }
+  if ("smoke" in b) { sets.push("smoke=?"); vals.push(b.smoke ? String(b.smoke).slice(0, 30) : null); }
+  if ("drink" in b) { sets.push("drink=?"); vals.push(b.drink ? String(b.drink).slice(0, 30) : null); }
+  if ("education" in b) { sets.push("education=?"); vals.push(b.education ? String(b.education).slice(0, 60) : null); }
+  if ("exercise" in b) { sets.push("exercise=?"); vals.push(b.exercise ? String(b.exercise).slice(0, 30) : null); }
+  // V776 · Prompts (preguntas de perfil / rompehielos): array de {q,a} saneado.
+  if ("prompts" in b) {
+    let arr = Array.isArray(b.prompts) ? b.prompts : [];
+    arr = arr
+      .filter(p => p && typeof p === "object" && String(p.a || "").trim())
+      .slice(0, 6)
+      .map(p => ({ q: String(p.q || "").slice(0, 120), a: String(p.a || "").slice(0, 280) }));
+    sets.push("prompts=?"); vals.push(JSON.stringify(arr));
   }
   // V741 · Género editable desde el perfil (etiquetas en español).
   if ("gender" in b) { sets.push("gender=?"); vals.push(b.gender ? String(b.gender).slice(0, 30) : null); }
@@ -11905,7 +11992,8 @@ app.get("/api/demo", wrap(async (req, res) => {
     // / Cerca de ti, sin depender del email exacto.
     const [rows] = await pool.query(
       `SELECT id, name, age, gender, orientation, city, ethnicity, height, weight,
-              bio, job, looking_for, relationship, interests, photo_url, verified, online
+              bio, job, looking_for, relationship, interests, photo_url, verified, online,
+              pets, smoke, drink, education, exercise, prompts
          FROM users
         WHERE email='prueba@aura.app'
            OR LOWER(name) LIKE '%usuario de prueba%'
@@ -11918,6 +12006,10 @@ app.get("/api/demo", wrap(async (req, res) => {
       let interests = [];
       try { interests = r.interests ? (Array.isArray(r.interests) ? r.interests : JSON.parse(r.interests)) : []; }
       catch { interests = []; }
+      // V776 · prompts (rompehielos) del perfil de prueba.
+      let prompts = [];
+      try { prompts = r.prompts ? (Array.isArray(r.prompts) ? r.prompts : JSON.parse(r.prompts)) : []; }
+      catch { prompts = []; }
       profile = {
         id: r.id,
         name: r.name || "Usuario de Prueba",
@@ -11933,6 +12025,10 @@ app.get("/api/demo", wrap(async (req, res) => {
         looking_for: r.looking_for || "",
         relationship: r.relationship || "",
         interests: Array.isArray(interests) ? interests : [],
+        // V776 · Campos opcionales de estilo de vida + rompehielos.
+        pets: r.pets || "", smoke: r.smoke || "", drink: r.drink || "",
+        education: r.education || "", exercise: r.exercise || "",
+        prompts: Array.isArray(prompts) ? prompts : [],
         photo_url: r.photo_url || null,
         verified: !!r.verified,
         online: !!r.online,
