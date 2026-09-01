@@ -1970,19 +1970,33 @@ app.get("/api/users/:id", wrap(async (req, res) => {
     );
     activity = a;
   } catch {}
-  // V786 · Provincia y zona horaria. La tabla users no guarda estos campos, así
-  // que los derivamos de la IP del dispositivo más reciente vía geoip-lite (local,
-  // sin llamadas externas). Solo rellenamos cuando el valor no viene ya en la fila.
+  // V789 · Provincia y zona horaria. La tabla users no guarda estos campos.
+  // Los derivamos PRIMERO de la CIUDAD declarada por el usuario (fuente fiable:
+  // es lo que él eligió); solo si la ciudad es desconocida caemos a la IP como
+  // último recurso. Antes se usaba solo la IP, lo que producía incoherencias en
+  // ciudades limítrofes (p.ej. Guadalajara enrutada por Madrid).
   let province = rows[0].province || "";
   let timezone = rows[0].timezone || "";
   try {
+    // 1) Por ciudad declarada (España).
+    if (!province) {
+      const p = _provinceForCity(rows[0].city);
+      if (p) province = p;
+    }
+    if (!timezone && province) {
+      const tz = _timezoneForProvince(province);
+      if (tz) timezone = tz;
+    }
+    // 2) Último recurso: IP del dispositivo más reciente (geoip-lite local).
     if ((!province || !timezone) && devices.length) {
       const dev = devices.find((d) => d.ip) || null;
       if (dev && dev.ip) {
         const geo = await _geoLookup(dev.ip);
-        if (geo) {
-          if (!province) province = _regionName(geo.country_code || geo.country, geo.region) || "";
+        if (geo && String(geo.country_code || geo.country || "").toUpperCase() === "ES") {
           if (!timezone) timezone = geo.tz || "";
+          // No sobreescribimos la provincia si ya la sacamos de la ciudad; y si
+          // no la teníamos, la IP-region solo se usa como aproximación.
+          if (!province && geo.region) province = _ES_REGION_NAMES[String(geo.region).toUpperCase()] || "";
         }
       }
     }
@@ -9976,23 +9990,100 @@ async function _geoLookup(ip) {
   return info;
 }
 
-// V786 · Traduce el código de subdivisión ISO-3166-2 que devuelve geoip-lite
-// (p.ej. "MD", "CT") a un nombre legible. Solo mapeamos España (app en español);
-// para otros países o códigos desconocidos devolvemos el código tal cual.
-const _ES_REGIONS = {
+// V789 · Provincia derivada de la CIUDAD declarada por el usuario (no de la IP).
+// La IP solo indica por dónde sale la conexión: en ciudades limítrofes (p.ej.
+// Guadalajara enruta por Madrid) daba provincias contradictorias con la ciudad.
+// Mapa ciudad→provincia (España): capitales de provincia + municipios grandes.
+// Clave normalizada (minúsculas, sin acentos). Si la ciudad no está en el mapa,
+// devolvemos "" y el llamador puede caer a la IP como último recurso.
+function _normCity(s) {
+  return String(s || "")
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // quita acentos
+    .toLowerCase()
+    .replace(/[’'`.]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+const _ES_CITY_PROVINCE = (() => {
+  const m = {};
+  const add = (prov, cities) => cities.forEach((c) => { m[_normCity(c)] = prov; });
+  add("A Coruña", ["a coruna", "coruna", "santiago de compostela", "ferrol", "naron", "oleiros"]);
+  add("Álava", ["vitoria", "vitoria-gasteiz", "gasteiz"]);
+  add("Albacete", ["albacete", "hellin"]);
+  add("Alicante", ["alicante", "alacant", "elche", "elx", "torrevieja", "orihuela", "benidorm", "alcoy", "elda", "denia"]);
+  add("Almería", ["almeria", "el ejido", "roquetas de mar", "nijar"]);
+  add("Asturias", ["oviedo", "gijon", "aviles", "siero", "langreo", "mieres"]);
+  add("Ávila", ["avila"]);
+  add("Badajoz", ["badajoz", "merida", "don benito", "almendralejo"]);
+  add("Islas Baleares", ["palma", "palma de mallorca", "calvia", "ibiza", "eivissa", "manacor", "mao", "mahon"]);
+  add("Barcelona", ["barcelona", "l hospitalet de llobregat", "hospitalet de llobregat", "hospitalet", "badalona", "terrassa", "sabadell", "mataro", "santa coloma de gramenet", "cornella de llobregat", "cornella", "sant cugat del valles", "sant boi de llobregat", "manresa", "vilanova i la geltru", "granollers", "castelldefels", "el prat de llobregat"]);
+  add("Vizcaya", ["bilbao", "barakaldo", "getxo", "portugalete", "santurtzi", "basauri"]);
+  add("Burgos", ["burgos", "miranda de ebro", "aranda de duero"]);
+  add("Cáceres", ["caceres", "plasencia"]);
+  add("Cádiz", ["cadiz", "jerez", "jerez de la frontera", "algeciras", "san fernando", "el puerto de santa maria", "chiclana", "chiclana de la frontera", "la linea de la concepcion", "puerto real"]);
+  add("Cantabria", ["santander", "torrelavega", "castro-urdiales", "camargo"]);
+  add("Castellón", ["castellon", "castellon de la plana", "castello de la plana", "vila-real", "villarreal", "borriana", "burriana", "vinaros"]);
+  add("Ciudad Real", ["ciudad real", "puertollano", "tomelloso", "alcazar de san juan", "valdepenas"]);
+  add("Córdoba", ["cordoba", "lucena", "puente genil", "montilla"]);
+  add("Cuenca", ["cuenca"]);
+  add("Girona", ["girona", "gerona", "figueres", "blanes", "lloret de mar", "salt", "olot"]);
+  add("Granada", ["granada", "motril", "armilla", "maracena"]);
+  add("Guadalajara", ["guadalajara", "azuqueca de henares"]);
+  add("Guipúzcoa", ["san sebastian", "donostia", "irun", "errenteria", "renteria", "eibar", "zarautz"]);
+  add("Huelva", ["huelva", "lepe", "almonte"]);
+  add("Huesca", ["huesca", "monzon", "barbastro"]);
+  add("Jaén", ["jaen", "linares", "ubeda", "andujar", "martos"]);
+  add("León", ["leon", "ponferrada", "san andres del rabanedo"]);
+  add("Lleida", ["lleida", "lerida"]);
+  add("Lugo", ["lugo", "monforte de lemos", "viveiro"]);
+  add("Madrid", ["madrid", "mostoles", "alcala de henares", "fuenlabrada", "leganes", "getafe", "alcorcon", "torrejon de ardoz", "parla", "alcobendas", "las rozas de madrid", "las rozas", "san sebastian de los reyes", "pozuelo de alarcon", "rivas-vaciamadrid", "rivas vaciamadrid", "coslada", "majadahonda", "collado villalba", "aranjuez", "arganda del rey", "boadilla del monte", "pinto", "colmenar viejo", "tres cantos", "valdemoro"]);
+  add("Málaga", ["malaga", "marbella", "mijas", "velez-malaga", "velez malaga", "fuengirola", "torremolinos", "benalmadena", "estepona", "antequera", "rincon de la victoria", "alhaurin de la torre", "ronda"]);
+  add("Murcia", ["murcia", "cartagena", "lorca", "molina de segura", "alcantarilla", "aguilas", "yecla", "cieza", "aguilas"]);
+  add("Navarra", ["pamplona", "iruna", "tudela", "barañain", "baranain"]);
+  add("Ourense", ["ourense", "orense", "verin"]);
+  add("Palencia", ["palencia"]);
+  add("Las Palmas", ["las palmas", "las palmas de gran canaria", "telde", "santa lucia de tirajana", "arrecife", "puerto del rosario"]);
+  add("Pontevedra", ["pontevedra", "vigo", "vilagarcia de arousa", "redondela", "marin", "cangas"]);
+  add("La Rioja", ["logrono", "calahorra", "arnedo"]);
+  add("Salamanca", ["salamanca", "bejar", "santa marta de tormes"]);
+  add("Santa Cruz de Tenerife", ["santa cruz de tenerife", "san cristobal de la laguna", "la laguna", "arona", "la orotava", "los realejos", "granadilla de abona", "adeje"]);
+  add("Segovia", ["segovia"]);
+  add("Sevilla", ["sevilla", "dos hermanas", "alcala de guadaira", "utrera", "mairena del aljarafe", "ecija", "la rinconada", "coria del rio"]);
+  add("Soria", ["soria"]);
+  add("Tarragona", ["tarragona", "reus", "tortosa", "el vendrell", "cambrils", "valls", "salou"]);
+  add("Teruel", ["teruel", "alcaniz"]);
+  add("Toledo", ["toledo", "talavera de la reina", "illescas", "torrijos", "seseña"]);
+  add("Valencia", ["valencia", "torrent", "gandia", "paterna", "sagunto", "sagunt", "alzira", "mislata", "burjassot", "ontinyent", "xativa", "cullera"]);
+  add("Valladolid", ["valladolid", "medina del campo", "laguna de duero"]);
+  add("Zamora", ["zamora", "benavente"]);
+  add("Zaragoza", ["zaragoza", "calatayud", "utebo", "ejea de los caballeros"]);
+  add("Ceuta", ["ceuta"]);
+  add("Melilla", ["melilla"]);
+  return m;
+})();
+// Devuelve la provincia española de una ciudad declarada, o "" si no la conocemos.
+function _provinceForCity(city) {
+  const key = _normCity(city);
+  if (!key) return "";
+  return _ES_CITY_PROVINCE[key] || "";
+}
+// Nombres de las CCAA por código ISO-3166-2 que devuelve geoip-lite. Solo se usa
+// como último recurso cuando no conocemos la ciudad declarada (aproximación).
+const _ES_REGION_NAMES = {
   AN: "Andalucía", AR: "Aragón", AS: "Asturias", CB: "Cantabria",
   CE: "Ceuta", CL: "Castilla y León", CM: "Castilla-La Mancha",
   CN: "Canarias", CT: "Cataluña", EX: "Extremadura", GA: "Galicia",
   IB: "Islas Baleares", MC: "Murcia", MD: "Madrid", ML: "Melilla",
   NC: "Navarra", PV: "País Vasco", RI: "La Rioja", VC: "Comunidad Valenciana",
 };
-function _regionName(countryCode, regionCode) {
-  const rc = String(regionCode || "").trim();
-  if (!rc) return "";
-  if (String(countryCode || "").toUpperCase() === "ES" && _ES_REGIONS[rc.toUpperCase()]) {
-    return _ES_REGIONS[rc.toUpperCase()];
-  }
-  return rc;
+// Zona horaria por provincia (España): Canarias es Atlantic/Canary; el resto,
+// Europe/Madrid. Devuelve "" si la provincia no es española conocida.
+const _ES_CANARY_PROVINCES = new Set(["Las Palmas", "Santa Cruz de Tenerife"]);
+function _timezoneForProvince(province) {
+  if (!province) return "";
+  if (_ES_CANARY_PROVINCES.has(province)) return "Atlantic/Canary";
+  if (_ES_CITY_PROVINCE && Object.values(_ES_CITY_PROVINCE).includes(province)) return "Europe/Madrid";
+  return "";
 }
 
 // Motivos de moderación estandarizados. Se exponen al panel de admin.
