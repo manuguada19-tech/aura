@@ -9115,16 +9115,28 @@ body.map-open { overflow: hidden; }
 .map-notice.show { opacity: 1; transform: translate(-50%, -50%) scale(1); }
 
 /* V768 · Asa arrastrable del círculo de búsqueda */
+/* V769 · Asa arrastrable como PASTILLA etiquetada "Mover zona" que flota sobre
+   el centro del círculo, para no tapar el punto azul y ser fácil de identificar.
+   Lleva una flecha inferior que apunta al centro del círculo. */
 .map-circle-handle-wrap { background: none; border: 0; }
 .map-circle-handle {
-  width: 34px; height: 34px; border-radius: 50%;
-  display: grid; place-items: center; color: #fff; cursor: grab;
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: 999px;
+  color: #fff; cursor: grab; white-space: nowrap;
+  font-size: 12px; font-weight: 800; letter-spacing: .2px;
   background: linear-gradient(135deg, #ff5c8a, #ff3b6b);
   border: 2px solid #fff;
-  box-shadow: 0 4px 12px rgba(255,59,107,.45), 0 2px 6px rgba(0,0,0,.3);
+  box-shadow: 0 4px 12px rgba(255,59,107,.5), 0 2px 6px rgba(0,0,0,.35);
   touch-action: none;
 }
-.map-circle-handle:active { cursor: grabbing; transform: scale(1.05); }
+.map-circle-handle::after {
+  content: ""; position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%);
+  width: 0; height: 0;
+  border-left: 7px solid transparent; border-right: 7px solid transparent;
+  border-top: 9px solid #fff;
+}
+.map-circle-handle:active { cursor: grabbing; transform: scale(1.04); }
 
 /* V764 · Buscador por ciudad/provincia flotante sobre el mapa */
 .map-searchbar {

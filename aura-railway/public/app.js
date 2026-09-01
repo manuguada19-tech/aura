@@ -7643,23 +7643,30 @@ async function fetchDemoProfile() {
 }
 
 function makeTestMapUser(center, realProfile) {
-  // V768 · Usa el perfil REAL de la cuenta de prueba si el backend lo devolvió;
-  // si no, cae a valores por defecto. Así el pin del mapa coincide siempre con
-  // el "usuario de prueba" creado en la app. La ubicación SÍ es ficticia (se
-  // calcula sobre el centro del mapa): esa cuenta no comparte GPS real.
+  // V769 · Perfil del pin de prueba, en este orden de preferencia:
+  //   1) Perfil REAL de la cuenta de prueba (prueba@aura.app) si /api/demo lo
+  //      devuelve (cuando existe en la BD).
+  //   2) Si esa cuenta está purgada/no existe, usamos el PERFIL DEL PROPIO
+  //      USUARIO conectado (state.user): así "el usuario de prueba" del mapa es
+  //      el mismo que estás usando para probar (misma foto y nombre).
+  //   3) Valores por defecto genéricos.
+  // La ubicación SÍ es ficticia (se calcula sobre el centro del mapa).
   const p = realProfile || null;
-  const photo = (p && p.photo_url) ? p.photo_url : "https://i.pravatar.cc/600?img=15";
+  const me = (typeof state !== "undefined" && state && state.user) ? state.user : null;
+  const photo = (p && p.photo_url) ? p.photo_url
+    : (me && me.photo) ? me.photo
+    : "https://i.pravatar.cc/600?img=15";
   const interests = (p && Array.isArray(p.interests) && p.interests.length) ? p.interests : ["Pruebas", "Mapas", "Demo"];
   return {
     id: "test_demo",
-    name: (p && p.name) ? p.name : "Usuario de Prueba",
-    age: (p && p.age != null) ? p.age : 28,
-    gender: (p && p.gender) ? p.gender : "Otro",
+    name: (p && p.name) ? p.name : (me && me.name) ? me.name : "Usuario de Prueba",
+    age: (p && p.age != null) ? p.age : (me && me.age != null) ? me.age : 28,
+    gender: (p && p.gender) ? p.gender : (me && me.gender) ? me.gender : "Otro",
     city: "Ubicación ficticia (prueba)",
     photo,
     photos: [photo],
-    bio: (p && p.bio) ? p.bio : "Cuenta de demostración. Mi ubicación en el mapa es simulada y no corresponde a una posición real.",
-    job: (p && p.job) ? p.job : "Demostración",
+    bio: (p && p.bio) ? p.bio : "Perfil de prueba. Mi ubicación en el mapa es simulada y no corresponde a una posición real.",
+    job: (p && p.job) ? p.job : (me && me.job) ? me.job : "Demostración",
     interests,
     looking_for: (p && p.looking_for) ? p.looking_for : "any",
     relationship: (p && p.relationship) ? p.relationship : "any",
@@ -7821,10 +7828,12 @@ async function openNearbyMap() {
   const demoProfile = await fetchDemoProfile();
   const testUser = makeTestMapUser(start, demoProfile);
 
+  // V769 · Zoom inicial más cercano (15) para que el punto azul de "mi
+  // ubicación" se vea bien centrado; antes con 13 quedaba demasiado lejano.
   const map = L.map(mapEl, {
     zoomControl: false,
     attributionControl: false, // sin "publicidad"/atribución sobre el mapa
-  }).setView([start.lat, start.lng], 13);
+  }).setView([start.lat, start.lng], 15);
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
   // V762 · Teselas SIN clave: usamos Esri (ArcGIS) Canvas Dark/Light Gray.
@@ -7944,9 +7953,14 @@ async function openNearbyMap() {
   // El círculo en sí sigue el asa mientras se arrastra.
   let circleHandle = null;
   function circleHandleIcon() {
+    // V769 · El asa ya NO va en el centro (tapaba el punto azul). Es una
+    // "pastilla" etiquetada "Mover zona" que FLOTA por encima del centro del
+    // círculo (iconAnchor desplazado 44 px hacia abajo respecto a la pastilla),
+    // de modo que el punto azul del centro queda siempre visible y el asa se
+    // identifica fácilmente.
     return L.divIcon({ className: "map-circle-handle-wrap",
-      html: '<div class="map-circle-handle"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg></div>',
-      iconSize: [34, 34], iconAnchor: [17, 17] });
+      html: '<div class="map-circle-handle"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg><span>Mover zona</span></div>',
+      iconSize: [104, 36], iconAnchor: [52, 80] });
   }
   function drawCircle(center, radiusKm) {
     if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
@@ -7984,13 +7998,14 @@ async function openNearbyMap() {
 
   // V766 · Punto azul de "mi ubicación" (estilo Google Maps) para saber dónde
   // está el usuario respecto al resto de personas. Se coloca en myLocation
-  // (GPS con consentimiento o aproximación por IP que devuelve el backend) y se
-  // queda fijo, por debajo de los pines de personas.
+  // (GPS con consentimiento o aproximación por IP que devuelve el backend).
+  // V769 · SIEMPRE visible por encima del resto (zIndexOffset alto) para que no
+  // lo tapen ni los pines ni el círculo/asa. Antes iba por debajo (-1000).
   const meIcon = L.divIcon({ className: "map-me-wrap",
     html: '<div class="map-me"><span class="map-me-pulse"></span><span class="map-me-dot"></span></div>',
     iconSize: [24, 24], iconAnchor: [12, 12] });
   const meMarker = L.marker([myLocation.lat, myLocation.lng], {
-    icon: meIcon, interactive: false, keyboard: false, zIndexOffset: -1000,
+    icon: meIcon, interactive: false, keyboard: false, zIndexOffset: 2000,
   }).addTo(map);
   meMarker.bindTooltip("Tú estás aquí", { direction: "top", offset: [0, -10], className: "map-me-tip" });
 
