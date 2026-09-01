@@ -7643,35 +7643,30 @@ async function fetchDemoProfile() {
 }
 
 function makeTestMapUser(center, realProfile) {
-  // V769 · Perfil del pin de prueba, en este orden de preferencia:
-  //   1) Perfil REAL de la cuenta de prueba (prueba@aura.app) si /api/demo lo
-  //      devuelve (cuando existe en la BD).
-  //   2) Si esa cuenta está purgada/no existe, usamos el PERFIL DEL PROPIO
-  //      USUARIO conectado (state.user): así "el usuario de prueba" del mapa es
-  //      el mismo que estás usando para probar (misma foto y nombre).
-  //   3) Valores por defecto genéricos.
-  // La ubicación SÍ es ficticia (se calcula sobre el centro del mapa).
+  // V770 · El pin de prueba es EXCLUSIVAMENTE la cuenta de prueba real que
+  // devuelve /api/demo (la misma "Usuario de prueba, 25" que ves en Explorar /
+  // Cerca de ti). NO usamos el perfil del propio usuario conectado: uno no se
+  // busca a sí mismo (tú ya eres el punto azul). Si no hay cuenta de prueba,
+  // devolvemos null y el mapa no pinta ningún pin ficticio.
   const p = realProfile || null;
-  const me = (typeof state !== "undefined" && state && state.user) ? state.user : null;
-  const photo = (p && p.photo_url) ? p.photo_url
-    : (me && me.photo) ? me.photo
-    : "https://i.pravatar.cc/600?img=15";
-  const interests = (p && Array.isArray(p.interests) && p.interests.length) ? p.interests : ["Pruebas", "Mapas", "Demo"];
+  if (!p || !(p.photo_url || p.name)) return null;
+  const photo = p.photo_url || "https://i.pravatar.cc/600?img=15";
+  const interests = (Array.isArray(p.interests) && p.interests.length) ? p.interests : [];
   return {
-    id: "test_demo",
-    name: (p && p.name) ? p.name : (me && me.name) ? me.name : "Usuario de Prueba",
-    age: (p && p.age != null) ? p.age : (me && me.age != null) ? me.age : 28,
-    gender: (p && p.gender) ? p.gender : (me && me.gender) ? me.gender : "Otro",
-    city: "Ubicación ficticia (prueba)",
+    id: (p.id != null ? p.id : "test_demo"),
+    name: p.name || "Usuario de prueba",
+    age: (p.age != null) ? p.age : null,
+    gender: p.gender || "",
+    city: p.city || "Ubicación ficticia (prueba)",
     photo,
     photos: [photo],
-    bio: (p && p.bio) ? p.bio : "Perfil de prueba. Mi ubicación en el mapa es simulada y no corresponde a una posición real.",
-    job: (p && p.job) ? p.job : (me && me.job) ? me.job : "Demostración",
+    bio: p.bio || "Cuenta de prueba. Su ubicación en el mapa es simulada.",
+    job: p.job || "",
     interests,
-    looking_for: (p && p.looking_for) ? p.looking_for : "any",
-    relationship: (p && p.relationship) ? p.relationship : "any",
-    verified: (p && p.verified != null) ? !!p.verified : true,
-    online: (p && p.online != null) ? !!p.online : true,
+    looking_for: p.looking_for || "any",
+    relationship: p.relationship || "any",
+    verified: (p.verified != null) ? !!p.verified : true,
+    online: (p.online != null) ? !!p.online : false,
     gps_ok: true,
     distance: 1.2,
     lat: center.lat + 0.010,
@@ -7903,10 +7898,11 @@ async function openNearbyMap() {
     try { modal.open(sheet); } catch {}
   }
 
-  // Lista visible en el mapa según filtros (incluye el usuario de prueba fijo).
+  // Lista visible en el mapa según filtros. V770 · Solo añade el usuario de
+  // prueba si existe (testUser puede ser null si no hay cuenta de prueba).
   function visibleList() {
     let list = (lastData && Array.isArray(lastData.users)) ? lastData.users.slice() : [];
-    if (mapFilters.showTest) list.unshift(testUser);
+    if (mapFilters.showTest && testUser) list.unshift(testUser);
     return list.filter(u => mapGenderMatches(mapFilters.gender, u.gender) && (!mapFilters.onlyOnline || u.online));
   }
 
@@ -7941,7 +7937,9 @@ async function openNearbyMap() {
     const realCount = list.filter(u => !u._test).length;
     legend.textContent = realCount
       ? `${realCount} ${realCount === 1 ? "persona" : "personas"} en esta zona · toca un pin o usa la cuadrícula`
-      : "Nadie real por aquí todavía · se muestra un perfil de prueba ficticio";
+      : (testUser
+          ? "Nadie real por aquí todavía · se muestra la cuenta de prueba"
+          : "Nadie por aquí todavía · arrastra o busca por ciudad");
     list.forEach(u => {
       const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => openUserSheet(u));

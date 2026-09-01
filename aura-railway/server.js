@@ -11874,10 +11874,20 @@ app.get("/api/demo", wrap(async (req, res) => {
   // uno inventado en el cliente. Campos públicos y no sensibles solamente.
   let profile = null;
   try {
+    // V770 · La cuenta de prueba original (prueba@aura.app) pudo ser purgada o
+    // editada (p. ej. "Usuario de prueba" con otro email). La buscamos de forma
+    // flexible: primero por email exacto y, si no, por nombre "usuario de
+    // prueba". Así el mapa muestra la MISMA cuenta de prueba que ves en Explorar
+    // / Cerca de ti, sin depender del email exacto.
     const [rows] = await pool.query(
       `SELECT id, name, age, gender, orientation, city, height, weight,
               bio, job, looking_for, relationship, interests, photo_url, verified, online
-         FROM users WHERE email='prueba@aura.app' LIMIT 1`
+         FROM users
+        WHERE email='prueba@aura.app'
+           OR LOWER(name) LIKE '%usuario de prueba%'
+           OR LOWER(name) LIKE '%usuario prueba%'
+        ORDER BY (email='prueba@aura.app') DESC, id ASC
+        LIMIT 1`
     );
     if (rows.length) {
       const r = rows[0];
