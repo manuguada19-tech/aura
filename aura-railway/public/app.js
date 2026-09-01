@@ -14704,34 +14704,75 @@ async function maybePromptForPushAnon() {
       return false;
     }
 
-    let exitArmed = false;
-    let exitTimer = null;
+    let _exiting = false;        // bloquea el listener mientras cerramos la PWA
+    let _exitDialogOpen = false; // evita diálogos de salida duplicados
     const arm = () => { try { history.pushState({ auraBackGuard: true }, ""); } catch {} };
+
+    // Sale de verdad de la PWA. Al abrir el diálogo hay una trampa armada, por
+    // lo que estamos una entrada por encima de la entrada de lanzamiento. La
+    // salida es en dos pasos encadenados (más fiable que history.go(-2), que no
+    // hace nada si el índice queda fuera de rango):
+    //   1) history.back() → consume la trampa y nos deja en la entrada base.
+    //   2) history.back() de nuevo → retrocede ANTES de la base → el navegador
+    //      cierra la PWA (mismo mecanismo que ya funcionaba).
+    // window.close() es una salvaguarda final para WebViews que no cierran solo
+    // con el historial (no-op en la mayoría de PWAs).
+    function doExit() {
+      _exiting = true;
+      let done = false;
+      const finish = () => {
+        if (done) return; done = true;
+        window.removeEventListener("popstate", finish);
+        try { history.back(); } catch {}
+        setTimeout(() => { try { window.close(); } catch {} }, 300);
+      };
+      window.addEventListener("popstate", finish);
+      try { history.back(); } catch { finish(); }
+      // Salvaguarda por si el primer popstate no llega en algún WebView.
+      setTimeout(finish, 250);
+    }
+
+    // Diálogo de confirmación de salida (mismo estilo que el resto de sheets).
+    function askExitConfirm() {
+      if (_exitDialogOpen) return;
+      _exitDialogOpen = true;
+      // Re-armamos la trampa para que, si el usuario pulsa "Atrás" con el
+      // diálogo abierto, se CIERRE el diálogo (lo detecta closeTopOverlay) en
+      // vez de salir de la app.
+      arm();
+      const sheet = el("div", {}, [
+        el("div", { class: "sheet-title" }, "¿Salir de Aura?"),
+        el("div", { class: "sheet-body" }, "Vas a cerrar la aplicación. ¿Seguro que quieres salir?"),
+        el("div", { class: "sheet-actions" }, [
+          el("button", {
+            class: "btn btn-danger btn-block",
+            onclick: () => { _exitDialogOpen = false; try { modal.close(); } catch {} doExit(); },
+          }, "Salir"),
+          el("button", {
+            class: "btn btn-outline btn-block",
+            "data-close": true,
+            onclick: () => { _exitDialogOpen = false; },
+          }, "Seguir en Aura"),
+        ]),
+      ]);
+      try { modal.open(sheet); } catch { _exitDialogOpen = false; }
+    }
 
     // Cebamos la trampa: siempre debe haber una entrada que consumir.
     arm();
 
     window.addEventListener("popstate", () => {
+      if (_exiting) return; // estamos cerrando la PWA: no reinterpretar
       const handled = handleBack();
       if (handled) {
-        exitArmed = false;
-        if (exitTimer) { clearTimeout(exitTimer); exitTimer = null; }
+        // Cualquier navegación hacia atrás cierra también el diálogo de salida
+        // si estaba abierto (closeTopOverlay ya cerró el modal).
+        _exitDialogOpen = false;
         arm(); // re-armar la trampa para el siguiente "atrás"
         return;
       }
-      // Estamos en la portada. Doble pulsación para salir de verdad.
-      if (exitArmed) {
-        exitArmed = false;
-        if (exitTimer) { clearTimeout(exitTimer); exitTimer = null; }
-        // No re-armamos: dejamos que el siguiente back salga. Como ya
-        // consumimos la trampa, un back más cierra la PWA.
-        try { history.back(); } catch {}
-        return;
-      }
-      exitArmed = true;
-      try { toast("Pulsa «Atrás» otra vez para salir de Aura"); } catch {}
-      arm(); // seguimos dentro
-      exitTimer = setTimeout(() => { exitArmed = false; exitTimer = null; }, 2200);
+      // Estamos en la portada (Explorar) → pedir confirmación antes de salir.
+      askExitConfirm();
     });
   } catch {}
 })();
