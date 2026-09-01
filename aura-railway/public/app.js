@@ -232,6 +232,8 @@ const contentFallback = {
   "content.me.field_city": "Ciudad",
   "content.me.field_job": "Profesión",
   "content.me.field_height": "Altura (cm)",
+  "content.me.field_looking_for": "¿Qué buscas en Aura?",
+  "content.me.field_relationship": "¿Qué tipo de relación quieres?",
   "content.me.field_interests": "Intereses (separados por comas)",
   "content.me.default_bio": "Amante del café, las conversaciones largas y los planes espontáneos.",
   "content.me.default_city": "Madrid",
