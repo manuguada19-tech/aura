@@ -7629,12 +7629,15 @@ async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
 // una ubicación claramente marcada como ficticia. Sirve para probar el mapa
 // aunque no haya usuarios reales cerca. Nunca se guarda ni se envía al backend.
 function makeTestMapUser(center) {
-  const photo = "https://i.pravatar.cc/600?img=47";
+  // V765 · El perfil ficticio del mapa es el MISMO "usuario de prueba" (chico)
+  // que se ve en el resto de la app, no otro distinto: mismo chico, misma foto
+  // y mismos datos, para que al pulsar "Ver perfil" no aparezca otra persona.
+  const photo = "https://i.pravatar.cc/600?img=12";
   return {
     id: "test_demo",
     name: "Perfil de prueba",
-    age: 27,
-    gender: "Mujer",
+    age: 28,
+    gender: "Hombre",
     city: "Ubicación ficticia (prueba)",
     photo,
     photos: [photo],
