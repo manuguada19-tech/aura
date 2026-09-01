@@ -398,7 +398,9 @@ function register(app, pool, helpers) {
     const plan = await getUserPlan(pool, me);
     const filters = req.body?.filters || {};
     // Filtros premium (permitidos desde Premium)
-    const basic = ["age_min","age_max","distance_km","gender"];
+    // V748 · Añadidos city/cities (ubicación) y ethnicities (multi-etnia) al
+    // conjunto básico — se aplican en /api/discover y /api/my/nearby.
+    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities"];
     // Filtros avanzados (solo Oro+)
     const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages","height_min","height_max"];
     const finalFilters = {};

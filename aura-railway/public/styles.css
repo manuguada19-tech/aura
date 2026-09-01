@@ -1398,6 +1398,64 @@ img { max-width: 100%; display: block; }
 .switch input:checked + span { background: var(--brand-1); }
 .switch input:checked + span::before { transform: translateX(18px); }
 .switch-row { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; }
+.switch-row.gated { opacity: .6; }
+
+/* -------- V748 · Filtros: cajas numéricas (edad/distancia) sin barras -------- */
+.num-range { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.num-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 96px; }
+.num-field > span { font-size: 11px; color: var(--text-soft); text-transform: uppercase; letter-spacing: .03em; }
+.num-sep { color: var(--text-muted); font-weight: 700; align-self: flex-end; padding-bottom: 10px; }
+.num-input {
+  width: 100%; height: 44px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 16px; font-weight: 700;
+  text-align: center; padding: 0 8px; box-sizing: border-box;
+}
+.num-input:focus { outline: none; border-color: var(--brand-1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-1) 22%, transparent); }
+.num-suffix { font-size: 13px; color: var(--text-soft); font-weight: 700; }
+
+/* -------- V748 · Filtros: buscador de ubicación -------- */
+input.filter-search {
+  width: 100%; height: 44px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--surface); color: var(--text); font-size: 15px; padding: 0 14px;
+  box-sizing: border-box;
+}
+input.filter-search:focus { outline: none; border-color: var(--brand-1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-1) 22%, transparent); }
+.filter-search-list { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; max-height: 200px; overflow-y: auto; }
+.filter-search-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  font-size: 14px; cursor: pointer;
+}
+.filter-search-item:hover, .filter-search-item.active { border-color: var(--brand-1); background: color-mix(in srgb, var(--brand-1) 8%, var(--surface)); }
+.filter-search-item .fs-count { font-size: 12px; color: var(--text-muted); font-weight: 700; }
+.filter-selected-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.filter-selected-row:empty { display: none; }
+
+/* -------- V748 · Visor de foto de perfil ampliada -------- */
+.avatar-viewer {
+  position: fixed; inset: 0; z-index: 5000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.92); padding: 24px; box-sizing: border-box;
+  animation: avatarViewerIn .18s ease;
+}
+@keyframes avatarViewerIn { from { opacity: 0; } to { opacity: 1; } }
+.avatar-viewer-img {
+  max-width: min(92vw, 520px); max-height: 76vh; width: auto; height: auto;
+  border-radius: 16px; object-fit: contain; box-shadow: 0 20px 60px rgba(0,0,0,.5);
+}
+.avatar-viewer-close {
+  position: absolute; top: 18px; right: 18px; width: 44px; height: 44px; border-radius: 50%;
+  border: 0; background: rgba(255,255,255,.14); color: #fff; display: flex; align-items: center;
+  justify-content: center; cursor: pointer;
+}
+.avatar-viewer-close:hover { background: rgba(255,255,255,.26); }
+.avatar-viewer-actions { position: absolute; left: 0; right: 0; bottom: 28px; display: flex; justify-content: center; }
+.avatar-viewer-change {
+  display: inline-flex; align-items: center; height: 46px; padding: 0 22px; border-radius: 999px;
+  border: 0; background: var(--brand-1); color: #fff; font-weight: 700; font-size: 15px; cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+}
+.me-avatar.tappable { cursor: pointer; }
 
 /* -------- Likes screen -------- */
 .likes-tabs {

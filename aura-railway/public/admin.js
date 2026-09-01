@@ -3259,7 +3259,7 @@ async function openUserDrawer(id, onChange) {
     btn("Activar", "ok xs", () => act("activate")),
     btn("Verificar", "ghost xs", () => act("verify")),
     btn("Enviar OTP", "ghost xs", () => act("send_otp")),
-    btn("Cerrar sesiones", "ghost xs", () => act("logout_all")),
+    btn("Cerrar todas las sesiones", "ghost xs", () => act("logout_all")),
     btn("Restablecer contraseña", "ghost xs", () => act("reset_password")),
     btn("Fijar como cuenta social", "ghost xs", async () => {
       if (!confirm(
@@ -3360,16 +3360,35 @@ async function openUserDrawer(id, onChange) {
   } else {
     const dtable = el("table", { class: "data-table" });
     dtable.appendChild(el("thead", {}, el("tr", {}, [
-      el("th", {}, "Dispositivo"), el("th", {}, "IP"), el("th", {}, "Ubicación"), el("th", {}, "Últ. actividad"), el("th", {}, "Activo"),
+      el("th", {}, "Dispositivo"), el("th", {}, "IP"), el("th", {}, "Ubicación"), el("th", {}, "Últ. actividad"), el("th", {}, "Activo"), el("th", {}, "Sesión"),
     ])));
     const dtb = el("tbody");
-    u.devices.forEach(d => dtb.appendChild(el("tr", {}, [
-      el("td", {}, d.device_name || "—"),
-      el("td", {}, d.ip || "—"),
-      el("td", {}, d.location || "—"),
-      el("td", {}, fmt.reldate(d.last_seen)),
-      el("td", {}, d.is_current ? tag("Actual", "ok") : tag("—", "muted")),
-    ])));
+    u.devices.forEach(d => {
+      const closed = !!d.sessions_revoked_at && !d.is_current;
+      // V748 · Botón para cerrar la sesión de ESE dispositivo concreto.
+      const sessCell = el("td", {});
+      if (closed) {
+        sessCell.appendChild(tag("Cerrada", "muted"));
+      } else {
+        sessCell.appendChild(btn("Cerrar sesión", "danger xs", async () => {
+          if (!confirm("¿Cerrar la sesión de este dispositivo (" + (d.device_name || "—") + ")? El usuario tendrá que volver a iniciar sesión en ese equipo.")) return;
+          try {
+            await api.post("/api/users/" + id + "/action", { action: "logout_device", device_id: d.id });
+            toast("Sesión del dispositivo cerrada");
+            await onChange?.();
+            setTimeout(() => { try { openUserDrawer(id, onChange); } catch (_) {} }, 60);
+          } catch (e) { toast("Error al cerrar la sesión"); }
+        }));
+      }
+      dtb.appendChild(el("tr", {}, [
+        el("td", {}, d.device_name || "—"),
+        el("td", {}, d.ip || "—"),
+        el("td", {}, d.location || "—"),
+        el("td", {}, fmt.reldate(d.last_seen)),
+        el("td", {}, d.is_current ? tag("Actual", "ok") : tag("—", "muted")),
+        sessCell,
+      ]));
+    });
     dtable.appendChild(dtb);
     form.appendChild(el("div", { class: "table-scroll" }, [ dtable ]));
   }

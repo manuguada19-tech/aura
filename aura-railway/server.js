@@ -262,32 +262,119 @@ async function ensureAuthSecret() {
   return AUTH_SESSION_SECRET;
 }
 
-function signUserToken(uid, ttlMs = USER_TOKEN_TTL_MS) {
+/* ============================================================
+   V748 · Revocación de sesión por dispositivo (cierre remoto)
+   ------------------------------------------------------------
+   Los tokens siguen siendo HMAC sin estado, PERO ahora pueden
+   llevar un identificador de dispositivo (`did`) y un instante de
+   emisión (`iat`). Con eso podemos "matar" un token concreto sin
+   tocar el secreto global:
+     · `_revokeDeviceAt`  did  -> ms  (cerrar sesión en ese equipo)
+     · `_revokeAllAt`     uid  -> ms  (cerrar TODAS las sesiones)
+   Un token es inválido si su `iat` <= el instante de revocación
+   aplicable. Los mapas viven en memoria (consulta O(1) por
+   petición, sin BD) y se persisten en columnas nuevas para
+   sobrevivir a reinicios:
+     · devices.sessions_revoked_at
+     · users.sessions_revoked_at
+   RETROCOMPATIBLE: los tokens antiguos de 3 partes (sin did/iat)
+   se tratan como iat=0; sólo un "cerrar todas" (a nivel de usuario)
+   los invalida — un cierre por dispositivo no puede apuntarlos.
+   ============================================================ */
+const _revokeDeviceAt = new Map(); // deviceId -> ms de revocación
+const _revokeAllAt = new Map();    // userId   -> ms de revocación (todas)
+
+async function loadRevocations() {
+  try {
+    const [dr] = await pool.query("SELECT id, sessions_revoked_at FROM devices WHERE sessions_revoked_at IS NOT NULL");
+    _revokeDeviceAt.clear();
+    for (const r of dr) { const t = new Date(r.sessions_revoked_at).getTime(); if (Number.isFinite(t)) _revokeDeviceAt.set(Number(r.id), t); }
+  } catch {}
+  try {
+    const [ur] = await pool.query("SELECT id, sessions_revoked_at FROM users WHERE sessions_revoked_at IS NOT NULL");
+    _revokeAllAt.clear();
+    for (const r of ur) { const t = new Date(r.sessions_revoked_at).getTime(); if (Number.isFinite(t)) _revokeAllAt.set(Number(r.id), t); }
+  } catch {}
+}
+
+// Cierra la sesión de UN dispositivo concreto (marca la revocación).
+async function revokeDeviceSession(uid, deviceId) {
+  const now = Date.now();
+  try { await pool.execute("UPDATE devices SET sessions_revoked_at=NOW(), is_current=0 WHERE id=? AND user_id=?", [deviceId, uid]); } catch {}
+  _revokeDeviceAt.set(Number(deviceId), now);
+}
+// Cierra TODAS las sesiones del usuario (todos los dispositivos).
+async function revokeAllSessions(uid) {
+  const now = Date.now();
+  try { await pool.execute("UPDATE users SET sessions_revoked_at=NOW() WHERE id=?", [uid]); } catch {}
+  try { await pool.execute("UPDATE devices SET is_current=0 WHERE user_id=?", [uid]); } catch {}
+  _revokeAllAt.set(Number(uid), now);
+}
+
+function signUserToken(uid, ttlMs = USER_TOKEN_TTL_MS, did = null) {
   if (!AUTH_SESSION_SECRET) return null; // aún no inicializado
-  const exp = Date.now() + ttlMs;
+  const iat = Date.now();
+  const exp = iat + ttlMs;
+  const d = (did != null && Number.isFinite(Number(did)) && Number(did) > 0) ? Math.floor(Number(did)) : 0;
+  if (d > 0) {
+    // Token v2: incluye instante de emisión y dispositivo → revocable.
+    const body = `${uid}.${exp}.${iat}.${d}`;
+    const mac = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
+    return Buffer.from(`${body}.${mac}`).toString("base64url");
+  }
+  // Token legacy (3 partes): sin did/iat. Se mantiene por compatibilidad.
   const body = `${uid}.${exp}`;
   const mac = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
   return Buffer.from(`${body}.${mac}`).toString("base64url");
 }
 
-// Devuelve el uid si el token es válido y no ha expirado; si no, null.
-// Usa comparación en tiempo constante para el HMAC.
-function verifyUserToken(token) {
+// Descompone y valida un token (firma + no expirado). Devuelve
+// { uid, iat, did } o null. NO comprueba revocación (eso va aparte).
+function tokenParse(token) {
   if (!token || !AUTH_SESSION_SECRET) return null;
   let decoded;
   try { decoded = Buffer.from(String(token), "base64url").toString("utf8"); } catch { return null; }
   const parts = decoded.split(".");
-  if (parts.length !== 3) return null;
-  const [uidStr, expStr, mac] = parts;
-  const body = `${uidStr}.${expStr}`;
+  let uidStr, expStr, iatStr = null, didStr = null, mac, body;
+  if (parts.length === 3) { [uidStr, expStr, mac] = parts; body = `${uidStr}.${expStr}`; }
+  else if (parts.length === 5) { [uidStr, expStr, iatStr, didStr, mac] = parts; body = `${uidStr}.${expStr}.${iatStr}.${didStr}`; }
+  else return null;
   const expected = crypto.createHmac("sha256", AUTH_SESSION_SECRET).update(body).digest("hex");
   const a = Buffer.from(mac); const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
   const uid = parseInt(uidStr, 10);
   const exp = parseInt(expStr, 10);
   if (!Number.isFinite(uid) || uid <= 0) return null;
-  if (!Number.isFinite(exp) || exp < Date.now()) return null;
-  return uid;
+  if (!Number.isFinite(exp) || exp < Date.now()) return null; // expirado
+  const iat = iatStr != null ? parseInt(iatStr, 10) : 0;
+  const did = didStr != null ? parseInt(didStr, 10) : 0;
+  return { uid, iat: Number.isFinite(iat) ? iat : 0, did: Number.isFinite(did) ? did : 0 };
+}
+
+// ¿Ese token (firma válida y no expirado) ha sido revocado?
+function tokenInfoRevoked(info) {
+  if (!info) return false;
+  const ra = _revokeAllAt.get(Number(info.uid));
+  if (ra != null && info.iat <= ra) return true;
+  if (info.did) { const rd = _revokeDeviceAt.get(Number(info.did)); if (rd != null && info.iat <= rd) return true; }
+  return false;
+}
+
+// Devuelve el uid si el token es válido, no ha expirado y NO está
+// revocado; si no, null. Comparación HMAC en tiempo constante.
+function verifyUserToken(token) {
+  const info = tokenParse(token);
+  if (!info) return null;
+  if (tokenInfoRevoked(info)) return null;
+  return info.uid;
+}
+
+// true SOLO si el token tiene firma válida y no expirada pero está
+// revocado. Sirve para NO caer al fallback X-User-Id en ese caso.
+function isTokenRevoked(token) {
+  const info = tokenParse(token);
+  if (!info) return false;
+  return tokenInfoRevoked(info);
 }
 
 function readUserToken(req) {
@@ -1242,6 +1329,9 @@ async function migrate() {
     "ALTER TABLE devices ADD COLUMN ch_browser VARCHAR(64) NULL",
     "ALTER TABLE devices ADD COLUMN ch_browser_version VARCHAR(48) NULL",
     "ALTER TABLE devices ADD COLUMN ch_last_seen TIMESTAMP NULL",
+    // V748 · Cierre remoto de sesión por dispositivo / por usuario.
+    "ALTER TABLE devices ADD COLUMN sessions_revoked_at TIMESTAMP NULL",
+    "ALTER TABLE users ADD COLUMN sessions_revoked_at TIMESTAMP NULL",
   ]) { try { await pool.execute(stmt); } catch {} }
 
   // Función 5 · Pagos con Stripe. Columnas para enlazar filas locales con los
@@ -1962,7 +2052,17 @@ app.post("/api/users/:id/action", wrap(async (req, res) => {
     },
     verify: () => pool.execute("UPDATE users SET verified=1 WHERE id=?", [id]),
     reset_password: () => Promise.resolve(),
-    logout_all: () => pool.execute("DELETE FROM devices WHERE user_id=?", [id]),
+    // V748 · Cierra TODAS las sesiones del usuario (revocación real por token,
+    // no solo borrar la fila). El usuario tendrá que volver a iniciar sesión.
+    logout_all: () => revokeAllSessions(id),
+    // V748 · Cierra la sesión de UN dispositivo concreto (device_id en el body).
+    logout_device: async () => {
+      const did = parseInt(req.body?.device_id, 10);
+      if (!did) throw new Error("device_id_required");
+      const [[row]] = await pool.query("SELECT id FROM devices WHERE id=? AND user_id=? LIMIT 1", [did, id]);
+      if (!row) throw new Error("device_not_found");
+      await revokeDeviceSession(id, did);
+    },
     warning: () => Promise.resolve(),
     send_otp: async () => {
       // Enviar código OTP al usuario para que se verifique él mismo.
@@ -2039,7 +2139,7 @@ app.post("/api/users/:id/action", wrap(async (req, res) => {
   } catch {}
   // Empuje SSE para que el banner del usuario aparezca/desaparezca al
   // instante cuando cambia el estado (suspend/ban/activate).
-  if (["suspend", "ban", "activate", "logout_all"].includes(action)) {
+  if (["suspend", "ban", "activate", "logout_all", "logout_device"].includes(action)) {
     try { ssePushRestrictions(id); } catch {}
   }
   res.json({ ok: true });
@@ -5982,7 +6082,8 @@ async function backfillUserGeoFromDevices() {
 }
 
 async function touchUserDevice(req, uid) {
-  if (!uid) return;
+  if (!uid) return null;
+  let _deviceId = null; // V748 · id de la fila del dispositivo actual (para el token)
   try {
     const ip = clientIp(req) || null;
     const ua = String(req.get?.("user-agent") || req.headers?.["user-agent"] || "").slice(0, 200);
@@ -6020,9 +6121,14 @@ async function touchUserDevice(req, uid) {
       ch_browser_version: ch.browser_version || null,
     } : null;
     if (existing.length) {
+      _deviceId = existing[0].id;
+      // V748 · Al re-loguear en este equipo, este dispositivo vuelve a estar
+      // "vivo": limpiamos su marca de revocación (el nuevo token tendrá iat
+      // posterior de todos modos, pero mantenemos el mapa/estado coherente).
+      _revokeDeviceAt.delete(Number(_deviceId));
       if (chFields) {
         await pool.execute(
-          `UPDATE devices SET ip=?, last_seen=NOW(), is_current=1, device_name=?,
+          `UPDATE devices SET ip=?, last_seen=NOW(), is_current=1, device_name=?, sessions_revoked_at=NULL,
              ch_platform=?, ch_platform_version=?, ch_model=?, ch_mobile=?,
              ch_browser=?, ch_browser_version=?, ch_last_seen=NOW()
            WHERE id=?`,
@@ -6033,13 +6139,13 @@ async function touchUserDevice(req, uid) {
         );
       } else {
         await pool.execute(
-          "UPDATE devices SET ip=?, last_seen=NOW(), is_current=1, device_name=? WHERE id=?",
+          "UPDATE devices SET ip=?, last_seen=NOW(), is_current=1, device_name=?, sessions_revoked_at=NULL WHERE id=?",
           [ip, deviceName, existing[0].id]
         );
       }
     } else {
       if (chFields) {
-        await pool.execute(
+        const [ins] = await pool.execute(
           `INSERT INTO devices
              (user_id, device_name, ip, user_agent, last_seen, is_current,
               ch_platform, ch_platform_version, ch_model, ch_mobile,
@@ -6049,17 +6155,20 @@ async function touchUserDevice(req, uid) {
            chFields.ch_platform, chFields.ch_platform_version, chFields.ch_model, chFields.ch_mobile,
            chFields.ch_browser, chFields.ch_browser_version]
         );
+        _deviceId = ins.insertId || null;
       } else {
-        await pool.execute(
+        const [ins] = await pool.execute(
           "INSERT INTO devices (user_id, device_name, ip, user_agent, last_seen, is_current) VALUES (?,?,?,?,NOW(),1)",
           [uid, deviceName, ip, ua || null]
         );
+        _deviceId = ins.insertId || null;
       }
     }
   } catch (e) {
     // devices puede no existir en instalaciones muy antiguas: no propagar.
     console.warn("[touchUserDevice] failed:", e.message);
   }
+  return _deviceId;
 }
 
 /* Live push (SSE) para restricciones. Cuando admin aplica/levanta una
@@ -6586,6 +6695,20 @@ function applyPrivacyToPublicRow(row) {
 }
 
 // Discover (client)
+// V748 · Aplica un filtro por lista de valores (ubicación/etnia) al WHERE.
+//   value puede ser: undefined/null/"" (no filtra), un string (1 valor) o un
+//   array de strings (multi). Los valores vacíos se ignoran; si tras limpiar
+//   no queda ninguno, no se añade condición. Comparación exacta por columna.
+function applyFacetFilter(where, params, column, value) {
+  if (value == null) return;
+  let list = Array.isArray(value) ? value : [value];
+  list = list.map(v => String(v == null ? "" : v).trim()).filter(Boolean);
+  if (!list.length) return;
+  if (list.length === 1) { where.push(`${column} = ?`); params.push(list[0]); return; }
+  where.push(`${column} IN (${list.map(() => "?").join(",")})`);
+  for (const v of list) params.push(v);
+}
+
 app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
   const me = readMyUserId(req); // puede ser null (anónimo)
@@ -6624,6 +6747,12 @@ app.get("/api/discover", wrap(async (req, res) => {
   if (f.gender && f.gender !== "todos" && f.gender !== "all") {
     where.push("u.gender = ?"); params.push(String(f.gender));
   }
+
+  // V748 · Filtro de ubicación (ciudad) — buscador basado en usuarios reales.
+  //        Acepta `cities` (array, multi) o `city` (string). Vacío = sin filtro.
+  applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
+  // V748 · Filtro de etnia — multi-selección (`ethnicities`). Vacío = sin filtro.
+  applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
 
   // ---- Geolocalización (función 4) ----
   // Coordenadas del usuario actual (sólo si dio consentimiento GPS y hay
@@ -6705,6 +6834,41 @@ app.get("/api/discover", wrap(async (req, res) => {
   res.json(rows);
 }));
 
+// V748 · GET /api/discover/facets → valores REALES disponibles para los
+// filtros, calculados sobre los usuarios registrados y activos de la zona:
+//   · cities:      [{ value, count }]  ciudades con al menos 1 usuario
+//   · ethnicities: [{ value, count }]  etnias declaradas (no vacías)
+// Sirve para que el buscador de ubicación y el multi-selector de etnia solo
+// ofrezcan opciones que devuelvan resultados. Si una lista viene vacía, el
+// cliente muestra "no hay usuarios registrados con ese filtro".
+app.get("/api/discover/facets", wrap(async (req, res) => {
+  const zone = req.query.zone === "lgtb" ? "lgtb" : "hetero";
+  let cities = [], ethnicities = [];
+  try {
+    const [cr] = await pool.query(
+      `SELECT u.city AS value, COUNT(*) AS count
+         FROM users u
+        WHERE u.zone=? AND u.status='active' AND (u.role='user' OR u.role IS NULL)
+          AND u.city IS NOT NULL AND TRIM(u.city) <> ''
+        GROUP BY u.city ORDER BY count DESC, u.city ASC LIMIT 200`,
+      [zone]
+    );
+    cities = cr.map(r => ({ value: r.value, count: Number(r.count) || 0 }));
+  } catch {}
+  try {
+    const [er] = await pool.query(
+      `SELECT u.ethnicity AS value, COUNT(*) AS count
+         FROM users u
+        WHERE u.zone=? AND u.status='active' AND (u.role='user' OR u.role IS NULL)
+          AND u.ethnicity IS NOT NULL AND TRIM(u.ethnicity) <> ''
+        GROUP BY u.ethnicity ORDER BY count DESC, u.ethnicity ASC LIMIT 60`,
+      [zone]
+    );
+    ethnicities = er.map(r => ({ value: r.value, count: Number(r.count) || 0 }));
+  } catch {}
+  res.json({ ok: true, cities, ethnicities });
+}));
+
 // GET /api/my/nearby  → "Cerca de ti" con USUARIOS REALES ordenados por distancia.
 // ------------------------------------------------------------------------------
 // Igual que /api/discover (mismos filtros de zona/edad/género/bloqueos y misma
@@ -6740,6 +6904,9 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   if (Number.isFinite(ageMin) && ageMin > 0) { where.push("(u.age IS NULL OR u.age >= ?)"); params.push(ageMin); }
   if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
   if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
+  // V748 · Mismos filtros de ubicación/etnia que /api/discover.
+  applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
+  applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
 
   // Coordenadas del usuario actual. V738 · GPS real (para filtrar por radio) e
   // IP aproximada (solo para mostrar distancia; nunca excluye).
@@ -7228,10 +7395,12 @@ app.get("/api/my/devices", wrap(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT id, device_name, ip, user_agent, location, last_seen, is_current,
             ch_platform, ch_platform_version, ch_model, ch_mobile,
-            ch_browser, ch_browser_version
+            ch_browser, ch_browser_version, sessions_revoked_at
        FROM devices WHERE user_id=? ORDER BY is_current DESC, last_seen DESC LIMIT 20`,
     [me]
   );
+  // V748 · Marca de sesión cerrada (revocada) para pintar el estado en la UI.
+  for (const r of rows) r.session_closed = !!r.sessions_revoked_at && !r.is_current;
   res.json({ ok: true, items: rows });
 }));
 
@@ -7249,6 +7418,42 @@ app.delete("/api/my/devices/:id", wrap(async (req, res) => {
   if (row.is_current) return res.status(400).json({ ok: false, error: "is_current" });
   await pool.execute("DELETE FROM devices WHERE id=? AND user_id=?", [id, me]);
   res.json({ ok: true });
+}));
+
+// V748 · POST /api/my/devices/:id/logout → cierra la sesión de UN dispositivo
+// concreto (el usuario elige cuál). El token vivo en ese equipo deja de valer
+// en su próxima petición (401 → pantalla de inicio de sesión). No borramos la
+// fila para que el usuario siga viendo el equipo en la lista (ya sin sesión).
+app.post("/api/my/devices/:id/logout", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
+  const [[row]] = await pool.query("SELECT id FROM devices WHERE id=? AND user_id=? LIMIT 1", [id, me]);
+  if (!row) return res.status(404).json({ ok: false, error: "not_found" });
+  await revokeDeviceSession(me, id);
+  try { await logStream(me, "device_logout_self", { detail: "device " + id, req }); } catch {}
+  res.json({ ok: true });
+}));
+
+// V748 · POST /api/my/devices/logout-all → cierra la sesión en TODOS los
+// dispositivos del usuario. Opcionalmente puede excluir el dispositivo actual
+// (keep_current=true) para no expulsarse a sí mismo. El propio cliente recibe
+// un token nuevo (más reciente que la revocación) para seguir dentro.
+app.post("/api/my/devices/logout-all", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const keepCurrent = !!req.body?.keep_current;
+  await revokeAllSessions(me);
+  let auth_token = null;
+  if (keepCurrent) {
+    // Reactiva ESTE dispositivo y emítele un token nuevo (iat > revocación),
+    // de modo que "cerrar todas" saca a los demás pero no a mí.
+    const _did = await touchUserDevice(req, me);
+    auth_token = signUserToken(me, undefined, _did);
+  }
+  try { await logStream(me, "device_logout_all_self", { req }); } catch {}
+  res.json({ ok: true, auth_token });
 }));
 
 /* ============================================================
@@ -9644,10 +9849,20 @@ app.post("/api/admin/users/:uid/moderate", wrap(async (req, res) => {
       await logActivity("admin", `Restricciones limpiadas para ${uid} por ${admin}`);
       try { ssePushRestrictions(uid); } catch {}
     } else if (action === "logout_devices") {
-      // Marca todas las sesiones/dispositivos como no-current: forzará re-login
-      await pool.execute("UPDATE devices SET is_current=0 WHERE user_id=?", [uid]);
-      try { await pool.execute("DELETE FROM sessions WHERE user_id=?", [uid]); } catch {}
+      // V748 · Revocación real de TODAS las sesiones (por token), no solo
+      // marcar is_current=0. El usuario tendrá que volver a iniciar sesión.
+      await revokeAllSessions(uid);
       await logActivity("admin", `Sesiones cerradas para ${uid} por ${admin}`);
+      try { ssePushRestrictions(uid); } catch {}
+    } else if (action === "logout_device") {
+      // V748 · Cierra la sesión de UN dispositivo concreto (device_id en body).
+      const did = parseInt(req.body?.device_id, 10);
+      if (!did) return res.status(400).json({ error: "device_id_required" });
+      const [[drow]] = await pool.query("SELECT id FROM devices WHERE id=? AND user_id=? LIMIT 1", [did, uid]);
+      if (!drow) return res.status(404).json({ error: "device_not_found" });
+      await revokeDeviceSession(uid, did);
+      await logActivity("admin", `Sesión del dispositivo ${did} cerrada para ${uid} por ${admin}`);
+      try { ssePushRestrictions(uid); } catch {}
     } else {
       return res.status(400).json({ error: "unknown_action" });
     }
@@ -9989,12 +10204,12 @@ app.post("/api/login", wrap(async (req, res) => {
     return res.json({ ok: false, needs_otp: true, email, demoCode: sent ? null : code });
   }
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
-  await touchUserDevice(req, rows[0].id);
+  const _did = await touchUserDevice(req, rows[0].id);
   await fillApproxGeoFromIp(req, rows[0].id); // V736
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login", { detail: rows[0].email, req }); } catch {}
-  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id) });
+  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id, undefined, _did) });
 }));
 
 // V633 · Verificación del OTP de login (solo relevante si el flag
@@ -10023,12 +10238,12 @@ app.post("/api/login/otp-verify", wrap(async (req, res) => {
   if (await is2FAEnabled(rows[0].id)) return res.json({ ok: false, needs_2fa: true, email: rows[0].email });
   clearLoginFails(email);
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [rows[0].id]);
-  await touchUserDevice(req, rows[0].id);
+  const _did = await touchUserDevice(req, rows[0].id);
   await fillApproxGeoFromIp(req, rows[0].id); // V736
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   await logActivity("user", `Login (OTP) ${rows[0].email}${ipMsg}`);
   try { await logStream(rows[0].id, "login_otp", { detail: rows[0].email, req }); } catch {}
-  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id) });
+  res.json({ ok: true, user: rows[0], auth_token: signUserToken(rows[0].id, undefined, _did) });
 }));
 
 /* ============================================================
@@ -10042,8 +10257,14 @@ app.post("/api/login/otp-verify", wrap(async (req, res) => {
 
 function readMyUserId(req) {
   // 1) Preferimos siempre el token firmado (no falsificable).
-  const fromToken = verifyUserToken(readUserToken(req));
+  const tok = readUserToken(req);
+  const fromToken = verifyUserToken(tok);
   if (fromToken) return fromToken;
+  // 1b) V748 · Si el token es válido pero está REVOCADO (cierre remoto de
+  //     sesión en este dispositivo o "cerrar todas"), NO caemos al fallback
+  //     X-User-Id: eso vaciaría de sentido el cierre de sesión. Devolvemos
+  //     null → 401 → el cliente muestra la pantalla de inicio de sesión.
+  if (tok && isTokenRevoked(tok)) return null;
   // 2) Si el modo estricto está activo, NO se acepta X-User-Id sin token.
   //    Por defecto está desactivado → compatibilidad total con clientes
   //    actuales que todavía sólo mandan X-User-Id.
@@ -10292,10 +10513,10 @@ app.post("/api/2fa/login-verify", wrap(async (req, res) => {
   }
   await pool.execute("UPDATE user_2fa SET last_used_at=NOW() WHERE user_id=?", [u.id]);
   await pool.execute("UPDATE users SET last_login=NOW(), online=1 WHERE id=?", [u.id]);
-  await touchUserDevice(req, u.id);
+  const _did = await touchUserDevice(req, u.id);
   await fillApproxGeoFromIp(req, u.id); // V736
   try { await logStream(u.id, usedRecovery ? "2fa_login_recovery" : "2fa_login_ok", { req }); } catch {}
-  res.json({ ok: true, user: u, used_recovery: usedRecovery, auth_token: signUserToken(u.id) });
+  res.json({ ok: true, user: u, used_recovery: usedRecovery, auth_token: signUserToken(u.id, undefined, _did) });
 }));
 
 /* ============================================================
@@ -10612,7 +10833,8 @@ app.post("/api/access/superadmin", wrap(async (req, res) => {
     );
     user = { id: ins.insertId, email, name, role: "superadmin", plan: "platinum", zone: "hetero", photo_url: null };
   }
-  try { await touchUserDevice(req, user.id); } catch {}
+  let _did = null;
+  try { _did = await touchUserDevice(req, user.id); } catch {}
   const ipMsg = isTrue("security.log_ips", false) ? ` (ip=${clientIp(req)})` : "";
   try { await logActivity("security", `Acceso superadmin con código${ipMsg}`); } catch {}
   // V708 · Devolver el token firmado igual que /api/login. Sin esto, con el
@@ -10620,7 +10842,7 @@ app.post("/api/access/superadmin", wrap(async (req, res) => {
   // se quedaba sin X-Auth-Token y TODAS las llamadas de features_ui.js
   // (Quedadas, Historias, Progreso, Avisos, Recompensas, Cupones, GDPR)
   // devolvían 401. Retrocompatible: quien ya funcionaba sigue igual.
-  res.json({ ok: true, user, auth_token: signUserToken(user.id) });
+  res.json({ ok: true, user, auth_token: signUserToken(user.id, undefined, _did) });
 }));
 
 app.post("/api/my/ensure", wrap(async (req, res) => {
@@ -10652,8 +10874,8 @@ app.post("/api/my/ensure", wrap(async (req, res) => {
     } else {
       await pool.execute("UPDATE users SET online=1, last_login=NOW() WHERE id=?", [existing[0].id]);
     }
-    await touchUserDevice(req, existing[0].id);
-    return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url }, auth_token: signUserToken(existing[0].id) });
+    const _did = await touchUserDevice(req, existing[0].id);
+    return res.json({ ok: true, user: { ...existing[0], name, photo_url: photo || existing[0].photo_url }, auth_token: signUserToken(existing[0].id, undefined, _did) });
   }
   // Auto-registro deshabilitado: los usuarios se crean únicamente desde el
   // panel de administrador (Usuarios → crear). Si el email no existe:
@@ -10690,7 +10912,11 @@ app.post("/api/my/session/token", wrap(async (req, res) => {
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query("SELECT id, status FROM users WHERE id=? LIMIT 1", [me]);
   if (!u || u.status !== "active") return res.status(403).json({ error: "inactive" });
-  res.json({ ok: true, auth_token: signUserToken(me) });
+  // V748 · Emitimos un token ligado a este dispositivo (did) para que el
+  // cierre remoto por dispositivo pueda apuntarlo. touchUserDevice devuelve
+  // el id de la fila del equipo actual.
+  const _did = await touchUserDevice(req, me);
+  res.json({ ok: true, auth_token: signUserToken(me, undefined, _did) });
 }));
 
 // GET /api/my/conversations  → list of conversations for X-User-Id
@@ -11909,6 +12135,7 @@ webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, 
     await ensureSuperadminAccessSettings();
     await loadRuntimeSettings();
     await ensureAuthSecret(); // función 1 · secreto para firmar tokens de sesión
+    await loadRevocations();  // V748 · carga revocaciones de sesión persistidas
     try {
       await phase1.migrate(pool);
       phase1.startExpiryJob(pool);

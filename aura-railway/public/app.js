@@ -1756,6 +1756,7 @@ const state = {
   filters: {
     ageMin: 21, ageMax: 40, distance: 50,
     genders: ["Todos"], onlyVerified: false, onlyOnline: false,
+    cities: [], ethnicities: [], // V748 · ubicación (multi) y etnia (multi)
   },
   favorites: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
@@ -7438,11 +7439,18 @@ function screenDiscover(root) {
         "aria-label": "Aura",
         html: `<img src="assets/aura-logo-round.png?v=13" alt="Aura" />`,
       }),
-      el("button", { class: "chip", onclick: openFilters }, [
-        el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
+      // V748 · El banner de zona YA NO abre los filtros: abre el cambio de zona.
+      // Los filtros tienen su propio botón, separado, para no confundir.
+      el("button", { class: "chip", onclick: openZoneSwitch, title: "Cambiar zona" }, [
+        el("span", { style: "font-size:14px", "aria-hidden": "true" }, state.zone === "lgtb" ? "🌈" : "❤️"),
         state.zone === "lgtb" ? "Zona LGTB+" : "Zona Hetero",
       ]),
       el("span", { class: "brand-topbar-spacer", "aria-hidden": "true" }),
+      // Botón de filtros independiente (icono de embudo).
+      el("button", { class: "chip", onclick: openFilters, title: "Filtros", "aria-label": "Filtros" }, [
+        el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
+        "Filtros",
+      ]),
     ]),
     el("div", { class: "discover-stack-wrap" }, [
       notices,
@@ -8229,7 +8237,24 @@ function toggleFav(u, btn) {
   });
 }
 
-/* ---- Filters modal ---- */
+/* ---- Filters modal ---- V748 · rediseño completo ---- */
+// Mapa etiqueta visible → valor guardado en users.gender. El usuario ve
+// "Chicas/Chicos"; el backend sigue filtrando por "Mujer/Hombre".
+const GENDER_FILTER_OPTS = {
+  hetero: [
+    { label: "Todos", value: "todos" },
+    { label: "Chicas", value: "Mujer" },
+    { label: "Chicos", value: "Hombre" },
+  ],
+  lgtb: [
+    { label: "Todos", value: "todos" },
+    { label: "Chicas", value: "Mujer" },
+    { label: "Chicos", value: "Hombre" },
+    { label: "No binario", value: "No binario" },
+    { label: "Trans", value: "Trans" },
+    { label: "Género fluido", value: "Género fluido" },
+  ],
+};
 function openFilters() {
   const wrap = el("div", { class: "filters-body" });
   wrap.appendChild(el("div", { class: "sheet-titlebar" }, [
@@ -8245,84 +8270,232 @@ function openFilters() {
 
   const zone = state.zone === "lgtb" ? "lgtb" : "hetero";
 
-  const grpGender = el("div", { class: "filter-group" }, [
+  // ---- Género (Chicas/Chicos) con "Todos" mutuamente excluyente ----
+  const genderOpts = GENDER_FILTER_OPTS[zone] || GENDER_FILTER_OPTS.hetero;
+  const genderChips = [];
+  const grpGenderRow = el("div", { class: "chip-row" });
+  genderOpts.forEach(opt => {
+    const active = opt.value === "todos"
+      ? (!state.filters.genders.length || state.filters.genders.includes("Todos"))
+      : state.filters.genders.includes(opt.value);
+    const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
+    c._value = opt.value;
+    c.addEventListener("click", () => {
+      if (opt.value === "todos") {
+        // "Todos" limpia el resto y se marca solo.
+        genderChips.forEach(x => x.classList.toggle("active", x === c));
+      } else {
+        c.classList.toggle("active");
+        // Al pulsar cualquier género concreto se DESMARCA "Todos".
+        const todos = genderChips.find(x => x._value === "todos");
+        if (todos) todos.classList.remove("active");
+        // Si no queda ninguno concreto activo, vuelve a marcarse "Todos".
+        const anyConcrete = genderChips.some(x => x._value !== "todos" && x.classList.contains("active"));
+        if (!anyConcrete && todos) todos.classList.add("active");
+      }
+    });
+    genderChips.push(c);
+    grpGenderRow.appendChild(c);
+  });
+  wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, zone === "lgtb" ? "Género e identidad" : "Género"),
-    el("div", { class: "chip-row" },
-      (zone === "lgtb"
-        ? ["Todos","Mujer","Hombre","No binario","Trans","Género fluido"]
-        : ["Todos","Mujer","Hombre"]).map(g => {
-        const c = el("button", { class: "chip selectable" + (state.filters.genders.includes(g) ? " active" : "") }, g);
-        c.addEventListener("click", () => c.classList.toggle("active"));
-        return c;
-      })),
-  ]);
-  wrap.appendChild(grpGender);
+    grpGenderRow,
+  ]));
 
-  const ageLbl = el("span", { class: "val" }, `${state.filters.ageMin} - ${state.filters.ageMax}`);
-  const ageMin = el("input", { type: "range", min: 18, max: 65, value: state.filters.ageMin });
-  const ageMax = el("input", { type: "range", min: 18, max: 65, value: state.filters.ageMax });
-  const upd = () => ageLbl.textContent = `${ageMin.value} - ${ageMax.value}`;
-  ageMin.addEventListener("input", upd); ageMax.addEventListener("input", upd);
+  // ---- Edad: cajas numéricas mín/máx (teclado numérico), sin barras ----
+  const ageMinInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 18, max: 99, value: state.filters.ageMin, "aria-label": "Edad mínima" });
+  const ageMaxInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 18, max: 99, value: state.filters.ageMax, "aria-label": "Edad máxima" });
   wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, "Edad"),
-    el("div", { class: "slider-row" }, [ ageMin, ageLbl ]),
-    el("div", { class: "slider-row", style: "margin-top:6px" }, [ ageMax, el("span", { class: "val", style: "opacity:0" }, "") ]),
+    el("div", { class: "num-range" }, [
+      el("label", { class: "num-field" }, [ el("span", {}, "Mínima"), ageMinInp ]),
+      el("span", { class: "num-sep" }, "—"),
+      el("label", { class: "num-field" }, [ el("span", {}, "Máxima"), ageMaxInp ]),
+    ]),
   ]));
 
-  const distLbl = el("span", { class: "val" }, `${state.filters.distance} km`);
-  const dist = el("input", { type: "range", min: 1, max: 200, value: state.filters.distance });
-  dist.addEventListener("input", () => distLbl.textContent = `${dist.value} km`);
+  // ---- Distancia: caja numérica + accesos rápidos (sin barra) ----
+  const distInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 1, max: 500, value: state.filters.distance, "aria-label": "Distancia máxima en km" });
+  const distPresets = el("div", { class: "chip-row", style: "margin-top:8px" },
+    [5, 10, 25, 50, 100, 200].map(km => {
+      const chip = el("button", { class: "chip selectable" + (+state.filters.distance === km ? " active" : ""), type: "button" }, km + " km");
+      chip.addEventListener("click", () => {
+        distInp.value = km;
+        $$(".chip.selectable", distPresets).forEach(x => x.classList.toggle("active", x === chip));
+      });
+      return chip;
+    }));
+  distInp.addEventListener("input", () => { $$(".chip.selectable", distPresets).forEach(x => x.classList.remove("active")); });
   wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, "Distancia máxima"),
-    el("div", { class: "slider-row" }, [ dist, distLbl ]),
+    el("div", { class: "num-range" }, [
+      el("label", { class: "num-field" }, [ el("span", {}, "Km"), distInp ]),
+    ]),
+    distPresets,
   ]));
 
-  wrap.appendChild(el("div", { class: "filter-group" }, [
-    el("h5", {}, "Ubicación"),
-    el("div", { class: "chip-row" }, CITIES.slice(0, 6).map(c => {
-      const chip = el("button", { class: "chip selectable" }, c);
-      chip.addEventListener("click", () => chip.classList.toggle("active"));
-      return chip;
-    })),
-  ]));
+  // ---- Ubicación: buscador entre las ciudades de usuarios reales ----
+  const cityGroup = el("div", { class: "filter-group" });
+  cityGroup.appendChild(el("h5", {}, "Ubicación"));
+  const citySelected = new Set((state.filters.cities || []).map(String));
+  const citySelWrap = el("div", { class: "chip-row", style: "margin-bottom:8px" });
+  const citySearch = el("input", { class: "filter-search", type: "search", inputmode: "search", placeholder: "Busca provincia o ciudad…", "aria-label": "Buscar ubicación" });
+  const cityResults = el("div", { class: "filter-search-list" }, el("div", { class: "muted", style: "padding:8px 4px" }, "Cargando ubicaciones…"));
+  cityGroup.appendChild(citySelWrap);
+  cityGroup.appendChild(citySearch);
+  cityGroup.appendChild(cityResults);
+  wrap.appendChild(cityGroup);
 
-  wrap.appendChild(el("div", { class: "filter-group" }, [
-    el("h5", {}, "Etnia"),
-    el("div", { class: "chip-row" }, ["Cualquiera","Latina/o","Caucásica/o","Asiática/o","Afrodescendiente","Árabe"].map(e => {
-      const chip = el("button", { class: "chip selectable" }, e);
-      chip.addEventListener("click", () => chip.classList.toggle("active"));
-      return chip;
-    })),
-  ]));
+  function renderCitySelected() {
+    citySelWrap.innerHTML = "";
+    if (!citySelected.size) { citySelWrap.style.display = "none"; return; }
+    citySelWrap.style.display = "";
+    citySelected.forEach(c => {
+      const chip = el("button", { class: "chip active", type: "button", title: "Quitar" }, [ c + "  ✕" ]);
+      chip.addEventListener("click", () => { citySelected.delete(c); renderCitySelected(); renderCityResults(); });
+      citySelWrap.appendChild(chip);
+    });
+  }
 
-  wrap.appendChild(el("div", { class: "filter-group" }, [
+  // ---- Etnia: multi-selección entre las declaradas por usuarios reales ----
+  const ethGroup = el("div", { class: "filter-group" });
+  ethGroup.appendChild(el("h5", {}, "Etnia"));
+  const ethSelected = new Set((state.filters.ethnicities || []).map(String));
+  const ethRow = el("div", { class: "chip-row" }, el("div", { class: "muted", style: "padding:4px" }, "Cargando…"));
+  ethGroup.appendChild(ethRow);
+  wrap.appendChild(ethGroup);
+
+  // Facetas reales (ciudades/etnias disponibles). Rellenan ubicación y etnia.
+  let facetCities = [], facetEth = [];
+  function renderCityResults() {
+    const q = (citySearch.value || "").trim().toLowerCase();
+    const matches = facetCities.filter(c => !q || c.value.toLowerCase().includes(q)).slice(0, 40);
+    cityResults.innerHTML = "";
+    if (!facetCities.length) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px;line-height:1.4" }, "No hay usuarios registrados con ese filtro."));
+      return;
+    }
+    if (!matches.length) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px" }, "Sin coincidencias."));
+      return;
+    }
+    matches.forEach(c => {
+      const on = citySelected.has(c.value);
+      const item = el("button", { class: "filter-search-item" + (on ? " active" : ""), type: "button" }, [
+        el("span", {}, c.value),
+        el("small", { class: "muted" }, String(c.count)),
+      ]);
+      item.addEventListener("click", () => {
+        if (citySelected.has(c.value)) citySelected.delete(c.value); else citySelected.add(c.value);
+        renderCitySelected(); renderCityResults();
+      });
+      cityResults.appendChild(item);
+    });
+  }
+  function renderEth() {
+    ethRow.innerHTML = "";
+    if (!facetEth.length) {
+      ethRow.appendChild(el("div", { class: "muted", style: "padding:4px;line-height:1.4" }, "No hay usuarios registrados con ese filtro."));
+      return;
+    }
+    facetEth.forEach(e => {
+      const on = ethSelected.has(e.value);
+      const chip = el("button", { class: "chip selectable" + (on ? " active" : ""), type: "button" }, `${e.value} · ${e.count}`);
+      chip.addEventListener("click", () => {
+        if (ethSelected.has(e.value)) ethSelected.delete(e.value); else ethSelected.add(e.value);
+        chip.classList.toggle("active");
+      });
+      ethRow.appendChild(chip);
+    });
+  }
+  citySearch.addEventListener("input", renderCityResults);
+  renderCitySelected();
+  (async () => {
+    try {
+      const z = state.zone || "hetero";
+      const r = await fetch(`/api/discover/facets?zone=${encodeURIComponent(z)}`, { headers: datingApi.headers(), cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      facetCities = (d && d.cities) || [];
+      facetEth = (d && d.ethnicities) || [];
+    } catch {}
+    renderCityResults();
+    renderEth();
+  })();
+
+  // ---- Otros: "Solo verificados" está bloqueado si el usuario NO está
+  // verificado (para chatear solo con verificados debes estar verificado).
+  const verInp = el("input", { type: "checkbox", checked: state.filters.onlyVerified || undefined });
+  const verRow = el("div", { class: "switch-row" }, [
+    el("span", { style: "font-size:14px" }, "Solo verificados"),
+    el("label", { class: "switch" }, [ verInp, el("span") ]),
+  ]);
+  const verHint = el("small", { class: "filter-hint", style: "display:none;color:var(--text-muted);margin-top:2px;line-height:1.4" });
+  let _iAmVerified = null; // null=desconocido, true/false una vez cargado
+  verInp.addEventListener("change", () => {
+    if (verInp.checked && _iAmVerified === false) {
+      verInp.checked = false;
+      state.filters.onlyVerified = false;
+      toast("Verifícate para chatear solo con perfiles verificados");
+      return;
+    }
+    state.filters.onlyVerified = verInp.checked;
+  });
+  const otrosGroup = el("div", { class: "filter-group" }, [
     el("h5", {}, "Otros"),
-    switchRow("Solo verificados", state.filters.onlyVerified, v => state.filters.onlyVerified = v),
+    verRow,
+    verHint,
     switchRow("Solo online", state.filters.onlyOnline, v => state.filters.onlyOnline = v),
-    switchRow("Nuevos usuarios", false, () => {}),
-  ]));
+  ]);
+  wrap.appendChild(otrosGroup);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      _iAmVerified = !!d && d.kyc_status === "verified";
+    } catch { _iAmVerified = false; }
+    if (_iAmVerified === false) {
+      verRow.classList.add("gated");
+      if (verInp.checked) { verInp.checked = false; state.filters.onlyVerified = false; }
+      verHint.textContent = "Verifícate para poder usar este filtro y chatear solo con perfiles verificados.";
+      verHint.style.display = "block";
+      const goBtn = el("button", {
+        class: "filter-verify-link", type: "button",
+        style: "display:block;margin-top:4px;background:none;border:0;color:var(--brand);font-size:12px;font-weight:600;padding:0;cursor:pointer;text-align:left",
+        onclick: () => { try { modal.close(); } catch {} startVerifyFlow(); },
+      }, "Verificar ahora →");
+      otrosGroup.appendChild(goBtn);
+    }
+  })();
 
   wrap.appendChild(el("div", { class: "sheet-actions" }, [
     el("button", { class: "btn btn-brand btn-block", onclick: () => {
-      state.filters.ageMin = +ageMin.value;
-      state.filters.ageMax = +ageMax.value;
-      state.filters.distance = +dist.value;
-      // Lee los géneros seleccionados (chips activos) del grupo de género.
-      const selected = $$(".chip.selectable.active", grpGender).map(c => c.textContent.trim());
-      state.filters.genders = selected.length ? selected : ["Todos"];
-      // El backend aplica un único valor de género (o "todos"). Enviamos el
-      // primero seleccionado que no sea "Todos"; la etiqueta coincide con el
-      // valor almacenado en el registro (p.ej. "Mujer", "Hombre").
-      const genderVal = selected.find(g => g !== "Todos") || "todos";
-      // Persiste los filtros básicos en el servidor (si hay sesión).
+      // Edad: normaliza y ordena mín ≤ máx dentro de 18–99.
+      let aMin = parseInt(ageMinInp.value, 10); let aMax = parseInt(ageMaxInp.value, 10);
+      if (!Number.isFinite(aMin)) aMin = 18; if (!Number.isFinite(aMax)) aMax = 99;
+      aMin = Math.min(99, Math.max(18, aMin)); aMax = Math.min(99, Math.max(18, aMax));
+      if (aMin > aMax) { const t = aMin; aMin = aMax; aMax = t; }
+      state.filters.ageMin = aMin; state.filters.ageMax = aMax;
+      // Distancia: 1–500 km.
+      let dkm = parseInt(distInp.value, 10);
+      if (!Number.isFinite(dkm) || dkm < 1) dkm = 50; dkm = Math.min(500, dkm);
+      state.filters.distance = dkm;
+      // Género: chips activos → valores guardados. "Todos" o vacío = sin filtro.
+      const activeGender = genderChips.filter(x => x.classList.contains("active"));
+      const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
+      state.filters.genders = concrete.length ? concrete : ["Todos"];
+      const genderVal = concrete.length ? concrete[0] : "todos"; // backend: 1 valor
+      // Ubicación / etnia (multi).
+      state.filters.cities = Array.from(citySelected);
+      state.filters.ethnicities = Array.from(ethSelected);
       datingApi.saveFilters({
         age_min: state.filters.ageMin,
         age_max: state.filters.ageMax,
         distance_km: state.filters.distance,
         gender: genderVal,
+        cities: state.filters.cities,
+        ethnicities: state.filters.ethnicities,
       });
       modal.close(); toast("Filtros aplicados");
-      // Invalida las cachés para que la próxima carga use los nuevos filtros.
       const grid = $("#resultsGrid");
       if (grid) { grid._pool = null; populateResults(grid); }
       const stack = $("#swipeStack");
@@ -10187,7 +10360,7 @@ function screenMe(root) {
   const meMail = state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico";
   const meTier = T("content.me.tier_label") || "★ Premium";
   root.appendChild(el("div", { class: "me-hero" }, [
-    el("div", { class: "me-avatar", style: `background-image:url('${meAvatar}')` }),
+    el("div", { class: "me-avatar tappable", style: `background-image:url('${meAvatar}')`, title: "Ver foto", role: "button", tabindex: "0", onclick: () => openAvatarViewer(meAvatar) }),
     el("div", {}, [
       el("h3", { class: "me-name" }, meName),
       el("div", { class: "me-mail" }, meMail),
@@ -10637,8 +10810,9 @@ function screenEditProfile(root) {
   const u = state.user || {};
   // V722 · La miniatura del perfil muestra la foto real (principal) del
   // usuario; si aún no tiene ninguna, cae al avatar demo.
+  const _editAvatarUrl = (state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
   wrap.appendChild(el("div", { class: "edit-avatar" }, [
-    el("div", { class: "me-avatar", style: `background-image:url('${(state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32"}')` }),
+    el("div", { class: "me-avatar tappable", style: `background-image:url('${_editAvatarUrl}')`, title: "Ver foto", role: "button", tabindex: "0", onclick: () => openAvatarViewer(_editAvatarUrl) }),
     el("button", { class: "btn btn-outline btn-sm", type: "button", onclick: () => render(screenMyPhotos) }, T("content.me.change_photo") || "Cambiar foto"),
   ]));
 
@@ -10835,6 +11009,34 @@ function downscaleImageFile(file, maxSide = 1000, quality = 0.82) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+// V748 · Visor de la foto de perfil. Al tocar el avatar se muestra la foto
+// ampliada a pantalla completa, con opción de cambiarla (lleva a "Mis fotos").
+function openAvatarViewer(imageUrl) {
+  const src = imageUrl || (state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/600?img=32";
+  const overlay = el("div", { class: "avatar-viewer" });
+  const close = () => { try { document.body.removeChild(overlay); } catch {} document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  const img = el("img", { class: "avatar-viewer-img", src, alt: "Foto de perfil" });
+  const closeBtn = el("button", {
+    class: "avatar-viewer-close", type: "button", "aria-label": "Cerrar",
+    onclick: close,
+    html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
+  });
+  const changeBtn = el("button", {
+    class: "avatar-viewer-change", type: "button",
+    onclick: () => { close(); render(screenMyPhotos); },
+  }, [
+    el("span", { style: "margin-right:6px" }, "📷"),
+    (T("content.me.change_photo") || "Cambiar foto"),
+  ]);
+  overlay.appendChild(closeBtn);
+  overlay.appendChild(img);
+  overlay.appendChild(el("div", { class: "avatar-viewer-actions" }, [ changeBtn ]));
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey);
 }
 
 // V725 · Modal para recortar la foto principal en formato 3:4. Muestra la
@@ -12199,10 +12401,33 @@ function deviceWhen(ts) {
 
 function openDevicesSheet() {
   const list = el("div", { class: "filters-body" }, el("div", { class: "muted", style: "padding:12px 4px" }, T("content.me.devices_loading") || "Cargando dispositivos…"));
+  // V748 · Botón para cerrar sesión en TODOS los demás dispositivos (mantiene
+  // el actual). Sólo aparece cuando hay al menos otro equipo con sesión.
+  const logoutAllBtn = el("button", { class: "btn btn-outline btn-block", type: "button", style: "display:none;color:var(--danger,#e5484d);border-color:var(--danger,#e5484d)" }, "Cerrar sesión en los demás dispositivos");
+  logoutAllBtn.addEventListener("click", async () => {
+    if (!confirm("Se cerrará la sesión en todos tus dispositivos excepto en este. ¿Continuar?")) return;
+    logoutAllBtn.disabled = true;
+    try {
+      const rr = await fetch("/api/my/devices/logout-all", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+        body: JSON.stringify({ keep_current: true }),
+      });
+      const dd = await rr.json().catch(() => ({}));
+      if (rr.ok && dd.ok) {
+        // El backend nos devuelve un token nuevo para SEGUIR dentro en este equipo.
+        if (dd.auth_token) Auth.set(dd.auth_token);
+        toast("Sesión cerrada en los demás dispositivos");
+        await refresh();
+      } else { toast("No se pudo completar"); }
+    } catch (e) { toast("Error"); }
+    logoutAllBtn.disabled = false;
+  });
   const wrap = el("div", {}, [
     el("div", { class: "sheet-title" }, T("content.me.item_devices") || "Dispositivos activos"),
     list,
     el("div", { class: "sheet-actions" }, [
+      logoutAllBtn,
       el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.close") || "Cerrar"),
     ]),
   ]);
@@ -12224,22 +12449,46 @@ function openDevicesSheet() {
     }
     list.innerHTML = "";
     if (!items.length) {
+      logoutAllBtn.style.display = "none";
       list.appendChild(el("div", { class: "muted", style: "padding:12px 4px;line-height:1.4" }, T("content.me.devices_empty") || "No hay dispositivos registrados todavía."));
       return;
     }
-    list.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:2px 4px 10px;line-height:1.4" }, T("content.me.devices_hint") || "Estos son los dispositivos desde los que has iniciado sesión. Elimina los que no reconozcas."));
+    // Mostrar "cerrar en los demás" sólo si hay algún otro equipo con sesión viva.
+    const otherLive = items.some(d => !(d.is_current === 1 || d.is_current === true) && !d.session_closed);
+    logoutAllBtn.style.display = otherLive ? "" : "none";
+    list.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:2px 4px 10px;line-height:1.4" }, "Estos son los dispositivos desde los que has iniciado sesión. Cierra la sesión en los que no reconozcas; el equipo tendrá que volver a iniciar sesión."));
     items.forEach((d) => {
       const isCurrent = d.is_current === 1 || d.is_current === true;
-      const sub = [deviceWhen(d.last_seen), d.ip].filter(Boolean).join(" · ");
-      const row = el("div", { class: "chat-item" }, [
-        el("div", { class: "avatar", style: "background:var(--surface-2);display:grid;place-items:center;font-size:24px" }, deviceIcon(d)),
-        el("div", { class: "txt" }, [
-          el("strong", {}, deviceLabel(d) + (isCurrent ? " · " + (T("content.me.device_current") || "Este dispositivo") : "")),
-          el("small", {}, sub),
-        ]),
-        isCurrent ? null : el("button", {
-          class: "btn btn-sm btn-outline",
-          type: "button",
+      const closed = !!d.session_closed;
+      const subParts = [deviceWhen(d.last_seen), d.ip].filter(Boolean);
+      if (closed) subParts.push("Sesión cerrada");
+      const sub = subParts.join(" · ");
+      // Acciones por dispositivo:
+      //  · Actual → sin botones (para salir de aquí se usa "Cerrar sesión").
+      //  · Otro con sesión viva → "Cerrar sesión" (revoca el token de ese equipo).
+      //  · Otro ya cerrado → "Olvidar" (borra la fila de la lista).
+      let actionBtnEl = null;
+      if (!isCurrent && !closed) {
+        actionBtnEl = el("button", {
+          class: "btn btn-sm btn-outline", type: "button", style: "color:var(--danger,#e5484d);border-color:var(--danger,#e5484d)",
+          onclick: async (ev) => {
+            ev.stopPropagation();
+            if (!confirm("¿Cerrar la sesión en este dispositivo? Tendrá que volver a iniciar sesión.")) return;
+            ev.currentTarget.disabled = true;
+            try {
+              const rr = await fetch("/api/my/devices/" + d.id + "/logout", {
+                method: "POST",
+                headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+              });
+              const dd = await rr.json().catch(() => ({}));
+              if (rr.ok && dd.ok) { toast("Sesión cerrada en ese dispositivo"); await refresh(); }
+              else { toast("No se pudo cerrar"); ev.currentTarget.disabled = false; }
+            } catch (e) { toast("Error"); ev.currentTarget.disabled = false; }
+          },
+        }, "Cerrar sesión");
+      } else if (!isCurrent && closed) {
+        actionBtnEl = el("button", {
+          class: "btn btn-sm btn-outline", type: "button",
           onclick: async (ev) => {
             ev.stopPropagation();
             ev.currentTarget.disabled = true;
@@ -12253,7 +12502,15 @@ function openDevicesSheet() {
               else { toast("No se pudo eliminar"); ev.currentTarget.disabled = false; }
             } catch (e) { toast("Error"); ev.currentTarget.disabled = false; }
           },
-        }, T("content.me.device_forget") || "Olvidar"),
+        }, T("content.me.device_forget") || "Olvidar");
+      }
+      const row = el("div", { class: "chat-item" }, [
+        el("div", { class: "avatar", style: "background:var(--surface-2);display:grid;place-items:center;font-size:24px" + (closed ? ";opacity:.5" : "") }, deviceIcon(d)),
+        el("div", { class: "txt" }, [
+          el("strong", {}, deviceLabel(d) + (isCurrent ? " · " + (T("content.me.device_current") || "Este dispositivo") : "")),
+          el("small", { style: closed ? "color:var(--danger,#e5484d)" : "" }, sub),
+        ]),
+        actionBtnEl,
       ]);
       list.appendChild(row);
     });
