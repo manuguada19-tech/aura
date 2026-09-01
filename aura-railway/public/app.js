@@ -51,6 +51,7 @@ const modal = {
 
 /* ---------- Content (loaded from /api/content, editable in admin) ---------- */
 const contentFallback = {
+  "common.loading": "Cargando…",
   "content.brand.name": "Aura",
   "content.brand.tag": "Conexiones reales, momentos únicos.",
   "content.welcome.title": "Aura",
@@ -232,6 +233,9 @@ const contentFallback = {
   "content.me.field_city": "Ciudad",
   "content.me.field_job": "Profesión",
   "content.me.field_height": "Altura (cm)",
+  "content.me.field_gender": "Género",
+  "content.me.deleting": "Eliminando cuenta…",
+  "content.me.delete_err": "Sesión cerrada. Si tu cuenta no se eliminó, escríbenos a soporte.",
   "content.me.field_looking_for": "¿Qué buscas en Aura?",
   "content.me.field_relationship": "¿Qué tipo de relación quieres?",
   "content.me.field_interests": "Intereses (separados por comas)",
