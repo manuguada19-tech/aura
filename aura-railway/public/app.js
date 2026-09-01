@@ -9261,17 +9261,28 @@ function openFilters() {
   wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Intereses (uno o más)"), intRow ]));
 
   // Facetas reales (ciudades/etnias disponibles). Rellenan ubicación y etnia.
-  let facetCities = [], facetEth = [];
+  // V773 · `facetsLoaded` distingue "aún cargando" de "cargado y vacío": antes
+  // se mostraba "No hay usuarios registrados con ese filtro" en cuanto la lista
+  // venía vacía (incluido el estado inicial y el caso de que el único perfil
+  // visible fuera el de prueba), lo cual confundía. Ahora:
+  //   · Ubicación con campo vacío → invita a escribir una ciudad.
+  //   · Ubicación con texto sin coincidencias → mensaje concreto.
+  //   · Etnia sin opciones → invita a elegir, sin alarmar.
+  let facetCities = [], facetEth = [], facetsLoaded = false;
   function renderCityResults() {
     const q = (citySearch.value || "").trim().toLowerCase();
-    const matches = facetCities.filter(c => !q || c.value.toLowerCase().includes(q)).slice(0, 40);
     cityResults.innerHTML = "";
-    if (!facetCities.length) {
-      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px;line-height:1.4" }, "No hay usuarios registrados con ese filtro."));
+    if (!facetsLoaded) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px" }, "Cargando ubicaciones…"));
       return;
     }
+    if (!q) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px;line-height:1.4" }, "Escribe una ciudad o provincia para filtrar."));
+      return;
+    }
+    const matches = facetCities.filter(c => c.value.toLowerCase().includes(q)).slice(0, 40);
     if (!matches.length) {
-      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px" }, "Sin coincidencias."));
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px;line-height:1.4" }, "No hay usuarios registrados en esa ubicación."));
       return;
     }
     matches.forEach(c => {
@@ -9289,8 +9300,12 @@ function openFilters() {
   }
   function renderEth() {
     ethRow.innerHTML = "";
+    if (!facetsLoaded) {
+      ethRow.appendChild(el("div", { class: "muted", style: "padding:4px" }, "Cargando…"));
+      return;
+    }
     if (!facetEth.length) {
-      ethRow.appendChild(el("div", { class: "muted", style: "padding:4px;line-height:1.4" }, "No hay usuarios registrados con ese filtro."));
+      ethRow.appendChild(el("div", { class: "muted", style: "padding:4px;line-height:1.4" }, "Aún no hay etnias registradas para filtrar."));
       return;
     }
     facetEth.forEach(e => {
@@ -9313,6 +9328,24 @@ function openFilters() {
       facetCities = (d && d.cities) || [];
       facetEth = (d && d.ethnicities) || [];
     } catch {}
+    // V773 · Red de seguridad cliente: fusiona la ciudad/etnia de la cuenta de
+    // PRUEBA en las facetas si el backend no las trajo (deploy en curso o zona).
+    // Así, mientras el único perfil visible sea el de prueba, su ubicación y su
+    // etnia siguen siendo buscables y coherentes con el mapa/Explorar.
+    try {
+      const demo = await fetchDemoProfile();
+      if (demo) {
+        const dCity = String(demo.city || "").trim();
+        const dEth = String(demo.ethnicity || "").trim();
+        if (dCity && !facetCities.some(c => String(c.value).toLowerCase() === dCity.toLowerCase())) {
+          facetCities.unshift({ value: dCity, count: 1 });
+        }
+        if (dEth && !facetEth.some(e => String(e.value).toLowerCase() === dEth.toLowerCase())) {
+          facetEth.unshift({ value: dEth, count: 1 });
+        }
+      }
+    } catch {}
+    facetsLoaded = true;
     renderCityResults();
     renderEth();
   })();

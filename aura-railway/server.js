@@ -6890,6 +6890,30 @@ app.get("/api/discover/facets", wrap(async (req, res) => {
     );
     ethnicities = er.map(r => ({ value: r.value, count: Number(r.count) || 0 }));
   } catch {}
+  // V773 · Incluir SIEMPRE la ciudad (y etnia) de la cuenta de PRUEBA/demo si
+  // pertenece a esta zona, para que el buscador de filtros la ofrezca y sea
+  // localizable — igual que aparece en el mapa y en Explorar. Sin esto, si el
+  // único perfil visible es el de prueba, el panel salía vacío ("No hay
+  // usuarios registrados con ese filtro") y buscar "Madrid" no encontraba nada.
+  try {
+    const [drows] = await pool.query(
+      `SELECT city, ethnicity, zone FROM users
+        WHERE email='prueba@aura.app'
+           OR LOWER(name) LIKE '%usuario de prueba%'
+           OR LOWER(name) LIKE '%usuario prueba%'
+        ORDER BY (email='prueba@aura.app') DESC, id ASC LIMIT 1`
+    );
+    if (drows.length && drows[0].zone === zone) {
+      const dCity = String(drows[0].city || "").trim();
+      const dEth = String(drows[0].ethnicity || "").trim();
+      if (dCity && !cities.some(c => String(c.value).toLowerCase() === dCity.toLowerCase())) {
+        cities.unshift({ value: dCity, count: 1 });
+      }
+      if (dEth && !ethnicities.some(e => String(e.value).toLowerCase() === dEth.toLowerCase())) {
+        ethnicities.unshift({ value: dEth, count: 1 });
+      }
+    }
+  } catch {}
   res.json({ ok: true, cities, ethnicities });
 }));
 
@@ -11880,7 +11904,7 @@ app.get("/api/demo", wrap(async (req, res) => {
     // prueba". Así el mapa muestra la MISMA cuenta de prueba que ves en Explorar
     // / Cerca de ti, sin depender del email exacto.
     const [rows] = await pool.query(
-      `SELECT id, name, age, gender, orientation, city, height, weight,
+      `SELECT id, name, age, gender, orientation, city, ethnicity, height, weight,
               bio, job, looking_for, relationship, interests, photo_url, verified, online
          FROM users
         WHERE email='prueba@aura.app'
@@ -11901,6 +11925,7 @@ app.get("/api/demo", wrap(async (req, res) => {
         gender: r.gender || "",
         orientation: r.orientation || "",
         city: r.city || "",
+        ethnicity: r.ethnicity || "",
         height: r.height || null,
         weight: r.weight || null,
         bio: r.bio || "",
