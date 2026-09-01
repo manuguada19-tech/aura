@@ -7100,6 +7100,79 @@ app.post("/api/my/like", wrap(async (req, res) => {
   res.json({ ok: true, match: true, type, conversation_id: convId, peer: { id: peer.id, name: peer.name, photo_url: peer.photo_url } });
 }));
 
+// V749 · POST /api/my/like/undo  { target_id? }
+// "Rebobinar" REAL: deshace la última reacción (like/super/pass). Es una función
+// de PAGO (cualquier plan distinto de 'free'). Reglas de seguridad:
+//   · Si la reacción había creado un match recíproco y ya hay MENSAJES en la
+//     conversación, NO se permite rebobinar (409): sería destructivo.
+//   · Si el match no tiene mensajes, se deshace el match y la conversación vacía.
+//   · Se borra la fila de likes → el perfil vuelve a aparecer en Explorar.
+//   · Se limpian avisos in-app NO leídos (like_received / new_match) que
+//     generamos hacia el objetivo por esa reacción (best-effort).
+app.post("/api/my/like/undo", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+
+  // Rebobinar es Premium: los planes de pago lo desbloquean.
+  const [[meRow]] = await pool.query("SELECT plan FROM users WHERE id=? LIMIT 1", [me]);
+  const plan = String((meRow && meRow.plan) || "free").toLowerCase();
+  if (plan === "free") return res.status(402).json({ error: "premium_required", feature: "rewind" });
+
+  // Localiza la reacción a deshacer: por target si se indica, o la más reciente.
+  const target = parseInt(req.body?.target_id, 10);
+  let likeRow = null;
+  if (Number.isFinite(target) && target > 0) {
+    const [[r]] = await pool.query(
+      "SELECT id, to_user, type FROM likes WHERE from_user=? AND to_user=? LIMIT 1", [me, target]
+    );
+    likeRow = r || null;
+  } else {
+    const [[r]] = await pool.query(
+      "SELECT id, to_user, type FROM likes WHERE from_user=? ORDER BY created_at DESC, id DESC LIMIT 1", [me]
+    );
+    likeRow = r || null;
+  }
+  if (!likeRow) return res.status(404).json({ error: "nothing_to_undo" });
+  const to = likeRow.to_user;
+
+  // ¿La reacción había derivado en match recíproco?
+  const a = Math.min(me, to), b = Math.max(me, to);
+  const [[match]] = await pool.query(
+    "SELECT id FROM matches WHERE user_a=? AND user_b=? LIMIT 1", [a, b]
+  );
+  if (match) {
+    const [[conv]] = await pool.query(
+      "SELECT id FROM conversations WHERE (user_a=? AND user_b=?) OR (user_a=? AND user_b=?) LIMIT 1",
+      [a, b, b, a]
+    );
+    if (conv) {
+      const [[mc]] = await pool.query(
+        "SELECT COUNT(*) c FROM messages WHERE conversation_id=?", [conv.id]
+      );
+      if (mc && Number(mc.c) > 0) {
+        return res.status(409).json({ error: "chat_started", message: "No puedes rebobinar: ya habéis intercambiado mensajes." });
+      }
+      // Match sin mensajes → se deshace la conversación vacía.
+      await pool.execute("DELETE FROM conversations WHERE id=?", [conv.id]);
+    }
+    await pool.execute("DELETE FROM matches WHERE id=?", [match.id]);
+  }
+
+  // Borra la reacción → el perfil vuelve a estar disponible en Explorar.
+  await pool.execute("DELETE FROM likes WHERE id=?", [likeRow.id]);
+
+  // Limpia avisos in-app NO leídos que generamos hacia el objetivo por esta
+  // reacción (best-effort; si el objetivo ya los leyó, no se tocan).
+  try {
+    await pool.execute(
+      "DELETE FROM notifications WHERE user_id=? AND read_at IS NULL AND type IN ('like_received','new_match') AND JSON_EXTRACT(data,'$.peer_id')=?",
+      [to, me]
+    );
+  } catch { /* best-effort */ }
+
+  res.json({ ok: true, undone: { target_id: to, type: likeRow.type }, match_reverted: !!match });
+}));
+
 // GET /api/my/likes  → perfiles que me han dado like (y si ya es match)
 app.get("/api/my/likes", wrap(async (req, res) => {
   const me = readMyUserId(req);

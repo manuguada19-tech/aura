@@ -2122,6 +2122,19 @@ const datingApi = {
       return await r.json();
     } catch { return null; }
   },
+  // V749 · Rebobinar real: deshace la última reacción en el servidor.
+  // Devuelve { ok, undone, match_reverted } o { error, status } para que la UI
+  // pueda avisar (premium_required 402, chat_started 409, nothing_to_undo 404).
+  async undoReaction(targetId) {
+    if (!this._authed()) return { error: "unauthorized", status: 401 };
+    try {
+      const body = (targetId != null) ? JSON.stringify({ target_id: targetId }) : "{}";
+      const r = await fetch("/api/my/like/undo", { method: "POST", headers: this.headers(), body });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error", status: r.status, message: data && data.message };
+      return data;
+    } catch { return { error: "network", status: 0 }; }
+  },
   async toggleFavorite(targetId) {
     if (!this._authed()) return null;
     try {
@@ -7457,7 +7470,7 @@ function screenDiscover(root) {
       buildSwipeStack(),
     ]),
     el("div", { class: "action-row" }, [
-      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho"), "Rebobinar"),
+      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => rewindLast(), "Rebobinar"),
       actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
       actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
       actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
@@ -8078,6 +8091,11 @@ function bindSwipe(card, stack) {
   };
 }
 
+// V749 · Última acción de swipe, para poder rebobinarla (deshacer). Guarda el
+// usuario, el tipo (like/super/pass), el stack y si es un usuario REAL (con id
+// numérico) para saber si hay que deshacerlo también en el servidor.
+let _lastSwipe = null;
+
 function fly(card, dir, stack) {
   const off = window.innerWidth;
   const map = { left: [-off, 0, -30], right: [off, 0, 30], up: [0, -off, 0] };
@@ -8088,6 +8106,11 @@ function fly(card, dir, stack) {
   // Registra la reacción en el servidor (like/super/pass) para usuarios reales.
   const type = dir === "up" ? "super" : dir === "right" ? "like" : "pass";
   reactToUser(currentUser, type, dir);
+  // V749 · Recuerda esta acción para "Rebobinar".
+  _lastSwipe = currentUser
+    ? { userId: currentUser.id, user: currentUser, type, stack,
+        real: !!(currentUser._real && typeof currentUser.id === "number" && Number.isFinite(currentUser.id)) }
+    : null;
   setTimeout(() => {
     card.remove();
     stack._index++;
@@ -8129,6 +8152,77 @@ function swipeCurrent(dir) {
   // también lo bloquea (428) como salvaguarda.
   if ((dir === "right" || dir === "up") && blockIfVerifyRequired()) return;
   fly(card, dir, stack);
+}
+
+// V749 · Rebobinar REAL: deshace la última acción (like/super/pass). Es una
+// función Premium; el backend valida el plan y devuelve 402 si es Free (mostramos
+// el paywall) o 409 si ya se habían intercambiado mensajes tras el match.
+let _rewindBusy = false;
+async function rewindLast() {
+  if (_rewindBusy) return;
+  const last = _lastSwipe;
+  if (!last || !last.user) { toast("No hay ninguna acción reciente que rebobinar"); return; }
+
+  // Usuario demo / anónimo: no hay nada que deshacer en el servidor; sólo
+  // reinsertamos la tarjeta visualmente si el stack sigue disponible.
+  if (!last.real) {
+    restoreLastCard(last);
+    _lastSwipe = null;
+    toast("Acción deshecha");
+    return;
+  }
+
+  _rewindBusy = true;
+  try {
+    const res = await datingApi.undoReaction(last.userId);
+    if (res && res.ok) {
+      restoreLastCard(last);
+      _lastSwipe = null;
+      toast("Acción deshecha ↩︎");
+      return;
+    }
+    // Errores conocidos → aviso claro.
+    if (res && res.status === 402) { _rewindBusy = false; openRewindPaywall(); return; }
+    if (res && res.status === 409) { toast(res.message || "No puedes rebobinar: ya habéis chateado"); return; }
+    if (res && res.status === 404) { toast("No hay ninguna acción reciente que rebobinar"); _lastSwipe = null; return; }
+    toast("No se pudo rebobinar. Inténtalo de nuevo.");
+  } finally {
+    _rewindBusy = false;
+  }
+}
+
+// V749 · Reinserta la última tarjeta en el stack (si sigue montado) para que el
+// usuario vuelva a verla tras rebobinar.
+function restoreLastCard(last) {
+  const stack = (last.stack && last.stack.isConnected) ? last.stack : $("#swipeStack");
+  if (!stack || !stack._users) return;
+  // Si el usuario ya no está en el pool en la posición previa, lo reinsertamos.
+  if (stack._index > 0) stack._index -= 1;
+  const at = stack._index;
+  const existing = stack._users[at];
+  if (!existing || existing.id !== last.user.id) {
+    stack._users.splice(at, 0, last.user);
+  }
+  renderStack(stack);
+}
+
+// V749 · Paywall específico de "Rebobinar" (función Premium).
+function openRewindPaywall() {
+  const sheet = el("div", { class: "premium-lock-sheet" });
+  sheet.appendChild(el("div", { class: "plm-hero" }, [
+    el("div", { class: "plm-hero-ic" }, "↩︎"),
+    el("h3", { class: "plm-h" }, "Rebobinar es Premium"),
+    el("p", { class: "plm-p" }, "Con un plan de pago puedes deshacer tu última acción y volver a ver ese perfil."),
+  ]));
+  sheet.appendChild(el("button", {
+    class: "btn btn-brand btn-block",
+    onclick: () => { modal.close(); render(screenSubscriptions); },
+  }, "Ver planes"));
+  sheet.appendChild(el("button", {
+    class: "btn btn-ghost btn-block",
+    onclick: () => modal.close(),
+  }, "Ahora no"));
+  modal.open(sheet);
 }
 
 function triggerMatch(user, conversationId = null) {
