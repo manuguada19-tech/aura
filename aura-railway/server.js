@@ -12258,6 +12258,23 @@ app.get("/admin_features.js", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "admin_features.js"));
 });
 
+// V783 · Código de la app servido con caché LARGA cuando se pide versionado
+// (?v=<build>). index.html carga app.js/features_ui.js/styles.css con la versión
+// del build (solo cambia al desplegar), así que el navegador los cachea y no los
+// re-descarga en cada apertura (app.js pesa ~850 KB). Sin ?v= se sirve no-store
+// (compatibilidad total). DEBE ir ANTES de express.static para ganar la ruta.
+app.get(/^\/(app\.js|features_ui\.js|styles\.css)$/, (req, res, next) => {
+  const file = req.params[0];
+  const type = file.endsWith(".css") ? "text/css; charset=utf-8" : "application/javascript; charset=utf-8";
+  res.setHeader("Content-Type", type);
+  if (req.query && req.query.v) {
+    res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
+  } else {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  }
+  res.sendFile(path.join(__dirname, "public", file), (err) => { if (err) next(); });
+});
+
 app.use(express.static(path.join(__dirname, "public"), {
   setHeaders: (res, filePath) => {
     // V634 · Cache diferenciada:

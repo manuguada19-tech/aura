@@ -16,7 +16,7 @@
      usuario dejó la app instalada, se registre su última zona.
 */
 
-const CACHE_VERSION = "aura-v82";
+const CACHE_VERSION = "aura-v83";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
@@ -76,12 +76,32 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Para JS/CSS de la propia app: NETWORK-FIRST con fallback a cache.
-  // Así los cambios en app.js / styles.css se reflejan inmediatamente sin
-  // tener que esperar a que caduque un cache. Solo caemos al cache si no
-  // hay red (offline).
-  const isAppCode = /\.(?:js|css)(?:\?.*)?$/i.test(url.pathname);
+  // Para JS/CSS de la propia app hay dos casos:
+  const isAppCode = /\.(?:js|css)$/i.test(url.pathname);
   if (isAppCode) {
+    // V783 · Si la URL viene VERSIONADA (?v=<build>), su contenido es inmutable
+    // para esa versión: usamos CACHE-FIRST. Así app.js (~850 KB) se sirve al
+    // instante desde caché en aperturas repetidas, sin re-descargar ni gastar
+    // datos. Al desplegar, el build cambia → URL nueva → se descarga fresca.
+    const hasVersion = /[?&]v=/.test(url.search);
+    if (hasVersion) {
+      event.respondWith((async () => {
+        const cached = await caches.match(req);
+        if (cached) return cached;
+        try {
+          const resp = await fetch(req);
+          if (resp && resp.status === 200 && resp.type === "basic") {
+            try { const c = await caches.open(CACHE_VERSION); await c.put(req, resp.clone()); } catch {}
+          }
+          return resp;
+        } catch {
+          return offlineFallback();
+        }
+      })());
+      return;
+    }
+    // Sin versión: NETWORK-FIRST con fallback a caché (comportamiento previo),
+    // para que los cambios se reflejen sin esperar a que caduque una caché.
     event.respondWith((async () => {
       try {
         const resp = await fetch(req, { cache: "no-store" });

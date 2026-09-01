@@ -32,7 +32,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="styles.css?v=782" />
+  <link rel="stylesheet" href="styles.css?v=783" />
   <!-- Google AdSense: verificación de propiedad + carga de anuncios -->
   <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9759358849227466"
      crossorigin="anonymous"></script>
@@ -172,16 +172,11 @@
       } catch(e){}
     })();
   </script>
-  <script>
-    // Cache-bust styles.css y app.js dinámicamente si el usuario ha visto una versión anterior recientemente
-    (function(){
-      try {
-        var stamp = Date.now();
-        var link = document.querySelector('link[href^="styles.css"]');
-        if (link) link.href = "styles.css?v=" + stamp;
-      } catch(e){}
-    })();
-  </script>
+  <!-- V783 · styles.css se carga con su versión fija (?v=NNN, que se bumpea en
+       cada cambio de CSS), así el navegador la cachea en vez de re-descargarla
+       en cada apertura. El auto-actualizador (más abajo) recarga con caché
+       limpia cuando hay un despliegue nuevo. -->
+
   <script>
     (function(){
       try {
@@ -313,17 +308,31 @@
 
 
   <script>
-    // Carga dinámica de app.js con cache-bust para evitar que Chrome sirva versión antigua
+    // V783 · Carga de app.js / features_ui.js con VERSIÓN ESTABLE (el build del
+    // servidor, que solo cambia en cada despliegue) en lugar de Date.now(). Así
+    // el navegador cachea estos archivos (app.js pesa ~850 KB) y las aperturas
+    // repetidas son casi instantáneas y sin gasto de datos. Cuando hay un
+    // despliegue nuevo, el build cambia → URL nueva → descarga fresca; y el
+    // auto-actualizador (más abajo) purga cachés y recarga por si acaso.
+    // Fallback: si /api/version tarda o falla, cargamos con Date.now() como antes
+    // (nunca dejamos la app sin cargar).
     (function(){
-      var s = document.createElement("script");
-      s.src = "app.js?v=" + Date.now();
-      s.async = false;
-      document.body.appendChild(s);
-      // V546 · Features Fase 2/3/4 UI
-      var s2 = document.createElement("script");
-      s2.src = "features_ui.js?v=" + Date.now();
-      s2.async = false;
-      document.body.appendChild(s2);
+      var loaded = false;
+      function load(ver){
+        if (loaded) return; loaded = true;
+        var s = document.createElement("script");
+        s.src = "app.js?v=" + ver; s.async = false; document.body.appendChild(s);
+        var s2 = document.createElement("script");
+        s2.src = "features_ui.js?v=" + ver; s2.async = false; document.body.appendChild(s2);
+      }
+      // Salvaguarda: si en 1200 ms no hemos resuelto el build, cargamos igual.
+      var t = setTimeout(function(){ load(Date.now()); }, 1200);
+      try {
+        fetch("/api/version", { cache: "no-store" })
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(d){ clearTimeout(t); load((d && d.build) ? String(d.build) : Date.now()); })
+          .catch(function(){ clearTimeout(t); load(Date.now()); });
+      } catch(e){ clearTimeout(t); load(Date.now()); }
     })();
   </script>
 
