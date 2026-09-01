@@ -15859,11 +15859,9 @@ async function maybePromptForPushAnon() {
     // que "Atrás" salía directo de la app SIN preguntar. Ahora cubrimos también
     // fullscreen y minimal-ui.
     const mm = (q) => { try { return window.matchMedia && window.matchMedia(q).matches; } catch { return false; } };
-    const standalone = mm("(display-mode: standalone)") || mm("(display-mode: fullscreen)")
+    // V779 · Detección como función reutilizable (no una sola vez al arrancar).
+    const isStandalone = () => mm("(display-mode: standalone)") || mm("(display-mode: fullscreen)")
       || mm("(display-mode: minimal-ui)") || window.navigator.standalone === true;
-    if (!standalone) return;
-    if (window.__auraBackGuard) return;
-    window.__auraBackGuard = true;
 
     // Cierra la capa/overlay superpuesta más reciente. Devuelve true si cerró algo.
     function closeTopOverlay() {
@@ -16009,23 +16007,53 @@ async function maybePromptForPushAnon() {
       try { modal.open(sheet); } catch {}
     }
 
-    // Cebamos la trampa: siempre debe haber una entrada que consumir.
-    arm();
+    // V779 · Instalación real del guard. Antes se ejecutaba UNA sola vez al
+    // arrancar y, si el navegador aún no había fijado display-mode: standalone
+    // (muy común en Android justo al abrir la PWA), la función salía con
+    // `return` y el guard NO se instalaba nunca → "Atrás" salía sin preguntar.
+    // Ahora la instalación es idempotente y se dispara en cuanto se detecta el
+    // modo instalado, con reintentos y escuchando el cambio de display-mode.
+    function install() {
+      if (window.__auraBackGuard) return;
+      window.__auraBackGuard = true;
+      // Cebamos la trampa: siempre debe haber una entrada que consumir.
+      arm();
+      window.addEventListener("popstate", () => {
+        if (_exiting) return; // estamos cerrando la PWA: no reinterpretar
+        const handled = handleBack();
+        if (handled) {
+          // Cualquier navegación hacia atrás cierra también el diálogo de salida
+          // si estaba abierto (closeTopOverlay ya cerró el modal).
+          arm(); // re-armar la trampa para el siguiente "atrás"
+          return;
+        }
+        // Estamos en la portada (Explorar) → pedir confirmación antes de salir.
+        // askExitConfirm() re-arma la trampa SIEMPRE que se muestre el diálogo,
+        // así el historial nunca se agota y la app no puede salir sin preguntar.
+        askExitConfirm();
+      });
+    }
 
-    window.addEventListener("popstate", () => {
-      if (_exiting) return; // estamos cerrando la PWA: no reinterpretar
-      const handled = handleBack();
-      if (handled) {
-        // Cualquier navegación hacia atrás cierra también el diálogo de salida
-        // si estaba abierto (closeTopOverlay ya cerró el modal).
-        arm(); // re-armar la trampa para el siguiente "atrás"
-        return;
-      }
-      // Estamos en la portada (Explorar) → pedir confirmación antes de salir.
-      // askExitConfirm() re-arma la trampa SIEMPRE que se muestre el diálogo,
-      // así el historial nunca se agota y la app no puede salir sin preguntar.
-      askExitConfirm();
-    });
+    // Intenta instalar ya; si aún no estamos en modo instalado, reintenta unas
+    // cuantas veces (Android tarda en fijar el display-mode) y también en
+    // cuanto cambie el display-mode o se instale la app.
+    const tryInstall = () => { if (isStandalone()) { install(); return true; } return false; };
+    if (!tryInstall()) {
+      let tries = 0;
+      const timer = setInterval(() => {
+        tries += 1;
+        if (tryInstall() || tries >= 20) clearInterval(timer); // ~10 s máx
+      }, 500);
+      try {
+        ["(display-mode: standalone)", "(display-mode: fullscreen)", "(display-mode: minimal-ui)"].forEach((q) => {
+          const mql = window.matchMedia && window.matchMedia(q);
+          if (mql && mql.addEventListener) mql.addEventListener("change", () => tryInstall());
+          else if (mql && mql.addListener) mql.addListener(() => tryInstall());
+        });
+      } catch {}
+      try { window.addEventListener("appinstalled", () => tryInstall()); } catch {}
+      try { window.addEventListener("visibilitychange", () => { if (!document.hidden) tryInstall(); }); } catch {}
+    }
   } catch {}
 })();
 
