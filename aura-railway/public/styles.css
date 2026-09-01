@@ -1239,8 +1239,17 @@ img { max-width: 100%; display: block; }
 .swipe-card-stack-hint b { color: var(--text); }
 
 .action-row {
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: flex-start; justify-content: center;
   gap: 14px; padding: 16px 0 4px;
+}
+/* V746 · Cada acción es una columna: botón redondo + leyenda debajo. */
+.action-item {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  flex: 0 0 auto;
+}
+.action-cap {
+  font-size: 10.5px; font-weight: 600; color: var(--text-muted);
+  line-height: 1; text-align: center; white-space: nowrap;
 }
 .action-btn {
   width: 60px; height: 60px; border-radius: 50%;
@@ -8263,6 +8272,21 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
    capa de avisos superpuesta. Ocupa el mismo alto que la pila de tarjetas. */
 .discover-stack-wrap { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .discover-stack-wrap > .discover-stack { flex: 1; }
+/* V746 · En MÓVIL la tarjeta debe rellenar TODO el alto disponible entre la
+   topbar y la fila de acciones. Antes quedaba limitada por aspect-ratio +
+   max-height:62vh, dejando un hueco vacío grande abajo. Al quitar esos topes
+   en móvil, la pila crece con flex:1 y el hueco desaparece; la fila de
+   acciones queda anclada justo encima del tabbar. */
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
+  .discover { padding-bottom: 8px; }
+  .discover-stack {
+    aspect-ratio: auto;
+    max-height: none;
+    height: auto;
+    min-height: 0;
+  }
+  .action-row { flex: 0 0 auto; padding: 12px 0 4px; }
+}
 /* V612 · Capa de avisos SUPERPUESTA sobre el borde superior de la tarjeta.
    position:absolute → 0 de alto en el layout: la tarjeta conserva su tamaño y
    NUNCA se recorta, aunque haya dos avisos (notificaciones + ubicación). Se

@@ -7449,11 +7449,11 @@ function screenDiscover(root) {
       buildSwipeStack(),
     ]),
     el("div", { class: "action-row" }, [
-      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho")),
-      actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left")),
-      actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up")),
-      actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right")),
-      actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => toast("¡Boost activado por 30 min!")),
+      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => toast("Deshecho"), "Rebobinar"),
+      actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
+      actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
+      actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
+      actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => toast("¡Boost activado por 30 min!"), "Boost"),
     ]),
   ]));
   // Ad slot (visible only to Free plan)
@@ -8140,10 +8140,16 @@ function triggerMatch(user, conversationId = null) {
   viewport.appendChild(match);
 }
 
-function actionBtn(cls, path, onclick) {
-  const btn = el("button", { class: "action-btn " + cls, onclick });
+function actionBtn(cls, path, onclick, label) {
+  // V746 · Cada acción se envuelve en una columna con su LEYENDA debajo para
+  // que se entienda qué hace cada botón (antes eran solo iconos sin texto).
+  const btn = el("button", { class: "action-btn " + cls, onclick, type: "button", "aria-label": label || undefined, title: label || undefined });
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg>`;
-  return btn;
+  if (!label) return btn;
+  return el("div", { class: "action-item" }, [
+    btn,
+    el("span", { class: "action-cap" }, label),
+  ]);
 }
 
 /* ---- Search ---- */
