@@ -7650,7 +7650,12 @@ function makeTestMapUser(center, realProfile) {
   // devolvemos null y el mapa no pinta ningún pin ficticio.
   const p = realProfile || null;
   if (!p || !(p.photo_url || p.name)) return null;
-  const photo = p.photo_url || "https://i.pravatar.cc/600?img=15";
+  // La foto del pin debe ser la MISMA que muestra la tarjeta de esa cuenta en
+  // Explorar / Cerca de ti. mapApiUser resuelve las fotos nulas con
+  // pravatar.cc/600?u=${id}, así que replicamos ese fallback (no img=15) para
+  // que la cara del pin coincida exactamente con la del perfil de prueba.
+  const photo = p.photo_url
+    || (p.id != null ? `https://i.pravatar.cc/600?u=${p.id}` : "https://i.pravatar.cc/600?img=15");
   const interests = (Array.isArray(p.interests) && p.interests.length) ? p.interests : [];
   return {
     id: (p.id != null ? p.id : "test_demo"),
