@@ -2005,6 +2005,20 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
       .map(p => ({ q: String(p.q || "").slice(0, 120), a: String(p.a || "").slice(0, 280) }));
     updates.push("prompts=?"); params.push(JSON.stringify(arr));
   }
+  // V785 · last_login editable desde el panel (soporte). Acepta un datetime-local
+  // ("YYYY-MM-DDTHH:mm") o vacío (=> NULL). Normalizamos la "T" a espacio para
+  // MySQL. Valor inválido => se ignora para no corromper la columna.
+  if ("last_login" in req.body) {
+    const raw = req.body.last_login;
+    if (!raw) { updates.push("last_login=?"); params.push(null); }
+    else {
+      const d = new Date(String(raw));
+      if (!isNaN(d.getTime())) {
+        const s = String(raw).replace("T", " ").slice(0, 19) + (String(raw).length <= 16 ? ":00" : "");
+        updates.push("last_login=?"); params.push(s.slice(0, 19));
+      }
+    }
+  }
   if (!updates.length) return res.json({ ok: true });
   params.push(req.params.id);
   await pool.execute(`UPDATE users SET ${updates.join(", ")} WHERE id=?`, params);

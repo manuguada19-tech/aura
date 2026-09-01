@@ -1195,6 +1195,81 @@ $("#themeBtn").addEventListener("click", () => {
   window.__setSidebarMode = applyMode;
 })();
 
+/* V785 · Buscador global de la cabecera.
+   El input de la topbar (.search-wrap input) existía en el HTML pero no estaba
+   conectado a nada. Ahora busca usuarios en vivo (/api/users?q=) por nombre o
+   email y, al elegir un resultado, abre su ficha (openUserDrawer).
+   Atajo ⌘K / Ctrl+K para enfocar. Es aditivo: no toca ninguna vista existente. */
+(function wireGlobalSearch() {
+  const input = document.querySelector(".search-wrap input");
+  const wrap = document.querySelector(".search-wrap");
+  if (!input || !wrap) return;
+
+  wrap.style.position = wrap.style.position || "relative";
+  const panel = document.createElement("div");
+  panel.className = "gsearch-panel";
+  panel.style.cssText =
+    "position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:60;display:none;" +
+    "max-height:60vh;overflow:auto;background:var(--panel,#14141c);" +
+    "border:1px solid var(--border,#2a2a3a);border-radius:12px;" +
+    "box-shadow:0 24px 60px rgba(0,0,0,.45);padding:6px";
+  wrap.appendChild(panel);
+
+  function close() { panel.style.display = "none"; panel.innerHTML = ""; }
+  function open() { panel.style.display = "block"; }
+
+  let timer = null, lastQ = "";
+  async function run(q) {
+    lastQ = q;
+    try {
+      const data = await api.get("/api/users?q=" + encodeURIComponent(q) + "&limit=8");
+      if (q !== lastQ) return; // respuesta obsoleta
+      const rows = (data && data.rows) || [];
+      panel.innerHTML = "";
+      if (!rows.length) {
+        panel.appendChild(el("div", { style: "padding:10px 12px;opacity:.6;font-size:13px" }, "Sin resultados"));
+        open(); return;
+      }
+      rows.forEach((u) => {
+        const row = el("div", {
+          style: "display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer",
+        }, [
+          avatar(u.photo_url, 30),
+          el("div", { style: "flex:1;min-width:0" }, [
+            el("div", { style: "font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, u.name || "—"),
+            el("small", { style: "opacity:.65;font-size:11px" }, `#${u.id}${u.email ? " · " + u.email : ""}`),
+          ]),
+        ]);
+        row.addEventListener("mouseenter", () => { row.style.background = "rgba(124,58,237,.15)"; });
+        row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
+        row.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          close(); input.value = "";
+          try { openUserDrawer(u.id); } catch {}
+        });
+        panel.appendChild(row);
+      });
+      open();
+    } catch { close(); }
+  }
+
+  input.addEventListener("input", () => {
+    const q = input.value.trim();
+    clearTimeout(timer);
+    if (q.length < 2) { close(); return; }
+    timer = setTimeout(() => run(q), 250);
+  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape") { close(); input.blur(); } });
+  input.addEventListener("blur", () => setTimeout(close, 150));
+
+  // Atajo ⌘K / Ctrl+K para enfocar el buscador desde cualquier vista.
+  document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      e.preventDefault(); input.focus(); input.select();
+    }
+  });
+})();
+
 /* Drawer */
 const drawer = {
   open(node) {
@@ -3015,6 +3090,17 @@ async function openUserDrawer(id, onChange) {
     el("div", {}, [ el("strong", {}, u.name), statusLine ]),
   ]));
 
+  // V785 · Última conexión editable (soporte). Formato datetime-local. Se
+  // autoguarda como el resto de campos vía PATCH (name="last_login").
+  const _llLocal = (() => {
+    if (!u.last_login) return "";
+    try { const d = new Date(u.last_login); if (isNaN(d.getTime())) return "";
+      const p = (n) => String(n).padStart(2, "0");
+      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+    } catch { return ""; }
+  })();
+  form.appendChild(field("Última conexión", el("input", { class: "input", name: "last_login", type: "datetime-local", value: _llLocal })));
+
   // Badge de duplicado: si duplicate_score > 0 mostramos alerta con enlace al panel.
   if (u.duplicate_score && u.duplicate_score > 0) {
     const cls = u.duplicate_score >= 70 ? "bad" : u.duplicate_score >= 40 ? "warn" : "muted";
@@ -3503,6 +3589,42 @@ async function openUserDrawer(id, onChange) {
     atable.appendChild(atb);
     form.appendChild(el("div", { class: "table-scroll" }, [ atable ]));
   }
+
+  // --- Eventos (stream) --- V785
+  // Muestra los eventos detallados del activity_stream de este usuario (login,
+  // telemetría del guard "Atrás", tracking de cliente…). Se carga bajo demanda
+  // del endpoint que ya existía; así el admin ve el detalle sin salir de la ficha.
+  const streamHeader = el("div", { class: "section-header" }, [ el("h3", {}, "Eventos (stream)") ]);
+  form.appendChild(streamHeader);
+  const streamBox = el("div", { class: "empty small" }, "Cargando eventos…");
+  form.appendChild(streamBox);
+  (async () => {
+    try {
+      const r = await api.get("/api/admin/activity/user/" + id + "?limit=100");
+      const items = (r && r.items) || [];
+      streamBox.innerHTML = "";
+      if (!items.length) { streamBox.className = "empty small"; streamBox.textContent = "Sin eventos en el stream."; return; }
+      streamBox.className = "";
+      const t = el("table", { class: "data-table" });
+      t.appendChild(el("thead", {}, el("tr", {}, [
+        el("th", {}, "Cuándo"), el("th", {}, "Evento"), el("th", {}, "Detalle"), el("th", {}, "IP"),
+      ])));
+      const tb = el("tbody");
+      items.forEach(ev => {
+        tb.appendChild(el("tr", {}, [
+          el("td", {}, fmt.reldate(ev.created_at)),
+          el("td", {}, el("span", { class: "tag" }, ev.event || "—")),
+          el("td", {}, ev.detail || "—"),
+          el("td", {}, ev.ip || "—"),
+        ]));
+      });
+      t.appendChild(tb);
+      streamBox.appendChild(el("div", { class: "table-scroll" }, [ t ]));
+    } catch {
+      streamBox.className = "empty small";
+      streamBox.textContent = "No se pudieron cargar los eventos.";
+    }
+  })();
 
   // --- Restricciones ---
   const restrictionsHeader = el("div", { class: "section-header" }, [
