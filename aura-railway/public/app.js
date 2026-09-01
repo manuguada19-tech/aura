@@ -12106,7 +12106,7 @@ function screenEditProfile(root) {
     lookingWrap.appendChild(c);
   });
   form.appendChild(el("div", { class: "field" }, [
-    el("label", {}, T("content.me.field_looking_for") || "¿Qué estás buscando?"),
+    el("label", {}, T("content.me.field_looking_for") || "¿Qué buscas en Aura?"),
     lookingWrap,
   ]));
 
@@ -12123,7 +12123,7 @@ function screenEditProfile(root) {
     relWrap.appendChild(c);
   });
   form.appendChild(el("div", { class: "field" }, [
-    el("label", {}, T("content.me.field_relationship") || "Tipo de relación"),
+    el("label", {}, T("content.me.field_relationship") || "¿Qué tipo de relación quieres?"),
     relWrap,
   ]));
 
