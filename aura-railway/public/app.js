@@ -16592,10 +16592,23 @@ async function maybePromptForPushAnon() {
       });
     }
 
+    // V816 · El guard "Atrás" salía SIN preguntar cuando la app se abría en una
+    // pestaña normal de Chrome/móvil (no instalada): display-mode = "browser",
+    // por lo que isStandalone() era false y el guard NO se instalaba nunca. En
+    // móvil web el diálogo de confirmación de salida también es deseable, así
+    // que instalamos el guard cuando es un dispositivo táctil/móvil, además de
+    // cuando está instalada. En ESCRITORIO seguimos SIN instalarlo (no atrapamos
+    // el botón atrás del navegador) → 100% retrocompatible con el uso de sobremesa.
+    const isMobileWeb = () => {
+      try {
+        if (window.matchMedia && window.matchMedia("(max-width: 900px) and ((pointer: coarse) or (hover: none))").matches) return true;
+        return /Android|iPhone|iPad|iPod|Mobile|Silk|KFAPWI/i.test((window.navigator && navigator.userAgent) || "");
+      } catch { return false; }
+    };
     // Intenta instalar ya; si aún no estamos en modo instalado, reintenta unas
     // cuantas veces (Android tarda en fijar el display-mode) y también en
     // cuanto cambie el display-mode o se instale la app.
-    const tryInstall = () => { if (isStandalone()) { install(); return true; } return false; };
+    const tryInstall = () => { if (isStandalone() || isMobileWeb()) { install(); return true; } return false; };
     if (!tryInstall()) {
       let tries = 0;
       const timer = setInterval(() => {
