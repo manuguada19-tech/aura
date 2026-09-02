@@ -2220,25 +2220,59 @@ textarea.input { resize: vertical; min-height: 60px; }
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow: hidden;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .12s ease;
 }
+.email-item:hover { border-color: rgba(255,255,255,0.16); }
 .email-item.open { border-color: var(--brand-1); box-shadow: 0 6px 22px rgba(255,59,107,0.10); }
+/* V806 · Cabecera de plantilla en dos líneas, con más aire y jerarquía. */
 .email-item-head {
-  display: flex; align-items: center; gap: 10px;
-  width: 100%; padding: 11px 14px;
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 12px 14px; min-height: 58px;
   border: 0; background: transparent; color: var(--text);
   font-size: 13.5px; text-align: left; cursor: pointer;
 }
 .email-item-head:hover { background: rgba(255,255,255,0.03); }
-.email-item-emoji { font-size: 16px; }
-.email-item-name { flex: 1; font-weight: 600; }
+.email-item-emoji {
+  font-size: 18px; flex: 0 0 auto;
+  width: 38px; height: 38px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--panel); border: 1px solid var(--border);
+}
+.email-item-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.email-item-name { font-weight: 700; font-size: 14px; line-height: 1.25; }
+.email-item-sub {
+  font-size: 12px; color: var(--text-muted); line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.email-item-meta {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+}
+.email-item-status {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .02em;
+  padding: 3px 9px; border-radius: 999px; text-transform: uppercase;
+}
+.email-item-status.on {
+  background: rgba(46,204,113,0.12); color: #2ecc71;
+  border: 1px solid rgba(46,204,113,0.28);
+}
+.email-item-status.off {
+  background: rgba(148,163,184,0.12); color: var(--text-muted);
+  border: 1px solid var(--border);
+}
 .email-item-id {
   font-family: "SF Mono", Monaco, monospace;
   font-size: 11px; color: var(--text-muted);
   background: var(--panel); padding: 2px 8px;
   border-radius: 6px; border: 1px solid var(--border);
+  max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.email-item-enabled { font-size: 11px; color: var(--warning, #f1c40f); }
-.email-item-caret { color: var(--text-muted); font-size: 12px; width: 14px; text-align: center; }
+.email-item-caret { color: var(--text-muted); font-size: 12px; width: 14px; text-align: center; flex: 0 0 auto; }
+/* En pantallas estrechas el id ocupa demasiado: lo ocultamos y dejamos el
+   estado + el asunto, que es lo informativo. */
+@media (max-width: 560px) {
+  .email-item-id { display: none; }
+  .email-cat-list { padding-left: 8px; padding-right: 8px; }
+}
 
 .email-editor {
   padding: 12px 14px 16px;

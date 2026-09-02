@@ -10715,6 +10715,10 @@ async function viewEmails(root) {
   function renderItem(t) {
     const isOpen = state.openId === t.id;
     const item = el("div", { class: "email-item" + (isOpen ? " open" : "") });
+    // V806 · Tarjeta de plantilla en DOS líneas: nombre (fuerte) + asunto real
+    // (previsualización) y, a la derecha, un estado (Activa/Off) y el id técnico
+    // como etiqueta discreta. Antes era una barra plana solo con nombre+id, que
+    // se veía apilada y vacía.
     const head = el("button", {
       class: "email-item-head",
       onclick: () => {
@@ -10723,9 +10727,14 @@ async function viewEmails(root) {
       },
     }, [
       el("span", { class: "email-item-emoji" }, t.emoji || "✉️"),
-      el("span", { class: "email-item-name" }, t.name),
-      el("span", { class: "email-item-id" }, t.id),
-      el("span", { class: "email-item-enabled" }, t.enabled ? "" : "· desactivado"),
+      el("span", { class: "email-item-main" }, [
+        el("span", { class: "email-item-name" }, t.name),
+        el("span", { class: "email-item-sub", title: t.subject || "" }, t.subject || "Sin asunto definido"),
+      ]),
+      el("span", { class: "email-item-meta" }, [
+        el("span", { class: "email-item-status " + (t.enabled ? "on" : "off") }, t.enabled ? "Activa" : "Off"),
+        el("span", { class: "email-item-id" }, t.id),
+      ]),
       el("span", { class: "email-item-caret" }, isOpen ? "▾" : "▸"),
     ]);
     item.appendChild(head);
