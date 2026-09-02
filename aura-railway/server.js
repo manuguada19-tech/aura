@@ -5841,6 +5841,60 @@ app.get("/api/reads/summary", requireAdmin, wrap(async (req, res) => {
   });
 }));
 
+// GET /api/admin/reads/purchases → historial completo de movimientos de lecturas
+// (ventas de packs + concesiones/retiradas manuales de admin), con el nombre y
+// email del usuario. Sirve al "Panel avanzado" para revisar y limpiar datos de
+// prueba. Filtro opcional ?type=all|sales|grants|revokes|manual y búsqueda ?q=.
+app.get("/api/admin/reads/purchases", wrap(async (req, res) => {
+  const type = String(req.query.type || "all");
+  const q = String(req.query.q || "").trim();
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const conds = [];
+  const args = [];
+  if (type === "sales") conds.push("p.amount > 0");
+  else if (type === "grants") conds.push("p.pack = 'grant'");
+  else if (type === "revokes") conds.push("p.pack = 'revoke'");
+  else if (type === "manual") conds.push("p.pack IN ('grant','revoke')");
+  if (q) {
+    conds.push("(u.name LIKE ? OR u.email LIKE ?)");
+    args.push("%" + q + "%", "%" + q + "%");
+  }
+  const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+  const [rows] = await pool.query(
+    `SELECT p.id, p.user_id, p.pack, p.credits, p.amount, p.currency, p.created_at,
+            u.name AS user_name, u.email AS user_email
+       FROM chat_read_purchases p
+       LEFT JOIN users u ON u.id = p.user_id
+       ${where}
+       ORDER BY p.id DESC
+       LIMIT ${limit}`,
+    args
+  );
+  const [[agg]] = await pool.query("SELECT COUNT(*) AS total FROM chat_read_purchases");
+  res.json({ rows, total: Number(agg.total) || 0, currency: getSetting("chat.reads.currency", "EUR") });
+}));
+
+// POST /api/admin/reads/purchases/delete  { ids: [...] } → borra permanentemente
+// las filas indicadas del historial de lecturas. Pensado para limpiar registros
+// de prueba. Solo elimina el LOG: no reajusta el saldo de créditos del usuario
+// (los créditos viven en chat_read_credits), para no alterar saldos por error.
+app.post("/api/admin/reads/purchases/delete", wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n))
+    : [];
+  if (!ids.length) return res.status(400).json({ error: "no_ids" });
+  const placeholders = ids.map(() => "?").join(",");
+  const [r] = await pool.query(
+    `DELETE FROM chat_read_purchases WHERE id IN (${placeholders})`,
+    ids
+  );
+  await logActivity(
+    "admin",
+    `Eliminadas ${r.affectedRows} fila(s) del historial de lecturas (ids: ${ids.slice(0, 20).join(",")}${ids.length > 20 ? "…" : ""})`
+  );
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
 // POST /api/admin/read-credits/:uid/reset-free  → resets the free monthly counter
 app.post("/api/admin/read-credits/:uid/reset-free", wrap(async (req, res) => {
   const uid = parseInt(req.params.uid, 10);

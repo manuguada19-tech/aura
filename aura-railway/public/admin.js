@@ -11985,6 +11985,153 @@ async function viewReadsAdmin(root){
   );
   root.appendChild(listPanel);
 
+  /* --- Panel avanzado: historial de movimientos (ventas + ajustes manuales)
+     con selección múltiple y borrado PERMANENTE. Pensado para limpiar datos de
+     prueba antes del lanzamiento. Solo borra el registro del historial; no
+     modifica el saldo de créditos del usuario. --- */
+  const histSelected = new Set();
+  const histWrap = el("div", { class: "table-wrap" });
+  let histRowsCache = [];
+
+  const histBulkBar = el("div", { class: "bulk-bar", id: "readsHistBulk" });
+  const histBulkCount = el("span", { class: "count" }, "0 seleccionados");
+  histBulkBar.appendChild(histBulkCount);
+  histBulkBar.appendChild(el("span", { class: "spacer", style: "flex:1" }));
+  histBulkBar.appendChild(btn("🗑 Eliminar seleccionadas", "danger sm", () => deleteHistSelected()));
+  histBulkBar.appendChild(btn("✖ Deseleccionar", "sm", () => { histSelected.clear(); renderHistory(histRowsCache); }));
+
+  const histTypeSel = el("select", { class: "input", id: "readsHistType", onchange: () => refreshHistory() }, [
+    el("option", { value: "all" }, "Todos los movimientos"),
+    el("option", { value: "sales" }, "Solo ventas (packs)"),
+    el("option", { value: "manual" }, "Solo ajustes manuales"),
+    el("option", { value: "grants" }, "Solo concesiones (+)"),
+    el("option", { value: "revokes" }, "Solo retiradas (−)"),
+  ]);
+
+  const histPanel = panel(
+    "Panel avanzado · Historial de movimientos",
+    [
+      btn("Actualizar", "ghost sm", async () => { await refreshHistory(); }),
+    ],
+    [
+      el("p", { class: "help" }, "Historial completo de ventas de packs y ajustes manuales de créditos. Selecciona filas y elimínalas permanentemente para limpiar datos de prueba. Ojo: el borrado no se puede deshacer y no reajusta el saldo del usuario."),
+      el("div", { class: "table-toolbar", style: "display:flex; gap:8px; flex-wrap:wrap; align-items:center" }, [
+        histTypeSel,
+        el("input", { class: "input", id: "readsHistSearch", placeholder: "Buscar por nombre o email…", oninput: () => debounceHistory() }),
+      ]),
+      histBulkBar,
+      histWrap,
+    ]
+  );
+  root.appendChild(histPanel);
+
+  function updateHistBulk() {
+    histBulkBar.classList.toggle("on", histSelected.size > 0);
+    histBulkCount.textContent = `${histSelected.size} seleccionadas`;
+  }
+
+  const PACK_LABEL = { grant: "➕ Concesión", revoke: "➖ Retirada" };
+  function movementCell(p) {
+    if (p.pack === "grant") return tag("➕ Concesión", "plan-premium");
+    if (p.pack === "revoke") return tag("➖ Retirada", "muted");
+    return tag("🛒 " + String(p.pack || "pack").toUpperCase(), "plan-gold");
+  }
+
+  function renderHistory(rows) {
+    histRowsCache = rows || [];
+    histWrap.innerHTML = "";
+    if (!histRowsCache.length) {
+      histWrap.appendChild(el("div", { class: "empty" }, "Sin movimientos."));
+      updateHistBulk();
+      return;
+    }
+    const cur = currentCurrency();
+    const headCb = el("input", { type: "checkbox", title: "Seleccionar todos" });
+    headCb.checked = histRowsCache.every(p => histSelected.has(p.id));
+    headCb.addEventListener("change", () => {
+      if (headCb.checked) histRowsCache.forEach(p => histSelected.add(p.id));
+      else histRowsCache.forEach(p => histSelected.delete(p.id));
+      table.querySelectorAll("tbody input.hist-cb").forEach(cb => { cb.checked = headCb.checked; });
+      updateHistBulk();
+    });
+    const table = el("table", { class: "data-table" }, [
+      el("thead", {}, el("tr", {}, [
+        el("th", { style: "width:32px" }, headCb),
+        el("th", {}, "Usuario"),
+        el("th", {}, "Movimiento"),
+        el("th", {}, "Créditos"),
+        el("th", {}, "Importe"),
+        el("th", {}, "Fecha"),
+      ])),
+      el("tbody", {}, histRowsCache.map(p => {
+        const rowCb = el("input", { type: "checkbox", class: "hist-cb" });
+        if (histSelected.has(p.id)) rowCb.checked = true;
+        rowCb.addEventListener("change", () => {
+          if (rowCb.checked) histSelected.add(p.id); else histSelected.delete(p.id);
+          updateHistBulk();
+        });
+        return el("tr", {}, [
+          el("td", {}, rowCb),
+          el("td", {}, [
+            el("div", {}, [
+              el("b", {}, p.user_name || ("#" + p.user_id)),
+              el("small", { style: "display:block; opacity:.7" }, p.user_email || ("id " + p.user_id)),
+            ]),
+          ]),
+          el("td", {}, movementCell(p)),
+          el("td", {}, (Number(p.credits) > 0 ? "+" : "") + String(p.credits)),
+          el("td", {}, (Number(p.amount) > 0 ? fmtMoney(p.amount, p.currency || cur) : "—")),
+          el("td", {}, fmt.date(p.created_at)),
+        ]);
+      })),
+    ]);
+    histWrap.appendChild(el("div", { class: "table-scroll" }, [table]));
+    labelTables(histWrap);
+    updateHistBulk();
+  }
+
+  let __histDebounce = null;
+  function debounceHistory() {
+    clearTimeout(__histDebounce);
+    __histDebounce = setTimeout(() => refreshHistory(), 300);
+  }
+
+  async function refreshHistory() {
+    histWrap.innerHTML = "";
+    histWrap.appendChild(el("div", { class: "loading" }, "Cargando historial…"));
+    const type = document.getElementById("readsHistType")?.value || "all";
+    const q = (document.getElementById("readsHistSearch")?.value || "").trim();
+    try {
+      const params = new URLSearchParams({ type, limit: "300" });
+      if (q) params.set("q", q);
+      const data = await api.get("/api/admin/reads/purchases?" + params.toString());
+      const rows = (data && data.rows) || [];
+      // Purga de la selección las filas que ya no están en la vista.
+      const visible = new Set(rows.map(r => r.id));
+      Array.from(histSelected).forEach(id => { if (!visible.has(id)) histSelected.delete(id); });
+      renderHistory(rows);
+    } catch (e) {
+      histWrap.innerHTML = "";
+      histWrap.appendChild(el("div", { class: "error" }, "Error cargando el historial."));
+    }
+  }
+
+  async function deleteHistSelected() {
+    const ids = Array.from(histSelected);
+    if (!ids.length) return;
+    if (!confirm(`¿Eliminar permanentemente ${ids.length} movimiento(s) del historial?\n\nEsta acción NO se puede deshacer y no reajusta el saldo de créditos de los usuarios.`)) return;
+    try {
+      const r = await api.post("/api/admin/reads/purchases/delete", { ids });
+      toast(`Eliminadas ${r.deleted ?? ids.length} fila(s)`);
+      histSelected.clear();
+      await refreshHistory();
+      // Refresca KPIs y lista de usuarios para reflejar el cambio.
+      try { route("reads"); } catch {}
+    } catch (e) {
+      toast("Error al eliminar: " + (e.message || "desconocido"));
+    }
+  }
+
   async function refreshList() {
     const q = (document.getElementById("readsSearch")?.value || "").trim().toLowerCase();
     listWrap.innerHTML = "";
@@ -12025,8 +12172,8 @@ async function viewReadsAdmin(root){
             el("td", {}, String(u.purchases_count ?? 0) + " · " + fmtMoney(u.purchases_total, (data && data.currency) || "EUR")),
             el("td", { class: "actions" }, [
               btn("Ver", "ghost sm", () => openUserReadsDrawer(u)),
-              btn("+ Créditos", "primary sm", () => grantPrompt(u, "add")),
-              btn("− Créditos", "ghost sm", () => grantPrompt(u, "remove")),
+              btn("Añadir créditos", "primary sm", () => grantPrompt(u, "add")),
+              btn("Quitar créditos", "ghost sm", () => grantPrompt(u, "remove")),
               btn("Reiniciar gratis", "ghost sm", () => resetFree(u)),
             ]),
           ]);
@@ -12093,12 +12240,12 @@ async function viewReadsAdmin(root){
           el("div", { class: "kpi" }, [ el("small", {}, "Créditos"), el("b", {}, String(data.credits ?? 0)) ]),
         ]),
         el("div", { style: "display:flex; gap:8px; margin-top:10px; flex-wrap:wrap" }, [
-          btn("+ Añadir créditos", "primary sm", async () => {
+          btn("Añadir créditos", "primary sm", async () => {
             const uCurrent = { ...u, credits: data.credits ?? 0 };
             await grantPrompt(uCurrent, "add");
             try { const d = document.getElementById("drawer"); if (d) d.hidden = true; } catch {}
           }),
-          btn("− Retirar créditos", "ghost sm", async () => {
+          btn("Retirar créditos", "ghost sm", async () => {
             const uCurrent = { ...u, credits: data.credits ?? 0 };
             await grantPrompt(uCurrent, "remove");
             try { const d = document.getElementById("drawer"); if (d) d.hidden = true; } catch {}
@@ -12140,6 +12287,7 @@ async function viewReadsAdmin(root){
   }
 
   await refreshList();
+  await refreshHistory();
 }
 
 /* =========================================================
