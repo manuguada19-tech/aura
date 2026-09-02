@@ -54,6 +54,41 @@ const contentFallback = {
   "common.loading": "Cargando…",
   "content.brand.name": "Aura",
   "content.brand.tag": "Conexiones reales, momentos únicos.",
+
+  // === Pantalla de match (editable desde Admin → Match y celebraciones) ===
+  // Usa {name} para el nombre del otro usuario.
+  "content.match.badge": "Es un match",
+  "content.match.title": "{name} y tú",
+  "content.match.sub": "Os habéis gustado. Ya podéis chatear.",
+  "content.match.cta_message": "Enviar mensaje",
+  "content.match.cta_keep": "Seguir descubriendo",
+  "content.match.you": "Tú",
+
+  // === Celebración de planes (editable desde Admin → Match y celebraciones) ===
+  // Globales para planes de pago. {plan} = nombre del plan, {period} = " anual".
+  "content.celebrate.enabled": "true",       // activar celebración de planes de pago
+  "content.celebrate.free_enabled": "true",  // activar celebración al volver a Free
+  "content.celebrate.duration": "5000",      // duración en ms (autocierre)
+  "content.celebrate.kicker": "Plan activado",
+  "content.celebrate.title": "Bienvenido a Aura {plan}",
+  "content.celebrate.sub": "Tu suscripción {plan}{period} ya está lista. Disfruta de todo lo que Aura tiene para ti.",
+  // Por plan: emoji, etiqueta y ventajas (una por línea).
+  "content.celebrate.premium.emoji": "⭐",
+  "content.celebrate.premium.label": "Premium",
+  "content.celebrate.premium.perks": "Likes ilimitados\nVer quién te dio like\nSin publicidad",
+  "content.celebrate.gold.emoji": "🏆",
+  "content.celebrate.gold.label": "Gold",
+  "content.celebrate.gold.perks": "Chats nuevos ilimitados\n5 Boost al mes\nMensajes prioritarios",
+  "content.celebrate.platinum.emoji": "💎",
+  "content.celebrate.platinum.label": "Platinum",
+  "content.celebrate.platinum.perks": "Todo ilimitado\nPrioridad máxima en Descubre\nSoporte prioritario",
+  // Plan gratuito: tono distinto (no es una compra, es volver al plan básico).
+  "content.celebrate.free.emoji": "🌱",
+  "content.celebrate.free.label": "Free",
+  "content.celebrate.free.kicker": "Plan actualizado",
+  "content.celebrate.free.title": "Ahora estás en Aura Free",
+  "content.celebrate.free.sub": "Has vuelto al plan gratuito. Seguirás disfrutando de Aura con las funciones básicas.",
+  "content.celebrate.free.perks": "5 chats nuevos al mes\n10 lecturas de chat al mes\nHasta 10 perfiles cercanos",
   "content.welcome.title": "Aura",
   "content.welcome.brand_tagline": "Encuentra tu match",
   "content.welcome.desktop_eyebrow": "✨ CONECTA TU ESENCIA",
@@ -3922,13 +3957,23 @@ function showApp() {
     if (payRes) {
       sessionStorage.removeItem("aura_pay_result");
       if (payRes === "ok") {
+        // Plan elegido antes de ir a la pasarela, para celebrarlo al volver.
+        let payPlan = null;
+        try { payPlan = JSON.parse(sessionStorage.getItem("aura_pay_plan") || "null"); } catch {}
+        try { sessionStorage.removeItem("aura_pay_plan"); } catch {}
         setTimeout(() => {
-          try { toast("¡Pago recibido! Tu compra se activará en unos segundos."); } catch {}
+          // Celebración visual del plan si es una suscripción; si no, toast normal.
+          const paidKey = payPlan && payPlan.plan && String(payPlan.plan).toLowerCase();
+          if (paidKey && ["premium", "gold", "platinum"].indexOf(paidKey) !== -1) {
+            try { celebratePlan(paidKey, { period: payPlan.period }); } catch {}
+          } else {
+            try { toast("¡Pago recibido! Tu compra se activará en unos segundos."); } catch {}
+          }
           // Reintentos suaves para refrescar el estado cuando el webhook llegue.
           let tries = 0;
           const iv = setInterval(async () => {
             tries++;
-            try { await chatApi.ensure(); } catch {}
+            try { await chatApi.ensure(); await syncUserPlan(); } catch {}
             if (tries >= 4) clearInterval(iv);
           }, 3000);
         }, 600);
@@ -8971,9 +9016,24 @@ async function syncUserPlan() {
     const s = await r.json().catch(() => null);
     if (!s || !s.plan) return;
     const plan = String(s.plan).toLowerCase();
+    const prevPlan = String((state.user.plan || state.user.plan_key) || "free").toLowerCase();
     state.user.plan = plan;
     try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
     try { updateMeTierBadge(); } catch {}
+    // V811 · Al detectar que el usuario ha vuelto al plan gratuito desde uno de
+    // pago (cancelación / fin de suscripción), mostramos la celebración Free,
+    // que tiene tono propio. Se dispara una sola vez por transición y solo si
+    // la app ya está montada (evita mostrarla en el arranque de sesión). Es
+    // desactivable desde el admin (content.celebrate.free_enabled).
+    try {
+      const wasPaid = ["premium", "gold", "platinum"].indexOf(prevPlan) !== -1;
+      const tb = document.getElementById("tabbar");
+      const appReady = !!(tb && !tb.hidden);
+      if (wasPaid && plan === "free" && appReady && !window.__auraFreeCelebrated) {
+        window.__auraFreeCelebrated = true;
+        celebratePlan("free");
+      }
+    } catch {}
   } catch {}
 }
 // Actualiza la píldora de plan del perfil (#meTierBadge) con el plan real. Se
@@ -9351,19 +9411,141 @@ function openRewindPaywall() {
 
 function triggerMatch(user, conversationId = null) {
   const chatOpts = conversationId ? { conversationId } : {};
+  const myPhoto = (state.user && state.user.photo) || "https://i.pravatar.cc/300?img=32";
   const match = el("div", { class: "match-screen" });
-  match.appendChild(el("p", { style: "font-size:16px;font-weight:700;letter-spacing:.05em;opacity:.9" }, "ES UN MATCH"));
-  match.appendChild(el("h2", {}, `${user.name} y tú`));
-  match.appendChild(el("p", {}, "Ya podéis chatear."));
-  match.appendChild(el("div", { class: "match-avatars" }, [
-    el("div", { class: "a", style: `background-image:url('${(state.user && state.user.photo) || "https://i.pravatar.cc/300?img=32"}')` }),
-    el("div", { class: "a", style: `background-image:url('${user.photo}')` }),
+  // Capa de corazones que suben flotando de fondo.
+  const heartsLayer = el("div", { class: "match-hearts" });
+  const heartSvg = `<svg viewBox="0 0 24 24"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`;
+  for (let i = 0; i < 14; i++) {
+    const sz = 12 + Math.round(Math.random() * 22);
+    heartsLayer.appendChild(el("i", {
+      html: heartSvg,
+      style: `left:${Math.round(Math.random() * 100)}%;width:${sz}px;height:${sz}px;` +
+             `animation-duration:${(3.6 + Math.random() * 3).toFixed(2)}s;` +
+             `animation-delay:${(Math.random() * 2.4).toFixed(2)}s;` +
+             `opacity:${(0.35 + Math.random() * 0.5).toFixed(2)};`,
+    }));
+  }
+  match.appendChild(heartsLayer);
+  // Textos editables desde Admin → Match y celebraciones (claves content.match.*).
+  // {name} se sustituye por el nombre del otro usuario.
+  const fill = (s, name) => String(s == null ? "" : s).replace(/\{name\}/g, name);
+  const badgeTxt = T("content.match.badge");
+  const titleTxt = fill(T("content.match.title"), user.name || "");
+  const subTxt = T("content.match.sub");
+  const youTxt = T("content.match.you") || "Tú";
+  // Insignia superior con icono de corazón.
+  match.appendChild(el("div", { class: "match-badge" }, [
+    el("span", { html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
+    badgeTxt,
+  ]));
+  match.appendChild(el("h2", {}, titleTxt));
+  match.appendChild(el("p", { class: "match-sub" }, subTxt));
+  // Tarjetas de foto tipo “carta”: yo a la izquierda, el match a la derecha.
+  const verifiedSvg = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 1.8 3 .2 1 2.8L21 9l-1 2.6 1 2.6-1.6 2.4-1 2.8-3 .2L12 22l-2.4-1.8-3-.2-1-2.8L3 14.6 4 12 3 9.4l1.6-2.4 1-2.8 3-.2z"/><path d="M9.5 12.5l1.8 1.8 3.4-3.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const myName = (state.user && (state.user.name || "").split(" ")[0]) || youTxt;
+  const themName = (user.name || "").split(" ")[0] || "";
+  const myCard = el("div", { class: "mc", style: `background-image:url('${myPhoto}')` }, [
+    el("div", { class: "mc-name" }, [ myName ]),
+  ]);
+  const themCard = el("div", { class: "mc", style: `background-image:url('${user.photo}')` }, [
+    el("div", { class: "mc-name" }, [ themName, user.verified ? el("span", { html: verifiedSvg }) : null ].filter(Boolean)),
+  ]);
+  match.appendChild(el("div", { class: "match-cards" }, [
+    myCard,
+    el("div", { class: "match-heart", html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
+    themCard,
   ]));
   match.appendChild(el("div", { class: "match-actions" }, [
-    el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, "Enviar mensaje"),
-    el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, "Seguir descubriendo"),
+    el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, T("content.match.cta_message")),
+    el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, T("content.match.cta_keep")),
   ]));
   viewport.appendChild(match);
+  // Toque de confeti para reforzar el momento (reutiliza el confeti existente).
+  try { spawnBetaConfetti(match); } catch {}
+}
+
+// V810 · Celebración visual al activar un plan de pago. Overlay a pantalla
+// completa con emblema del plan, ventajas destacadas, confeti y una barra de
+// progreso que lo autocierra en unos segundos. Solo es UI (no concede nada:
+// el plan lo activa el webhook de pago); sirve para acompañar la contratación.
+// V811 · Plantillas de celebración de plan totalmente configurables desde
+// Admin → «Match y celebraciones» (claves content.celebrate.*). Los planes de
+// pago comparten kicker/título/subtítulo globales; el plan gratuito (free)
+// tiene textos propios y un tono más calmado (no es una compra: es volver al
+// plan básico). buildPlanCelebrate() resuelve la plantilla efectiva de un plan
+// leyendo `content` en vivo, con los valores de contentFallback como respaldo.
+const PLAN_CELEBRATE_KEYS = ["free", "premium", "gold", "platinum"];
+function planCelebrateInfo(key) {
+  key = String(key || "").toLowerCase();
+  if (PLAN_CELEBRATE_KEYS.indexOf(key) === -1) return null;
+  const perksRaw = T(`content.celebrate.${key}.perks`) || "";
+  return {
+    key,
+    isFree: key === "free",
+    emoji: T(`content.celebrate.${key}.emoji`) || "🎉",
+    label: T(`content.celebrate.${key}.label`) || planLabel(key),
+    perks: String(perksRaw).split("\n").map(s => s.trim()).filter(Boolean),
+  };
+}
+function celebratePlan(planKey, opts = {}) {
+  const key = String(planKey || "").toLowerCase();
+  const info = planCelebrateInfo(key);
+  if (!info) return;
+  // Interruptores del admin: se puede desactivar la celebración de pago y/o
+  // la de vuelta a Free por separado.
+  const boolT = (k, def) => { const v = T(k); return v == null || v === "" ? def : String(v) !== "false"; };
+  if (info.isFree && !boolT("content.celebrate.free_enabled", true)) return;
+  if (!info.isFree && !boolT("content.celebrate.enabled", true)) return;
+
+  const period = (opts.period === "annual" || opts.period === "yearly") ? " anual" : "";
+  const durMs = opts.duration || parseInt(T("content.celebrate.duration"), 10) || 5000;
+  // Interpolación de plantilla: {plan} y {period}.
+  const fill = (s) => String(s == null ? "" : s).replace(/\{plan\}/g, info.label).replace(/\{period\}/g, period);
+  // El plan Free usa sus propios textos; los de pago comparten los globales.
+  const kicker = info.isFree ? (T("content.celebrate.free.kicker") || "Plan actualizado") : T("content.celebrate.kicker");
+  const titleTpl = info.isFree ? T("content.celebrate.free.title") : T("content.celebrate.title");
+  const subTpl = info.isFree ? T("content.celebrate.free.sub") : T("content.celebrate.sub");
+
+  // Evita apilar dos celebraciones a la vez.
+  try { document.querySelectorAll(".plan-celebrate").forEach(n => n.remove()); } catch {}
+
+  // El título de pago separa "…Aura " + <span>label</span> para poder degradar
+  // solo el nombre del plan. Si el admin quita el marcador {plan}, se muestra
+  // el texto tal cual. En Free mostramos el título completo sin resaltar.
+  let titleNodes;
+  if (info.isFree || titleTpl.indexOf("{plan}") === -1) {
+    titleNodes = [ fill(titleTpl) ];
+  } else {
+    const parts = titleTpl.split("{plan}");
+    titleNodes = [ fill(parts[0]), el("span", { class: "pc-plan" }, info.label), fill(parts.slice(1).join("{plan}")) ];
+  }
+
+  const check = () => el("span", { class: "pc-check", html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>` });
+  const overlay = el("div", { class: "plan-celebrate" + (info.isFree ? " plan-celebrate-free" : "") }, [
+    el("div", { class: `pc-emblem pc-${key}` }, info.emoji),
+    el("div", { class: "pc-kicker" }, kicker),
+    el("h2", { class: "pc-title" }, titleNodes),
+    el("p", { class: "pc-sub" }, fill(subTpl)),
+    el("div", { class: "pc-perks" }, info.perks.map(p => el("div", { class: "pc-perk" }, [ check(), el("span", {}, p) ]))),
+    el("div", { class: "pc-bar", style: `--pc-dur:${durMs}ms` }, [ el("i", {}) ]),
+  ]);
+  document.body.appendChild(overlay);
+  // El plan gratuito usa un confeti más discreto (o ninguno) para diferenciar
+  // el tono; los de pago mantienen la doble tanda de confeti festivo.
+  if (!info.isFree) {
+    try { spawnBetaConfetti(overlay); } catch {}
+  }
+  const t2 = info.isFree ? null : setTimeout(() => { try { spawnBetaConfetti(overlay); } catch {} }, 1200);
+  const close = () => {
+    if (t2) clearTimeout(t2);
+    overlay.classList.add("pc-out");
+    setTimeout(() => { try { overlay.remove(); } catch {} }, 450);
+  };
+  // Autocierre al terminar la barra; también se puede tocar para cerrar antes.
+  const auto = setTimeout(close, durMs);
+  overlay.addEventListener("click", () => { clearTimeout(auto); close(); });
+  return overlay;
 }
 
 function actionBtn(cls, path, onclick, label) {
@@ -14487,6 +14669,8 @@ function screenSubscriptions(root) {
                 const prev = btn.textContent;
                 btn.disabled = true; btn.textContent = "Redirigiendo al pago…";
                 try {
+                  // Recuerda el plan elegido para celebrarlo al volver del pago.
+                  try { sessionStorage.setItem("aura_pay_plan", JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "annual" : "monthly" })); } catch {}
                   const cs = await fetch("/api/my/checkout/subscription", {
                     method: "POST", headers: chatApi.headers(),
                     body: JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "yearly" : "monthly" }),
@@ -14498,7 +14682,8 @@ function screenSubscriptions(root) {
                 btn.disabled = false; btn.textContent = prev;
                 return;
               }
-              toast(`Suscripción ${p.tier} ${billing === "annual" ? "anual" : "mensual"} en curso (demo)`);
+              // Sin cobro real (demo/preview): mostramos la celebración del plan.
+              try { celebratePlan(p.tier, { period: billing === "annual" ? "annual" : "monthly" }); } catch {}
             }
           }, `Elegir ${p.tier}`);
       // Preview of how ads look for the Free plan (upgrade to remove them)

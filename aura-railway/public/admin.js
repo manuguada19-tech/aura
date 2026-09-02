@@ -1363,7 +1363,7 @@ function route(view) {
     subscriptions: viewSubscriptions,
     payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, stats: viewStats,
     notifications: viewNotifications, emails: viewEmails, settings: viewSettings, logs: viewLogs,
-    content: viewContent, design: viewDesign, ads: viewAdsAdmin, backup: viewBackup,
+    content: viewContent, design: viewDesign, match_celebrate: viewMatchCelebrate, ads: viewAdsAdmin, backup: viewBackup,
     waitlist: viewWaitlist,
     maintenance_emails: viewMaintenanceEmails,
     kyc: viewKyc,
@@ -10653,6 +10653,384 @@ function renderDesignPreview(container, d, T2, section, opts) {
     ]));
   }
   container.appendChild(wrap);
+}
+
+/* ================================================================
+   Match y celebraciones — plantillas editables de la pantalla de
+   "¡Es un match!" y de la celebración al activar/cambiar de plan
+   (incluido el plan gratuito). Persiste en claves content.* vía
+   /api/content; la app las lee en vivo (polling ~4s).
+   ================================================================ */
+// Valores por defecto (deben coincidir con contentFallback de app.js).
+const MC_DEFAULTS = {
+  "content.match.badge": "Es un match",
+  "content.match.title": "{name} y tú",
+  "content.match.sub": "Os habéis gustado. Ya podéis chatear.",
+  "content.match.cta_message": "Enviar mensaje",
+  "content.match.cta_keep": "Seguir descubriendo",
+  "content.match.you": "Tú",
+  "content.celebrate.enabled": "true",
+  "content.celebrate.free_enabled": "true",
+  "content.celebrate.duration": "5000",
+  "content.celebrate.kicker": "Plan activado",
+  "content.celebrate.title": "Bienvenido a Aura {plan}",
+  "content.celebrate.sub": "Tu suscripción {plan}{period} ya está lista. Disfruta de todo lo que Aura tiene para ti.",
+  "content.celebrate.premium.emoji": "⭐",
+  "content.celebrate.premium.label": "Premium",
+  "content.celebrate.premium.perks": "Likes ilimitados\nVer quién te dio like\nSin publicidad",
+  "content.celebrate.gold.emoji": "🏆",
+  "content.celebrate.gold.label": "Gold",
+  "content.celebrate.gold.perks": "Chats nuevos ilimitados\n5 Boost al mes\nMensajes prioritarios",
+  "content.celebrate.platinum.emoji": "💎",
+  "content.celebrate.platinum.label": "Platinum",
+  "content.celebrate.platinum.perks": "Todo ilimitado\nPrioridad máxima en Descubre\nSoporte prioritario",
+  "content.celebrate.free.emoji": "🌱",
+  "content.celebrate.free.label": "Free",
+  "content.celebrate.free.kicker": "Plan actualizado",
+  "content.celebrate.free.title": "Ahora estás en Aura Free",
+  "content.celebrate.free.sub": "Has vuelto al plan gratuito. Seguirás disfrutando de Aura con las funciones básicas.",
+  "content.celebrate.free.perks": "5 chats nuevos al mes\n10 lecturas de chat al mes\nHasta 10 perfiles cercanos",
+};
+
+// CSS de la vista previa (aislado dentro de un <iframe>, mismas animaciones que
+// la app real). Se inyecta en cada documento srcdoc que genera la preview.
+const MC_PREVIEW_CSS = `
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:'Poppins','Segoe UI',system-ui,-apple-system,sans-serif}
+.mc-host{position:fixed;inset:0;overflow:hidden}
+/* ---- Match ---- */
+.match-screen{position:absolute;inset:0;z-index:20;color:#fff;display:flex;flex-direction:column;align-items:center;padding:54px 26px 30px;overflow:hidden;
+  background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.20),transparent 55%),linear-gradient(300deg,#ff2d6f 0%,#ff6a3d 20%,#e02d7d 40%,#9b3cf0 62%,#ff2d6f 100%);
+  background-size:100% 100%,280% 280%;background-position:50% 0%,0% 50%;animation:matchFade .4s ease,matchBgFlow 10s ease-in-out infinite}
+@keyframes matchBgFlow{0%{background-position:50% 0%,0% 50%}50%{background-position:50% 0%,100% 50%}100%{background-position:50% 0%,0% 50%}}
+@keyframes matchFade{from{opacity:0}}
+.match-screen::before{content:"";position:absolute;top:20%;left:50%;width:150vw;height:150vw;transform:translate(-50%,-50%);
+  background:conic-gradient(from 0deg,rgba(255,255,255,.16),transparent 25%,rgba(255,255,255,.16) 50%,transparent 75%,rgba(255,255,255,.16));opacity:.5;pointer-events:none;animation:matchHalo 14s linear infinite}
+@keyframes matchHalo{to{transform:translate(-50%,-50%) rotate(360deg)}}
+.btn{height:52px;border-radius:26px;border:none;font:inherit;font-size:16px;font-weight:700;cursor:pointer}
+.match-badge{position:relative;z-index:2;display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:999px;
+  background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,.10));border:1px solid rgba(255,255,255,.45);
+  font-size:12.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#fff;box-shadow:0 8px 22px rgba(0,0,0,.22);animation:matchPop .6s .05s both cubic-bezier(.2,.9,.2,1)}
+.match-badge svg{width:15px;height:15px;animation:matchBeatIcon 1.5s 1.7s infinite ease-in-out}
+@keyframes matchBeatIcon{0%,100%{transform:scale(1)}15%{transform:scale(1.22)}30%{transform:scale(1)}45%{transform:scale(1.14)}60%{transform:scale(1)}}
+.match-screen h2{position:relative;z-index:2;font-size:40px;line-height:1.02;margin:16px 0 6px;font-weight:800;letter-spacing:-.03em;text-align:center;
+  background:linear-gradient(180deg,#fff 0%,#ffe4ee 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 4px 18px rgba(0,0,0,.28));animation:matchPop .6s .12s both cubic-bezier(.2,.9,.2,1)}
+.match-sub{position:relative;z-index:2;margin:0;font-size:14px;opacity:.95;text-align:center;animation:matchPop .6s .18s both cubic-bezier(.2,.9,.2,1)}
+@keyframes matchPop{from{opacity:0;transform:translateY(14px) scale(.96)}}
+.match-cards{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;margin:44px 0 16px}
+.match-cards .mc{position:relative;width:142px;height:190px;border-radius:26px;background-size:cover;background-position:center;border:4px solid #fff;box-shadow:0 22px 50px rgba(0,0,0,.42);overflow:hidden}
+.match-cards .mc::after{content:"";position:absolute;inset:auto 0 0 0;height:55%;background:linear-gradient(180deg,transparent,rgba(0,0,0,.6))}
+.match-cards .mc .mc-name{position:absolute;left:10px;right:10px;bottom:10px;z-index:2;display:flex;align-items:center;justify-content:center;gap:5px;font-size:14px;font-weight:800;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)}
+.match-cards .mc:first-child{transform:rotate(-9deg);margin-right:-30px;animation:matchInL 1s cubic-bezier(.34,1.56,.64,1) both}
+.match-cards .mc:last-child{transform:rotate(9deg);margin-left:-30px;z-index:1;animation:matchInR 1s .12s cubic-bezier(.34,1.56,.64,1) both}
+@keyframes matchInL{from{transform:translateX(-60px) rotate(-9deg) scale(.4);opacity:0}}
+@keyframes matchInR{from{transform:translateX(60px) rotate(9deg) scale(.4);opacity:0}}
+.match-heart{position:absolute;left:50%;top:100%;transform:translate(-50%,-60%);z-index:4;width:60px;height:60px;border-radius:50%;display:grid;place-items:center;
+  background:radial-gradient(circle at 35% 30%,#fff,#ffe3ec);color:#ff2d6f;box-shadow:0 14px 34px rgba(255,45,111,.5),inset 0 0 0 3px rgba(255,255,255,.9);
+  animation:matchHeart 1.1s .55s both cubic-bezier(.34,1.56,.64,1),matchBeat 1.5s 1.7s infinite ease-in-out}
+.match-heart svg{width:32px;height:32px}
+@keyframes matchHeart{from{transform:translate(-50%,-60%) scale(0) rotate(-30deg);opacity:0}}
+@keyframes matchBeat{0%,100%{transform:translate(-50%,-60%) scale(1)}15%{transform:translate(-50%,-60%) scale(1.16)}30%{transform:translate(-50%,-60%) scale(1)}45%{transform:translate(-50%,-60%) scale(1.1)}60%{transform:translate(-50%,-60%) scale(1)}}
+.match-actions{position:relative;z-index:2;margin-top:auto;display:grid;gap:12px;width:100%;animation:matchPop .6s .3s both cubic-bezier(.2,.9,.2,1)}
+.match-actions .btn-primary{background:#fff;color:#ff2d6f;font-weight:800;box-shadow:0 12px 30px rgba(0,0,0,.22)}
+.match-actions .btn-ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.45);font-weight:700}
+.match-hearts{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}
+.match-hearts i{position:absolute;bottom:-32px;color:rgba(255,255,255,.5)}
+.match-hearts i svg{display:block;width:100%;height:100%;fill:currentColor}
+.match-hearts i{animation:matchFloat linear infinite}
+@keyframes matchFloat{0%{transform:translateY(0) rotate(0) scale(1);opacity:0}12%{opacity:.9}100%{transform:translateY(-115vh) rotate(200deg) scale(1.15);opacity:0}}
+/* ---- Celebración de plan ---- */
+.plan-celebrate{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#fff;padding:34px 26px;overflow:hidden;
+  background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.18),transparent 55%),linear-gradient(165deg,#1b1030 0%,#2a1550 48%,#120a24 100%);animation:pcFade .35s ease}
+@keyframes pcFade{from{opacity:0}}
+.plan-celebrate::before{content:"";position:absolute;top:42%;left:50%;width:160vh;height:160vh;transform:translate(-50%,-50%);
+  background:conic-gradient(from 0deg,transparent 0 12deg,rgba(255,255,255,.10) 12deg 20deg);opacity:.55;pointer-events:none;animation:pcRays 20s linear infinite}
+@keyframes pcRays{to{transform:translate(-50%,-50%) rotate(360deg)}}
+.pc-emblem{position:relative;z-index:2;width:118px;height:118px;border-radius:30px;display:grid;place-items:center;font-size:56px;
+  background:linear-gradient(160deg,#ffd76a,#ff8a3b 55%,#ff2d6f);box-shadow:0 22px 60px rgba(255,138,59,.45),inset 0 0 0 2px rgba(255,255,255,.35);animation:pcEmblem .8s cubic-bezier(.2,.9,.2,1) both}
+.pc-emblem.pc-premium{background:linear-gradient(160deg,#8f9bff,#6d5cff 55%,#ff2d6f);box-shadow:0 22px 60px rgba(109,92,255,.45),inset 0 0 0 2px rgba(255,255,255,.35)}
+.pc-emblem.pc-gold{background:linear-gradient(160deg,#ffe08a,#f5b301 60%,#ff8a3b);box-shadow:0 22px 60px rgba(245,179,1,.45),inset 0 0 0 2px rgba(255,255,255,.4)}
+.pc-emblem.pc-platinum{background:linear-gradient(160deg,#eaf1ff,#b8c6e6 55%,#8fa3c8);color:#2a2f45;box-shadow:0 22px 60px rgba(184,198,230,.5),inset 0 0 0 2px rgba(255,255,255,.6)}
+.pc-emblem.pc-free{background:linear-gradient(160deg,#7ee0a6,#34c77b 55%,#15a267);box-shadow:0 22px 60px rgba(52,199,123,.42),inset 0 0 0 2px rgba(255,255,255,.4)}
+@keyframes pcEmblem{from{transform:scale(.3) rotate(-14deg);opacity:0}}
+.plan-celebrate-free{background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.14),transparent 55%),linear-gradient(165deg,#0c1f18 0%,#123a2b 48%,#0a1712 100%)}
+.plan-celebrate-free::before{opacity:.28}
+.plan-celebrate-free .pc-title{color:#eafff4}
+.plan-celebrate-free .pc-bar>i{background:linear-gradient(90deg,#7ee0a6,#15a267)}
+.pc-kicker{position:relative;z-index:2;margin-top:22px;font-size:12.5px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:rgba(255,255,255,.72);animation:pcUp .6s .1s both cubic-bezier(.2,.9,.2,1)}
+.pc-title{position:relative;z-index:2;margin-top:6px;font-size:32px;font-weight:800;letter-spacing:-.02em;line-height:1.08;animation:pcUp .6s .16s both cubic-bezier(.2,.9,.2,1)}
+.pc-title .pc-plan{background:linear-gradient(90deg,#ffd76a,#ff8a3b,#ff2d6f);-webkit-background-clip:text;background-clip:text;color:transparent}
+.pc-sub{position:relative;z-index:2;margin-top:10px;max-width:320px;font-size:14px;line-height:1.45;color:rgba(255,255,255,.82);text-wrap:balance;animation:pcUp .6s .22s both cubic-bezier(.2,.9,.2,1)}
+.pc-perks{position:relative;z-index:2;margin-top:22px;display:grid;gap:9px;width:100%;max-width:320px;animation:pcUp .6s .3s both cubic-bezier(.2,.9,.2,1)}
+.pc-perk{display:flex;align-items:center;gap:10px;text-align:left;padding:11px 14px;border-radius:14px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);font-size:13.5px;font-weight:600}
+.pc-perk .pc-check{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:#22c55e;color:#fff}
+.pc-perk .pc-check svg{width:13px;height:13px}
+.pc-bar{position:relative;z-index:2;margin-top:26px;width:100%;max-width:320px;height:4px;border-radius:999px;background:rgba(255,255,255,.16);overflow:hidden}
+.pc-bar>i{display:block;height:100%;width:100%;transform-origin:left;background:linear-gradient(90deg,#ffd76a,#ff2d6f);animation:pcBar var(--pc-dur,4.5s) linear forwards}
+@keyframes pcBar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes pcUp{from{opacity:0;transform:translateY(16px)}}
+/* ---- Confeti ---- */
+.beta-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:5}
+.beta-confetti span{position:absolute;top:-12px;width:8px;height:12px;border-radius:2px;animation:betaConfettiFall linear forwards;opacity:.9}
+@keyframes betaConfettiFall{0%{transform:translateY(0) rotate(0);opacity:1}100%{transform:translateY(120vh) rotate(720deg);opacity:0}}
+`;
+
+// Escapa texto de usuario para insertarlo en el HTML de la vista previa.
+function mcEsc(s) {
+  return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+// Genera N spans de confeti con estilos aleatorios (sin script en el iframe).
+function mcConfettiHtml(n) {
+  const colors = ["#ff3b6b", "#ff8a3b", "#ffd23b", "#4bd4ff", "#a06bff"];
+  let out = "";
+  for (let i = 0; i < n; i++) {
+    out += `<span style="background:${colors[i % colors.length]};left:${(Math.random() * 100).toFixed(1)}%;`
+      + `animation-delay:${(Math.random() * 0.4).toFixed(2)}s;animation-duration:${(0.9 + Math.random() * 0.8).toFixed(2)}s;`
+      + `transform:rotate(${Math.round(Math.random() * 360)}deg)"></span>`;
+  }
+  return `<div class="beta-confetti">${out}</div>`;
+}
+// Corazones flotantes de fondo para la preview del match.
+function mcHeartsHtml() {
+  const heart = `<svg viewBox="0 0 24 24"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`;
+  let out = "";
+  for (let i = 0; i < 14; i++) {
+    const sz = 12 + Math.round(Math.random() * 22);
+    out += `<i style="left:${Math.round(Math.random() * 100)}%;width:${sz}px;height:${sz}px;`
+      + `animation-duration:${(3.6 + Math.random() * 3).toFixed(2)}s;animation-delay:${(Math.random() * 2.4).toFixed(2)}s;`
+      + `opacity:${(0.35 + Math.random() * 0.5).toFixed(2)}">${heart}</i>`;
+  }
+  return `<div class="match-hearts">${out}</div>`;
+}
+function mcDoc(bodyHtml) {
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><style>${MC_PREVIEW_CSS}</style></head><body>${bodyHtml}</body></html>`;
+}
+// Construye la vista previa del match a partir de la configuración editada.
+function mcBuildMatchDoc(cfg) {
+  const g = (k) => cfg[k] != null && cfg[k] !== "" ? cfg[k] : MC_DEFAULTS[k];
+  const heartFill = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`;
+  const verified = `<svg viewBox="0 0 24 24" fill="currentColor" style="width:15px;height:15px;color:#4f8cff"><path d="M12 2l2.4 1.8 3 .2 1 2.8L21 9l-1 2.6 1 2.6-1.6 2.4-1 2.8-3 .2L12 22l-2.4-1.8-3-.2-1-2.8L3 14.6 4 12 3 9.4l1.6-2.4 1-2.8 3-.2z"/><path d="M9.5 12.5l1.8 1.8 3.4-3.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const me = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=600&h=800&fit=crop&crop=faces&q=80";
+  const him = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&h=800&fit=crop&crop=faces&q=80";
+  const title = mcEsc(g("content.match.title")).replace(/\{name\}/g, "Hugo");
+  const you = mcEsc(g("content.match.you")) || "Tú";
+  const body = `<div class="mc-host match-screen">${mcHeartsHtml()}
+    <div class="match-badge">${heartFill}<span>${mcEsc(g("content.match.badge"))}</span></div>
+    <h2>${title}</h2>
+    <p class="match-sub">${mcEsc(g("content.match.sub"))}</p>
+    <div class="match-cards">
+      <div class="mc" style="background-image:url('${me}')"><div class="mc-name">${you}</div></div>
+      <div class="match-heart">${heartFill}</div>
+      <div class="mc" style="background-image:url('${him}')"><div class="mc-name">Hugo <span style="display:inline-flex">${verified}</span></div></div>
+    </div>
+    <div class="match-actions">
+      <button class="btn btn-primary">${mcEsc(g("content.match.cta_message"))}</button>
+      <button class="btn btn-ghost">${mcEsc(g("content.match.cta_keep"))}</button>
+    </div>
+    ${mcConfettiHtml(24)}
+  </div>`;
+  return mcDoc(body);
+}
+// Construye la vista previa de la celebración de un plan.
+function mcBuildPlanDoc(cfg, planKey) {
+  const g = (k) => cfg[k] != null && cfg[k] !== "" ? cfg[k] : MC_DEFAULTS[k];
+  const isFree = planKey === "free";
+  const check = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
+  const label = mcEsc(g(`content.celebrate.${planKey}.label`)) || planKey;
+  const emoji = mcEsc(g(`content.celebrate.${planKey}.emoji`));
+  const dur = parseInt(g("content.celebrate.duration"), 10) || 5000;
+  const period = " anual";
+  const kicker = isFree ? mcEsc(g("content.celebrate.free.kicker")) : mcEsc(g("content.celebrate.kicker"));
+  const titleTpl = isFree ? g("content.celebrate.free.title") : g("content.celebrate.title");
+  const subTpl = isFree ? g("content.celebrate.free.sub") : g("content.celebrate.sub");
+  const fillTpl = (s) => mcEsc(s).replace(/\{plan\}/g, label).replace(/\{period\}/g, period);
+  let titleHtml;
+  if (isFree || String(titleTpl).indexOf("{plan}") === -1) {
+    titleHtml = fillTpl(titleTpl);
+  } else {
+    const parts = String(titleTpl).split("{plan}");
+    titleHtml = fillTpl(parts[0]) + `<span class="pc-plan">${label}</span>` + fillTpl(parts.slice(1).join("{plan}"));
+  }
+  const perks = String(g(`content.celebrate.${planKey}.perks`)).split("\n").map(s => s.trim()).filter(Boolean);
+  const perksHtml = perks.map(p => `<div class="pc-perk"><span class="pc-check">${check}</span><span>${mcEsc(p)}</span></div>`).join("");
+  const body = `<div class="mc-host plan-celebrate${isFree ? " plan-celebrate-free" : ""}">
+    <div class="pc-emblem pc-${planKey}">${emoji}</div>
+    <div class="pc-kicker">${kicker}</div>
+    <h2 class="pc-title">${titleHtml}</h2>
+    <p class="pc-sub">${fillTpl(subTpl)}</p>
+    <div class="pc-perks">${perksHtml}</div>
+    <div class="pc-bar" style="--pc-dur:${dur}ms"><i></i></div>
+    ${isFree ? "" : mcConfettiHtml(24)}
+  </div>`;
+  return mcDoc(body);
+}
+
+async function viewMatchCelebrate(root) {
+  root.appendChild(viewTitle(
+    "Match y celebraciones",
+    "Edita los textos de la pantalla de «¡Es un match!» y de la celebración al activar un plan (incluido el paso al plan gratuito). La vista previa muestra la animación real.",
+    [ btn("Abrir app", "ghost sm", () => window.open("index.html", "_blank")) ]
+  ));
+
+  root.appendChild(sectionLegend("Consejos", [
+    ["{name}", "En el título del match, se sustituye por el nombre del match."],
+    ["{plan}", "En los planes de pago, se sustituye por el nombre del plan."],
+    ["{period}", "Se sustituye por « anual» en suscripciones anuales."],
+    ["⏎", "En «Ventajas», una línea por ventaja."],
+    ["💡", "La animación en sí no se edita aquí; solo los textos, emojis, duración y activación."],
+  ]));
+
+  const c = await api.get("/api/content");
+  const cfg = {};
+  Object.keys(MC_DEFAULTS).forEach(k => { cfg[k] = (c[k] != null && c[k] !== "") ? c[k] : MC_DEFAULTS[k]; });
+
+  // ---- Guardado automático (debounced) de las claves de esta vista ----
+  let _saveTimer = null;
+  const saveStatus = el("span", { class: "muted", style: "font-size:11px; margin-left:8px" }, "");
+  function scheduleAutoSave() {
+    clearTimeout(_saveTimer);
+    saveStatus.textContent = "Guardando…";
+    _saveTimer = setTimeout(async () => {
+      try {
+        const body = {};
+        Object.keys(MC_DEFAULTS).forEach(k => { body[k] = cfg[k]; });
+        await api.put("/api/content", body);
+        saveStatus.textContent = "Guardado ✓";
+        setTimeout(() => { saveStatus.textContent = ""; }, 1200);
+      } catch {
+        saveStatus.textContent = "Error al guardar";
+      }
+    }, 500);
+  }
+
+  // ---- Vista previa (iframe aislado) ----
+  let previewTarget = "match"; // match | premium | gold | platinum | free
+  const frame = el("iframe", {
+    style: "width:300px;height:600px;border:0;border-radius:26px;background:#120a24;box-shadow:0 20px 50px rgba(0,0,0,.4)",
+    title: "Vista previa",
+  });
+  function renderPreview() {
+    frame.srcdoc = previewTarget === "match" ? mcBuildMatchDoc(cfg) : mcBuildPlanDoc(cfg, previewTarget);
+  }
+
+  // ---- Helpers de campo ----
+  function textField(label, key, ph) {
+    const inp = el("input", { class: "input", value: cfg[key] || "", placeholder: ph || "" });
+    inp.addEventListener("input", () => { cfg[key] = inp.value; renderPreview(); scheduleAutoSave(); });
+    return el("label", { class: "field" }, [ el("span", {}, label), inp ]);
+  }
+  function areaField(label, key, ph, rows) {
+    const ta = el("textarea", { class: "input", rows: String(rows || 3), placeholder: ph || "" });
+    ta.value = cfg[key] || "";
+    ta.addEventListener("input", () => { cfg[key] = ta.value; renderPreview(); scheduleAutoSave(); });
+    return el("label", { class: "field" }, [ el("span", {}, label), ta ]);
+  }
+  function boolField(label, key) {
+    const cb = el("input", { type: "checkbox" });
+    cb.checked = String(cfg[key]) !== "false";
+    cb.addEventListener("change", () => { cfg[key] = cb.checked ? "true" : "false"; renderPreview(); scheduleAutoSave(); });
+    const row = el("div", { style: "display:flex; align-items:center; gap:10px;" }, [ cb, el("span", {}, label) ]);
+    return el("label", { class: "field" }, [ el("span", {}, "\u00A0"), row ]);
+  }
+  function numField(label, key, ph) {
+    const inp = el("input", { class: "input", type: "number", min: "1000", step: "500", value: cfg[key] || "", placeholder: ph || "" });
+    inp.addEventListener("input", () => { cfg[key] = inp.value; renderPreview(); scheduleAutoSave(); });
+    return el("label", { class: "field" }, [ el("span", {}, label), inp ]);
+  }
+  function planFieldset(planKey, title, extra) {
+    const kids = [
+      el("h4", { style: "margin:4px 0 2px;font-size:14px" }, title),
+      textField("Emoji / icono", `content.celebrate.${planKey}.emoji`, "⭐"),
+      textField("Nombre del plan", `content.celebrate.${planKey}.label`, "Premium"),
+      areaField("Ventajas (una por línea)", `content.celebrate.${planKey}.perks`, "Ventaja 1\nVentaja 2", 4),
+    ];
+    (extra || []).forEach(n => kids.push(n));
+    const preview = btn("Previsualizar", "ghost sm", () => { previewTarget = planKey; setActiveChip(); renderPreview(); });
+    kids.push(preview);
+    return el("div", { class: "panel", style: "padding:14px;margin-bottom:12px" }, kids);
+  }
+
+  // ---- Selector de qué previsualizar ----
+  const chips = el("div", { class: "content-tabs", style: "margin-bottom:10px" });
+  const chipDefs = [
+    ["match", "💘 Match"], ["premium", "⭐ Premium"], ["gold", "🏆 Gold"],
+    ["platinum", "💎 Platinum"], ["free", "🌱 Free"],
+  ];
+  function setActiveChip() {
+    Array.from(chips.children).forEach(ch => ch.classList.toggle("active", ch.dataset.k === previewTarget));
+  }
+  chipDefs.forEach(([k, lbl]) => {
+    const t = el("button", { type: "button", class: "content-tab", "data-k": k, onclick: () => { previewTarget = k; setActiveChip(); renderPreview(); } }, lbl);
+    chips.appendChild(t);
+  });
+
+  // ---- Editor: pestañas Match / Celebración de planes ----
+  const editor = el("div", {});
+  const matchPane = el("div", { class: "settings-form" }, [
+    el("h3", { style: "margin-bottom:4px" }, "Pantalla de match"),
+    textField("Insignia superior", "content.match.badge", "Es un match"),
+    textField("Título (usa {name})", "content.match.title", "{name} y tú"),
+    areaField("Subtítulo", "content.match.sub", "Os habéis gustado…", 2),
+    textField("Botón principal", "content.match.cta_message", "Enviar mensaje"),
+    textField("Botón secundario", "content.match.cta_keep", "Seguir descubriendo"),
+    textField("Etiqueta “tú” (tu tarjeta)", "content.match.you", "Tú"),
+  ]);
+  const planPane = el("div", { class: "settings-form" }, [
+    el("h3", { style: "margin-bottom:4px" }, "Celebración de planes"),
+    boolField("Activar celebración en planes de pago", "content.celebrate.enabled"),
+    boolField("Activar celebración al volver a Free", "content.celebrate.free_enabled"),
+    numField("Duración en pantalla (ms)", "content.celebrate.duration", "5000"),
+    el("h4", { style: "margin:10px 0 2px;font-size:14px" }, "Textos comunes (planes de pago)"),
+    textField("Antetítulo", "content.celebrate.kicker", "Plan activado"),
+    textField("Título (usa {plan})", "content.celebrate.title", "Bienvenido a Aura {plan}"),
+    areaField("Subtítulo (usa {plan} y {period})", "content.celebrate.sub", "Tu suscripción {plan}{period} ya está lista…", 3),
+    planFieldset("premium", "⭐ Premium"),
+    planFieldset("gold", "🏆 Gold"),
+    planFieldset("platinum", "💎 Platinum"),
+    planFieldset("free", "🌱 Free (plan gratuito)", [
+      textField("Antetítulo (Free)", "content.celebrate.free.kicker", "Plan actualizado"),
+      textField("Título (Free)", "content.celebrate.free.title", "Ahora estás en Aura Free"),
+      areaField("Subtítulo (Free)", "content.celebrate.free.sub", "Has vuelto al plan gratuito…", 3),
+    ]),
+  ]);
+
+  let activeTab = "match";
+  const tabbar = el("div", { class: "content-tabs" });
+  const panes = { match: matchPane, plan: planPane };
+  [["match", "Match"], ["plan", "Celebración de planes"]].forEach(([k, lbl]) => {
+    const t = el("button", { type: "button", class: "content-tab" + (k === activeTab ? " active" : ""), onclick: () => {
+      activeTab = k;
+      Array.from(tabbar.children).forEach(ch => ch.classList.toggle("active", ch.dataset.k === k));
+      Object.entries(panes).forEach(([pk, pv]) => { pv.style.display = pk === k ? "" : "none"; });
+      // Al cambiar de pestaña, ajusta la preview por comodidad.
+      if (k === "match") { previewTarget = "match"; } else if (previewTarget === "match") { previewTarget = "premium"; }
+      setActiveChip(); renderPreview();
+    }, "data-k": k }, lbl);
+    tabbar.appendChild(t);
+  });
+  planPane.style.display = "none";
+  editor.appendChild(tabbar);
+  editor.appendChild(matchPane);
+  editor.appendChild(planPane);
+
+  // ---- Layout de dos columnas: editor + preview pegajosa ----
+  const previewCol = el("div", { style: "flex:0 0 320px" }, [
+    el("div", { style: "position:sticky;top:16px;display:flex;flex-direction:column;align-items:center;gap:10px" }, [
+      el("div", { style: "display:flex;align-items:center;gap:6px" }, [ el("strong", {}, "Vista previa"), saveStatus ]),
+      chips,
+      frame,
+      el("p", { class: "muted", style: "font-size:11px;max-width:300px;text-align:center" },
+        "La animación se reproduce al cambiar la selección. Los cambios se guardan solos y los usuarios los ven al recargar la app."),
+    ]),
+  ]);
+  const grid = el("div", { style: "display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap" }, [
+    el("div", { style: "flex:1 1 380px;min-width:300px" }, [ editor ]),
+    previewCol,
+  ]);
+  root.appendChild(grid);
+
+  setActiveChip();
+  renderPreview();
 }
 
 /* ================================================================
