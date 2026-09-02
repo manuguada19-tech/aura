@@ -8300,12 +8300,20 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
   box-shadow: 0 20px 60px rgba(0,0,0,.4);
   position: relative;
 }
-/* Botón de cierre (X) fijo arriba a la derecha de cualquier modal de aura2 */
+/* Botón de cierre (X) fijo arriba a la derecha de cualquier modal de aura2.
+   V817 · ANTES usaba `float: right`. Como el contenido del modal
+   (.notif-list-wrap, .rewards-shop) es `display:flex` (crea un contexto de
+   formato de bloque), el bloque se ENCOGÍA para no solaparse con el float →
+   TODO el contenido quedaba ~48px estrecho por la derecha (ese "margen" que no
+   se iba). Lo sacamos del flujo con `position:absolute` para que el contenido
+   ocupe el ancho completo de la tarjeta. Reservamos hueco en las cabeceras
+   (más abajo) para que el título no quede debajo de la X. */
 .modal-card .modal-x {
-  position: sticky;
-  top: -6px;
-  float: right;
-  margin: -8px -6px 0 8px;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  float: none;
+  margin: 0;
   width: 34px; height: 34px;
   border: none; border-radius: 999px;
   background: rgba(255,255,255,.1); color: inherit;
@@ -8313,6 +8321,11 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
   display: flex; align-items: center; justify-content: center;
   z-index: 3;
 }
+/* V817 · Hueco para la X en las cabeceras de estos modales, para que el
+   título/acciones no queden debajo del botón de cierre. */
+.modal-card .notif-head,
+.modal-card .rewards-head,
+.modal-card .rewards-shop > h3 { padding-right: 44px; }
 .modal-card .modal-x:hover { background: rgba(255,255,255,.2); }
 :root[data-theme="light"] .modal-card .modal-x { background: #eef0f5; }
 :root[data-theme="light"] .modal-card .modal-x:hover { background: #e0e3ec; }
