@@ -11918,15 +11918,37 @@ async function viewReadsAdmin(root){
         packsWrap.appendChild(el("div", { class: "empty" }, "No hay packs configurados."));
         return;
       }
+      // Pack "popular": el central si hay 3, o el de mejor ratio créditos/precio.
+      // Refleja exactamente lo que ve el usuario en el paywall.
+      let popularIdx = -1;
+      if (packs.length === 3) popularIdx = 1;
+      else if (packs.length >= 2) {
+        let best = -Infinity, bi = 0;
+        packs.forEach((p, i) => {
+          const ratio = (Number(p.credits) || 0) / Math.max(0.01, Number(p.price) || 0.01);
+          if (ratio > best) { best = ratio; bi = i; }
+        });
+        popularIdx = bi;
+      }
+      const basePerRead = packs.length ? (Number(packs[0].price) || 0) / Math.max(1, Number(packs[0].credits) || 1) : 0;
       const grid = el("div", { class: "packs-grid" });
-      packs.forEach(p => {
-        const card = el("div", { class: "pack-card" }, [
-          el("div", { class: "pack-card-head" }, [
-            el("span", { class: "pack-card-badge" }, (p.id || "").toUpperCase()),
-            el("span", { class: "pack-card-title" }, p.label || ("Pack " + (p.id || "").toUpperCase())),
+      packs.forEach((p, i) => {
+        const isPopular = i === popularIdx && packs.length >= 2;
+        const cur = p.currency || currency;
+        const perRead = (Number(p.price) || 0) / Math.max(1, Number(p.credits) || 1);
+        const savePct = basePerRead > 0 ? Math.round((1 - perRead / basePerRead) * 100) : 0;
+        const meta = [ el("span", { class: "pack-card-perread" }, fmtMoney(perRead, cur) + " / lectura") ];
+        if (savePct > 0) meta.push(el("span", { class: "pack-card-save" }, "Ahorra " + savePct + "%"));
+        const card = el("div", { class: "pack-card" + (isPopular ? " is-popular" : "") }, [
+          el("div", { class: "pack-card-ic" }, [
+            el("span", { class: "pack-card-ic-n" }, String(p.credits || 0)),
+            el("span", { class: "pack-card-ic-l" }, "lecturas"),
           ]),
-          el("div", { class: "pack-card-credits" }, (p.credits || 0) + " lecturas"),
-          el("div", { class: "pack-card-price" }, fmtMoney(p.price, p.currency || currency)),
+          el("div", { class: "pack-card-mid" }, [
+            el("div", { class: "pack-card-title" }, p.label || ("Pack " + (p.id || "").toUpperCase())),
+            el("div", { class: "pack-card-meta" }, meta),
+          ]),
+          el("div", { class: "pack-card-price" }, fmtMoney(p.price, cur)),
         ]);
         grid.appendChild(card);
       });
