@@ -16599,16 +16599,29 @@ async function maybePromptForPushAnon() {
     // que instalamos el guard cuando es un dispositivo táctil/móvil, además de
     // cuando está instalada. En ESCRITORIO seguimos SIN instalarlo (no atrapamos
     // el botón atrás del navegador) → 100% retrocompatible con el uso de sobremesa.
-    const isMobileWeb = () => {
+    // V818 · La detección anterior (matchMedia coarse + UA) fallaba en varios
+    // casos reales: Chrome Android en "Vista de escritorio" (finge puntero fino
+    // y UA de escritorio), algunos WebView y navegadores que no exponen bien
+    // pointer/hover. Resultado: el guard NO se instalaba y "Atrás" salía sin
+    // preguntar. La señal MÁS fiable de que hay pantalla táctil (y por tanto es
+    // un móvil/tablet donde el diálogo de salida es deseable) es HARDWARE:
+    // navigator.maxTouchPoints > 0. Añadimos esa señal como primaria; las
+    // anteriores quedan como refuerzo. En un escritorio real de ratón
+    // (maxTouchPoints 0, puntero fino, UA no móvil) el guard sigue SIN
+    // instalarse → 100% retrocompatible con el uso de sobremesa.
+    const isTouchDevice = () => {
       try {
-        if (window.matchMedia && window.matchMedia("(max-width: 900px) and ((pointer: coarse) or (hover: none))").matches) return true;
+        if ((navigator.maxTouchPoints || 0) > 0) return true;
+        if (typeof navigator.msMaxTouchPoints === "number" && navigator.msMaxTouchPoints > 0) return true;
+        if ("ontouchstart" in window) return true;
+        if (window.matchMedia && window.matchMedia("(pointer: coarse), (hover: none)").matches) return true;
         return /Android|iPhone|iPad|iPod|Mobile|Silk|KFAPWI/i.test((window.navigator && navigator.userAgent) || "");
       } catch { return false; }
     };
     // Intenta instalar ya; si aún no estamos en modo instalado, reintenta unas
     // cuantas veces (Android tarda en fijar el display-mode) y también en
     // cuanto cambie el display-mode o se instale la app.
-    const tryInstall = () => { if (isStandalone() || isMobileWeb()) { install(); return true; } return false; };
+    const tryInstall = () => { if (isStandalone() || isTouchDevice()) { install(); return true; } return false; };
     if (!tryInstall()) {
       let tries = 0;
       const timer = setInterval(() => {
