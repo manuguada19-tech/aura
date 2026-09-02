@@ -14431,11 +14431,16 @@ function screenSubscriptions(root) {
         el("div", { class: "pq-item" }, [ el("span", {}, "📍"), el("small", {}, p.profiles || "—") ]),
         el("div", { class: "pq-item " + adsInfo.cls }, [ el("span", {}, adsInfo.emoji), el("small", {}, adsInfo.label) ]),
       ]);
+      // V802 · Las tarjetas Gold/Platinum tienen fondo CLARO, pero .btn-outline
+      // usa color:var(--text) (blanco en tema oscuro) → el texto "Plan actual"
+      // salía invisible. Forzamos texto/borde oscuros en esas tarjetas claras.
+      const onLightCard = (p.cls === "gold" || p.cls === "platinum");
+      const outlineStyle = onLightCard ? "color:#111;border-color:rgba(0,0,0,.35)" : "";
       const cta = isCurrent
-        ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan actual (" + p.tier + ")")
+        ? el("button", { class: "btn btn-outline btn-block", disabled: true, style: outlineStyle }, "Plan actual (" + p.tier + ")")
         : isFree
         // Plan gratuito no comprable: solo indicativo cuando el usuario ya paga.
-        ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan gratuito")
+        ? el("button", { class: "btn btn-outline btn-block", disabled: true, style: outlineStyle }, "Plan gratuito")
         : el("button", { class: "btn btn-brand btn-block",
             onclick: async (ev) => {
               const btn = ev.currentTarget;
