@@ -8692,21 +8692,19 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
 .notif-subhint .nsh-ic { flex: 0 0 auto; font-size: 15px; line-height: 1.3; }
 .notif-subhint b { color: var(--text); font-weight: 700; }
 
-/* V808 · En móvil los modales de aura2 (tienda de recompensas, bandeja de
-   avisos y preferencias) deben OCUPAR TODO EL ANCHO del contenedor, igual que
-   las hojas nativas. Antes quedaban como una tarjeta centrada con márgenes
-   laterales — y la de avisos con un tope de 380px — así que "no ocupaban el
-   ancho completo del container". Aquí los convertimos en hoja inferior a ancho
-   completo (y damos por fin sentido a la clase .wide en móvil). */
+/* V812 · Los modales de aura2 (tienda de recompensas, bandeja de avisos y
+   preferencias) deben OCUPAR TODO EL ANCHO de su popup, sin márgenes laterales
+   sobrantes, PERO seguir FLOTANDO centrados (no anclados abajo). El intento
+   anterior (V808) los pegó al borde inferior como hoja, que no es lo deseado.
+   Aquí: quitamos el tope de 380px de avisos y hacemos que la tarjeta ocupe el
+   ancho del contenedor menos un pequeño margen, manteniendo el centrado. */
 @media (max-width: 900px) and ((pointer: coarse) or (hover: none)) {
-  .modal-backdrop { padding: 0; align-items: flex-end; }
+  .modal-backdrop { padding: 14px; align-items: center; }
   .modal-card,
   .modal-card.wide,
   .notif-modal {
     max-width: none;
     width: 100%;
-    border-radius: 22px 22px 0 0;
-    max-height: 92dvh;
   }
 }
 
