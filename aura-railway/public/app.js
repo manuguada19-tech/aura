@@ -8444,7 +8444,20 @@ async function openNearbyMap() {
     const data = await fetchNearbyMap(lat, lng, mapFilters.radiusKm);
     if (data) { lastData = data; repaint(); }
     const realCount = (data && Array.isArray(data.users)) ? data.users.length : 0;
-    if (opts.recenterIfEmpty && realCount === 0) {
+    // V831 · El pin de prueba (ficticio) también cuenta como "alguien" cuando
+    // cae DENTRO del círculo de búsqueda. Antes solo se miraban los usuarios
+    // reales, así que al arrastrar el círculo justo sobre el usuario de prueba
+    // salía "no hay nadie por esta zona" y el mapa se recentraba, pese a que el
+    // pin de prueba seguía visible en esa misma zona. Ahora, si está en rango,
+    // no mostramos el aviso ni recentramos.
+    let testInRange = false;
+    if (mapFilters.showTest && testUser && Number.isFinite(testUser.lat) && Number.isFinite(testUser.lng)) {
+      try {
+        const dkm = haversineKm(lat, lng, testUser.lat, testUser.lng);
+        testInRange = Number.isFinite(dkm) && dkm <= mapFilters.radiusKm;
+      } catch {}
+    }
+    if (opts.recenterIfEmpty && realCount === 0 && !testInRange) {
       // V768 · Aviso grande en pantalla (unos segundos) indicando que no hay
       // nadie cerca y que se volverá a la zona del usuario. Al terminar el
       // aviso, recentramos.
