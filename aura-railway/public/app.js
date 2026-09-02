@@ -8116,12 +8116,16 @@ async function openNearbyMap() {
   const demoProfile = await fetchDemoProfile();
   const testUser = makeTestMapUser(start, demoProfile);
 
-  // V769 · Zoom inicial más cercano (15) para que el punto azul de "mi
-  // ubicación" se vea bien centrado; antes con 13 quedaba demasiado lejano.
+  // V795 · Zoom inicial MUCHO más cercano al punto azul (17, nivel calle).
+  // Antes 15 quedaba demasiado lejano. Esri Canvas solo tiene teselas nativas
+  // hasta el nivel 16; para poder acercarnos más usamos maxNativeZoom en la
+  // capa de teselas (más abajo), que hace que Leaflet re-escale las del nivel
+  // 16 en los niveles 17-18 en lugar de mostrar hueco gris.
   const map = L.map(mapEl, {
     zoomControl: false,
     attributionControl: false, // sin "publicidad"/atribución sobre el mapa
-  }).setView([start.lat, start.lng], 15);
+    maxZoom: 18,
+  }).setView([start.lat, start.lng], 17);
   L.control.zoom({ position: "bottomright" }).addTo(map);
 
   // V762 · Teselas SIN clave: usamos Esri (ArcGIS) Canvas Dark/Light Gray.
@@ -8133,7 +8137,10 @@ async function openNearbyMap() {
   const tileUrl = dark
     ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
     : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
-  L.tileLayer(tileUrl, { maxZoom: 16, attribution: "" }).addTo(map);
+  // V795 · maxNativeZoom:16 = último nivel con teselas reales de Esri; maxZoom:18
+  // permite acercar más (Leaflet re-escala las teselas del nivel 16), de modo
+  // que el punto azul se ve a nivel de calle sin huecos grises.
+  L.tileLayer(tileUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
 
   const markers = L.layerGroup().addTo(map);
   let searchCircle = null;
@@ -8354,7 +8361,8 @@ async function openNearbyMap() {
       // aviso, recentramos.
       await showMapNotice("No hay nadie por esta zona. Volviendo a tu ubicación…", 2600);
       suppressMoveSearch = true;
-      map.setView([myLocation.lat, myLocation.lng], 13, { animate: true });
+      // V795 · Volver a mi ubicación con zoom cercano (16) coherente con el resto.
+      map.setView([myLocation.lat, myLocation.lng], 16, { animate: true });
       dropPointer(myLocation.lat, myLocation.lng);
       drawCircle(myLocation, mapFilters.radiusKm);
       const back = await fetchNearbyMap(myLocation.lat, myLocation.lng, mapFilters.radiusKm);
@@ -8518,7 +8526,9 @@ async function openNearbyMap() {
 
   locateBtn.addEventListener("click", () => {
     suppressMoveSearch = true;
-    map.setView([myLocation.lat, myLocation.lng], 14, { animate: true });
+    // V795 · Al centrar en mi ubicación, acercar a nivel calle (17) como el
+    // zoom inicial, para ver el punto azul de cerca.
+    map.setView([myLocation.lat, myLocation.lng], 17, { animate: true });
     dropPointer(myLocation.lat, myLocation.lng);
     searchAt(myLocation.lat, myLocation.lng, { recenterIfEmpty: false });
   });
