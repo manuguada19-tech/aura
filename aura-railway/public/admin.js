@@ -4308,8 +4308,33 @@ async function openUserDrawer(id, onChange) {
       // V441 · Botón admin: solicitar (re)consentimiento GPS al usuario.
       //         Marca la fila reask_pending=1 y la próxima vez que el usuario
       //         cargue la app (o SSE, si lo integramos), se mostrará el modal.
+      // V796 · Si el GPS del usuario YA está activo (consentimiento otorgado +
+      //         coordenadas reales reportadas), el admin NO puede volver a
+      //         solicitarlo: no tiene sentido pedir algo que ya está concedido.
+      //         En ese caso el botón queda deshabilitado y, al pulsarlo, muestra
+      //         durante un momento un aviso de que el usuario ya tiene el GPS
+      //         activo correctamente. Solo si NO hay ubicación activa se permite
+      //         enviar la solicitud de consentimiento.
       (function addReaskBtn(){
+        const gpsActive = !!(gps && gps.consent_given && gps.lat != null && gps.lng != null);
         const reaskRow = el("div", { class: "lv2-gps-row", style: "margin-top:6px" });
+        if (gpsActive) {
+          const btn = el("button", {
+            class: "btn xs btn-ghost",
+            type: "button",
+            style: "font-size:11.5px;padding:4px 10px;opacity:.6;cursor:not-allowed",
+            title: "El usuario ya tiene el GPS activo",
+            onclick: () => {
+              const old = btn.textContent;
+              btn.textContent = "✅ El usuario ya tiene el GPS activo correctamente";
+              try { toast && toast("El usuario ya tiene el GPS activo correctamente"); } catch {}
+              setTimeout(() => { btn.textContent = old; }, 2600);
+            },
+          }, "📍 Solicitar consentimiento GPS al usuario");
+          reaskRow.appendChild(btn);
+          liveBox.appendChild(reaskRow);
+          return;
+        }
         const btn = el("button", {
           class: "btn xs btn-ghost",
           type: "button",

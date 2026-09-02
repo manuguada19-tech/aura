@@ -12027,7 +12027,7 @@ function screenMe(root) {
       {
         icon: "📍",
         title: T("content.me.item_gps") || "Ubicación (GPS)",
-        sub: (state.gpsConsent === true)
+        sub: ((() => { try { return GPS.isActive({ consent_given: !!state.gpsConsent }, _geoPermWatch.last); } catch { return state.gpsConsent === true; } })())
           ? (T("content.me.item_gps_on") || "Permiso activo · pulsa para revocar")
           : (T("content.me.item_gps_off") || "Permiso no otorgado"),
         onClick: () => openGpsPrivacySheet(),
@@ -13819,7 +13819,16 @@ function openDeleteAccountSheet() {
    - Si hay consentimiento: botón "Revocar" (con confirmación).
    - Si no lo hay: botón "Activar ubicación" que abre el modal de consentimiento RGPD. */
 function openGpsPrivacySheet() {
-  const consent = state.gpsConsent === true;
+  // V796 · La ubicación se considera ACTIVA con el mismo criterio tolerante que
+  //         usan el boot y los avisos (GPS.isActive): navegador "granted", o
+  //         consentimiento en servidor + navegador != "denied" (iOS/PWA sin
+  //         Permissions API). Así, si el GPS YA está activo, NO ofrecemos el
+  //         botón de "Activar ubicación" (solicitar consentimiento): solo el de
+  //         revocar. El botón de solicitar aparece únicamente cuando la
+  //         ubicación NO está activa.
+  let active = false;
+  try { active = GPS.isActive({ consent_given: !!state.gpsConsent }, _geoPermWatch.last); } catch { active = state.gpsConsent === true; }
+  const consent = active;
   const wrap = el("div", {}, [
     el("div", { class: "sheet-title" }, "📍 " + (T("content.me.item_gps") || "Ubicación (GPS)")),
     el("div", { class: "form", style: "padding-top:0" }, [
