@@ -10224,6 +10224,47 @@ async function _geoLookup(ip, opts) {
   return info;
 }
 
+// V807 · Geocodificación INVERSA (coords GPS → ciudad/región). La ubicación por
+// IP es muy poco fiable en móvil: los operadores (Vodafone, etc.) enrutan la
+// conexión por un nodo central (normalmente Madrid), así que la "ciudad por IP"
+// no coincide con dónde está realmente el usuario. Cuando hay coordenadas GPS
+// REALES (consentidas), esas son la fuente de verdad; las convertimos a un
+// nombre de lugar con BigDataCloud (HTTPS, gratis, sin API key). Best-effort:
+// si falla, devolvemos null y el panel sigue mostrando el resto de datos.
+const _revGeoCache = new Map();
+async function _reverseGeocode(lat, lon) {
+  const la = Number(lat), lo = Number(lon);
+  if (!Number.isFinite(la) || !Number.isFinite(lo)) return null;
+  const key = la.toFixed(3) + "," + lo.toFixed(3); // ~100 m de resolución para caché
+  if (_revGeoCache.has(key)) return _revGeoCache.get(key);
+  let out = null;
+  try {
+    if (typeof fetch === "function") {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, 1200);
+      let r;
+      try {
+        r = await fetch(
+          "https://api.bigdatacloud.net/data/reverse-geocode-client?latitude="
+            + encodeURIComponent(la) + "&longitude=" + encodeURIComponent(lo) + "&localityLanguage=es",
+          { signal: ctrl.signal, headers: { Accept: "application/json" } }
+        );
+      } finally { clearTimeout(t); }
+      if (r && r.ok) {
+        const j = await r.json().catch(() => null);
+        if (j) {
+          const city = j.city || j.locality || j.principalSubdivision || "";
+          const region = j.principalSubdivision || "";
+          const country_code = j.countryCode || "";
+          out = { city, region, country_code };
+        }
+      }
+    }
+  } catch (e) { out = null; }
+  _revGeoCache.set(key, out);
+  return out;
+}
+
 // V789 · Provincia derivada de la CIUDAD declarada por el usuario (no de la IP).
 // La IP solo indica por dónde sale la conexión: en ciudades limítrofes (p.ej.
 // Guadalajara enruta por Madrid) daba provincias contradictorias con la ciudad.
@@ -10501,7 +10542,16 @@ async function getUserFullContext(uid) {
         reask_pending: !!g.reask_pending,
         reask_requested_at: g.reask_requested_at,
         reask_requested_by: g.reask_requested_by,
+        place: null, // V807 · ciudad/región reales derivadas de las coords GPS
       };
+      // V807 · Si hay coords GPS reales, las convertimos a ciudad/región. Esta
+      // es la ubicación FIABLE (la del IP puede decir Madrid por el operador).
+      if (hasConsent && gps.lat != null && gps.lng != null) {
+        try {
+          const rev = await _withTimeout(_reverseGeocode(gps.lat, gps.lng), 1500, null, "revgeo");
+          if (rev && (rev.city || rev.region)) gps.place = rev;
+        } catch { /* best-effort */ }
+      }
     }
   }
   return {

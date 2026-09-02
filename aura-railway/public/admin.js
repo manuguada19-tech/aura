@@ -4203,12 +4203,18 @@ async function openUserDrawer(id, onChange) {
           el("code", {}, dev.ip || "—"),
           ipLikelyProxy ? el("span", { class: "chip xs t-warn", style: "margin-left:6px" }, "proxy/CDN") : null,
         ].filter(Boolean)) ]),
-        el("div", {}, [ el("small", { class: "muted" }, "Ciudad / Región"), el("div", {}, `${geo.city || "-"}, ${geo.region || "-"}`) ]),
+        el("div", {}, [ el("small", { class: "muted" }, "Ciudad / Región (aprox. por IP)"), el("div", {}, [
+          el("span", {}, `${geo.city || "-"}, ${geo.region || "-"}`),
+          // V807 · La ubicación por IP no es fiable en móvil (el operador enruta
+          // por un nodo central, normalmente Madrid). Lo marcamos para que el
+          // admin no la confunda con la posición real del usuario.
+          el("span", { class: "chip xs t-warn", style: "margin-left:6px", title: "En móvil, la IP del operador suele salir por Madrid u otra ciudad central; no es la ubicación real. Usa la ubicación GPS de abajo." }, "orientativa"),
+        ]) ]),
         el("div", {}, [ el("small", { class: "muted" }, "País"), el("div", {}, geo.country || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Operador / ASN"), el("div", {}, geo.org || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Zona horaria"), el("div", {}, geo.tz || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Última conexión"), el("div", {}, dev.last_seen ? fmt.reldate(dev.last_seen) : "—") ]),
-        el("div", {}, [ el("small", { class: "muted" }, "Coordenadas"), el("div", {}, (geo.lat != null ? geo.lat.toFixed(3) + ", " + geo.lon.toFixed(3) : "—")) ]),
+        el("div", {}, [ el("small", { class: "muted" }, "Coordenadas (por IP)"), el("div", {}, (geo.lat != null ? geo.lat.toFixed(3) + ", " + geo.lon.toFixed(3) : "—")) ]),
       ]);
       panel.appendChild(grid);
       liveBox.appendChild(panel);
@@ -4294,6 +4300,12 @@ async function openUserDrawer(id, onChange) {
         const gpsRow = el("div", { class: "lv2-gps-row" });
         if (gps.consent_given && gps.lat != null && gps.lng != null) {
           gpsRow.appendChild(el("span", { class: "chip xs t-ok" }, "📍 GPS activo"));
+          // V807 · Ubicación REAL derivada de las coords GPS (ciudad/región).
+          // Es la fuente fiable, frente a la ciudad por IP (operador → Madrid).
+          if (gps.place && (gps.place.city || gps.place.region)) {
+            const placeTxt = [gps.place.city, gps.place.region].filter(Boolean).join(", ");
+            gpsRow.appendChild(el("span", { class: "chip xs t-ok", title: "Ubicación real según el GPS del dispositivo" }, "🏙 " + placeTxt));
+          }
           gpsRow.appendChild(el("span", { class: "chip xs" }, `± ${gps.accuracy || "?"} m`));
           gpsRow.appendChild(el("span", { class: "chip xs" }, `Actualizado ${gps.stale_minutes != null ? gps.stale_minutes + " min" : "—"}`));
           gpsRow.appendChild(el("span", { class: "chip xs" }, `${(+gps.lat).toFixed(5)}, ${(+gps.lng).toFixed(5)}`));
