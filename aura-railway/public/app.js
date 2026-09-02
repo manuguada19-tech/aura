@@ -14489,20 +14489,27 @@ function screenInfoFaq(root) {
   // Search bar
   const search = el("input", {
     type: "search",
+    id: "faqSearchInput",
     class: "faq-search",
     placeholder: "Buscar en las preguntas...",
-    oninput: (e) => filterFaq(e.target.value)
+    oninput: () => faqApplyFilter()
   });
   c.appendChild(search);
 
-  // Categories with pills
+  // V794 · Categorías reorganizadas y ampliadas para cubrir todas las
+  // funciones actuales (filtros con deslizadores y unidades, avisos por
+  // correo/push/campanita, historias, recompensas, quedadas, llamadas…).
   const categories = [
-    { key: "all", label: "Todas", ic: "✨" },
-    { key: "account", label: "Cuenta", ic: "🔐" },
-    { key: "matches", label: "Matches", ic: "💫" },
-    { key: "chat", label: "Chats", ic: "💬" },
-    { key: "safety", label: "Seguridad", ic: "🛡️" },
-    { key: "billing", label: "Pagos", ic: "💳" },
+    { key: "all",       label: "Todas",         ic: "✨" },
+    { key: "empezar",   label: "Primeros pasos", ic: "🚀" },
+    { key: "perfil",    label: "Perfil",         ic: "🧑" },
+    { key: "descubrir", label: "Buscar",         ic: "🎚️" },
+    { key: "matches",   label: "Matches",        ic: "💫" },
+    { key: "chat",      label: "Chat",           ic: "💬" },
+    { key: "avisos",    label: "Avisos",         ic: "🔔" },
+    { key: "extras",    label: "Recompensas",    ic: "🎁" },
+    { key: "seguridad", label: "Seguridad",      ic: "🛡️" },
+    { key: "planes",    label: "Pagos",          ic: "💳" },
   ];
   const pills = el("div", { class: "faq-pills" });
   categories.forEach((cat, idx) => {
@@ -14517,36 +14524,77 @@ function screenInfoFaq(root) {
   });
   c.appendChild(pills);
 
-  // FAQ data
+  // FAQ data — cada entrada: { cat, sub, q, a }. Las entradas se agrupan por
+  // categoría y, dentro, por subcategoría (subheader) para una lectura clara.
   const faqData = [
-    { cat: "account", q: "¿Cómo creo una cuenta en Aura?", a: "Introduce tu correo, verifica con el código de 6 dígitos que te enviamos, y completa tu perfil con foto y datos básicos. Todo el proceso lleva menos de 2 minutos." },
-    { cat: "account", q: "Olvidé mi contraseña, ¿cómo la recupero?", a: "En la pantalla de acceso pulsa \"¿Has olvidado tu contraseña?\", introduce tu correo y recibirás un enlace para restablecerla." },
-    { cat: "account", q: "¿Puedo cambiar mi correo electrónico?", a: "Sí. Ve a Ajustes → Cuenta → Cambiar correo. Se te pedirá verificar el correo nuevo antes de activarlo." },
-    { cat: "account", q: "¿Cómo elimino mi cuenta?", a: "Desde Ajustes → Cuenta → Eliminar cuenta. Tus datos se borran de forma permanente en un plazo máximo de 30 días." },
+    // ----- Primeros pasos -----
+    { cat: "empezar", sub: "🔐 Cuenta", q: "¿Cómo creo una cuenta en Aura?", a: "Introduce tu correo, verifica con el código de 6 dígitos que te enviamos y completa tu perfil con foto y datos básicos. Todo el proceso lleva menos de 2 minutos." },
+    { cat: "empezar", sub: "🔐 Cuenta", q: "Olvidé mi contraseña, ¿cómo la recupero?", a: "En la pantalla de acceso pulsa «¿Has olvidado tu contraseña?», introduce tu correo y recibirás un enlace para restablecerla." },
+    { cat: "empezar", sub: "🔐 Cuenta", q: "¿Puedo cambiar mi correo electrónico?", a: "Sí. Ve a Perfil → Cuenta → Cambiar correo. Te pediremos verificar el correo nuevo antes de activarlo." },
+    { cat: "empezar", sub: "📲 Instalar la app", q: "¿Puedo instalar Aura como aplicación?", a: "Sí. Aura es una PWA: desde el navegador, cuando estés en tu Perfil verás el aviso «Instala Aura en tu móvil». Al instalarla se abre a pantalla completa y puede recibir avisos aunque esté cerrada." },
+    { cat: "empezar", sub: "📲 Instalar la app", q: "¿Aura funciona sin conexión?", a: "La app carga al instante incluso con conexión débil gracias a su almacenamiento local, pero para ver perfiles, chatear o buscar necesitas conexión a internet." },
 
-    { cat: "matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan \"like\" mutuamente. A partir de ese momento podéis chatear libremente." },
-    { cat: "matches", q: "¿Cómo mejora Aura mis matches?", a: "Nuestro algoritmo analiza tus preferencias, intereses y actividad para mostrarte perfiles más afines. Cuanto más interactúas, mejor aprende." },
-    { cat: "matches", q: "¿Puedo deshacer un \"no me gusta\"?", a: "Sí, con la suscripción Premium puedes deshacer la última acción y volver a valorar ese perfil." },
-    { cat: "matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con Premium los likes son ilimitados." },
+    // ----- Perfil y fotos -----
+    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Cómo edito mi perfil, fotos y biografía?", a: "En Perfil → Editar perfil puedes cambiar tu foto, biografía, intereses y datos. Un perfil completo y con varias fotos consigue muchos más matches." },
+    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿En qué unidades introduzco mi altura y peso?", a: "Aura elige automáticamente las unidades habituales de tu país de registro (por ejemplo cm/kg en España, o ft·in/lb en países anglosajones). Puedes escribir el valor o usar el deslizador." },
+    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Puedo cambiar de zona (orientación)?", a: "Sí. En Perfil → Cambiar zona eliges la zona que corresponde a a quién quieres conocer. El cambio es inmediato y no pierdes tus matches." },
 
-    { cat: "chat", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. Todas pasan un filtro automático y respetamos la privacidad de ambos lados." },
-    { cat: "chat", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona os desmatcháis, la conversación desaparece." },
-    { cat: "chat", q: "¿Cómo activo notificaciones?", a: "En Ajustes → Notificaciones puedes personalizar avisos de matches, mensajes y likes recibidos." },
+    // ----- Buscar y filtros -----
+    { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Cómo uso los filtros de descubrimiento?", a: "En Perfil → Filtros de descubrimiento ajustas edad, distancia, altura, peso y más. Cada filtro numérico tiene un deslizador cómodo y, si prefieres, también puedes escribir el valor exacto a mano." },
+    { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Puedo cambiar las unidades (km/millas, cm/pies, kg/libras)?", a: "Sí. En cada filtro de altura, peso o distancia puedes alternar las unidades. Aura convierte el valor automáticamente para que compares con las unidades del país donde estás buscando." },
+    { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "Ajusté un filtro pero no lo quiero, ¿cómo lo quito?", a: "Deja el deslizador en su rango completo (mínimo–máximo) o borra el valor manual: ese filtro dejará de aplicarse y volverás a ver todos los perfiles." },
+    { cat: "descubrir", sub: "💡 Recomendaciones", q: "¿Cómo mejora Aura los perfiles que me muestra?", a: "El algoritmo analiza tus preferencias, tus filtros y tu actividad para priorizar perfiles más afines. Cuanto más interactúas, mejor aprende qué te interesa." },
 
-    { cat: "safety", q: "¿Aura verifica los perfiles?", a: "Sí. Ofrecemos verificación por selfie y por documento. Los perfiles verificados llevan un distintivo azul." },
-    { cat: "safety", q: "¿Cómo reporto o bloqueo a alguien?", a: "Desde el perfil o el chat, pulsa el icono de menú y elige \"Reportar\" o \"Bloquear\". Revisamos cada reporte en menos de 24 h." },
-    { cat: "safety", q: "¿Qué hago si detecto un bot o estafa?", a: "Repórtalo inmediatamente. Nuestro equipo antifraude actúa de forma proactiva y elimina cuentas sospechosas." },
-    { cat: "safety", q: "¿Comparte Aura mis datos?", a: "Nunca vendemos tus datos. Solo compartimos lo mínimo necesario con proveedores certificados para hacer funcionar el servicio. Consulta la Política de privacidad." },
+    // ----- Matches y likes -----
+    { cat: "matches", sub: "💫 Matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan «like» mutuamente. A partir de ese momento podéis chatear libremente." },
+    { cat: "matches", sub: "💫 Matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con un plan de pago los likes son ilimitados." },
+    { cat: "matches", sub: "↩️ Rebobinar", q: "¿Puedo deshacer un «no me gusta» o un like por error?", a: "Sí, con un plan de pago puedes «rebobinar» tu última acción y volver a valorar ese perfil. Si ya había match con mensajes, por seguridad no se puede deshacer." },
+    { cat: "matches", sub: "⭐ Super like", q: "¿Qué es un super like?", a: "Un super like avisa a la otra persona de que te ha gustado especialmente, destacando tu perfil. Recibe un aviso inmediato en la campanita y, si lo tiene activado, también por push o correo." },
 
-    { cat: "billing", q: "¿Cuánto cuesta Aura Premium?", a: "Ofrecemos planes mensuales, trimestrales y anuales. Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
-    { cat: "billing", q: "¿Cómo cancelo mi suscripción?", a: "Desde Ajustes → Suscripción → Cancelar. También puedes cancelar desde la tienda de tu dispositivo (App Store / Google Play)." },
-    { cat: "billing", q: "¿Ofrecéis reembolsos?", a: "Los reembolsos se gestionan según la política de la tienda desde la que compraste. Escríbenos si tienes un caso especial." },
-    { cat: "billing", q: "¿Hay periodo de prueba?", a: "Ocasionalmente ofrecemos periodos de prueba gratuitos. Se anuncian dentro de la app cuando están disponibles." },
+    // ----- Chat y llamadas -----
+    { cat: "chat", sub: "💬 Mensajes", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. Todas pasan un filtro automático y respetamos la privacidad de ambas partes." },
+    { cat: "chat", sub: "💬 Mensajes", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona deshacéis el match, la conversación desaparece." },
+    { cat: "chat", sub: "❄️ Rompehielos y stickers", q: "¿Qué son los rompehielos y los stickers?", a: "Los rompehielos son preguntas sugeridas para empezar la conversación (plan Premium o superior) y los stickers son pegatinas divertidas (plan Oro o superior) para animar el chat." },
+    { cat: "chat", sub: "🌐 Traducción", q: "¿Puedo traducir los mensajes que recibo?", a: "Sí. En el chat puedes traducir un mensaje al vuelo para hablar con personas en otro idioma sin salir de la conversación." },
+    { cat: "chat", sub: "📹 Videollamadas", q: "¿Cómo hago una videollamada?", a: "Cuando tengas un match, desde el chat puedes iniciar una videollamada dentro de la app. Es una función de los planes de pago y no necesitas instalar nada más." },
+
+    // ----- Notificaciones -----
+    { cat: "avisos", sub: "🔔 Canales de aviso", q: "¿Por qué canales puedo recibir avisos?", a: "Por tres vías: la campanita dentro de la app, notificaciones push en el móvil (aunque la app esté cerrada) y por correo electrónico con plantillas visuales." },
+    { cat: "avisos", sub: "⚙️ Personalizar avisos", q: "¿Cómo elijo qué notificaciones recibo?", a: "Abre la campanita 🔔 y pulsa «⚙️ Ajustes». Ahí activas o desactivas cada aviso (matches, likes, mensajes, recompensas) y decides si lo quieres en la campanita, por push o por correo. Los cambios se guardan al instante." },
+    { cat: "avisos", sub: "📧 Avisos por correo", q: "¿Qué emails puedo recibir de actividad?", a: "Puedes recibir un correo cuando haces un match nuevo, cuando recibes likes o cuando tienes mensajes sin leer y no estás en la app. Cada uno se puede activar o desactivar por separado en «⚙️ Ajustes»." },
+    { cat: "avisos", sub: "📧 Avisos por correo", q: "Recibo demasiados correos, ¿puedo reducirlos?", a: "Sí. En «⚙️ Ajustes» desactiva el canal «Por correo» de las categorías que no quieras. Los correos de likes, además, se agrupan para no llegar de uno en uno." },
+    { cat: "avisos", sub: "📱 Push en el móvil", q: "Activé el push pero no me llegan avisos", a: "Comprueba que aceptaste los permisos de notificación del navegador y que tienes Aura instalada. En iPhone los avisos push solo funcionan si añades Aura a la pantalla de inicio." },
+
+    // ----- Recompensas, historias y quedadas -----
+    { cat: "extras", sub: "🎁 Recompensas y canjes", q: "¿Qué son las recompensas y cómo las canjeo?", a: "Ganas puntos por tu actividad y progreso, y los canjeas por recompensas en la tienda de recompensas. Recibirás un aviso cuando un canje se apruebe o se conceda." },
+    { cat: "extras", sub: "🏆 Progreso", q: "¿Para qué sirve la sección de Progreso?", a: "Refleja tu actividad y logros en Aura. Completar acciones te da progreso y desbloquea recompensas." },
+    { cat: "extras", sub: "📸 Historias 24h", q: "¿Qué son las Historias 24h?", a: "Son publicaciones efímeras que desaparecen a las 24 horas. Sirven para mostrar tu día a día y llamar la atención de posibles matches. Las creas y ves desde Perfil → Historias." },
+    { cat: "extras", sub: "📅 Quedadas", q: "¿Cómo funcionan las quedadas o eventos?", a: "Desde Perfil → Quedadas puedes descubrir o crear eventos para conocer gente en persona de forma segura." },
+
+    // ----- Seguridad y privacidad -----
+    { cat: "seguridad", sub: "✅ Verificación", q: "¿Aura verifica los perfiles?", a: "Sí. Ofrecemos verificación por selfie, por documento y videoidentificación. Los perfiles verificados llevan un distintivo azul." },
+    { cat: "seguridad", sub: "🚫 Reportar y bloquear", q: "¿Cómo reporto o bloqueo a alguien?", a: "Desde el perfil o el chat, pulsa el icono de menú y elige «Reportar» o «Bloquear». Revisamos cada reporte en menos de 24 h." },
+    { cat: "seguridad", sub: "🚫 Reportar y bloquear", q: "¿Qué hago si detecto un bot o una estafa?", a: "Repórtalo de inmediato. Nuestro equipo antifraude actúa de forma proactiva y elimina las cuentas sospechosas." },
+    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Comparte Aura mis datos?", a: "Nunca vendemos tus datos. Solo compartimos lo mínimo necesario con proveedores certificados para hacer funcionar el servicio. Consulta la Política de privacidad." },
+    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo elimino mi cuenta y mis datos?", a: "Desde Perfil → Cuenta → Eliminar cuenta. Tus datos se borran de forma permanente en un plazo máximo de 30 días." },
+
+    // ----- Planes y pagos -----
+    { cat: "planes", sub: "💳 Suscripciones", q: "¿Cuánto cuestan los planes de pago?", a: "Hay planes Premium, Oro y Platino con opciones mensuales, trimestrales y anuales. Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
+    { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Los planes de pago añaden likes ilimitados, rebobinar, rompehielos, stickers, videollamadas y más. En la pantalla de planes ves el detalle de cada uno." },
+    { cat: "planes", sub: "🔄 Gestionar y cancelar", q: "¿Cómo cancelo mi suscripción?", a: "Desde Perfil → Suscripción → Cancelar. Conservarás el acceso hasta el final del periodo ya pagado." },
+    { cat: "planes", sub: "🧾 Facturas y reembolsos", q: "¿Ofrecéis reembolsos y facturas?", a: "Encuentras tus recibos en la sección de suscripción. Los reembolsos se gestionan según la política aplicable; escríbenos si tienes un caso especial." },
   ];
 
   const list = el("div", { class: "faq-list", id: "faqList" });
-  faqData.forEach((item, idx) => {
-    const details = el("details", { class: "faq-item", "data-cat": item.cat, "data-q": item.q.toLowerCase(), "data-a": item.a.toLowerCase() });
+  const seenSub = new Set();
+  faqData.forEach((item) => {
+    // Cabecera de subcategoría (una sola vez por grupo cat+sub).
+    const groupKey = item.cat + "||" + item.sub;
+    if (!seenSub.has(groupKey)) {
+      seenSub.add(groupKey);
+      list.appendChild(el("div", { class: "faq-subhead", "data-cat": item.cat, "data-sub": item.sub }, item.sub));
+    }
+    const details = el("details", { class: "faq-item", "data-cat": item.cat, "data-sub": item.sub, "data-q": item.q.toLowerCase(), "data-a": item.a.toLowerCase() });
     const summary = el("summary", { class: "faq-q" }, [
       el("span", { class: "faq-q-txt" }, item.q),
       el("span", { class: "faq-q-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>` }),
@@ -14555,6 +14603,11 @@ function screenInfoFaq(root) {
     details.appendChild(el("div", { class: "faq-a" }, item.a));
     list.appendChild(details);
   });
+  // Estado vacío cuando la búsqueda no devuelve resultados.
+  list.appendChild(el("div", { class: "faq-empty", id: "faqEmpty", style: "display:none" }, [
+    el("div", { class: "faq-empty-ic" }, "🔍"),
+    el("div", {}, "No hemos encontrado preguntas con esos términos."),
+  ]));
   c.appendChild(list);
 
   c.appendChild(el("div", { class: "info-cta" }, [
@@ -14569,24 +14622,44 @@ function screenInfoFaq(root) {
 function selectFaqCategory(btn, cat) {
   document.querySelectorAll(".faq-pill").forEach(p => p.classList.remove("active"));
   btn.classList.add("active");
-  document.querySelectorAll(".faq-item").forEach(item => {
-    const show = cat === "all" || item.dataset.cat === cat;
-    item.style.display = show ? "" : "none";
-    if (!show) item.open = false;
-  });
+  faqApplyFilter();
 }
 
-function filterFaq(query) {
-  const q = (query || "").toLowerCase().trim();
+// V794 · Filtro unificado: aplica la categoría activa + el texto de búsqueda,
+// muestra/oculta las preguntas y sus cabeceras de subcategoría, y enseña un
+// estado vacío si no hay coincidencias.
+function faqApplyFilter() {
+  const input = document.getElementById("faqSearchInput");
+  const q = (input ? input.value : "").toLowerCase().trim();
   const activePill = document.querySelector(".faq-pill.active");
   const cat = activePill ? activePill.dataset.cat : "all";
+
+  let visibleCount = 0;
+  // Cuenta cuántas preguntas quedan visibles por subcategoría.
+  const subVisible = {};
   document.querySelectorAll(".faq-item").forEach(item => {
     const matchCat = cat === "all" || item.dataset.cat === cat;
     const matchQ = !q || (item.dataset.q.includes(q) || item.dataset.a.includes(q));
-    item.style.display = matchCat && matchQ ? "" : "none";
-    if (item.style.display === "none") item.open = false;
+    const show = matchCat && matchQ;
+    item.style.display = show ? "" : "none";
+    if (!show) item.open = false;
+    if (show) {
+      visibleCount++;
+      const key = item.dataset.cat + "||" + item.dataset.sub;
+      subVisible[key] = (subVisible[key] || 0) + 1;
+    }
   });
+  // Muestra la cabecera de subcategoría solo si tiene alguna pregunta visible.
+  document.querySelectorAll(".faq-subhead").forEach(head => {
+    const key = head.dataset.cat + "||" + head.dataset.sub;
+    head.style.display = subVisible[key] ? "" : "none";
+  });
+  const empty = document.getElementById("faqEmpty");
+  if (empty) empty.style.display = visibleCount ? "none" : "";
 }
+
+// Compat: alias del filtro por texto (por si se invoca desde otro punto).
+function filterFaq() { faqApplyFilter(); }
 
 function screenInfoTerms(root) {
   const c = document.createDocumentFragment();

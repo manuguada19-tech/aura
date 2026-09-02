@@ -4544,7 +4544,45 @@ async function notifyNewMessage(senderId, cid, preview) {
       url: "/",
       tag: `chat-${cid}`,
     }, "chat_push"); // V592
+    // V794 · Email best-effort (respeta chat_email). Usa la plantilla visual
+    // "message_received" sincronizada con Administración → Emails.
+    emailNotifyIfAllowed(peer, "chat_email", "message_received", {
+      from_name: sender?.name || "Alguien",
+      from_photo: sender?.photo_url || "",
+      preview: (preview || "").slice(0, 160),
+    });
   } catch (e) { /* best-effort */ }
+}
+
+// V794 · Envío de email de notificación respetando la preferencia del usuario
+// (columnas *_email de notification_prefs). Best-effort y no bloqueante: nunca
+// interrumpe el flujo principal. enqueueEmail resuelve el destinatario y el
+// idioma a partir del user_id, e interpola la plantilla visual correspondiente.
+async function emailNotifyIfAllowed(userId, prefKey, templateId, vars = {}) {
+  try {
+    const uid = parseInt(userId, 10);
+    if (!uid) return;
+    if (prefKey && !(await notifPrefAllows(uid, prefKey))) return;
+    if (typeof enqueueEmail !== "function") return;
+    await enqueueEmail(templateId, uid, vars);
+  } catch (e) { /* best-effort, silencioso */ }
+}
+
+// V794 · Throttle en memoria del email de "like recibido": máx. 1 correo por
+// destinatario cada 6 h (los likes pueden llegar en ráfaga y no queremos
+// inundar la bandeja). El aviso in-app/push no está throttled aquí.
+const likeEmailThrottle = new Map(); // uid -> ts último email
+function likeEmailAllowed(uid) {
+  const id = parseInt(uid, 10);
+  if (!id) return false;
+  const last = likeEmailThrottle.get(id) || 0;
+  if (Date.now() - last < 6 * 60 * 60 * 1000) return false;
+  likeEmailThrottle.set(id, Date.now());
+  if (likeEmailThrottle.size > 5000) {
+    const cutoff = Date.now() - 12 * 60 * 60 * 1000;
+    for (const [k, ts] of likeEmailThrottle) if (ts < cutoff) likeEmailThrottle.delete(k);
+  }
+  return true;
 }
 
 async function processCampaign(id) {
@@ -7387,6 +7425,18 @@ app.post("/api/my/like", wrap(async (req, res) => {
           await pushToUser(target, {
             title, body, url: "/", tag: `like-${me}`,
           }, "likes_push");
+          // V794 · Email best-effort (respeta likes_email). Con throttle: como
+          // mucho un correo de "like recibido" por destinatario cada 6 h, para
+          // no saturar su bandeja. Plantilla "like_received".
+          if (likeEmailAllowed(target)) {
+            const [[lc]] = await pool.query(
+              "SELECT COUNT(*) AS c FROM likes WHERE to_user=? AND type IN ('like','super')",
+              [target]
+            );
+            emailNotifyIfAllowed(target, "likes_email", "like_received", {
+              like_count: String(lc?.c || 1),
+            });
+          }
         } catch (e) { /* best-effort */ }
       })().catch(() => {});
     }
@@ -7431,6 +7481,16 @@ app.post("/api/my/like", wrap(async (req, res) => {
         body: `Has hecho match con ${meName}. ¡Rompe el hielo y di hola!`,
         url: "/", tag: `match-${convId}`,
       }, "matches_push");
+      // V794 · Email best-effort (respeta matches_email). Plantilla "match_new".
+      const [[meFull]] = await pool.query(
+        "SELECT name, age, city, photo_url FROM users WHERE id=? LIMIT 1", [me]
+      );
+      emailNotifyIfAllowed(target, "matches_email", "match_new", {
+        match_name: meFull?.name || meName,
+        match_age: meFull?.age != null ? String(meFull.age) : "",
+        match_city: meFull?.city || "",
+        match_photo: meFull?.photo_url || "",
+      });
     } catch (e) { /* best-effort */ }
   })().catch(() => {});
 
@@ -11512,6 +11572,16 @@ app.post("/api/my/conversations", wrap(async (req, res) => {
         url: "/",
         tag: `match-${r.insertId}`,
       }, "matches_push"); // V592
+      // V794 · Email best-effort (respeta matches_email). Plantilla "match_new".
+      const [[meFull]] = await pool.query(
+        "SELECT name, age, city, photo_url FROM users WHERE id=? LIMIT 1", [me]
+      );
+      emailNotifyIfAllowed(peer, "matches_email", "match_new", {
+        match_name: meFull?.name || meName,
+        match_age: meFull?.age != null ? String(meFull.age) : "",
+        match_city: meFull?.city || "",
+        match_photo: meFull?.photo_url || "",
+      });
     } catch (e) { /* best-effort */ }
   })().catch(() => {});
   res.json({ ok: true, id: r.insertId });

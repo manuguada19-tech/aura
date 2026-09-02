@@ -65,12 +65,23 @@ async function migrate(pool) {
   try {
     await pool.query("ALTER TABLE notification_prefs ADD COLUMN likes_push TINYINT(1) NOT NULL DEFAULT 1");
   } catch (e) { /* la columna ya existe */ }
+
+  // V794 · Canal EMAIL por categoría. Additivo y retrocompatible: por defecto
+  // ACTIVADO (el usuario ya recibía otros correos transaccionales). Cada nueva
+  // columna se añade con ALTER si no existía en instalaciones previas.
+  const EMAIL_COLS = ["matches_email", "likes_email", "chat_email"];
+  for (const col of EMAIL_COLS) {
+    try {
+      await pool.query(`ALTER TABLE notification_prefs ADD COLUMN ${col} TINYINT(1) NOT NULL DEFAULT 1`);
+    } catch (e) { /* la columna ya existe */ }
+  }
 }
 
 // V592 · Claves válidas de preferencias (y sus defaults)
 // V631 · likes_inapp añadida (avisos de like recibido en la campana).
 // V717 · likes_push añadida (push de like recibido fuera de la app).
-const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push", "likes_inapp", "likes_push"];
+// V794 · *_email añadidas (avisos por correo con plantillas visuales).
+const PREF_KEYS = ["rewards_inapp", "rewards_push", "admin_push", "matches_inapp", "matches_push", "chat_push", "likes_inapp", "likes_push", "matches_email", "likes_email", "chat_email"];
 function prefDefaults() {
   const o = {};
   for (const k of PREF_KEYS) o[k] = true;

@@ -814,7 +814,14 @@
                   openNotifications();
                 } }, "Marcar todas leídas")
               : null,
-            h("button", { class: "btn ghost notif-prefs-btn", title: "Preferencias", onclick: () => { closeModal(); openNotifPrefs(); } }, "⚙️"),
+            h("button", { class: "btn ghost notif-prefs-btn", title: "Elige qué avisos recibir", onclick: () => { closeModal(); openNotifPrefs(); } }, "⚙️ Ajustes"),
+          ]),
+        ]),
+        // V794 · Pista para que el usuario sepa qué hace el engranaje.
+        h("div", { class: "notif-subhint" }, [
+          h("span", { class: "nsh-ic" }, "⚙️"),
+          h("span", {}, [
+            "Pulsa ", h("b", {}, "Ajustes"), " para elegir qué avisos recibes y por qué canal: app, móvil o correo.",
           ]),
         ]),
         h("div", { class: "notif-list" }, rows),
@@ -828,19 +835,27 @@
   // ============ PREFERENCIAS DE NOTIFICACIONES (V592) =============
   // El usuario elige qué avisos recibir y por qué canal. Se guarda al
   // instante con cada toggle (sin botón guardar).
+  // V794 · Se añade el canal EMAIL (correo) a cada categoría. Es additivo y
+  // retrocompatible: si el backend aún no tiene la columna, el toggle vuelve a
+  // su estado y se avisa (igual que cualquier fallo de guardado). Los emails
+  // usan plantillas visuales ya existentes (match_new, like_received,
+  // message_received) sincronizadas con Administración → Emails.
   const NOTIF_PREF_ROWS = [
     { section: "💘 Matches" },
-    { key: "matches_inapp", label: "En la campanita", hint: "Aviso en la app cuando haces match" },
-    { key: "matches_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada" },
+    { key: "matches_inapp", label: "En la campanita", hint: "Aviso en la app cuando haces match", ch: "app" },
+    { key: "matches_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada", ch: "push" },
+    { key: "matches_email", label: "Por correo",       hint: "Email con la tarjeta de tu nuevo match", ch: "email" },
     { section: "❤️ Likes recibidos" },
-    { key: "likes_inapp",   label: "En la campanita", hint: "Aviso cuando alguien te da like o super like" },
+    { key: "likes_inapp",   label: "En la campanita", hint: "Aviso cuando alguien te da like o super like", ch: "app" },
+    { key: "likes_email",   label: "Por correo",       hint: "Resumen por email cuando recibes likes", ch: "email" },
     { section: "💬 Mensajes de chat" },
-    { key: "chat_push",     label: "Push en el móvil", hint: "Cuando te escriben y no estás en la app" },
+    { key: "chat_push",     label: "Push en el móvil", hint: "Cuando te escriben y no estás en la app", ch: "push" },
+    { key: "chat_email",    label: "Por correo",       hint: "Email si tienes mensajes sin leer y no estás en la app", ch: "email" },
     { section: "🎁 Canjes y recompensas" },
-    { key: "rewards_inapp", label: "En la campanita", hint: "Canjes aprobados, rechazados y regalos" },
-    { key: "rewards_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada" },
+    { key: "rewards_inapp", label: "En la campanita", hint: "Canjes aprobados, rechazados y regalos", ch: "app" },
+    { key: "rewards_push",  label: "Push en el móvil", hint: "Notificación aunque la app esté cerrada", ch: "push" },
     { section: "📣 Mensajes del equipo" },
-    { key: "admin_push",    label: "Push en el móvil", hint: "Los avisos importantes siempre aparecen en la campanita" },
+    { key: "admin_push",    label: "Push en el móvil", hint: "Los avisos importantes siempre aparecen en la campanita", ch: "push" },
   ];
 
   async function openNotifPrefs() {
@@ -875,6 +890,15 @@
     modal([
       h("div", { class: "notif-list-wrap" }, [
         h("div", { class: "notif-head" }, [ h("h3", {}, "⚙️ Preferencias de avisos") ]),
+        // V794 · Explicación de para qué sirve esta pantalla y los canales.
+        h("div", { class: "notif-subhint" }, [
+          h("span", { class: "nsh-ic" }, "🔔"),
+          h("span", {}, [
+            "Activa o desactiva cada aviso. Puedes recibirlos ",
+            h("b", {}, "en la campanita"), ", como ", h("b", {}, "push en el móvil"),
+            " o por ", h("b", {}, "correo"), ". Los cambios se guardan al instante.",
+          ]),
+        ]),
         h("div", { class: "nprefs-list" }, children),
         h("div", { class: "modal-actions" }, [
           h("button", { class: "btn secondary", onclick: () => { closeModal(); openNotifications(); } }, "Volver"),
