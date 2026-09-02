@@ -4203,18 +4203,57 @@ async function openUserDrawer(id, onChange) {
           el("code", {}, dev.ip || "—"),
           ipLikelyProxy ? el("span", { class: "chip xs t-warn", style: "margin-left:6px" }, "proxy/CDN") : null,
         ].filter(Boolean)) ]),
-        el("div", {}, [ el("small", { class: "muted" }, "Ciudad / Región (aprox. por IP)"), el("div", {}, [
-          el("span", {}, `${geo.city || "-"}, ${geo.region || "-"}`),
-          // V807 · La ubicación por IP no es fiable en móvil (el operador enruta
-          // por un nodo central, normalmente Madrid). Lo marcamos para que el
-          // admin no la confunda con la posición real del usuario.
-          el("span", { class: "chip xs t-warn", style: "margin-left:6px", title: "En móvil, la IP del operador suele salir por Madrid u otra ciudad central; no es la ubicación real. Usa la ubicación GPS de abajo." }, "orientativa"),
-        ]) ]),
+        // V811 · CIUDAD PRINCIPAL = la REAL por GPS cuando existe (p. ej.
+        // Guadalajara), no la de la IP (que en móvil sale por Madrid al enrutar
+        // el operador). Antes el campo grande mostraba la de IP y la real
+        // quedaba como un chip pequeño enterrado bajo los botones → el admin
+        // veía "Madrid" y creía que estaba mal. Ahora, si hay GPS con
+        // consentimiento y ciudad reverse-geocodificada, ese es el valor
+        // destacado; la de IP se muestra debajo, claramente marcada como
+        // orientativa. Sin GPS, se mantiene la de IP como antes.
+        (function () {
+          const gp = (ctx.gps && ctx.gps.consent_given && ctx.gps.place && (ctx.gps.place.city || ctx.gps.place.region)) ? ctx.gps.place : null;
+          if (gp) {
+            const realTxt = [gp.city, gp.region].filter(Boolean).join(", ");
+            const ipTxt = `${geo.city || "-"}, ${geo.region || "-"}`;
+            return el("div", {}, [
+              el("small", { class: "muted" }, "Ciudad / Región (real por GPS)"),
+              el("div", {}, [
+                el("span", {}, realTxt),
+                el("span", { class: "chip xs t-ok", style: "margin-left:6px", title: "Ubicación real derivada del GPS del dispositivo." }, "✓ GPS"),
+              ]),
+              el("small", { class: "muted", style: "display:block;margin-top:4px;opacity:.75" }, `Por IP (orientativa): ${ipTxt}`),
+            ]);
+          }
+          return el("div", {}, [
+            el("small", { class: "muted" }, "Ciudad / Región (aprox. por IP)"),
+            el("div", {}, [
+              el("span", {}, `${geo.city || "-"}, ${geo.region || "-"}`),
+              // La ubicación por IP no es fiable en móvil (el operador enruta por
+              // un nodo central, normalmente Madrid).
+              el("span", { class: "chip xs t-warn", style: "margin-left:6px", title: "En móvil, la IP del operador suele salir por Madrid u otra ciudad central; no es la ubicación real. Activa/consulta el GPS para la ubicación real." }, "orientativa"),
+            ]),
+          ]);
+        })(),
         el("div", {}, [ el("small", { class: "muted" }, "País"), el("div", {}, geo.country || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Operador / ASN"), el("div", {}, geo.org || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Zona horaria"), el("div", {}, geo.tz || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Última conexión"), el("div", {}, dev.last_seen ? fmt.reldate(dev.last_seen) : "—") ]),
-        el("div", {}, [ el("small", { class: "muted" }, "Coordenadas (por IP)"), el("div", {}, (geo.lat != null ? geo.lat.toFixed(3) + ", " + geo.lon.toFixed(3) : "—")) ]),
+        // V811 · Coordenadas: si hay GPS real, mostrarlas (precisas); si no, las
+        // aproximadas por IP.
+        (function () {
+          const g = ctx.gps;
+          if (g && g.consent_given && g.lat != null && g.lng != null) {
+            return el("div", {}, [
+              el("small", { class: "muted" }, "Coordenadas (reales por GPS)"),
+              el("div", {}, `${(+g.lat).toFixed(5)}, ${(+g.lng).toFixed(5)}`),
+            ]);
+          }
+          return el("div", {}, [
+            el("small", { class: "muted" }, "Coordenadas (por IP)"),
+            el("div", {}, (geo.lat != null ? geo.lat.toFixed(3) + ", " + geo.lon.toFixed(3) : "—")),
+          ]);
+        })(),
       ]);
       panel.appendChild(grid);
       liveBox.appendChild(panel);
@@ -14408,7 +14447,27 @@ async function renderLiveMonitorTab(root) {
             u.is_new_device ? el("span", { class: "chip xs t-warn", style: "margin-left:6px" }, "NUEVO") : null,
           ])
         ]),
-        el("div", {}, [ el("small", { class: "muted" }, "Ubicación"), el("div", {}, u.geo ? `${u.geo.city || "-"}, ${u.geo.region || "-"}, ${u.geo.country || "-"}` : "—") ]),
+        // V811 · Ubicación: preferir la REAL por GPS (reverse-geocode) frente a
+        // la de IP (que en móvil sale por Madrid al enrutar el operador).
+        (function () {
+          const gp = (u.gps && u.gps.consent_given && u.gps.place && (u.gps.place.city || u.gps.place.region)) ? u.gps.place : null;
+          if (gp) {
+            const realTxt = [gp.city, gp.region, u.geo?.country].filter(Boolean).join(", ");
+            const ipTxt = u.geo ? `${u.geo.city || "-"}, ${u.geo.region || "-"}` : "—";
+            return el("div", {}, [
+              el("small", { class: "muted" }, "Ubicación (real por GPS)"),
+              el("div", {}, [
+                el("span", {}, realTxt),
+                el("span", { class: "chip xs t-ok", style: "margin-left:6px", title: "Ubicación real derivada del GPS del dispositivo." }, "✓ GPS"),
+              ]),
+              el("small", { class: "muted", style: "display:block;margin-top:4px;opacity:.75" }, `Por IP (orientativa): ${ipTxt}`),
+            ]);
+          }
+          return el("div", {}, [
+            el("small", { class: "muted" }, "Ubicación (aprox. por IP)"),
+            el("div", {}, u.geo ? `${u.geo.city || "-"}, ${u.geo.region || "-"}, ${u.geo.country || "-"}` : "—"),
+          ]);
+        })(),
         el("div", {}, [ el("small", { class: "muted" }, "Última conexión"), el("div", {}, dev.last_seen ? fmt.reldate(dev.last_seen) : "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Operador / ASN"), el("div", {}, u.geo?.org || "—") ]),
         el("div", {}, [ el("small", { class: "muted" }, "Zona horaria"), el("div", {}, u.geo?.tz || "—") ]),
