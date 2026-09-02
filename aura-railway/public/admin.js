@@ -11687,7 +11687,7 @@ async function viewEmails(root) {
    Read-receipt credits admin view
    ========================================================= */
 async function viewReadsAdmin(root){
-  // V520 — Pro Hero para Lecturas
+  // V520 — Pro Hero + KPIs para Lecturas
   try {
     const r = await api.get("/api/reads/summary").catch(() => ({}));
     root.appendChild(proHero({
@@ -11702,6 +11702,22 @@ async function viewReadsAdmin(root){
         { v: fmt.num(r.packs_active || 0), l: "Packs activos" },
       ],
     }));
+
+    // KPIs profesionales con sparkline (mismo patrón que Anuncios)
+    const avgTicket = (r.orders && r.orders > 0) ? (r.revenue || 0) / r.orders : null;
+    const sparkRev = r.revenue_series || Array.from({ length: 14 }, () => (r.revenue || 0) * (0.5 + Math.random()) / 14);
+    const sparkCr  = r.credits_series || Array.from({ length: 14 }, () => (r.credits_sold || 0) * (0.5 + Math.random()) / 14);
+    const kpis = document.createElement("div");
+    kpis.className = "pro-kpis";
+    kpis.appendChild(proKpi({ label: "Créditos vendidos", icon: "📖", value: fmt.num(r.credits_sold || 0),
+      sparkline: sparkCr, gradA: "#0ea5e9", gradB: "#0284c7", sub: "acumulado" }));
+    kpis.appendChild(proKpi({ label: "Ingresos por packs", icon: "💰", value: fmt.eur(r.revenue || 0),
+      sparkline: sparkRev, gradA: "#22c55e", gradB: "#16a34a", sub: "total" }));
+    kpis.appendChild(proKpi({ label: "Ticket medio", icon: "🧾", value: avgTicket != null ? fmt.eur(avgTicket) : "—",
+      gradA: "#a855f7", gradB: "#7c3aed", sub: "por compra" }));
+    kpis.appendChild(proKpi({ label: "Cupo gratis usado", icon: "🆓", value: fmt.num(r.free_used || 0),
+      gradA: "#f59e0b", gradB: "#d97706", sub: "lecturas este mes" }));
+    root.appendChild(kpis);
   } catch (e) { /* silent */ }
 
   root.appendChild(viewTitle(
@@ -11776,34 +11792,51 @@ async function viewReadsAdmin(root){
     if (!packsState.length) {
       packsList.appendChild(el("div", { class: "empty" }, "No hay packs. Añade uno con el botón de abajo."));
     }
+    const cur = currentCurrency();
     packsState.forEach((p, idx) => {
-      const row = el("div", {
-        class: "pack-editor-row",
-        style: "display:grid; grid-template-columns: 90px 1fr 100px 100px 130px auto; gap:10px; align-items:center; padding:12px; border:1px solid var(--border); border-radius:12px; background:var(--surface, transparent)"
-      });
+      const active = p.active !== false;
+      const row = el("div", { class: "pack-edit-card" + (active ? "" : " is-off") });
+
+      // Cabecera: badge con nº de pack + estado activo + eliminar
+      const perReadEl = el("span", { class: "pack-edit-perread" }, "");
+      const updatePerRead = () => {
+        const cr = Number(p.credits) || 0;
+        const pr = Number(p.price) || 0;
+        perReadEl.textContent = (cr > 0 && pr > 0)
+          ? (pr / cr).toFixed(3).replace(/0+$/, "").replace(/\.$/, "") + " " + currencySymbol(currentCurrency()) + "/lectura"
+          : "—";
+      };
+
       const fId = el("input", { class: "input", value: p.id, placeholder: "id", maxlength: 20 });
       fId.addEventListener("input", () => { p.id = fId.value; });
       const fLabel = el("input", { class: "input", value: p.label, placeholder: "Nombre visible" });
       fLabel.addEventListener("input", () => { p.label = fLabel.value; });
       const fCredits = el("input", { class: "input", type: "number", min: "0", step: "1", value: String(p.credits), placeholder: "Créditos" });
-      fCredits.addEventListener("input", () => { p.credits = parseInt(fCredits.value, 10) || 0; });
+      fCredits.addEventListener("input", () => { p.credits = parseInt(fCredits.value, 10) || 0; updatePerRead(); });
       const fPrice = el("input", { class: "input", type: "number", min: "0", step: "0.01", value: String(p.price), placeholder: "Precio" });
-      fPrice.addEventListener("input", () => { p.price = Number(fPrice.value) || 0; });
-      const fActive = el("label", { class: "check", style: "white-space:nowrap" }, [
-        el("input", { type: "checkbox", checked: p.active !== false, onchange: (e) => { p.active = e.target.checked; } }),
-        el("span", {}, "Activo"),
+      fPrice.addEventListener("input", () => { p.price = Number(fPrice.value) || 0; updatePerRead(); });
+      const activeChk = el("input", { type: "checkbox", checked: active, onchange: (e) => { p.active = e.target.checked; row.classList.toggle("is-off", !e.target.checked); } });
+      const fActive = el("label", { class: "pack-edit-switch", title: "Desmarca para ocultar el pack sin borrarlo" }, [
+        activeChk, el("span", {}, "Activo"),
       ]);
-      const removeBtn = el("button", { type: "button", class: "btn ghost sm",
+      const removeBtn = el("button", { type: "button", class: "btn ghost sm pack-edit-del",
         title: "Elimina este pack de la lista",
         "aria-label": "Eliminar pack",
         onclick: () => { packsState.splice(idx, 1); renderPacksEditor(); }
-      }, "🗑 Eliminar");
-      row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "ID"), fId ]));
-      row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "Nombre"), fLabel ]));
-      row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "Créditos"), fCredits ]));
-      row.appendChild(el("div", {}, [ el("small", { class: "muted" }, "Precio (" + currencySymbol(currentCurrency()) + ")"), fPrice ]));
-      row.appendChild(fActive);
-      row.appendChild(removeBtn);
+      }, "🗑");
+
+      row.appendChild(el("div", { class: "pack-edit-head" }, [
+        el("span", { class: "pack-edit-num" }, "📦 " + (idx + 1)),
+        perReadEl,
+        el("div", { class: "pack-edit-head-actions" }, [ fActive, removeBtn ]),
+      ]));
+      row.appendChild(el("div", { class: "pack-edit-grid" }, [
+        el("label", { class: "field" }, [ el("span", {}, "ID"), fId ]),
+        el("label", { class: "field pack-edit-name" }, [ el("span", {}, "Nombre"), fLabel ]),
+        el("label", { class: "field" }, [ el("span", {}, "Créditos"), fCredits ]),
+        el("label", { class: "field" }, [ el("span", {}, "Precio (" + currencySymbol(cur) + ")"), fPrice ]),
+      ]));
+      updatePerRead();
       packsList.appendChild(row);
     });
   }

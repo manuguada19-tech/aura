@@ -10490,42 +10490,56 @@ async function openReadsPaywall(prefStatus) {
       .rp2-hero-ic { font-size:32px; margin-bottom:4px; filter:drop-shadow(0 2px 8px rgba(0,0,0,0.25)); }
       .rp2-hero h3 { margin:0; font-size:19px; font-weight:800; letter-spacing:-.01em; }
       .rp2-hero p  { margin:4px 0 0; font-size:12.5px; opacity:.94; line-height:1.35; }
-      .rp2-chips { display:flex; gap:6px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
-      .rp2-chip { background:rgba(255,255,255,0.18); border-radius:999px; padding:4px 10px; font-size:11.5px; font-weight:600; backdrop-filter:blur(6px); }
+      .rp2-chips { display:flex; gap:7px; justify-content:center; margin-top:12px; flex-wrap:wrap; }
+      .rp2-chip { display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,0.16); border:1px solid rgba(255,255,255,0.22); border-radius:999px; padding:5px 11px; font-size:11.5px; font-weight:600; backdrop-filter:blur(6px); }
+      .rp2-chip .rp2-chip-ic { font-size:12.5px; line-height:1; }
       .rp2-chip b { font-weight:800; }
       .rp2-body { padding:14px 16px 16px; background:var(--bg,#0f1116); color:var(--text,#e6e6ea); }
       .rp2-camp { display:flex; align-items:center; gap:8px; padding:8px 10px; margin-bottom:10px; border-radius:10px; background:rgba(255,60,110,0.10); border:1px solid rgba(255,60,110,0.28); font-size:12px; }
       .rp2-camp b { color:#ffb4b4; }
       .rp2-camp .rp2-camp-chip { margin-left:auto; padding:4px 10px; border-radius:999px; background:#ff3b6b; color:#fff; border:none; font-size:11px; font-weight:700; cursor:pointer; }
-      .rp2-packs { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; }
-      .rp2-pack { position:relative; padding:14px 10px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:14px; background:rgba(255,255,255,0.04); text-align:center; transition:transform .15s ease, box-shadow .15s ease, border-color .15s ease; }
-      .rp2-pack:hover { transform:translateY(-2px); box-shadow:0 8px 22px rgba(0,0,0,0.28); border-color:rgba(255,60,110,0.5); }
-      .rp2-pack.is-popular { border-color:#ff3b6b; background:linear-gradient(180deg,rgba(255,60,110,0.14),rgba(255,60,110,0.03)); }
-      .rp2-pack.is-popular::before { content:"⭐ Más elegido"; position:absolute; top:-10px; left:50%; transform:translateX(-50%); background:#ff3b6b; color:#fff; padding:3px 9px; font-size:10.5px; font-weight:800; border-radius:999px; white-space:nowrap; box-shadow:0 4px 10px rgba(255,60,110,0.4); }
-      .rp2-pack-credits { font-size:22px; font-weight:800; color:#fff; line-height:1; }
-      .rp2-pack-credits small { display:block; font-size:11px; font-weight:600; opacity:.7; margin-top:3px; letter-spacing:.02em; text-transform:uppercase; }
-      .rp2-pack-price { margin:8px 0 10px; font-size:15px; font-weight:700; color:#ffd899; }
-      .rp2-pack-price s { color:rgba(255,255,255,0.5); font-weight:500; font-size:12px; margin-right:4px; }
-      .rp2-pack-save { display:inline-block; margin-top:2px; padding:2px 8px; border-radius:999px; background:rgba(46,204,113,0.15); color:#7ee0a3; font-size:10.5px; font-weight:700; }
-      .rp2-pack-btn { width:100%; padding:9px; border-radius:10px; border:none; background:linear-gradient(135deg,#ff3b6b,#ff8a3b); color:#fff; font-weight:700; font-size:13px; cursor:pointer; transition:opacity .15s; }
-      .rp2-pack-btn:hover { opacity:.92; }
-      .rp2-pack-btn:disabled { opacity:.5; cursor:not-allowed; }
+      .rp2-packs-title { font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; opacity:.6; margin:2px 2px 10px; }
+      .rp2-packs { display:flex; flex-direction:column; gap:11px; }
+      .rp2-pack { position:relative; display:flex; align-items:center; gap:14px; width:100%; text-align:left;
+        padding:14px 15px; border:1.5px solid rgba(255,255,255,0.12); border-radius:16px;
+        background:rgba(255,255,255,0.04); color:inherit; cursor:pointer; font:inherit;
+        transition:transform .12s ease, box-shadow .18s ease, border-color .15s ease, background .15s ease; }
+      .rp2-pack:hover { transform:translateY(-2px); box-shadow:0 10px 26px rgba(0,0,0,0.3); border-color:rgba(255,60,110,0.55); }
+      .rp2-pack:active { transform:scale(.99); }
+      .rp2-pack:disabled { opacity:.55; cursor:progress; }
+      .rp2-pack.is-popular { border-color:#ff3b6b; background:linear-gradient(120deg,rgba(255,60,110,0.16),rgba(255,138,59,0.06)); box-shadow:0 8px 24px rgba(255,60,110,0.18); }
+      .rp2-pack.is-popular::before { content:"⭐ Más elegido"; position:absolute; top:-11px; left:16px; background:linear-gradient(135deg,#ff3b6b,#ff8a3b); color:#fff; padding:3px 10px; font-size:10.5px; font-weight:800; border-radius:999px; white-space:nowrap; box-shadow:0 4px 10px rgba(255,60,110,0.45); }
+      .rp2-pack-ic { flex:none; width:54px; height:54px; border-radius:14px; display:grid; place-items:center; position:relative;
+        background:linear-gradient(150deg,rgba(255,60,110,0.9),rgba(255,138,59,0.9)); box-shadow:0 6px 16px rgba(255,60,110,0.28); }
+      .rp2-pack-ic .rp2-pack-ic-n { font-size:19px; font-weight:800; color:#fff; line-height:1; }
+      .rp2-pack-ic .rp2-pack-ic-l { font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em; color:rgba(255,255,255,0.9); margin-top:1px; }
+      .rp2-pack-mid { flex:1; min-width:0; }
+      .rp2-pack-name { font-size:16px; font-weight:800; color:#fff; letter-spacing:-.01em; }
+      .rp2-pack-meta { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:4px; }
+      .rp2-pack-perread { font-size:11.5px; color:rgba(255,255,255,0.6); }
+      .rp2-pack-save { padding:2px 8px; border-radius:999px; background:rgba(46,204,113,0.16); color:#7ee0a3; font-size:10.5px; font-weight:800; }
+      .rp2-pack-right { flex:none; display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+      .rp2-pack-price { font-size:18px; font-weight:800; color:#ffd899; line-height:1; white-space:nowrap; }
+      .rp2-pack-price s { display:block; color:rgba(255,255,255,0.45); font-weight:500; font-size:11px; margin-bottom:2px; }
+      .rp2-pack-go { display:inline-flex; align-items:center; gap:5px; padding:7px 13px; border-radius:999px;
+        background:linear-gradient(135deg,#ff3b6b,#ff8a3b); color:#fff; font-weight:800; font-size:12.5px; white-space:nowrap;
+        box-shadow:0 4px 12px rgba(255,60,110,0.3); }
       .rp2-actions { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px; }
-      .rp2-promo { display:flex; gap:6px; margin-top:10px; }
-      .rp2-promo input { flex:1; padding:8px 10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:inherit; font-size:12.5px; }
-      .rp2-promo button { padding:8px 12px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.06); color:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
-      .rp2-promo-msg { font-size:11.5px; margin-top:4px; min-height:14px; }
+      .rp2-promo { display:flex; gap:6px; margin-top:12px; }
+      .rp2-promo input { flex:1; padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.04); color:inherit; font-size:12.5px; }
+      .rp2-promo button { padding:10px 14px; border-radius:12px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.06); color:inherit; font-size:12.5px; font-weight:600; cursor:pointer; }
+      .rp2-promo-msg { font-size:11.5px; margin-top:6px; }
+      .rp2-promo-msg:empty { display:none; }
       .rp2-promo-msg.is-ok { color:#7ee0a3; }
       .rp2-promo-msg.is-err { color:#ffb4b4; }
-      .rp2-cta-premium { padding:10px; border-radius:10px; border:none; background:linear-gradient(135deg,#6a2eff,#3b0f99); color:#fff; font-weight:700; font-size:13px; cursor:pointer; }
-      .rp2-cta-close   { padding:10px; border-radius:10px; border:1px solid rgba(255,255,255,0.14); background:transparent; color:inherit; font-size:13px; cursor:pointer; }
+      .rp2-cta-premium { padding:12px; border-radius:12px; border:none; background:linear-gradient(135deg,#6a2eff,#3b0f99); color:#fff; font-weight:800; font-size:13.5px; cursor:pointer; }
+      .rp2-cta-close   { padding:12px; border-radius:12px; border:1px solid rgba(255,255,255,0.14); background:transparent; color:inherit; font-size:13.5px; cursor:pointer; }
       @media (max-width:400px) {
         .rp2-hero h3 { font-size:17px; }
-        .rp2-packs { grid-template-columns:repeat(3,1fr); gap:8px; }
-        .rp2-pack { padding:12px 6px 10px; }
-        .rp2-pack-credits { font-size:19px; }
-        .rp2-pack-price { font-size:13px; }
-        .rp2-pack-btn { font-size:12px; padding:8px 4px; }
+        .rp2-pack { gap:11px; padding:13px 12px; }
+        .rp2-pack-ic { width:48px; height:48px; }
+        .rp2-pack-name { font-size:15px; }
+        .rp2-pack-go { padding:6px 11px; font-size:11.5px; }
       }
     `;
     document.head.appendChild(s);
@@ -10551,9 +10565,9 @@ async function openReadsPaywall(prefStatus) {
     el("h3", {}, "Amplía tus lecturas de chat"),
     el("p", {}, "Ve cuándo se leen tus mensajes. Elige un pack o pasa a Premium para tenerlas ilimitadas."),
     el("div", { class: "rp2-chips" }, [
-      el("span", { class: "rp2-chip" }, [ "Gratis: ", el("b", { id: "rpFree" }, "…") ]),
-      el("span", { class: "rp2-chip" }, [ "Créditos: ", el("b", { id: "rpCredits" }, "…") ]),
-      el("span", { class: "rp2-chip" }, [ "Plan: ", el("b", { id: "rpPlan" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ el("span", { class: "rp2-chip-ic" }, "🆓"), "Gratis: ", el("b", { id: "rpFree" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ el("span", { class: "rp2-chip-ic" }, "🎟️"), "Créditos: ", el("b", { id: "rpCredits" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ el("span", { class: "rp2-chip-ic" }, "⭐"), "Plan: ", el("b", { id: "rpPlan" }, "…") ]),
     ]),
   ]));
 
@@ -10586,9 +10600,10 @@ async function openReadsPaywall(prefStatus) {
     } catch {}
   })();
 
-  // Grid de packs — auto-fit para que quepan en fila sin scroll.
+  // Lista de packs (vertical, cómoda para tocar en móvil).
+  body.appendChild(el("div", { class: "rp2-packs-title" }, "Elige tu pack de lecturas"));
   const packsRow = el("div", { class: "rp2-packs", id: "rpPacksRow" }, [
-    el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "Cargando packs…"),
+    el("div", { style: "text-align:center;padding:16px;opacity:.6;font-size:12px;" }, "Cargando packs…"),
   ]);
   body.appendChild(packsRow);
 
@@ -10724,59 +10739,70 @@ async function openReadsPaywall(prefStatus) {
       const isPopular = i === popularIdx && packs.length >= 2;
       const perRead = (Number(p.price) || 0) / Math.max(1, Number(p.credits) || 1);
       const savePct = basePricePerRead > 0 ? Math.round((1 - perRead / basePricePerRead) * 100) : 0;
-      const card = el("div", {
+      const goLabel = el("span", { class: "rp2-pack-go" }, "Comprar");
+      const card = el("button", {
         class: "rp2-pack" + (isPopular ? " is-popular" : ""),
+        type: "button",
         "data-orig-price": String(p.price ?? 0),
         "data-currency": p.currency || "EUR",
-      }, [
-        el("div", { class: "rp2-pack-credits" }, [
-          String(p.credits || 0),
-          el("small", {}, "lecturas"),
-        ]),
-        el("div", { class: "rp2-pack-price" }, fmtPrice(p.price, p.currency)),
-        savePct > 0 ? el("div", { class: "rp2-pack-save" }, `Ahorra ${savePct}%`) : el("span", {}),
-        el("button", {
-          class: "rp2-pack-btn",
-          type: "button",
-          onclick: async () => {
-            const btn = card.querySelector(".rp2-pack-btn");
-            if (btn) { btn.disabled = true; btn.textContent = "Procesando…"; }
-            try {
-              // Función 5 · Si el cobro real (Stripe) está activo, creamos una
-              //   sesión de Checkout y redirigimos a la página de pago de Stripe.
-              //   El crédito se concede al volver, vía webhook verificado.
-              if (publicConfig?.payments?.checkout_live) {
-                const cs = await fetch("/api/my/checkout/reads", {
-                  method: "POST", headers: chatApi.headers(),
-                  body: JSON.stringify({ pack: p.id }),
-                });
-                const csj = await cs.json().catch(() => ({}));
-                if (cs.ok && csj.url) { window.location.href = csj.url; return; }
-                toast(csj.reason || "No se pudo iniciar el pago");
-                if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-                return;
-              }
-              const promo = window.__auraPromo;
-              const resp = await fetch("/api/my/reads/purchase", {
+        onclick: async () => {
+          if (card.disabled) return;
+          card.disabled = true;
+          const prevGo = goLabel.textContent;
+          goLabel.textContent = "Procesando…";
+          const restore = () => { card.disabled = false; goLabel.textContent = prevGo; };
+          try {
+            // Función 5 · Si el cobro real (Stripe) está activo, creamos una
+            //   sesión de Checkout y redirigimos a la página de pago de Stripe.
+            //   El crédito se concede al volver, vía webhook verificado.
+            if (publicConfig?.payments?.checkout_live) {
+              const cs = await fetch("/api/my/checkout/reads", {
                 method: "POST", headers: chatApi.headers(),
-                body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
+                body: JSON.stringify({ pack: p.id }),
               });
-              if (!resp.ok) {
-                const err = await resp.json().catch(() => ({}));
-                toast(err.reason || "No se pudo completar la compra");
-                if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-                return;
-              }
-              const done = await resp.json();
-              refreshStatus(done.status);
-              const priceTxt = done.discount_percent
-                ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
-                : "";
-              toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
-              if (btn) { btn.disabled = false; btn.textContent = "Comprar"; }
-            } catch { toast("Error en la compra"); if (btn) { btn.disabled = false; btn.textContent = "Comprar"; } }
-          },
-        }, "Comprar"),
+              const csj = await cs.json().catch(() => ({}));
+              if (cs.ok && csj.url) { window.location.href = csj.url; return; }
+              toast(csj.reason || "No se pudo iniciar el pago");
+              restore();
+              return;
+            }
+            const promo = window.__auraPromo;
+            const resp = await fetch("/api/my/reads/purchase", {
+              method: "POST", headers: chatApi.headers(),
+              body: JSON.stringify({ pack: p.id, promo_code: promo?.code || undefined }),
+            });
+            if (!resp.ok) {
+              const err = await resp.json().catch(() => ({}));
+              toast(err.reason || "No se pudo completar la compra");
+              restore();
+              return;
+            }
+            const done = await resp.json();
+            refreshStatus(done.status);
+            const priceTxt = done.discount_percent
+              ? ` (${fmtPrice(done.price, p.currency)}, cupón ${done.promo_code} -${done.discount_percent}%)`
+              : "";
+            toast("¡Compra completada! +" + (done.added || done.credits_added || p.credits) + " lecturas" + priceTxt);
+            restore();
+          } catch { toast("Error en la compra"); restore(); }
+        },
+      }, [
+        el("div", { class: "rp2-pack-ic" }, [
+          el("span", { class: "rp2-pack-ic-n" }, String(p.credits || 0)),
+          el("span", { class: "rp2-pack-ic-l" }, "lecturas"),
+        ]),
+        el("div", { class: "rp2-pack-mid" }, [
+          el("div", { class: "rp2-pack-name" }, p.label || (`Pack de ${p.credits || 0}`)),
+          el("div", { class: "rp2-pack-meta" }, [
+            (Number(p.credits) > 0 && Number(p.price) > 0)
+              ? el("span", { class: "rp2-pack-perread" }, `${fmtPrice(perRead, p.currency)} / lectura`) : el("span", {}),
+            savePct > 0 ? el("span", { class: "rp2-pack-save" }, `Ahorra ${savePct}%`) : el("span", {}),
+          ]),
+        ]),
+        el("div", { class: "rp2-pack-right" }, [
+          el("div", { class: "rp2-pack-price" }, fmtPrice(p.price, p.currency)),
+          goLabel,
+        ]),
       ]);
       row.appendChild(card);
     });

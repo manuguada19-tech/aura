@@ -874,9 +874,12 @@ table.tbl {
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table-footer { padding: 10px 14px; color: var(--text-muted); font-size: 12.5px; border-top: 1px solid var(--border); background: var(--panel-2); }
 
-.user-cell { display: flex; align-items: center; gap: 10px; }
-.user-cell strong { display: block; font-size: 13.5px; }
-.user-cell small { color: var(--text-muted); font-size: 11.5px; }
+.user-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.user-cell > div { min-width: 0; }
+.user-cell strong, .user-cell b { display: block; font-size: 13.5px; font-weight: 700; line-height: 1.25;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-cell small { display: block; color: var(--text-muted); font-size: 11.5px; line-height: 1.2;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .av { border-radius: 50%; background: var(--panel-2) center/cover no-repeat; flex-shrink: 0; }
 
@@ -2478,29 +2481,50 @@ textarea.input { resize: vertical; min-height: 60px; }
    =========================================================== */
 .reads-packs-wrap { margin-top: 6px; }
 .reads-packs-wrap .help { color: var(--muted, #7a7f8a); font-size: 12px; margin: 0 0 10px; }
-.pack-editor-row small.muted {
-  display: block;
-  font-size: 10.5px;
-  margin-bottom: 3px;
-  letter-spacing: .04em;
-  text-transform: uppercase;
+
+/* Editor de packs — tarjetas profesionales */
+.pack-edit-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px 14px;
+  background: linear-gradient(165deg, rgba(255,255,255,.02), rgba(255,255,255,0));
+  box-shadow: 0 3px 12px rgba(0,0,0,.05);
+  transition: border-color .15s ease, box-shadow .15s ease, opacity .15s ease;
 }
-.pack-editor-row .input { padding: 6px 8px; font-size: 13px; width: 100%; }
+.pack-edit-card:hover { border-color: rgba(14,165,233,.4); box-shadow: 0 6px 18px rgba(0,0,0,.1); }
+.pack-edit-card.is-off { opacity: .55; }
+.pack-edit-head {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 10px; margin-bottom: 10px;
+  border-bottom: 1px dashed var(--border);
+}
+.pack-edit-num {
+  font-weight: 800; font-size: 12px; letter-spacing: .3px;
+  padding: 3px 10px; border-radius: 999px; color: #fff;
+  background: linear-gradient(135deg, #0ea5e9, #06b6d4);
+}
+.pack-edit-perread {
+  font-size: 12px; font-weight: 700; color: var(--text-muted);
+  padding: 3px 9px; border-radius: 999px; background: rgba(148,163,184,.14);
+}
+.pack-edit-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.pack-edit-switch {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; color: var(--text-soft);
+  white-space: nowrap; cursor: pointer;
+}
+.pack-edit-del { padding: 6px 10px; font-size: 14px; line-height: 1; }
+.pack-edit-grid {
+  display: grid; grid-template-columns: 110px 1fr 110px 120px; gap: 12px; align-items: end;
+}
+.pack-edit-grid .field span { font-size: 10.5px; text-transform: uppercase; letter-spacing: .04em; }
+.pack-edit-grid .input { padding: 8px 10px; font-size: 13px; width: 100%; }
 @media (max-width: 780px) {
-  .pack-editor-row {
-    grid-template-columns: 1fr 1fr !important;
-    gap: 8px !important;
-  }
-  .pack-editor-row > *:nth-child(5),
-  .pack-editor-row > *:nth-child(6) {
-    grid-column: span 1;
-  }
+  .pack-edit-grid { grid-template-columns: 1fr 1fr; }
+  .pack-edit-grid .pack-edit-name { grid-column: 1 / -1; }
 }
 @media (max-width: 480px) {
-  .pack-editor-row {
-    grid-template-columns: 1fr !important;
-  }
-  .pack-editor-row > * { grid-column: 1 / -1; }
+  .pack-edit-grid { grid-template-columns: 1fr; }
 }
 .packs-grid {
   display: grid;
