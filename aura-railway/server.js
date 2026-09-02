@@ -9709,6 +9709,12 @@ async function sendInviteEmail(inv) {
   const openPixel = `${baseUrl}/t/o/${token}.png`;
   const clickUrl = `${baseUrl}/t/c/${token}`;
   const vars = {
+    // V797 · El 2º argumento de enqueueEmail es un user_id NUMÉRICO, no un email.
+    //   Antes se pasaba inv.email ahí, así que la resolución de destinatario
+    //   fallaba (no_recipient) y el email de invitación NUNCA salía, aunque
+    //   marcáramos sent_at. Ahora pasamos userId=null y el destinatario por
+    //   vars.user_email, que enqueueEmail sí usa.
+    user_email: inv.email,
     code: inv.code,
     invite_url: clickUrl,
     pixel: openPixel,
@@ -9718,11 +9724,49 @@ async function sendInviteEmail(inv) {
   };
   try {
     if (typeof enqueueEmail === "function") {
-      await enqueueEmail("invite", inv.email, vars);
+      await enqueueEmail("invite", null, vars);
     }
   } catch (e) { /* si no hay template, seguimos marcando enviado */ }
   await pool.execute("UPDATE invites SET sent_at=NOW() WHERE id=?", [inv.id]);
   try { await pool.execute("INSERT INTO invite_events (invite_id, kind) VALUES (?, 'sent')", [inv.id]); } catch {}
+}
+
+/* V797 · Email atractivo cuando el admin AMPLÍA/MODIFICA la validez (duración)
+   de una invitación. Solo se envía si el código tiene email asociado, sigue
+   siendo utilizable (no revocado, con usos disponibles) y se ha fijado una
+   nueva fecha de caducidad. Reutiliza el tracking (pixel + click). Devuelve
+   true si se encoló el envío. */
+async function sendInviteExtendedEmail(inv, expiresAt) {
+  if (!inv || !inv.email) return false;
+  if (inv.revoked) return false;
+  const uses = inv.used_count != null ? Number(inv.used_count) : 0;
+  const maxUses = inv.max_uses != null ? Number(inv.max_uses) : 1;
+  if (uses >= maxUses) return false;
+  if (!expiresAt) return false; // "sin caducidad" no necesita aviso de plazo
+  const baseUrl = process.env.PUBLIC_BASE_URL || "https://citasaura.es";
+  const token = inv.track_token || genTrackToken();
+  if (!inv.track_token) {
+    try { await pool.execute("UPDATE invites SET track_token=? WHERE id=?", [token, inv.id]); } catch {}
+  }
+  let newExpiry;
+  try {
+    newExpiry = new Date(expiresAt).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+  } catch { newExpiry = String(expiresAt).slice(0, 10); }
+  const vars = {
+    user_email: inv.email,
+    code: inv.code,
+    new_expiry: newExpiry,
+    invite_url: `${baseUrl}/t/c/${token}`,
+    pixel: `${baseUrl}/t/o/${token}.png`,
+    __lang: null,
+  };
+  try {
+    if (typeof enqueueEmail === "function") {
+      const r = await enqueueEmail("invite_extended", null, vars);
+      return !!(r && r.ok);
+    }
+  } catch (e) { /* best-effort */ }
+  return false;
 }
 
 /* Reenviar invitación por email */
@@ -9833,7 +9877,21 @@ app.post("/api/admin/invites/:id/extend", wrap(async (req, res) => {
   await pool.execute("UPDATE invites SET expires_at=? WHERE id=?", [expiresAt, id]);
   await logActivity("admin",
     `Invitacion #${id} validez ${expiresAt ? "hasta " + expiresAt.toISOString().slice(0, 10) : "sin caducidad"}`);
-  res.json({ ok: true, expires_at: expiresAt });
+  // V797 · Avisar al invitado por email (atractivo) de que su código sigue
+  //   activo con la nueva fecha. Solo si el admin lo pide (notify != false),
+  //   el código tiene email y se ha fijado una caducidad. Best-effort: no
+  //   bloquea la respuesta si el envío falla.
+  let emailed = false;
+  const wantNotify = req.body?.notify !== false && req.body?.notify !== "false";
+  if (wantNotify && expiresAt) {
+    try {
+      const [rows] = await pool.query("SELECT * FROM invites WHERE id=?", [id]);
+      if (rows.length && rows[0].email) {
+        emailed = await sendInviteExtendedEmail(rows[0], expiresAt);
+      }
+    } catch (e) { /* best-effort */ }
+  }
+  res.json({ ok: true, expires_at: expiresAt, emailed });
 }));
 
 app.delete("/api/admin/invites/:id", wrap(async (req, res) => {

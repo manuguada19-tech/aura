@@ -13892,9 +13892,21 @@ async function viewInvites(root) {
         if (ans === null) return;
         const days = parseInt(ans, 10);
         if (!Number.isFinite(days) || days < 0) { toast("Número no válido", "err"); return; }
+        // Si el código tiene email y se fija una caducidad, ofrecemos avisar al
+        // invitado con un email atractivo de "tu código sigue activo".
+        let notify = false;
+        if (iv.email && days > 0) {
+          notify = confirm(
+            "¿Avisar a " + iv.email + " por email de que su código sigue activo\n" +
+            "con la nueva validez (" + days + " días)?\n\n" +
+            "Aceptar = enviar email · Cancelar = solo ampliar sin email"
+          );
+        }
         try {
-          const r = await api.post("/api/admin/invites/" + iv.id + "/extend", { days_valid: days });
-          toast(r.expires_at ? "Validez ampliada" : "Sin caducidad");
+          const r = await api.post("/api/admin/invites/" + iv.id + "/extend", { days_valid: days, notify });
+          toast(r.expires_at
+            ? (r.emailed ? "Validez ampliada · email enviado 📧" : "Validez ampliada")
+            : "Sin caducidad");
           load(); loadStats();
         } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
       }));
