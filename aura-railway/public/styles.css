@@ -2242,8 +2242,10 @@ body.account-suspended .restriction-banner .rb-close {
    texto largo (p. ej. "Madrid · No comparte su ubicación") se partía en muchas
    líneas y llenaba la tarjeta, tapando la foto y el perfil. */
 .nearby-info strong {
-  display: block; font-size: 12.5px; text-shadow: 0 1px 2px rgba(0,0,0,.4);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  font-size: 12.5px; text-shadow: 0 1px 2px rgba(0,0,0,.4);
+  white-space: normal; overflow: hidden; text-overflow: ellipsis;
+  word-break: break-word; line-height: 1.15;
 }
 .nearby-info small {
   display: block; font-size: 10.5px; opacity: .9;
