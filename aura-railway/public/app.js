@@ -3323,6 +3323,37 @@ const ETHNICITY_OPTIONS = [
   "Afrodescendiente", "Árabe", "Mixta/o",
 ];
 
+// V791 · Unidad de peso según el país de registro. La mayoría del mundo usa el
+// sistema métrico (kg); solo unos pocos países usan libras (lb). El peso SIEMPRE
+// se almacena y se envía al backend en kg; la unidad solo afecta a lo mostrado.
+const KG_PER_LB = 0.45359237;
+const LB_COUNTRIES = [
+  "estados unidos", "eeuu", "ee.uu", "ee. uu", "usa", "u.s.a", "u.s.",
+  "united states", "america", "myanmar", "birmania", "liberia",
+];
+function weightUnitForCountry(country) {
+  const c = String(country || "").trim().toLowerCase();
+  if (!c) return "kg";
+  if (c === "us") return "lb";
+  return LB_COUNTRIES.some(x => c === x || c.includes(x)) ? "lb" : "kg";
+}
+function kgToUnit(kg, unit) {
+  const n = Number(kg); if (!Number.isFinite(n)) return 0;
+  return unit === "lb" ? Math.round(n / KG_PER_LB) : Math.round(n);
+}
+function unitToKg(val, unit) {
+  const n = Number(val); if (!Number.isFinite(n)) return 0;
+  return unit === "lb" ? Math.round(n * KG_PER_LB) : Math.round(n);
+}
+// País del usuario actual → unidad de peso. Usa el perfil ya cargado, el país de
+// registro o, por defecto, España (kg). No hace peticiones de red.
+function myCountry() {
+  return (state.myProfile && state.myProfile.country)
+    || (state.registration && state.registration.country)
+    || "España";
+}
+function myWeightUnit() { return weightUnitForCountry(myCountry()); }
+
 // V776 · Campos OPCIONALES de estilo de vida. Mismo formato {id,label,emoji}
 // que LOOKING_FOR_OPTIONS para reutilizar el patrón de chips. El `id` es lo que
 // se guarda (coincide con lo que filtra el backend) y `label` lo que se muestra.
@@ -6855,10 +6886,25 @@ function screenRegisterProfile(root) {
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "País"), fCountry ]));
 
   const fHeight = el("input", { type: "number", min: 140, max: 210, value: state.registration.height });
-  const fWeight = el("input", { type: "number", min: 40, max: 180, value: state.registration.weight });
+  // V791 · Peso con unidad según el país escrito arriba. El input muestra kg o
+  // lb; internamente el peso se guarda SIEMPRE en kg. Al cambiar de país, se
+  // recalcula la unidad y se convierte el valor visible.
+  const regW = { u: weightUnitForCountry(state.registration.country) };
+  const fWeight = el("input", { type: "number", min: 40, max: 400, value: kgToUnit(state.registration.weight, regW.u) });
+  const weightLbl = el("label", {}, `Peso (${regW.u})`);
+  const syncRegWeightUnit = () => {
+    const nu = weightUnitForCountry(fCountry.value);
+    if (nu === regW.u) return;
+    const kg = unitToKg(fWeight.value, regW.u); // valor actual → kg
+    regW.u = nu;
+    fWeight.value = kgToUnit(kg, nu);
+    weightLbl.textContent = `Peso (${nu})`;
+  };
+  fCountry.addEventListener("input", syncRegWeightUnit);
+  fCountry.addEventListener("change", syncRegWeightUnit);
   form.appendChild(el("div", { class: "field-row" }, [
     el("div", { class: "field" }, [ el("label", {}, "Altura (cm)"), fHeight ]),
-    el("div", { class: "field" }, [ el("label", {}, "Peso (kg)"), fWeight ]),
+    el("div", { class: "field" }, [ weightLbl, fWeight ]),
   ]));
   const fEth = el("select", {},
     ["Prefiero no decirlo","Latina/o","Caucásica/o","Asiática/o","Afrodescendiente","Árabe","Mixta/o"]
@@ -6938,7 +6984,8 @@ function screenRegisterProfile(root) {
       name: fName.value, birthDate: fBirth.value,
       gender: fGender.value, orientation: fOrient.value,
       city: fCity.value, province: fProv.value, country: fCountry.value,
-      height: +fHeight.value, weight: +fWeight.value, ethnicity: fEth.value,
+      // V791 · el peso se guarda SIEMPRE en kg (se convierte desde la unidad mostrada).
+      height: +fHeight.value, weight: unitToKg(fWeight.value, regW.u), ethnicity: fEth.value,
       // V776 · campos opcionales de estilo de vida + rompehielos.
       job: fJob.value.trim(), education: fEdu.value, pets: fPets.value,
       exercise: fEx.value, smoke: fSmoke.value, drink: fDrink.value,
@@ -9259,6 +9306,36 @@ const GENDER_FILTER_OPTS = {
     { label: "Género fluido", value: "Género fluido" },
   ],
 };
+// V791 · Slider de doble mango reutilizable para rangos (edad, peso, altura).
+// Evita tener que escribir números a mano: se arrastra. Devuelve el nodo y
+// getters getLo()/getHi() con los valores actuales (enteros, mín ≤ máx).
+// `format(a,b)` genera la etiqueta visible. Los mangos no se cruzan.
+function makeRangeSlider({ min, max, step = 1, lo, hi, format }) {
+  min = +min; max = +max; step = +step || 1;
+  lo = Math.min(max, Math.max(min, Number.isFinite(+lo) ? +lo : min));
+  hi = Math.min(max, Math.max(min, Number.isFinite(+hi) ? +hi : max));
+  if (lo > hi) { const t = lo; lo = hi; hi = t; }
+  const fmt = format || ((a, b) => `${a} – ${b}`);
+  const valLbl = el("span", { class: "dual-range-val" });
+  const track = el("div", { class: "dual-range-track" });
+  const fill = el("div", { class: "dual-range-fill" });
+  track.appendChild(fill);
+  const inMin = el("input", { type: "range", class: "dual-range-input", min, max, step, value: lo, "aria-label": "Mínimo" });
+  const inMax = el("input", { type: "range", class: "dual-range-input", min, max, step, value: hi, "aria-label": "Máximo" });
+  const slider = el("div", { class: "dual-range-slider" }, [ track, inMin, inMax ]);
+  const node = el("div", { class: "dual-range" }, [ valLbl, slider ]);
+  const span = (max - min) || 1;
+  const paint = () => {
+    const a = +inMin.value, b = +inMax.value;
+    fill.style.left = ((a - min) / span * 100) + "%";
+    fill.style.width = ((b - a) / span * 100) + "%";
+    valLbl.textContent = fmt(a, b);
+  };
+  inMin.addEventListener("input", () => { if (+inMin.value > +inMax.value) inMin.value = inMax.value; paint(); });
+  inMax.addEventListener("input", () => { if (+inMax.value < +inMin.value) inMax.value = inMin.value; paint(); });
+  paint();
+  return { node, getLo: () => +inMin.value, getHi: () => +inMax.value, inMin, inMax };
+}
 function openFilters() {
   const wrap = el("div", { class: "filters-body" });
   wrap.appendChild(el("div", { class: "sheet-titlebar" }, [
@@ -9303,16 +9380,14 @@ function openFilters() {
     grpGenderRow,
   ]));
 
-  // ---- Edad: cajas numéricas mín/máx (teclado numérico), sin barras ----
-  const ageMinInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 18, max: 99, value: state.filters.ageMin, "aria-label": "Edad mínima" });
-  const ageMaxInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 18, max: 99, value: state.filters.ageMax, "aria-label": "Edad máxima" });
+  // ---- Edad: slider de doble mango (18–99), sin escribir a mano (V791) ----
+  const ageSlider = makeRangeSlider({
+    min: 18, max: 99, lo: state.filters.ageMin, hi: state.filters.ageMax,
+    format: (a, b) => `${a} – ${b} años`,
+  });
   wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, "Edad"),
-    el("div", { class: "num-range" }, [
-      el("label", { class: "num-field" }, [ el("span", {}, "Mínima"), ageMinInp ]),
-      el("span", { class: "num-sep" }, "—"),
-      el("label", { class: "num-field" }, [ el("span", {}, "Máxima"), ageMaxInp ]),
-    ]),
+    ageSlider.node,
   ]));
 
   // ---- Distancia: caja numérica + accesos rápidos (sin barra) ----
@@ -9347,16 +9422,50 @@ function openFilters() {
     ]),
   ]));
 
-  // ---- Peso (kg): rango mín/máx (opcional, 0/vacío = sin filtro) ----
-  const wMinInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 35, max: 250, value: state.filters.weightMin || "", placeholder: "—", "aria-label": "Peso mínimo" });
-  const wMaxInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 35, max: 250, value: state.filters.weightMax || "", placeholder: "—", "aria-label": "Peso máximo" });
+  // ---- Peso: slider de doble mango con unidad kg/lb según país (V791) ----
+  // El rango real es 35–250 kg. Se muestra en la unidad del usuario (kg o lb
+  // según su país de registro) pero SIEMPRE se guarda/filtra en kg. Empieza en
+  // el rango completo (= sin filtro efectivo).
+  const wUnit = { u: myWeightUnit() };
+  const wRange = () => wUnit.u === "lb"
+    ? { min: kgToUnit(35, "lb"), max: kgToUnit(250, "lb") }  // ≈ 77–551 lb
+    : { min: 35, max: 250 };
+  const wStartLoKg = state.filters.weightMin > 0 ? state.filters.weightMin : 35;
+  const wStartHiKg = state.filters.weightMax > 0 ? state.filters.weightMax : 250;
+  let weightSlider = null;
+  const weightSliderHost = el("div");
+  function buildWeightSlider(loKg, hiKg) {
+    const r = wRange();
+    weightSlider = makeRangeSlider({
+      min: r.min, max: r.max,
+      lo: kgToUnit(loKg, wUnit.u), hi: kgToUnit(hiKg, wUnit.u),
+      format: (a, b) => `${a} – ${b} ${wUnit.u}`,
+    });
+    weightSliderHost.innerHTML = "";
+    weightSliderHost.appendChild(weightSlider.node);
+  }
+  buildWeightSlider(wStartLoKg, wStartHiKg);
+  // Selector de unidad kg/lb (permite cambiar cómo se ve/elige el peso).
+  const unitChips = ["kg", "lb"].map(u => {
+    const chip = el("button", { class: "chip selectable" + (wUnit.u === u ? " active" : ""), type: "button" }, u);
+    chip.addEventListener("click", () => {
+      if (wUnit.u === u) return;
+      // Conserva la selección actual (en kg) al cambiar de unidad.
+      const loKg = unitToKg(weightSlider.getLo(), wUnit.u);
+      const hiKg = unitToKg(weightSlider.getHi(), wUnit.u);
+      wUnit.u = u;
+      $$(".chip.selectable", unitRow).forEach(x => x.classList.toggle("active", x === chip));
+      buildWeightSlider(loKg, hiKg);
+    });
+    return chip;
+  });
+  const unitRow = el("div", { class: "chip-row", style: "margin-bottom:10px" }, [
+    el("span", { class: "unit-label" }, "Unidad:"), ...unitChips,
+  ]);
   wrap.appendChild(el("div", { class: "filter-group" }, [
-    el("h5", {}, "Peso (kg)"),
-    el("div", { class: "num-range" }, [
-      el("label", { class: "num-field" }, [ el("span", {}, "Mínimo"), wMinInp ]),
-      el("span", { class: "num-sep" }, "—"),
-      el("label", { class: "num-field" }, [ el("span", {}, "Máximo"), wMaxInp ]),
-    ]),
+    el("h5", {}, "Peso"),
+    unitRow,
+    weightSliderHost,
   ]));
 
   // ---- Ubicación: buscador entre las ciudades de usuarios reales ----
@@ -9591,24 +9700,27 @@ function openFilters() {
 
   wrap.appendChild(el("div", { class: "sheet-actions" }, [
     el("button", { class: "btn btn-brand btn-block", onclick: () => {
-      // Edad: normaliza y ordena mín ≤ máx dentro de 18–99.
-      let aMin = parseInt(ageMinInp.value, 10); let aMax = parseInt(ageMaxInp.value, 10);
-      if (!Number.isFinite(aMin)) aMin = 18; if (!Number.isFinite(aMax)) aMax = 99;
-      aMin = Math.min(99, Math.max(18, aMin)); aMax = Math.min(99, Math.max(18, aMax));
-      if (aMin > aMax) { const t = aMin; aMin = aMax; aMax = t; }
-      state.filters.ageMin = aMin; state.filters.ageMax = aMax;
+      // Edad: slider de doble mango (18–99), ya viene ordenado mín ≤ máx (V791).
+      state.filters.ageMin = ageSlider.getLo();
+      state.filters.ageMax = ageSlider.getHi();
       // Distancia: 1–500 km.
       let dkm = parseInt(distInp.value, 10);
       if (!Number.isFinite(dkm) || dkm < 1) dkm = 50; dkm = Math.min(500, dkm);
       state.filters.distance = dkm;
-      // V788 · Altura (120–230 cm) y peso (35–250 kg). Vacío/0 = sin filtro.
+      // V788 · Altura (120–230 cm). Vacío/0 = sin filtro.
       const rangeVal = (raw, lo, hi) => { const n = parseInt(raw, 10); if (!Number.isFinite(n) || n <= 0) return 0; return Math.min(hi, Math.max(lo, n)); };
       let hMin = rangeVal(hMinInp.value, 120, 230), hMax = rangeVal(hMaxInp.value, 120, 230);
       if (hMin && hMax && hMin > hMax) { const t = hMin; hMin = hMax; hMax = t; }
-      let wMin = rangeVal(wMinInp.value, 35, 250), wMax = rangeVal(wMaxInp.value, 35, 250);
-      if (wMin && wMax && wMin > wMax) { const t = wMin; wMin = wMax; wMax = t; }
       state.filters.heightMin = hMin; state.filters.heightMax = hMax;
-      state.filters.weightMin = wMin; state.filters.weightMax = wMax;
+      // V791 · Peso: el slider va en la unidad del usuario; se convierte SIEMPRE a
+      // kg (35–250) para el backend. Si abarca todo el rango = sin filtro (0).
+      let wMinKg = unitToKg(weightSlider.getLo(), wUnit.u);
+      let wMaxKg = unitToKg(weightSlider.getHi(), wUnit.u);
+      wMinKg = Math.min(250, Math.max(35, wMinKg));
+      wMaxKg = Math.min(250, Math.max(35, wMaxKg));
+      if (wMinKg > wMaxKg) { const t = wMinKg; wMinKg = wMaxKg; wMaxKg = t; }
+      state.filters.weightMin = (wMinKg <= 35 && wMaxKg >= 250) ? 0 : wMinKg;
+      state.filters.weightMax = (wMinKg <= 35 && wMaxKg >= 250) ? 0 : wMaxKg;
       // Género: chips activos → valores guardados. "Todos" o vacío = sin filtro.
       const activeGender = genderChips.filter(x => x.classList.contains("active"));
       const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
@@ -12075,7 +12187,7 @@ function screenEditProfile(root) {
       city: cityInp.value.trim(),
       job: jobInp.value.trim(),
       height: parseInt(heightInp.value, 10) || null,
-      weight: parseInt(weightInp.value, 10) || null, // V776
+      weight: weightInp.value ? unitToKg(weightInp.value, peWeight.u) : null, // V791 · siempre kg
       gender: genderInp.value,
       ethnicity: ethInp.value || null,
       looking_for: lookingRef.id,
@@ -12116,8 +12228,13 @@ function screenEditProfile(root) {
   const heightField = el("div", { class: "field" }); const heightInp = el("input", { type: "number", value: u.height || "" });
   heightField.appendChild(el("label", {}, T("content.me.field_height") || "Altura (cm)")); heightField.appendChild(heightInp); form.appendChild(heightField);
   // V776 · Peso (opcional).
-  const weightField = el("div", { class: "field" }); const weightInp = el("input", { type: "number", value: u.weight || "", min: 40, max: 300 });
-  weightField.appendChild(el("label", {}, "Peso en kg (opcional)")); weightField.appendChild(weightInp); form.appendChild(weightField);
+  // V791 · Peso con unidad según país. El input muestra kg o lb; se almacena en
+  // kg. `peWeight.u` se recalcula al cargar el perfil (que ya trae el país).
+  const peWeight = { u: myWeightUnit() };
+  const weightField = el("div", { class: "field" });
+  const weightInp = el("input", { type: "number", value: u.weight ? kgToUnit(u.weight, peWeight.u) : "", min: 40, max: 400 });
+  const weightLabel = el("label", {}, `Peso (${peWeight.u}) · opcional`);
+  weightField.appendChild(weightLabel); weightField.appendChild(weightInp); form.appendChild(weightField);
 
   // V741 · Género (etiquetas en español). El valor almacenado se normaliza para
   // preseleccionar la opción correcta aunque estuviera guardado como male/female.
@@ -12275,7 +12392,13 @@ function screenEditProfile(root) {
       if (p.city != null) cityInp.value = p.city;
       if (p.job != null) jobInp.value = p.job;
       if (p.height != null) heightInp.value = p.height;
-      if (p.weight != null) weightInp.value = p.weight; // V776
+      // V791 · unidad de peso según el país real del perfil; convierte kg → unidad.
+      if (p.country != null) {
+        state.myProfile.country = p.country;
+        peWeight.u = weightUnitForCountry(p.country);
+        weightLabel.textContent = `Peso (${peWeight.u}) · opcional`;
+      }
+      if (p.weight != null) weightInp.value = kgToUnit(p.weight, peWeight.u); // V791
       if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
       if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
       // V776 · Rellena los grupos de estilo de vida (selección única).

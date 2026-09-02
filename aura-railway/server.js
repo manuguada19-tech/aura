@@ -7881,7 +7881,7 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   let interests = [];
