@@ -3912,7 +3912,7 @@ function showApp() {
   // Ensure the current user is registered in DB for real chat + start heartbeat.
   // Auth.refresh() consigue un token de sesión firmado de forma silenciosa para
   // las sesiones antiguas que aún no lo tienen (migración previa al modo estricto).
-  (async () => { try { await chatApi.ensure(); await Auth.refresh(); startHeartbeat(); } catch {} })();
+  (async () => { try { await chatApi.ensure(); await Auth.refresh(); startHeartbeat(); await syncUserPlan(); } catch {} })();
   // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
   setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
   // Función 5 · Aviso de retorno de pago (Stripe). El plan/los créditos los
@@ -8930,6 +8930,41 @@ function planLabel(key) {
   const map = { free: "Free", premium: "Premium", gold: "Gold", platinum: "Platinum" };
   return map[key] || "Free";
 }
+// V801 · Sincroniza el plan REAL del usuario desde el servidor. Las distintas
+// vías de login (email, OTP, 2FA, huella, social, beta admin) guardaban
+// state.user SIN el campo `plan`, por lo que getUserPlan() devolvía siempre
+// "free" aunque el usuario tuviera Premium/Gold/Platinum en la BD (que es lo
+// que ve el admin). Aquí lo corregimos de forma centralizada: pedimos el plan
+// al backend (/api/my/reads/status ya lo devuelve) y lo persistimos en
+// state.user + localStorage, refrescando la etiqueta del perfil si está visible.
+async function syncUserPlan() {
+  try {
+    if (!state.user || !state.user.id) return;
+    const r = await fetch("/api/my/reads/status", { headers: chatApi.headers(), cache: "no-store" });
+    if (!r.ok) return;
+    const s = await r.json().catch(() => null);
+    if (!s || !s.plan) return;
+    const plan = String(s.plan).toLowerCase();
+    state.user.plan = plan;
+    try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+    try { updateMeTierBadge(); } catch {}
+  } catch {}
+}
+// Actualiza la píldora de plan del perfil (#meTierBadge) con el plan real. Se
+// usa tanto al pintar screenMe como tras sincronizar el plan del servidor.
+function updateMeTierBadge() {
+  const badge = document.getElementById("meTierBadge");
+  if (!badge) return;
+  const plan = getUserPlan();
+  if (plan === "free") {
+    badge.textContent = "Plan Free · Mejorar";
+    badge.setAttribute("style", "background:rgba(255,255,255,.10);color:var(--text,#ecedf3);cursor:pointer");
+  } else {
+    badge.textContent = "★ " + planLabel(plan);
+    badge.removeAttribute("style"); // vuelve al gradiente dorado de .me-tier
+    badge.style.cursor = "pointer";
+  }
+}
 function getProfilesLimit() {
   const plan = getUserPlan();
   const lim = PLAN_PROFILE_LIMITS[plan];
@@ -11877,7 +11912,14 @@ function screenMe(root) {
   const meAvatar = (state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
   const meName = state.user?.name || T("content.me.default_name") || "";
   const meMail = state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico";
-  const meTier = T("content.me.tier_label") || "★ Premium";
+  // V801 · La píldora de plan ahora refleja el plan REAL (antes estaba fija en
+  // "★ Premium"). Se pinta con el plan actual y se re-sincroniza con el servidor
+  // por si state.user aún no lo tenía cargado.
+  const _mePlan = getUserPlan();
+  const meTier = _mePlan === "free" ? "Plan Free · Mejorar" : ("★ " + planLabel(_mePlan));
+  // V801 · Re-sincroniza el plan real con el servidor (self-heal) y actualiza la
+  // píldora/gates aunque state.user aún no lo tuviera cargado.
+  try { syncUserPlan(); } catch {}
   // V771 · Distintivo azul junto al nombre si la cuenta está verificada. Se pinta
   // con el sello local (state.user.verified) y, además, se confirma con el
   // servidor de forma asíncrona por si el sello local aún no estaba puesto.
@@ -11904,7 +11946,11 @@ function screenMe(root) {
     el("div", {}, [
       meNameRow,
       el("div", { class: "me-mail" }, meMail),
-      el("span", { class: "me-tier" }, meTier),
+      el("span", {
+        class: "me-tier", id: "meTierBadge",
+        style: _mePlan === "free" ? "background:rgba(255,255,255,.10);color:var(--text,#ecedf3);cursor:pointer" : "cursor:pointer",
+        onclick: () => render(screenSubscriptions),
+      }, meTier),
     ]),
     el("div", { class: "me-hero-actions" }, [
       // V587 · Campanita de notificaciones in-app con badge de no leídas
@@ -11973,7 +12019,7 @@ function screenMe(root) {
       { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
       { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
       { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
-      { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: T("content.me.item_subs_sub") || "Premium · renueva 12 dic", onClick: () => render(screenSubscriptions) },
+      { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: (getUserPlan() === "free" ? "Plan Free · descubre Premium" : ("Plan " + planLabel(getUserPlan()))), onClick: () => render(screenSubscriptions) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
     ]},
@@ -14361,8 +14407,12 @@ function screenSubscriptions(root) {
 
   function renderPlans() {
     list.innerHTML = "";
+    // V801 · Plan actual REAL del usuario, para marcar cuál tiene activo en vez
+    // de asumir siempre "Free".
+    const currentPlan = getUserPlan();
     plans.forEach(p => {
       const isFree = p.tier === "Free";
+      const isCurrent = p.tier.toLowerCase() === currentPlan;
       const priceHtml = isFree
         ? `<span>Gratis</span>`
         : (billing === "annual"
@@ -14381,8 +14431,11 @@ function screenSubscriptions(root) {
         el("div", { class: "pq-item" }, [ el("span", {}, "📍"), el("small", {}, p.profiles || "—") ]),
         el("div", { class: "pq-item " + adsInfo.cls }, [ el("span", {}, adsInfo.emoji), el("small", {}, adsInfo.label) ]),
       ]);
-      const cta = isFree
-        ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan actual (Free)")
+      const cta = isCurrent
+        ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan actual (" + p.tier + ")")
+        : isFree
+        // Plan gratuito no comprable: solo indicativo cuando el usuario ya paga.
+        ? el("button", { class: "btn btn-outline btn-block", disabled: true }, "Plan gratuito")
         : el("button", { class: "btn btn-brand btn-block",
             onclick: async (ev) => {
               const btn = ev.currentTarget;
