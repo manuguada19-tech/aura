@@ -32,10 +32,12 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="styles.css?v=791" />
-  <!-- Google AdSense: verificación de propiedad + carga de anuncios -->
-  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9759358849227466"
-     crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="styles.css?v=792" />
+  <!-- Google AdSense: verificación de propiedad SIN cargar el código de
+       anuncios en el arranque. El script pagead2 sólo se inyecta bajo demanda
+       (ensureAdSenseLoader) cuando se muestra un anuncio en una pantalla con
+       contenido real; así no se sirven anuncios en pantallas vacías/de carga. -->
+  <meta name="google-adsense-account" content="ca-pub-9759358849227466" />
   <style>
     /* Anti-FOUC: oculta el DOM hasta que CSS y JS estén listos.
        Evita mostrar el marco de escritorio, la lista de bullets y las mock cards

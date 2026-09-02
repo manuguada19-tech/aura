@@ -4169,6 +4169,8 @@ async function ensureAdsContext(force) {
 }
 
 async function maybeShowInterstitial() {
+  // Política AdSense: nunca sobre pantallas de arranque/onboarding/vacías.
+  if (!isContentScreen()) return;
   const ctx = await ensureAdsContext();
   if (!ctx || !ctx.show_ads) return;
   const inter = ctx.interstitial || {};
@@ -4192,8 +4194,9 @@ function startInterstitialTriggerPoll() {
     if (!__lastTriggerSeen) { __lastTriggerSeen = t; return; }
     if (t > __lastTriggerSeen) {
       __lastTriggerSeen = t;
-      // Forzado por admin: ignora cooldown/frecuencia y muestra siempre que show_ads
-      if (ctx.show_ads && ctx.interstitial?.enabled) {
+      // Forzado por admin: ignora cooldown/frecuencia pero SIEMPRE respeta la
+      // política de contenido (nunca sobre pantallas vacías/de arranque).
+      if (ctx.show_ads && ctx.interstitial?.enabled && isContentScreen()) {
         __lastInterAt = Date.now();
         showInterstitial(ctx);
       }
@@ -4204,6 +4207,8 @@ try { startInterstitialTriggerPoll(); } catch(_) {}
 
 function showInterstitial(ctx) {
   if (document.getElementById("auraInter")) return;
+  // Guarda de política: no mostrar sobre pantallas sin contenido del editor.
+  if (!isContentScreen()) return;
   const interCfg = ctx?.interstitial || {};
   const forceClose = !!interCfg.force_close;
   const duration = Math.max(0, parseInt(interCfg.duration_s, 10) || 0);
@@ -8596,10 +8601,31 @@ const DEMO_ADS = [
 function adConfig() {
   return (publicConfig && publicConfig.ads) || {};
 }
+// Política AdSense: los anuncios SOLO pueden aparecer en pantallas con
+// contenido real del editor (feed, cerca, mensajes) y con sesión iniciada.
+// NUNCA en bienvenida/registro/OTP/verificación/login/carga o pantallas vacías.
+// Esto evita "anuncios servidos en pantallas sin contenido del editor".
+const AD_CONTENT_SCREENS = [
+  "screenDiscover",
+  "screenNearby",
+  "screenChats",
+  "screenSearch",
+  "screenLikes",
+];
+function isContentScreen() {
+  try {
+    // Debe existir sesión real (no arranque/onboarding) y no estar en preview vacío.
+    if (!(state && state.user && state.user.id)) return false;
+    const name = (_lastScreenFn && _lastScreenFn.name) || "";
+    return AD_CONTENT_SCREENS.includes(name);
+  } catch { return false; }
+}
 function shouldShowAds() {
   const cfg = adConfig();
   if (!cfg.enabled) return false;
   if (cfg.only_free_plan !== false && getUserPlan() !== "free") return false;
+  // Sólo en pantallas con contenido del editor y con sesión iniciada.
+  if (!isContentScreen()) return false;
   return true;
 }
 
