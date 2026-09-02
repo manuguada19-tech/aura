@@ -13912,6 +13912,28 @@ async function viewInvites(root) {
           load(); loadStats();
         } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
       }));
+      // V805 · Vista previa del email de "validez ampliada" (el que hasta ahora
+      //   no se podía visualizar). Renderiza la plantilla real con los datos del
+      //   código y la muestra en un iframe, sin enviar nada.
+      acts.appendChild(btn("👁 Ver email ampliación", "ghost sm", async () => {
+        try {
+          const r = await api.post("/api/admin/invites/" + iv.id + "/preview", { type: "extended" });
+          showEmailPreview(r.subject, r.html, iv.code);
+        } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
+      }));
+      // V805 · Reenviar el email de "validez ampliada" de forma independiente,
+      //   sin tener que volver a cambiar la duración. Solo si tiene email y
+      //   caducidad fijada.
+      if (iv.email && iv.expires_at && !iv.revoked) {
+        acts.appendChild(btn("📅 Reenviar ampliación", "primary sm", async () => {
+          if (!confirm("¿Reenviar a " + iv.email + " el email de \"validez ampliada\"\n(válido hasta " + new Date(iv.expires_at).toLocaleDateString() + ")?")) return;
+          try {
+            await api.post("/api/admin/invites/" + iv.id + "/send-extended", {});
+            toast("Email de ampliación reenviado 📧");
+            load(); loadStats();
+          } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
+        }));
+      }
       acts.appendChild(btn("🗑️ Eliminar", "danger sm", async () => {
         if (!confirm("¿Eliminar definitivamente " + iv.code + "?")) return;
         try { await api.del("/api/admin/invites/" + iv.id); toast("Eliminada"); load(); loadStats(); }
@@ -13942,6 +13964,32 @@ async function viewInvites(root) {
     });
     exportBar.appendChild(btnExp);
     listBox.appendChild(exportBar);
+  }
+
+  // V805 · Vista previa del email (asunto + cuerpo HTML) en un modal con iframe.
+  function showEmailPreview(subject, html, code) {
+    const modal = E("div", "inv-modal-bg");
+    const box = E("div", "inv-modal-box");
+    box.style.maxWidth = "820px";
+    box.style.width = "min(820px, 94vw)";
+    const head = E("div", "inv-modal-head");
+    head.appendChild(el("div", {}, [
+      el("h3", { style: "margin:0" }, "👁 Vista previa del email"),
+      el("div", { class: "muted", style: "font-size:12px" }, code || ""),
+    ]));
+    box.appendChild(head);
+    box.appendChild(el("div", { style: "margin:8px 0 4px;font-size:12px;color:var(--text-muted)" }, "Asunto"));
+    box.appendChild(el("div", { style: "font-weight:700;margin-bottom:10px;word-break:break-word" }, subject || "(vacío)"));
+    const frame = document.createElement("iframe");
+    frame.style.cssText = "width:100%;height:66vh;border:1px solid var(--border);border-radius:12px;background:#fff";
+    frame.srcdoc = html || "";
+    box.appendChild(frame);
+    const acts = E("div", "inv-modal-acts");
+    acts.appendChild(btn("Cerrar", "ghost", () => modal.remove()));
+    box.appendChild(acts);
+    modal.appendChild(box);
+    modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
   }
 
   function showQr(url, code) {

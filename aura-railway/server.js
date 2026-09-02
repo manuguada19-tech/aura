@@ -9898,6 +9898,62 @@ app.post("/api/admin/invites/:id/extend", wrap(async (req, res) => {
   res.json({ ok: true, expires_at: expiresAt, emailed });
 }));
 
+// V805 · Vista previa del email de invitación (normal o de "validez ampliada"),
+//   renderizando la plantilla REAL con los datos del código. No envía nada ni
+//   modifica la base de datos. body: { type: 'invite' | 'extended' } (por
+//   defecto 'extended', que es el que no tenía forma de previsualizarse).
+app.post("/api/admin/invites/:id/preview", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const [rows] = await pool.query("SELECT * FROM invites WHERE id=? LIMIT 1", [id]);
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  const inv = rows[0];
+  const type = String(req.body?.type || "extended").toLowerCase() === "invite" ? "invite" : "extended";
+  const tplId = type === "invite" ? "invite" : "invite_extended";
+  const [tplRows] = await pool.query("SELECT * FROM email_templates WHERE id=? LIMIT 1", [tplId]);
+  if (!tplRows.length) return res.status(404).json({ error: "template_not_found", template: tplId });
+  const tpl = tplRows[0];
+  const baseUrl = process.env.PUBLIC_BASE_URL || "https://citasaura.es";
+  const token = inv.track_token || "PREVIEW";
+  let newExpiry = "";
+  try {
+    const d = inv.expires_at ? new Date(inv.expires_at) : new Date(Date.now() + 30 * 86400000);
+    newExpiry = d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
+  } catch { newExpiry = ""; }
+  const vars = {
+    user_email: inv.email || "invitado@ejemplo.com",
+    code: inv.code,
+    new_expiry: newExpiry,
+    invite_url: `${baseUrl}/t/c/${token}`,
+    pixel: `${baseUrl}/t/o/${token}.png`,
+    role: inv.role || "tester",
+    campaign: inv.campaign || "beta",
+  };
+  res.json({
+    ok: true,
+    type,
+    subject: interpolate(tpl.subject, vars),
+    html: interpolate(tpl.html, vars),
+  });
+}));
+
+// V805 · Reenviar el email de "validez ampliada" de forma independiente, sin
+//   tener que volver a cambiar la duración. Requiere email y una caducidad
+//   fijada (si el código es "sin caducidad", este aviso no aplica). Best-effort.
+app.post("/api/admin/invites/:id/send-extended", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "invalid_id" });
+  const [rows] = await pool.query("SELECT * FROM invites WHERE id=? LIMIT 1", [id]);
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  const inv = rows[0];
+  if (!inv.email) return res.status(400).json({ error: "no_email" });
+  if (!inv.expires_at) return res.status(400).json({ error: "no_expiry" });
+  const emailed = await sendInviteExtendedEmail(inv, new Date(inv.expires_at));
+  if (!emailed) return res.status(400).json({ error: "not_sent", hint: "revocado/agotado/plantilla deshabilitada" });
+  await logActivity("admin", `Invitacion #${id} email de validez ampliada reenviado`);
+  res.json({ ok: true, emailed: true });
+}));
+
 app.delete("/api/admin/invites/:id", wrap(async (req, res) => {
   await pool.execute("DELETE FROM invites WHERE id=?", [req.params.id]);
   res.json({ ok: true });
