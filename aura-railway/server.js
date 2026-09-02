@@ -9187,6 +9187,23 @@ async function seedEmailTemplates() {
       console.warn("seedEmailTemplates:", t.id, e.message);
     }
   }
+  // V813 · Las plantillas ya sembradas en BD conservaban el logo/enlaces
+  // apuntando a `www.citasaura.es`, host que NO resuelve (el bueno es el ápex
+  // `citasaura.es`), por lo que la cabecera del email salía con la imagen rota.
+  // El seed normal usa ON DUPLICATE KEY UPDATE id=id (no toca filas existentes)
+  // y la corrección del JSON (V809) no llegaba a esas filas. Aquí forzamos un
+  // reemplazo directo en BD sobre asunto y cuerpo. Es idempotente: una vez
+  // corregido, REPLACE no encuentra nada que cambiar.
+  try {
+    await pool.execute(
+      "UPDATE email_templates " +
+      "SET html = REPLACE(html, 'www.citasaura.es', 'citasaura.es'), " +
+      "    subject = REPLACE(subject, 'www.citasaura.es', 'citasaura.es') " +
+      "WHERE html LIKE '%www.citasaura.es%' OR subject LIKE '%www.citasaura.es%'"
+    );
+  } catch (e) {
+    console.warn("seedEmailTemplates fix www host:", e.message);
+  }
 }
 
 // Interpola {{token}} en un string. Preserva espacios.
