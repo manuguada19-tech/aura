@@ -16589,16 +16589,33 @@ async function maybePromptForPushAnon() {
       // Chrome). Los re-armados posteriores ya ocurren con activación fijada.
       let _armedOnce = false;
       const gestureEvents = ["pointerdown", "touchstart", "keydown", "click"];
-      const armAfterGesture = () => {
+      const doArmOnce = (why) => {
         if (_armedOnce) return;
         _armedOnce = true;
         gestureEvents.forEach((ev) => { try { window.removeEventListener(ev, armAfterGesture, true); } catch {} });
         arm();
-        try { reportEvent("backguard_armed"); } catch {}
+        try { reportEvent("backguard_armed", why || null); } catch {}
       };
-      gestureEvents.forEach((ev) => {
-        try { window.addEventListener(ev, armAfterGesture, { capture: true, passive: true }); } catch {}
-      });
+      const armAfterGesture = () => doArmOnce("gesture");
+      // V820 · Intentar cebar la trampa YA al abrir, no solo al primer toque.
+      // Solo es posible si el documento YA tiene activación de usuario (p. ej.
+      // al reabrir/reanudar la app o si el arranque la conserva): en ese caso
+      // la entrada NO es skippable y el atrás la respeta. Si aún no hay
+      // activación (arranque en frío típico), NO cebamos ahora —lo haría
+      // skippable y el atrás cerraría—, y esperamos al primer gesto, que es el
+      // instante más temprano que Chrome permite armar de forma fiable.
+      let armedAtOpen = false;
+      try {
+        if (navigator.userActivation && navigator.userActivation.hasBeenActive) {
+          doArmOnce("open-activation");
+          armedAtOpen = true;
+        }
+      } catch {}
+      if (!armedAtOpen) {
+        gestureEvents.forEach((ev) => {
+          try { window.addEventListener(ev, armAfterGesture, { capture: true, passive: true }); } catch {}
+        });
+      }
       window.addEventListener("popstate", () => {
         if (_exiting) return; // estamos cerrando la PWA: no reinterpretar
         const handled = handleBack();
