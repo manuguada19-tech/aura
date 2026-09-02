@@ -1991,7 +1991,7 @@ app.get("/api/users/:id", wrap(async (req, res) => {
     if ((!province || !timezone) && devices.length) {
       const dev = devices.find((d) => d.ip) || null;
       if (dev && dev.ip) {
-        const geo = await _geoLookup(dev.ip);
+        const geo = await _geoLookup(dev.ip, { external: false });
         if (geo && String(geo.country_code || geo.country || "").toUpperCase() === "ES") {
           if (!timezone) timezone = geo.tz || "";
           // No sobreescribimos la provincia si ya la sacamos de la ciudad; y si
@@ -6199,7 +6199,8 @@ async function fillApproxGeoFromIp(req, uid) {
   if (!uid) return;
   try {
     const ip = clientIp(req);
-    const geo = await _geoLookup(ip);
+    // Solo necesitamos coords → sin llamada externa (no ralentizamos el login).
+    const geo = await _geoLookup(ip, { external: false });
     if (!geo || geo.lat == null || geo.lon == null) return;
     await pool.execute(
       "UPDATE users SET lat=?, lng=? WHERE id=? AND (lat IS NULL OR lng IS NULL)",
@@ -6228,7 +6229,8 @@ async function backfillUserGeoFromDevices() {
     let filled = 0;
     for (const r of rows) {
       if (!r.ip) continue;
-      const geo = await _geoLookup(r.ip);
+      // Backfill masivo → solo coords, sin llamadas externas (evita rate-limit).
+      const geo = await _geoLookup(r.ip, { external: false });
       if (!geo || geo.lat == null || geo.lon == null) continue;
       try {
         await pool.execute(
@@ -10068,17 +10070,54 @@ function _parseUA(ua) {
   else if (/Safari\//i.test(s)) browser = "Safari";
   return { os, browser, device };
 }
-// Geolocalización aproximada por IP usando servicio gratuito ipapi.co
-// Cache en memoria para evitar rate-limit.
+// Geolocalización aproximada por IP.
+// Cache en memoria (por IP) para evitar consultas repetidas y rate-limit.
 const _geoCache = new Map();
 // Geolocalización IP self-hosted con geoip-lite (base MaxMind GeoLite2 embebida).
-// No hace llamadas externas: cumple RGPD (los datos IP nunca salen del servidor)
-// y no tiene cuota. La base se actualiza al hacer `npm install geoip-lite@...`.
+// geoip-lite NO hace llamadas externas y da país/región/coords/zona horaria,
+// pero NO trae operador (ASN/org) y a menudo deja la ciudad vacía.
+// La base se actualiza al hacer `npm install geoip-lite@...`.
 let _geoipLite = null;
 try { _geoipLite = require("geoip-lite"); }
 catch (e) { console.warn("[geo] geoip-lite no disponible:", e.message); }
 
-async function _geoLookup(ip) {
+// V803 · Enriquecimiento externo (best-effort) para rellenar CIUDAD y OPERADOR
+// (ASN/org) cuando geoip-lite no los trae. Usamos ipwho.is: HTTPS, gratuito,
+// sin API key. Es opcional: si falla o tarda, nos quedamos con geoip-lite.
+// Solo se llama para IPs públicas y una vez por IP (queda cacheado).
+async function _geoExternalEnrich(ipn) {
+  try {
+    if (typeof fetch !== "function") return null;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, 1200);
+    let r;
+    try {
+      r = await fetch("https://ipwho.is/" + encodeURIComponent(ipn), {
+        signal: ctrl.signal,
+        headers: { Accept: "application/json" },
+      });
+    } finally { clearTimeout(t); }
+    if (!r || !r.ok) return null;
+    const j = await r.json().catch(() => null);
+    if (!j || j.success === false) return null;
+    const conn = j.connection || {};
+    const org = conn.org || conn.isp || (conn.asn ? ("AS" + conn.asn) : "");
+    const tz = (j.timezone && (j.timezone.id || (typeof j.timezone === "string" ? j.timezone : ""))) || "";
+    return {
+      city: j.city || "",
+      region: j.region || "",
+      country: j.country || "",
+      country_code: j.country_code || "",
+      lat: (typeof j.latitude === "number") ? j.latitude : null,
+      lon: (typeof j.longitude === "number") ? j.longitude : null,
+      org: org || "",
+      tz,
+    };
+  } catch (e) { return null; }
+}
+
+async function _geoLookup(ip, opts) {
+  const external = !opts || opts.external !== false;
   // Normaliza IPv4 mapeada en IPv6 (::ffff:1.2.3.4 → 1.2.3.4)
   let ipn = String(ip || "").trim();
   if (ipn.startsWith("::ffff:")) ipn = ipn.slice(7);
@@ -10106,6 +10145,25 @@ async function _geoLookup(ip) {
       }
     }
   } catch (e) { /* ignore */ }
+  // V803 · Si falta ciudad u operador, completamos con la fuente externa.
+  // geoip-lite manda como fuente de verdad para lo que sí tiene; lo externo
+  // solo rellena huecos (aditivo, no pisa datos ya presentes).
+  if (external && (!info.org || !info.city)) {
+    const ext = await _geoExternalEnrich(ipn);
+    if (ext) {
+      info = {
+        ip: ipn,
+        city: info.city || ext.city || "",
+        region: info.region || ext.region || "",
+        country: info.country || ext.country || "",
+        country_code: info.country_code || ext.country_code || "",
+        lat: (info.lat != null ? info.lat : ext.lat),
+        lon: (info.lon != null ? info.lon : ext.lon),
+        org: info.org || ext.org || "",
+        tz: info.tz || ext.tz || "",
+      };
+    }
+  }
   _geoCache.set(ipn, info);
   return info;
 }
