@@ -14222,12 +14222,24 @@ function openDevicesSheet() {
     } catch (e) { toast("Error"); }
     logoutAllBtn.disabled = false;
   });
+  // V808 · Barra de título con botón de cierre (✕) SIEMPRE visible arriba a la
+  // derecha. Antes solo había un "Cerrar" al final que quedaba fuera de pantalla
+  // cuando la lista de dispositivos era larga → "no se podía cerrar la ventana".
   const wrap = el("div", {}, [
-    el("div", { class: "sheet-title" }, T("content.me.item_devices") || "Dispositivos activos"),
+    el("div", { class: "sheet-titlebar", style: "padding:8px 20px 4px" }, [
+      el("span", { class: "sheet-title", style: "padding:0" }, T("content.me.item_devices") || "Dispositivos activos"),
+      el("button", {
+        class: "sheet-close",
+        type: "button",
+        "aria-label": T("content.me.close") || "Cerrar",
+        onclick: () => modal.close(),
+        html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
+      }),
+    ]),
     list,
     el("div", { class: "sheet-actions" }, [
       logoutAllBtn,
-      el("button", { class: "btn btn-outline btn-block", "data-close": true }, T("content.me.close") || "Cerrar"),
+      el("button", { class: "btn btn-outline btn-block", "data-close": true, onclick: () => modal.close() }, T("content.me.close") || "Cerrar"),
     ]),
   ]);
   modal.open(wrap);
