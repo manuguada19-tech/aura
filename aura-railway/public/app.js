@@ -3354,6 +3354,53 @@ function myCountry() {
 }
 function myWeightUnit() { return weightUnitForCountry(myCountry()); }
 
+// V792 · Países que usan el sistema imperial también para altura (pies/pulgadas)
+// y distancia (millas). Incluye a EE. UU. y Reino Unido. El resto usa métrico.
+const IMPERIAL_COUNTRIES = LB_COUNTRIES.concat([
+  "reino unido", "uk", "u.k", "u. k", "united kingdom", "inglaterra",
+  "gran bretaña", "england", "britain",
+]);
+function isImperialCountry(country) {
+  const c = String(country || "").trim().toLowerCase();
+  if (!c) return false;
+  if (c === "us" || c === "gb") return true;
+  return IMPERIAL_COUNTRIES.some(x => c === x || c.includes(x));
+}
+function heightUnitForCountry(country) { return isImperialCountry(country) ? "ftin" : "cm"; }
+function distanceUnitForCountry(country) { return isImperialCountry(country) ? "mi" : "km"; }
+function myHeightUnit() { return heightUnitForCountry(myCountry()); }
+
+// V792 · Conversión altura cm ↔ pulgadas (para mostrar en pies/pulgadas).
+const CM_PER_IN = 2.54;
+function cmToIn(cm) { const n = Number(cm); return Number.isFinite(n) ? Math.round(n / CM_PER_IN) : 0; }
+function inToCm(inch) { const n = Number(inch); return Number.isFinite(n) ? Math.round(n * CM_PER_IN) : 0; }
+function inchesToFtIn(inch) { const n = Math.max(0, Math.round(+inch || 0)); return `${Math.floor(n / 12)}'${n % 12}"`; }
+function cmToFtIn(cm) { return inchesToFtIn(cmToIn(cm)); }
+
+// V792 · Definiciones de unidad por magnitud. Cada unidad sabe convertir a/desde
+// el valor CANÓNICO (años, km, cm, kg) que es lo que se guarda y filtra en el
+// backend — así cambiar de unidad NUNCA altera los datos, solo lo que se ve.
+const KM_PER_MI = 1.609344;
+function unitsFor(metric) {
+  if (metric === "age") return [
+    { id: "y", label: "años", min: 18, max: 99, step: 1, toCanon: v => v, fromCanon: c => c, fmt: v => `${v}`, suffix: "años" },
+  ];
+  if (metric === "distance") return [
+    { id: "km", label: "km", min: 1, max: 500, step: 1, toCanon: v => v, fromCanon: c => c, fmt: v => `${v}`, suffix: "km" },
+    { id: "mi", label: "mi", min: 1, max: 311, step: 1, toCanon: v => Math.round(v * KM_PER_MI), fromCanon: c => Math.round(c / KM_PER_MI), fmt: v => `${v}`, suffix: "mi" },
+  ];
+  if (metric === "height") return [
+    { id: "cm", label: "cm", min: 120, max: 230, step: 1, toCanon: v => v, fromCanon: c => c, fmt: v => `${v}`, suffix: "cm" },
+    // ftin: el slider muestra pies'pulgadas"; las cajas manuales van en pulgadas.
+    { id: "ftin", label: "ft·in", min: 47, max: 91, step: 1, toCanon: v => inToCm(v), fromCanon: c => cmToIn(c), fmt: v => inchesToFtIn(v), suffix: "", boxSuffix: "in" },
+  ];
+  // weight (kg canónico)
+  return [
+    { id: "kg", label: "kg", min: 35, max: 250, step: 1, toCanon: v => v, fromCanon: c => c, fmt: v => `${v}`, suffix: "kg" },
+    { id: "lb", label: "lb", min: 77, max: 551, step: 1, toCanon: v => unitToKg(v, "lb"), fromCanon: c => kgToUnit(c, "lb"), fmt: v => `${v}`, suffix: "lb" },
+  ];
+}
+
 // V776 · Campos OPCIONALES de estilo de vida. Mismo formato {id,label,emoji}
 // que LOOKING_FOR_OPTIONS para reutilizar el patrón de chips. El `id` es lo que
 // se guarda (coincide con lo que filtra el backend) y `label` lo que se muestra.
@@ -6885,25 +6932,35 @@ function screenRegisterProfile(root) {
   ]));
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "País"), fCountry ]));
 
-  const fHeight = el("input", { type: "number", min: 140, max: 210, value: state.registration.height });
-  // V791 · Peso con unidad según el país escrito arriba. El input muestra kg o
-  // lb; internamente el peso se guarda SIEMPRE en kg. Al cambiar de país, se
-  // recalcula la unidad y se convierte el valor visible.
+  // V792 · Altura y peso con unidad según el país escrito arriba. Los inputs
+  // muestran cm/in y kg/lb; internamente SIEMPRE se guarda en cm y kg. Al cambiar
+  // de país se recalcula la unidad y se convierte el valor visible.
+  const regH = { u: heightUnitForCountry(state.registration.country) };
   const regW = { u: weightUnitForCountry(state.registration.country) };
+  const fHeight = el("input", { type: "number", min: 40, max: 250, value: regH.u === "ftin" ? cmToIn(state.registration.height) : state.registration.height });
+  const heightLbl = el("label", {}, regH.u === "ftin" ? "Altura (in)" : "Altura (cm)");
   const fWeight = el("input", { type: "number", min: 40, max: 400, value: kgToUnit(state.registration.weight, regW.u) });
   const weightLbl = el("label", {}, `Peso (${regW.u})`);
-  const syncRegWeightUnit = () => {
-    const nu = weightUnitForCountry(fCountry.value);
-    if (nu === regW.u) return;
-    const kg = unitToKg(fWeight.value, regW.u); // valor actual → kg
-    regW.u = nu;
-    fWeight.value = kgToUnit(kg, nu);
-    weightLbl.textContent = `Peso (${nu})`;
+  const syncRegUnits = () => {
+    const nh = heightUnitForCountry(fCountry.value);
+    if (nh !== regH.u) {
+      const cm = regH.u === "ftin" ? inToCm(fHeight.value) : Math.round(+fHeight.value) || 0;
+      regH.u = nh;
+      fHeight.value = nh === "ftin" ? cmToIn(cm) : cm;
+      heightLbl.textContent = nh === "ftin" ? "Altura (in)" : "Altura (cm)";
+    }
+    const nw = weightUnitForCountry(fCountry.value);
+    if (nw !== regW.u) {
+      const kg = unitToKg(fWeight.value, regW.u);
+      regW.u = nw;
+      fWeight.value = kgToUnit(kg, nw);
+      weightLbl.textContent = `Peso (${nw})`;
+    }
   };
-  fCountry.addEventListener("input", syncRegWeightUnit);
-  fCountry.addEventListener("change", syncRegWeightUnit);
+  fCountry.addEventListener("input", syncRegUnits);
+  fCountry.addEventListener("change", syncRegUnits);
   form.appendChild(el("div", { class: "field-row" }, [
-    el("div", { class: "field" }, [ el("label", {}, "Altura (cm)"), fHeight ]),
+    el("div", { class: "field" }, [ heightLbl, fHeight ]),
     el("div", { class: "field" }, [ weightLbl, fWeight ]),
   ]));
   const fEth = el("select", {},
@@ -6984,8 +7041,9 @@ function screenRegisterProfile(root) {
       name: fName.value, birthDate: fBirth.value,
       gender: fGender.value, orientation: fOrient.value,
       city: fCity.value, province: fProv.value, country: fCountry.value,
-      // V791 · el peso se guarda SIEMPRE en kg (se convierte desde la unidad mostrada).
-      height: +fHeight.value, weight: unitToKg(fWeight.value, regW.u), ethnicity: fEth.value,
+      // V792 · altura en cm y peso en kg SIEMPRE (se convierten desde la unidad mostrada).
+      height: regH.u === "ftin" ? inToCm(fHeight.value) : (+fHeight.value || 0),
+      weight: unitToKg(fWeight.value, regW.u), ethnicity: fEth.value,
       // V776 · campos opcionales de estilo de vida + rompehielos.
       job: fJob.value.trim(), education: fEdu.value, pets: fPets.value,
       exercise: fEx.value, smoke: fSmoke.value, drink: fDrink.value,
@@ -9310,7 +9368,7 @@ const GENDER_FILTER_OPTS = {
 // Evita tener que escribir números a mano: se arrastra. Devuelve el nodo y
 // getters getLo()/getHi() con los valores actuales (enteros, mín ≤ máx).
 // `format(a,b)` genera la etiqueta visible. Los mangos no se cruzan.
-function makeRangeSlider({ min, max, step = 1, lo, hi, format }) {
+function makeRangeSlider({ min, max, step = 1, lo, hi, format, onInput, showLabel = true }) {
   min = +min; max = +max; step = +step || 1;
   lo = Math.min(max, Math.max(min, Number.isFinite(+lo) ? +lo : min));
   hi = Math.min(max, Math.max(min, Number.isFinite(+hi) ? +hi : max));
@@ -9323,18 +9381,157 @@ function makeRangeSlider({ min, max, step = 1, lo, hi, format }) {
   const inMin = el("input", { type: "range", class: "dual-range-input", min, max, step, value: lo, "aria-label": "Mínimo" });
   const inMax = el("input", { type: "range", class: "dual-range-input", min, max, step, value: hi, "aria-label": "Máximo" });
   const slider = el("div", { class: "dual-range-slider" }, [ track, inMin, inMax ]);
-  const node = el("div", { class: "dual-range" }, [ valLbl, slider ]);
+  const node = el("div", { class: "dual-range" }, showLabel ? [ valLbl, slider ] : [ slider ]);
   const span = (max - min) || 1;
   const paint = () => {
     const a = +inMin.value, b = +inMax.value;
     fill.style.left = ((a - min) / span * 100) + "%";
     fill.style.width = ((b - a) / span * 100) + "%";
-    valLbl.textContent = fmt(a, b);
+    if (showLabel) valLbl.textContent = fmt(a, b);
+    if (typeof onInput === "function") onInput(+inMin.value, +inMax.value);
   };
   inMin.addEventListener("input", () => { if (+inMin.value > +inMax.value) inMin.value = inMax.value; paint(); });
   inMax.addEventListener("input", () => { if (+inMax.value < +inMin.value) inMax.value = inMin.value; paint(); });
   paint();
-  return { node, getLo: () => +inMin.value, getHi: () => +inMax.value, inMin, inMax };
+  // set(a,b): mueve los mangos programáticamente (desde cajas manuales) y repinta.
+  const set = (a, b) => {
+    a = Math.min(max, Math.max(min, Math.round(+a)));
+    b = Math.min(max, Math.max(min, Math.round(+b)));
+    if (a > b) { const t = a; a = b; b = t; }
+    inMin.value = a; inMax.value = b; paint();
+  };
+  return { node, getLo: () => +inMin.value, getHi: () => +inMax.value, inMin, inMax, set };
+}
+// V792 · Control de RANGO con doble mango + cajas numéricas manuales + (opcional)
+// selector de unidad. Todo trabaja sobre el valor CANÓNICO (años/km/cm/kg) para
+// no romper el backend: cambiar de unidad solo cambia lo que se ve. Devuelve
+// getLoCanon()/getHiCanon().
+function makeUnitRange({ metric, defaultUnitId, loCanon, hiCanon }) {
+  const units = unitsFor(metric);
+  let unit = units.find(u => u.id === defaultUnitId) || units[0];
+  const sliderHost = el("div");
+  const numLo = el("input", { class: "num-input", type: "number", inputmode: "numeric", "aria-label": "Mínimo" });
+  const numHi = el("input", { class: "num-input", type: "number", inputmode: "numeric", "aria-label": "Máximo" });
+  const sepUnit = el("span", { class: "num-suffix num-range-unit" });
+  let slider = null, syncing = false;
+  const clampDisp = (v) => Math.min(unit.max, Math.max(unit.min, Math.round(+v) || unit.min));
+  function build(loDisp, hiDisp) {
+    slider = makeRangeSlider({
+      min: unit.min, max: unit.max, step: unit.step, lo: loDisp, hi: hiDisp,
+      format: (a, b) => `${unit.fmt(a)} – ${unit.fmt(b)}${unit.suffix ? " " + unit.suffix : ""}`,
+      onInput: (a, b) => { if (!syncing) { numLo.value = a; numHi.value = b; } },
+    });
+    sliderHost.innerHTML = ""; sliderHost.appendChild(slider.node);
+    numLo.min = unit.min; numLo.max = unit.max; numLo.value = slider.getLo();
+    numHi.min = unit.min; numHi.max = unit.max; numHi.value = slider.getHi();
+    sepUnit.textContent = unit.boxSuffix || unit.suffix || unit.label;
+  }
+  numLo.addEventListener("change", () => { let v = clampDisp(numLo.value); if (v > slider.getHi()) v = slider.getHi(); numLo.value = v; syncing = true; slider.set(v, slider.getHi()); syncing = false; });
+  numHi.addEventListener("change", () => { let v = clampDisp(numHi.value); if (v < slider.getLo()) v = slider.getLo(); numHi.value = v; syncing = true; slider.set(slider.getLo(), v); syncing = false; });
+  // Sin filtro (canónico 0/vacío) → arranca en el rango completo de la unidad.
+  const loStartDisp = (Number.isFinite(+loCanon) && +loCanon > 0) ? unit.fromCanon(+loCanon) : unit.min;
+  const hiStartDisp = (Number.isFinite(+hiCanon) && +hiCanon > 0) ? unit.fromCanon(+hiCanon) : unit.max;
+  build(loStartDisp, hiStartDisp);
+  // Chips de unidad (solo si hay más de una). Al cambiar, conserva el valor
+  // canónico y lo reconvierte a la nueva unidad.
+  const node = el("div", { class: "range-control" });
+  let unitRow = null;
+  if (units.length > 1) {
+    const chips = units.map(u => {
+      const chip = el("button", { class: "chip selectable" + (u.id === unit.id ? " active" : ""), type: "button" }, u.label);
+      chip.addEventListener("click", () => {
+        if (u.id === unit.id) return;
+        const loC = unit.toCanon(slider.getLo()), hiC = unit.toCanon(slider.getHi());
+        unit = u;
+        $$(".chip.selectable", unitRow).forEach(x => x.classList.toggle("active", x === chip));
+        build(unit.fromCanon(loC), unit.fromCanon(hiC));
+      });
+      return chip;
+    });
+    unitRow = el("div", { class: "chip-row unit-row", style: "margin-bottom:10px" }, [
+      el("span", { class: "unit-label" }, "Unidad:"), ...chips,
+    ]);
+    node.appendChild(unitRow);
+  }
+  node.appendChild(el("div", { class: "num-range", style: "margin-bottom:10px" }, [
+    el("label", { class: "num-field" }, [ el("span", {}, "Mínimo"), numLo ]),
+    el("span", { class: "num-sep" }, "—"),
+    el("label", { class: "num-field" }, [ el("span", {}, "Máximo"), numHi ]),
+    sepUnit,
+  ]));
+  node.appendChild(sliderHost);
+  return {
+    node,
+    getLoCanon: () => unit.toCanon(slider.getLo()),
+    getHiCanon: () => unit.toCanon(slider.getHi()),
+    unitMinCanon: () => unit.toCanon(unit.min),
+    unitMaxCanon: () => unit.toCanon(unit.max),
+    canonMin: () => units[0].toCanon(units[0].min),
+    canonMax: () => units[0].toCanon(units[0].max),
+  };
+}
+// V792 · Control de VALOR ÚNICO (distancia): slider + caja manual + unidad +
+// accesos rápidos. Trabaja en canónico (km). getCanon() devuelve el valor.
+function makeUnitSingle({ metric, defaultUnitId, valCanon, presetsCanon }) {
+  const units = unitsFor(metric);
+  let unit = units.find(u => u.id === defaultUnitId) || units[0];
+  const valLbl = el("span", { class: "dual-range-val" });
+  const rangeInp = el("input", { type: "range", class: "single-range-input", "aria-label": "Valor" });
+  const numInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", "aria-label": "Valor" });
+  const sepUnit = el("span", { class: "num-suffix" });
+  const presetRow = el("div", { class: "chip-row", style: "margin-top:8px" });
+  const clampDisp = (v) => Math.min(unit.max, Math.max(unit.min, Math.round(+v) || unit.min));
+  function paint() {
+    const v = +rangeInp.value;
+    valLbl.textContent = `${unit.fmt(v)} ${unit.suffix || unit.label}`;
+    numInp.value = v;
+    $$(".chip.selectable", presetRow).forEach(ch => ch.classList.toggle("active", +ch._disp === v));
+  }
+  function build(dispVal) {
+    rangeInp.min = unit.min; rangeInp.max = unit.max; rangeInp.step = unit.step;
+    rangeInp.value = Math.min(unit.max, Math.max(unit.min, dispVal));
+    numInp.min = unit.min; numInp.max = unit.max;
+    sepUnit.textContent = unit.suffix || unit.label;
+    // Accesos rápidos (convertidos a la unidad actual).
+    presetRow.innerHTML = "";
+    (presetsCanon || []).forEach(pc => {
+      const disp = unit.fromCanon(pc);
+      if (disp < unit.min || disp > unit.max) return;
+      const chip = el("button", { class: "chip selectable", type: "button" }, `${unit.fmt(disp)} ${unit.suffix || unit.label}`);
+      chip._disp = disp;
+      chip.addEventListener("click", () => { rangeInp.value = disp; paint(); });
+      presetRow.appendChild(chip);
+    });
+    paint();
+  }
+  rangeInp.addEventListener("input", paint);
+  numInp.addEventListener("change", () => { rangeInp.value = clampDisp(numInp.value); paint(); });
+  build(unit.fromCanon(Number.isFinite(+valCanon) ? +valCanon : units[0].toCanon(unit.min)));
+  const node = el("div", { class: "range-control" });
+  let unitRow = null;
+  if (units.length > 1) {
+    const chips = units.map(u => {
+      const chip = el("button", { class: "chip selectable" + (u.id === unit.id ? " active" : ""), type: "button" }, u.label);
+      chip.addEventListener("click", () => {
+        if (u.id === unit.id) return;
+        const c = unit.toCanon(+rangeInp.value);
+        unit = u;
+        $$(".chip.selectable", unitRow).forEach(x => x.classList.toggle("active", x === chip));
+        build(unit.fromCanon(c));
+      });
+      return chip;
+    });
+    unitRow = el("div", { class: "chip-row unit-row", style: "margin-bottom:10px" }, [
+      el("span", { class: "unit-label" }, "Unidad:"), ...chips,
+    ]);
+    node.appendChild(unitRow);
+  }
+  node.appendChild(el("div", { class: "num-range", style: "margin-bottom:8px" }, [
+    el("label", { class: "num-field" }, [ el("span", {}, "Máximo"), numInp ]), sepUnit,
+  ]));
+  node.appendChild(el("div", { class: "single-range-slider" }, [ valLbl, rangeInp ]));
+  node.appendChild(presetRow);
+  return { node, getCanon: () => unit.toCanon(+rangeInp.value) };
 }
 function openFilters() {
   const wrap = el("div", { class: "filters-body" });
@@ -9380,92 +9577,44 @@ function openFilters() {
     grpGenderRow,
   ]));
 
-  // ---- Edad: slider de doble mango (18–99), sin escribir a mano (V791) ----
-  const ageSlider = makeRangeSlider({
-    min: 18, max: 99, lo: state.filters.ageMin, hi: state.filters.ageMax,
-    format: (a, b) => `${a} – ${b} años`,
+  // V792 · Unidad por defecto según el país del usuario (registro/perfil). El
+  // usuario puede cambiarla con los chips para comparar en las unidades del país
+  // donde busca. Los valores se guardan/filtran SIEMPRE en canónico (años/km/cm/kg).
+  const _cc = myCountry();
+
+  // ---- Edad: slider de doble mango + cajas manuales (18–99) ----
+  const ageCtl = makeUnitRange({ metric: "age", loCanon: state.filters.ageMin, hiCanon: state.filters.ageMax });
+  wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Edad"), ageCtl.node ]));
+
+  // ---- Distancia máxima: slider + caja manual + unidad km/mi + accesos ----
+  const distCtl = makeUnitSingle({
+    metric: "distance", defaultUnitId: distanceUnitForCountry(_cc),
+    valCanon: state.filters.distance, presetsCanon: [5, 10, 25, 50, 100, 200],
+  });
+  wrap.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Distancia máxima"), distCtl.node ]));
+
+  // ---- Altura: slider + caja manual + unidad cm/ft·in (opcional) ----
+  const heightCtl = makeUnitRange({
+    metric: "height", defaultUnitId: heightUnitForCountry(_cc),
+    loCanon: state.filters.heightMin, hiCanon: state.filters.heightMax,
   });
   wrap.appendChild(el("div", { class: "filter-group" }, [
-    el("h5", {}, "Edad"),
-    ageSlider.node,
+    el("h5", {}, "Altura"),
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-6px 0 8px;line-height:1.35" },
+      "Todo el rango = sin filtro. Cambia la unidad para comparar."),
+    heightCtl.node,
   ]));
 
-  // ---- Distancia: caja numérica + accesos rápidos (sin barra) ----
-  const distInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 1, max: 500, value: state.filters.distance, "aria-label": "Distancia máxima en km" });
-  const distPresets = el("div", { class: "chip-row", style: "margin-top:8px" },
-    [5, 10, 25, 50, 100, 200].map(km => {
-      const chip = el("button", { class: "chip selectable" + (+state.filters.distance === km ? " active" : ""), type: "button" }, km + " km");
-      chip.addEventListener("click", () => {
-        distInp.value = km;
-        $$(".chip.selectable", distPresets).forEach(x => x.classList.toggle("active", x === chip));
-      });
-      return chip;
-    }));
-  distInp.addEventListener("input", () => { $$(".chip.selectable", distPresets).forEach(x => x.classList.remove("active")); });
-  wrap.appendChild(el("div", { class: "filter-group" }, [
-    el("h5", {}, "Distancia máxima"),
-    el("div", { class: "num-range" }, [
-      el("label", { class: "num-field" }, [ el("span", {}, "Km"), distInp ]),
-    ]),
-    distPresets,
-  ]));
-
-  // ---- Altura (cm): rango mín/máx (opcional, 0/vacío = sin filtro) ----
-  const hMinInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 120, max: 230, value: state.filters.heightMin || "", placeholder: "—", "aria-label": "Altura mínima" });
-  const hMaxInp = el("input", { class: "num-input", type: "number", inputmode: "numeric", min: 120, max: 230, value: state.filters.heightMax || "", placeholder: "—", "aria-label": "Altura máxima" });
-  wrap.appendChild(el("div", { class: "filter-group" }, [
-    el("h5", {}, "Altura (cm)"),
-    el("div", { class: "num-range" }, [
-      el("label", { class: "num-field" }, [ el("span", {}, "Mínima"), hMinInp ]),
-      el("span", { class: "num-sep" }, "—"),
-      el("label", { class: "num-field" }, [ el("span", {}, "Máxima"), hMaxInp ]),
-    ]),
-  ]));
-
-  // ---- Peso: slider de doble mango con unidad kg/lb según país (V791) ----
-  // El rango real es 35–250 kg. Se muestra en la unidad del usuario (kg o lb
-  // según su país de registro) pero SIEMPRE se guarda/filtra en kg. Empieza en
-  // el rango completo (= sin filtro efectivo).
-  const wUnit = { u: myWeightUnit() };
-  const wRange = () => wUnit.u === "lb"
-    ? { min: kgToUnit(35, "lb"), max: kgToUnit(250, "lb") }  // ≈ 77–551 lb
-    : { min: 35, max: 250 };
-  const wStartLoKg = state.filters.weightMin > 0 ? state.filters.weightMin : 35;
-  const wStartHiKg = state.filters.weightMax > 0 ? state.filters.weightMax : 250;
-  let weightSlider = null;
-  const weightSliderHost = el("div");
-  function buildWeightSlider(loKg, hiKg) {
-    const r = wRange();
-    weightSlider = makeRangeSlider({
-      min: r.min, max: r.max,
-      lo: kgToUnit(loKg, wUnit.u), hi: kgToUnit(hiKg, wUnit.u),
-      format: (a, b) => `${a} – ${b} ${wUnit.u}`,
-    });
-    weightSliderHost.innerHTML = "";
-    weightSliderHost.appendChild(weightSlider.node);
-  }
-  buildWeightSlider(wStartLoKg, wStartHiKg);
-  // Selector de unidad kg/lb (permite cambiar cómo se ve/elige el peso).
-  const unitChips = ["kg", "lb"].map(u => {
-    const chip = el("button", { class: "chip selectable" + (wUnit.u === u ? " active" : ""), type: "button" }, u);
-    chip.addEventListener("click", () => {
-      if (wUnit.u === u) return;
-      // Conserva la selección actual (en kg) al cambiar de unidad.
-      const loKg = unitToKg(weightSlider.getLo(), wUnit.u);
-      const hiKg = unitToKg(weightSlider.getHi(), wUnit.u);
-      wUnit.u = u;
-      $$(".chip.selectable", unitRow).forEach(x => x.classList.toggle("active", x === chip));
-      buildWeightSlider(loKg, hiKg);
-    });
-    return chip;
+  // ---- Peso: slider + caja manual + unidad kg/lb (opcional) ----
+  const weightCtl = makeUnitRange({
+    metric: "weight", defaultUnitId: myWeightUnit(),
+    loCanon: state.filters.weightMin, hiCanon: state.filters.weightMax,
   });
-  const unitRow = el("div", { class: "chip-row", style: "margin-bottom:10px" }, [
-    el("span", { class: "unit-label" }, "Unidad:"), ...unitChips,
-  ]);
   wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, "Peso"),
-    unitRow,
-    weightSliderHost,
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-6px 0 8px;line-height:1.35" },
+      "Todo el rango = sin filtro. Cambia la unidad para comparar."),
+    weightCtl.node,
   ]));
 
   // ---- Ubicación: buscador entre las ciudades de usuarios reales ----
@@ -9700,27 +9849,28 @@ function openFilters() {
 
   wrap.appendChild(el("div", { class: "sheet-actions" }, [
     el("button", { class: "btn btn-brand btn-block", onclick: () => {
-      // Edad: slider de doble mango (18–99), ya viene ordenado mín ≤ máx (V791).
-      state.filters.ageMin = ageSlider.getLo();
-      state.filters.ageMax = ageSlider.getHi();
-      // Distancia: 1–500 km.
-      let dkm = parseInt(distInp.value, 10);
+      // V792 · Edad: control con slider + caja manual. Valor canónico = años.
+      state.filters.ageMin = ageCtl.getLoCanon();
+      state.filters.ageMax = ageCtl.getHiCanon();
+      // V792 · Distancia: canónico = km (aunque se muestre en millas). 1–500 km.
+      let dkm = distCtl.getCanon();
       if (!Number.isFinite(dkm) || dkm < 1) dkm = 50; dkm = Math.min(500, dkm);
       state.filters.distance = dkm;
-      // V788 · Altura (120–230 cm). Vacío/0 = sin filtro.
-      const rangeVal = (raw, lo, hi) => { const n = parseInt(raw, 10); if (!Number.isFinite(n) || n <= 0) return 0; return Math.min(hi, Math.max(lo, n)); };
-      let hMin = rangeVal(hMinInp.value, 120, 230), hMax = rangeVal(hMaxInp.value, 120, 230);
-      if (hMin && hMax && hMin > hMax) { const t = hMin; hMin = hMax; hMax = t; }
-      state.filters.heightMin = hMin; state.filters.heightMax = hMax;
-      // V791 · Peso: el slider va en la unidad del usuario; se convierte SIEMPRE a
-      // kg (35–250) para el backend. Si abarca todo el rango = sin filtro (0).
-      let wMinKg = unitToKg(weightSlider.getLo(), wUnit.u);
-      let wMaxKg = unitToKg(weightSlider.getHi(), wUnit.u);
-      wMinKg = Math.min(250, Math.max(35, wMinKg));
-      wMaxKg = Math.min(250, Math.max(35, wMaxKg));
+      // V792 · Altura: canónico = cm (aunque se muestre en ft·in). Si abarca todo
+      // el rango (120–230) = sin filtro (0).
+      let hMin = heightCtl.getLoCanon(), hMax = heightCtl.getHiCanon();
+      hMin = Math.min(230, Math.max(120, hMin)); hMax = Math.min(230, Math.max(120, hMax));
+      if (hMin > hMax) { const t = hMin; hMin = hMax; hMax = t; }
+      const hFull = (hMin <= 120 && hMax >= 230);
+      state.filters.heightMin = hFull ? 0 : hMin;
+      state.filters.heightMax = hFull ? 0 : hMax;
+      // V792 · Peso: canónico = kg (aunque se muestre en lb). Todo el rango = sin filtro.
+      let wMinKg = weightCtl.getLoCanon(), wMaxKg = weightCtl.getHiCanon();
+      wMinKg = Math.min(250, Math.max(35, wMinKg)); wMaxKg = Math.min(250, Math.max(35, wMaxKg));
       if (wMinKg > wMaxKg) { const t = wMinKg; wMinKg = wMaxKg; wMaxKg = t; }
-      state.filters.weightMin = (wMinKg <= 35 && wMaxKg >= 250) ? 0 : wMinKg;
-      state.filters.weightMax = (wMinKg <= 35 && wMaxKg >= 250) ? 0 : wMaxKg;
+      const wFull = (wMinKg <= 35 && wMaxKg >= 250);
+      state.filters.weightMin = wFull ? 0 : wMinKg;
+      state.filters.weightMax = wFull ? 0 : wMaxKg;
       // Género: chips activos → valores guardados. "Todos" o vacío = sin filtro.
       const activeGender = genderChips.filter(x => x.classList.contains("active"));
       const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
@@ -12186,7 +12336,8 @@ function screenEditProfile(root) {
       bio: bioInp.value.trim(),
       city: cityInp.value.trim(),
       job: jobInp.value.trim(),
-      height: parseInt(heightInp.value, 10) || null,
+      // V792 · altura en cm SIEMPRE (se convierte desde in si procede).
+      height: heightInp.value ? (peHeight.u === "ftin" ? inToCm(heightInp.value) : (parseInt(heightInp.value, 10) || null)) : null,
       weight: weightInp.value ? unitToKg(weightInp.value, peWeight.u) : null, // V791 · siempre kg
       gender: genderInp.value,
       ethnicity: ethInp.value || null,
@@ -12225,8 +12376,13 @@ function screenEditProfile(root) {
   cityField.appendChild(el("label", {}, T("content.me.field_city") || "Ciudad")); cityField.appendChild(cityInp); form.appendChild(cityField);
   const jobField = el("div", { class: "field" }); const jobInp = el("input", { type: "text", value: "" });
   jobField.appendChild(el("label", {}, T("content.me.field_job") || "Profesión")); jobField.appendChild(jobInp); form.appendChild(jobField);
-  const heightField = el("div", { class: "field" }); const heightInp = el("input", { type: "number", value: u.height || "" });
-  heightField.appendChild(el("label", {}, T("content.me.field_height") || "Altura (cm)")); heightField.appendChild(heightInp); form.appendChild(heightField);
+  // V792 · Altura con unidad según país. El input muestra cm o in; se almacena
+  // en cm. `peHeight.u` se recalcula al cargar el perfil (que trae el país).
+  const peHeight = { u: myHeightUnit() };
+  const heightField = el("div", { class: "field" });
+  const heightInp = el("input", { type: "number", value: u.height ? (peHeight.u === "ftin" ? cmToIn(u.height) : u.height) : "" });
+  const heightLabel = el("label", {}, peHeight.u === "ftin" ? "Altura (in)" : (T("content.me.field_height") || "Altura (cm)"));
+  heightField.appendChild(heightLabel); heightField.appendChild(heightInp); form.appendChild(heightField);
   // V776 · Peso (opcional).
   // V791 · Peso con unidad según país. El input muestra kg o lb; se almacena en
   // kg. `peWeight.u` se recalcula al cargar el perfil (que ya trae el país).
@@ -12391,13 +12547,17 @@ function screenEditProfile(root) {
       if (p.bio != null) bioInp.value = p.bio;
       if (p.city != null) cityInp.value = p.city;
       if (p.job != null) jobInp.value = p.job;
-      if (p.height != null) heightInp.value = p.height;
-      // V791 · unidad de peso según el país real del perfil; convierte kg → unidad.
+      // V792 · unidad de altura/peso según el país real del perfil (convierte
+      // desde el valor canónico cm/kg a la unidad mostrada). Se hace ANTES de
+      // rellenar altura/peso para que salgan ya en la unidad correcta.
       if (p.country != null) {
         state.myProfile.country = p.country;
+        peHeight.u = heightUnitForCountry(p.country);
         peWeight.u = weightUnitForCountry(p.country);
+        heightLabel.textContent = peHeight.u === "ftin" ? "Altura (in)" : (T("content.me.field_height") || "Altura (cm)");
         weightLabel.textContent = `Peso (${peWeight.u}) · opcional`;
       }
+      if (p.height != null) heightInp.value = peHeight.u === "ftin" ? cmToIn(p.height) : p.height; // V792
       if (p.weight != null) weightInp.value = kgToUnit(p.weight, peWeight.u); // V791
       if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
       if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
