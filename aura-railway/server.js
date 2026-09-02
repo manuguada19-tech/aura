@@ -5782,6 +5782,65 @@ app.post("/api/admin/read-credits/:uid/grant", wrap(async (req, res) => {
   res.json({ ok: true, credits: next, applied });
 }));
 
+// GET /api/reads/summary → métricas agregadas reales para el panel de Lecturas.
+// Solo cuenta compras reales de packs (amount>0); las concesiones/retiradas
+// manuales de admin se registran con amount=0 y quedan excluidas de ingresos y
+// ticket medio. Devuelve también series diarias (14 días) para las sparklines.
+app.get("/api/reads/summary", requireAdmin, wrap(async (req, res) => {
+  // Totales de ventas reales (packs pagados).
+  const [[tot]] = await pool.query(
+    `SELECT COALESCE(SUM(amount),0)  AS revenue,
+            COALESCE(SUM(credits),0) AS credits_sold,
+            COUNT(*)                 AS orders
+       FROM chat_read_purchases
+      WHERE amount > 0`
+  );
+  // Cupo gratis consumido este periodo (los contadores se resetean por mes).
+  const [[free]] = await pool.query(
+    "SELECT COALESCE(SUM(used_free),0) AS free_used FROM chat_read_credits"
+  );
+  // Series diarias de los últimos 14 días para las mini-gráficas.
+  const [days] = await pool.query(
+    `SELECT DATE(created_at) AS d,
+            COALESCE(SUM(amount),0)  AS rev,
+            COALESCE(SUM(credits),0) AS cr
+       FROM chat_read_purchases
+      WHERE amount > 0 AND created_at >= (CURDATE() - INTERVAL 13 DAY)
+      GROUP BY DATE(created_at)`
+  );
+  // La columna DATE llega como objeto Date (mysql2). Normalizamos a clave
+  // "YYYY-MM-DD" en horario local para que cuadre con los días que generamos.
+  const dayKey = (v) => {
+    const d = (v instanceof Date) ? v : new Date(v);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const byDay = new Map();
+  for (const r of days) byDay.set(dayKey(r.d), r);
+  const revenue_series = [];
+  const credits_series = [];
+  for (let i = 13; i >= 0; i--) {
+    const dt = new Date();
+    dt.setDate(dt.getDate() - i);
+    const hit = byDay.get(dayKey(dt));
+    revenue_series.push(hit ? Number(hit.rev) : 0);
+    credits_series.push(hit ? Number(hit.cr) : 0);
+  }
+  const packs = readPacks();
+  res.json({
+    revenue: Number(tot.revenue) || 0,
+    credits_sold: Number(tot.credits_sold) || 0,
+    orders: Number(tot.orders) || 0,
+    free_used: Number(free.free_used) || 0,
+    packs_active: Array.isArray(packs) ? packs.length : 0,
+    currency: getSetting("chat.reads.currency", "EUR"),
+    revenue_series,
+    credits_series,
+  });
+}));
+
 // POST /api/admin/read-credits/:uid/reset-free  → resets the free monthly counter
 app.post("/api/admin/read-credits/:uid/reset-free", wrap(async (req, res) => {
   const uid = parseInt(req.params.uid, 10);

@@ -2182,7 +2182,14 @@ body.account-suspended .restriction-banner .rb-close {
 .nearby-head h5 { margin: 0; color: var(--text-soft); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 .nearby-count { font-size: 11px; color: var(--text-muted); }
 .nearby-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  /* V830 · Antes eran 4 columnas fijas y sólo se bajaba a 3/2 en pantallas
+     táctiles. En PC (puntero fino) la app va dentro de un marco tipo móvil
+     (~382px), así que 4 columnas dejaban tarjetas de ~83px donde el texto de
+     ubicación no cabía y se cortaba. Con auto-fill + minmax se ajustan solas a
+     tantas columnas legibles como quepan, en PC y en móvil. */
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 12px;
 }
 /* V741 · Igual que .result-card: anillo degradado permanente + esquinas suaves. */
 .nearby-card {
@@ -9382,13 +9389,19 @@ body.welcome-desktop .hero-desktop .welcome-foot,
   font-weight: 700;
   opacity: 1 !important;
   text-shadow: 0 1px 3px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.8);
-  white-space: normal;
-  overflow: visible;
-  text-overflow: clip;
-  line-height: 1.25;
+  /* V830 · El texto de aviso ahora es corto ("📍 Ubicación oculta"). Lo dejamos
+     envolver hasta 2 líneas para que se lea ENTERO en tarjetas estrechas, pero
+     CONTENIDO dentro de la caja (overflow:hidden). El bug anterior usaba
+     -webkit-line-clamp:2 con overflow:visible, y por eso el texto se salía de
+     la tarjeta y quedaba cortado por el borde. */
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+  font-size: 10px;
 }
 
 /* V758 · Botón "Buscar en el mapa" en la pestaña Cerca de ti */

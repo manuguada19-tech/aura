@@ -8889,7 +8889,12 @@ function buildNearbySection() {
           looking ? el("div", { class: "nearby-badge" }, `${looking.emoji} ${looking.label}`) : null,
           el("div", { class: "nearby-info" }, [
             el("strong", {}, `${u.name}, ${u.age}`),
-            el("small", { class: li.off ? "gps-off" : "" }, distLabel ? `${u.city ? u.city + " · " : ""}${distLabel}` : (u.city || "")),
+            // Si la ubicación está oculta, mostramos un texto corto ("Ubicación
+            // oculta") sin la ciudad delante: en tarjetas estrechas el texto
+            // largo "Madrid · No comparte su ubicación" se salía y se cortaba.
+            el("small", { class: li.off ? "gps-off" : "" },
+              li.off ? "📍 Ubicación oculta"
+                     : (distLabel ? `${u.city ? u.city + " · " : ""}${distLabel}` : (u.city || ""))),
           ]),
         ]);
         card.addEventListener("click", () => openProfileDetail(u));
