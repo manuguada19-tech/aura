@@ -18,7 +18,34 @@
 
 const BASE = "https://citasaura.es";
 const SITE = "Aura";
-const TODAY = "2026-08-13";
+const TODAY = "2026-09-02";
+
+/* --------------------------------------------------------------------
+   AdSense (SOLO en páginas de contenido rastreable, nunca en la app)
+   --------------------------------------------------------------------
+   La política de AdSense exige que los anuncios aparezcan en páginas con
+   contenido original y de valor. Estas páginas server-side (guías, FAQ,
+   cómo funciona, inicio) cumplen ese requisito, así que aquí SÍ es correcto
+   cargar el código de anuncios. El slot en el cuerpo es opcional: si no hay
+   ADSENSE_SLOT_CONTENT configurado, el loader habilita los Auto Ads (que se
+   activan/desactivan desde el panel de AdSense) sin insertar unidades fijas. */
+const ADSENSE_CLIENT = "ca-pub-9759358849227466";
+const ADSENSE_SLOT_CONTENT = process.env.ADSENSE_SLOT_CONTENT || "";
+
+// Loader del script de AdSense (para el <head> de páginas con contenido).
+function adsenseLoaderHtml() {
+  return `<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}" crossorigin="anonymous"></script>`;
+}
+
+// Unidad de anuncio in-content. Sólo se inserta si hay slot configurado; si no,
+// devuelve cadena vacía y son los Auto Ads quienes colocan el anuncio.
+function adUnit() {
+  if (!ADSENSE_SLOT_CONTENT) return "";
+  return `<div class="ad-holder"><span class="ad-lbl">Publicidad</span>`
+    + `<ins class="adsbygoogle" style="display:block" data-ad-client="${ADSENSE_CLIENT}" `
+    + `data-ad-slot="${ADSENSE_SLOT_CONTENT}" data-ad-format="auto" data-full-width-responsive="true"></ins>`
+    + `<script>(adsbygoogle=window.adsbygoogle||[]).push({});</script></div>`;
+}
 
 /* --------------------------------------------------------------------
    Utilidades de escape / render
@@ -74,6 +101,9 @@ function layout(opts) {
     `<a href="${n.path}"${n.path === o.path ? ' aria-current="page"' : ""}>${esc(n.label)}</a>`
   ).join("");
 
+  // AdSense solo en páginas con contenido de editor (o.ads === true).
+  const adsHead = o.ads ? adsenseLoaderHtml() : "";
+
   return `<!doctype html>
 <html lang="es">
 <head>
@@ -91,6 +121,7 @@ function layout(opts) {
   <meta property="og:image" content="${BASE}/assets/welcome-logo-light.png"/>
   <meta name="twitter:card" content="summary"/>
   <link rel="icon" href="/assets/welcome-logo-light.png"/>
+  ${adsHead}
   ${jsonLdHtml}
   <style>
     :root{--bg:#0b0c10;--card:#15161d;--card2:#1b1d26;--text:#f4f5f7;--soft:#a7abb7;--border:#262833;--brand:#ff3b6b;--brand2:#ff8a3b;--accent:#a855f7}
@@ -151,6 +182,8 @@ function layout(opts) {
     footer.site nav{display:flex;flex-wrap:wrap;gap:14px 20px;margin-bottom:16px}
     footer.site a{color:var(--soft)}
     footer.site .fine{color:#6b6f7b;font-size:13px}
+    .ad-holder{margin:26px 0;padding:8px;border:1px solid var(--border);border-radius:14px;background:var(--card);min-height:90px}
+    .ad-holder .ad-lbl{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b6f7b;margin:0 0 6px}
     @media (max-width:560px){nav.site{display:none}.hero{padding:40px 0 24px}}
   </style>
 </head>
@@ -461,6 +494,95 @@ const GUIDES = [
 
 <p>¿Quieres ver a quién te recomienda hoy? <a href="/">Entra en Aura</a>.</p>`,
   },
+  {
+    slug: "ideas-para-una-primera-cita",
+    title: "20 ideas para una primera cita que no sea un café aburrido",
+    date: "2026-08-20",
+    excerpt: "Planes originales, económicos y seguros para romper el hielo en persona. Ideas para cada estación y tipo de persona.",
+    minutes: 7,
+    body: `
+<p>Habéis conectado en el chat, hay buena sintonía y toca dar el salto al mundo real. Pero "¿un café?" se ha convertido en el plan por defecto de tanta gente que ya sabe a poco. La primera cita no tiene por qué ser una entrevista de trabajo con cafeína: el plan adecuado relaja el ambiente, da tema de conversación y os enseña cómo sois de verdad cuando salís de la pantalla.</p>
+
+<h2>Qué hace que un plan de primera cita funcione</h2>
+<p>Antes de la lista, tres principios que convierten cualquier idea en un buen plan:</p>
+<ul>
+  <li><strong>Que permita hablar.</strong> Un concierto a todo volumen mata la conversación. Busca algo con pausas.</li>
+  <li><strong>Que tenga una "vía de escape" natural.</strong> Un plan con final claro (un paseo, una exposición) evita el compromiso de una cena de tres horas si no hay química.</li>
+  <li><strong>Que sea en un lugar público y accesible</strong> para ambos, sin que nadie tenga que cruzar media ciudad.</li>
+</ul>
+
+<h2>Planes de día</h2>
+<ul>
+  <li><strong>Un mercado gastronómico:</strong> picáis de aquí y de allá, hay movimiento y siempre surge conversación sobre qué probar.</li>
+  <li><strong>Una exposición o museo pequeño:</strong> el arte da pie a opiniones y os movéis mientras habláis, sin la tensión del cara a cara fijo.</li>
+  <li><strong>Un paseo con café para llevar:</strong> el clásico café, pero andando. Menos rígido y podéis alargarlo o cortarlo con naturalidad.</li>
+  <li><strong>Un rastro o mercadillo:</strong> curiosear objetos raros es un generador infinito de anécdotas.</li>
+  <li><strong>Alquilar bicis</strong> y recorrer un parque grande o el paseo marítimo.</li>
+</ul>
+
+<h2>Planes de tarde-noche</h2>
+<ul>
+  <li><strong>Una cata:</strong> vino, cerveza artesana o quesos. Hay una actividad guiada que rompe el hielo por vosotros.</li>
+  <li><strong>Juegos de mesa en un bar temático:</strong> competir un poco desata risas y quita presión.</li>
+  <li><strong>Tapas de ruta:</strong> un bar por plato en vez de una cena larga. Si va bien, seguís; si no, tenéis salida.</li>
+  <li><strong>Un espectáculo de monólogos:</strong> reír juntos crea complicidad casi al instante.</li>
+  <li><strong>Mirar las estrellas</strong> en un mirador con una manta y algo de picar (con buena cobertura y sitio conocido).</li>
+</ul>
+
+<h2>Planes originales y económicos</h2>
+<ul>
+  <li>Una clase suelta de algo: cerámica, cocina, baile. Aprender juntos une.</li>
+  <li>Un karaoke privado, si os va la marcha.</li>
+  <li>Una tarde de librería y luego comentar lo que cada uno ha "fichado".</li>
+  <li>Patinaje sobre hielo o minigolf: el punto competitivo y torpe rebaja la tensión.</li>
+  <li>Un picnic en un parque con lista de música compartida.</li>
+</ul>
+
+<h2>Seguridad primero</h2>
+<p>Elijas el plan que elijas, recuerda lo básico: <strong>lugar público, transporte propio y avisar a alguien de confianza</strong> de dónde vas. Lo desarrollamos en nuestra guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a>. Confía en tu instinto: si algo no te encaja, no pasa nada por acortar la cita.</p>
+
+<h2>Y si no hay química, ¿qué?</h2>
+<p>No todas las primeras citas terminan en segunda, y está bien. Un plan corto y ligero hace que, incluso sin chispa, la experiencia sea agradable y sin incomodidad. Sé honesto y amable: un mensaje sincero después vale más que desaparecer.</p>
+
+<p>¿Ya tienes con quién quedar? <a href="/">Abre Aura</a> y propón el plan. Y si aún no, empieza a conocer gente afín a ti hoy.</p>`,
+  },
+  {
+    slug: "senales-de-que-hay-conexion-real",
+    title: "Señales de que hay conexión real (y no solo entusiasmo del principio)",
+    date: "2026-08-28",
+    excerpt: "Cómo distinguir una atracción pasajera de una conexión con futuro. Señales verdes, dudas frecuentes y qué observar en las primeras semanas.",
+    minutes: 6,
+    body: `
+<p>Las primeras semanas conociendo a alguien son una montaña rusa de mensajes, mariposas y sobreanálisis. Pero, ¿cómo saber si lo que sientes es una conexión real o solo el subidón de la novedad? No hay una fórmula mágica, pero sí señales que, con el tiempo, distinguen una atracción pasajera de algo con recorrido.</p>
+
+<h2>Señales verdes de conexión real</h2>
+<ul>
+  <li><strong>Las conversaciones fluyen sin esfuerzo.</strong> No tienes que "preparar" temas: surgen solos, os vais por las ramas y perdéis la noción del tiempo.</li>
+  <li><strong>Hay curiosidad genuina.</strong> La otra persona pregunta por tu día, recuerda detalles que le contaste y vuelve sobre ellos.</li>
+  <li><strong>Te sientes tú mismo.</strong> No actúas ni mides cada palabra por miedo a decepcionar. La comodidad es una gran señal.</li>
+  <li><strong>Los planes se concretan.</strong> Hay ganas reales de veros, no solo un "a ver si quedamos" eterno que nunca cristaliza.</li>
+  <li><strong>Respeta tus tiempos y tus "no".</strong> Una conexión sana no presiona; entiende tu ritmo.</li>
+</ul>
+
+<h2>Señales de que quizá es solo entusiasmo pasajero</h2>
+<ul>
+  <li>La intensidad es altísima al principio y se apaga en cuanto hay que mantener algo estable.</li>
+  <li>Solo conectáis en un plano (por ejemplo, físico) y las conversaciones "de verdad" no arrancan.</li>
+  <li>Sientes ansiedad más que ilusión: revisas el móvil con angustia, interpretas cada silencio.</li>
+  <li>La otra persona evita hablar de qué busca o mantiene todo en la ambigüedad.</li>
+</ul>
+
+<h2>El factor tiempo</h2>
+<p>El enamoramiento inicial —esa fase de euforia— tiene una explicación química y, por diseño, no dura para siempre. Eso no es malo: es la puerta de entrada. La conexión real se demuestra cuando esa intensidad baja y aun así sigues queriendo ver a la persona, hablar con ella y construir algo. Dale semanas, no días, antes de sacar conclusiones.</p>
+
+<h2>Habla las cosas, no las adivines</h2>
+<p>La mayor fuente de sufrimiento en las primeras semanas es intentar leer la mente del otro. En lugar de analizar cada emoji, pregunta. Una conversación honesta sobre qué buscáis cada uno ahorra semanas de dudas. Si te da miedo "asustar" a la otra persona con esa charla, ten en cuenta que quien encaja contigo agradecerá la claridad.</p>
+
+<h2>Cuídate en el proceso</h2>
+<p>Ilusionarte está bien, pero no pongas tu bienestar entero en manos de alguien a quien acabas de conocer. Mantén tu vida, tus amigos y tus rutinas. Una conexión sana suma a tu vida; no debería vaciarla. Y si detectas señales de alarma o manipulación, nuestra guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a> te ayuda a reconocerlas.</p>
+
+<p>La buena noticia: cuando la conexión es real, no necesitas forzar nada ni convencer a nadie. Simplemente encaja. <a href="/">Abre Aura</a> y date la oportunidad de encontrarla.</p>`,
+  },
 ];
 
 /* --------------------------------------------------------------------
@@ -521,6 +643,7 @@ function pageHub() {
     h1: "Encuentra tu match en Aura",
     sub: "Conexiones reales, momentos únicos. La app de citas con perfiles verificados y seguridad de verdad.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }],
+    ads: true,
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
@@ -552,6 +675,7 @@ function pageFaq() {
     h1: "Preguntas frecuentes",
     sub: "Todo lo que necesitas saber, organizado por temas.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Preguntas frecuentes", path: "/faq" }],
+    ads: true,
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
@@ -715,6 +839,7 @@ function pageComoFunciona() {
     h1: "Cómo funciona Aura",
     sub: "De crear tu perfil a tu primera cita, explicado paso a paso.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Cómo funciona", path: "/como-funciona" }],
+    ads: true,
     bodyHtml: body,
   });
 }
@@ -732,6 +857,7 @@ function pageGuidesIndex() {
     h1: "Guías de citas",
     sub: "Consejos prácticos para conocer gente de forma segura y con sentido.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Guías", path: "/guias" }],
+    ads: true,
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
@@ -761,6 +887,7 @@ function pageGuide(slug) {
       <p class="meta">${esc(fmtDate(g.date))} · ${g.minutes} min de lectura</p>
       ${g.body}
     </article>
+    ${adUnit()}
     ${relHtml}
     <div class="cta"><h2>Ponlo en práctica</h2><p>Crea tu perfil en Aura y empieza a conocer gente hoy.</p><a class="btn" href="/">Abrir Aura</a></div>`;
   return layout({
@@ -771,6 +898,7 @@ function pageGuide(slug) {
     h1: g.title,
     sub: g.excerpt,
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Guías", path: "/guias" }, { name: g.title, path: "/guias/" + g.slug }],
+    ads: true,
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
