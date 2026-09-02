@@ -14708,7 +14708,7 @@ function screenInfoFaq(root) {
     { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo elimino mi cuenta y mis datos?", a: "Desde Perfil → Cuenta → Eliminar cuenta. Tus datos se borran de forma permanente en un plazo máximo de 30 días." },
 
     // ----- Planes y pagos -----
-    { cat: "planes", sub: "💳 Suscripciones", q: "¿Cuánto cuestan los planes de pago?", a: "Hay planes Premium, Oro y Platino con opciones mensuales, trimestrales y anuales. Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
+    { cat: "planes", sub: "💳 Suscripciones", q: "¿Cuánto cuestan los planes de pago?", a: "Hay planes Premium, Oro y Platino con opciones mensuales y anuales (la anual con descuento). Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
     { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Los planes de pago añaden likes ilimitados, rebobinar, rompehielos, stickers, videollamadas y más. En la pantalla de planes ves el detalle de cada uno." },
     { cat: "planes", sub: "🔄 Gestionar y cancelar", q: "¿Cómo cancelo mi suscripción?", a: "Desde Perfil → Suscripción → Cancelar. Conservarás el acceso hasta el final del periodo ya pagado." },
     { cat: "planes", sub: "🧾 Facturas y reembolsos", q: "¿Ofrecéis reembolsos y facturas?", a: "Encuentras tus recibos en la sección de suscripción. Los reembolsos se gestionan según la política aplicable; escríbenos si tienes un caso especial." },
