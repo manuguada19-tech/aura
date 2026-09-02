@@ -987,7 +987,7 @@ $("#themeBtn").addEventListener("click", () => {
     });
     header.querySelector(".notif-purge").addEventListener("click", async () => {
       if (!items.length) { toast("No hay actividad para visualizar ni eliminar"); return; }
-      if (!confirm("¿Borrar TODAS las notificaciones? Esto vacía el registro de actividad reciente.")) return;
+      if (!(await askConfirm("¿Borrar TODAS las notificaciones? Esto vacía el registro de actividad reciente.", { okText: "Borrar todo", danger: true }))) return;
       try {
         await api.del("/api/activity");
         items = [];
@@ -1318,6 +1318,8 @@ $("#nav").addEventListener("click", (e) => {
         icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>` },
       { view: "device_incidents", label: "Dispositivos perdidos",
         icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/><path d="M2 12h2M20 12h2M12 2v2M12 22v-2"/></svg>` },
+      { view: "audit", label: "Auditoría",
+        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>` },
     ];
     dyn.forEach(item => {
       if (nav.querySelector(`[data-view="${item.view}"]`)) return;
@@ -1373,6 +1375,7 @@ function route(view) {
     popups: viewPopups,
     push_campaigns: viewPushCampaigns,
     device_incidents: viewDeviceIncidents,
+    audit: viewAuditLog,
     // Legacy: 'live' redirige a chats (fusionado en V410)
     live: viewChatsAdmin,
   };
@@ -1952,11 +1955,13 @@ async function viewDashboard(root){
     api.get("/api/stats/zones"),
   ]);
 
-  // V520 — Pro Hero + KPIs con sparkline sintética (usa datos reales cuando existen)
-  const spark7 = stats.signups_7d || Array.from({length:7}, () => Math.round((stats.total || 100) * (0.8 + Math.random()*0.4) / 30));
-  const sparkMrr = stats.mrr_7d || Array.from({length:7}, () => Math.round((stats.mrr || 500) * (0.85 + Math.random()*0.3)));
-  const sparkOnline = stats.online_series || Array.from({length:12}, () => Math.max(1, Math.round((stats.online || 50) * (0.7 + Math.random()*0.6))));
-  const sparkMatches = stats.matches_7d || Array.from({length:7}, () => Math.round((stats.matches || 50) * (0.6 + Math.random()*0.8)));
+  // V823 — KPIs con series y tendencias REALES del backend (7 días).
+  // Si el backend no manda la serie (instancia antigua), no inventamos datos:
+  // dejamos el array vacío y la sparkline simplemente no se dibuja.
+  const spark7 = Array.isArray(stats.signups_7d) ? stats.signups_7d : [];
+  const sparkMrr = Array.isArray(stats.mrr_7d) ? stats.mrr_7d : [];
+  const sparkOnline = Array.isArray(stats.online_series) ? stats.online_series : []; // sin histórico real de "en línea"
+  const sparkMatches = Array.isArray(stats.matches_7d) ? stats.matches_7d : [];
 
   root.appendChild(proHero({
     icon: "💗",
@@ -1975,7 +1980,7 @@ async function viewDashboard(root){
   kpisPro.className = "pro-kpis";
   kpisPro.appendChild(proKpi({
     label: "Nuevos usuarios (7d)", icon: "👥", value: fmt.num(stats.signups_week || 0),
-    trend: stats.signups_trend || "+8%", sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
+    trend: stats.signups_trend || null, sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
     sub: "vs semana anterior",
   }));
   kpisPro.appendChild(proKpi({
@@ -1985,12 +1990,12 @@ async function viewDashboard(root){
   }));
   kpisPro.appendChild(proKpi({
     label: "MRR estimado", icon: "💰", value: fmt.eur(stats.mrr || 0),
-    trend: stats.mrr_trend || "+5%", sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
+    trend: stats.mrr_trend || null, sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
     sub: `${fmt.num(stats.subscriptions || 0)} suscripciones`,
   }));
   kpisPro.appendChild(proKpi({
     label: "Matches nuevos (7d)", icon: "💞", value: fmt.num(stats.matches_week || stats.matches || 0),
-    trend: stats.matches_trend || "+12%", sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
+    trend: stats.matches_trend || null, sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
     sub: `${fmt.num(stats.open_reports || 0)} denuncias abiertas`,
   }));
   root.appendChild(kpisPro);
@@ -3578,7 +3583,7 @@ async function openUserDrawer(id, onChange) {
   ]);
   if (u.activity && u.activity.length) {
     activityHeader.appendChild(btn("Vaciar", "ghost xs danger", async () => {
-      if (!confirm("¿Vaciar toda la actividad reciente de este usuario?")) return;
+      if (!(await askConfirm("¿Vaciar toda la actividad reciente de este usuario?", { okText: "Vaciar", danger: true }))) return;
       try {
         await api.del("/api/users/" + id + "/activity");
         toast("Actividad borrada");
@@ -3658,7 +3663,7 @@ async function openUserDrawer(id, onChange) {
   const restrictionsHeader = el("div", { class: "section-header" }, [
     el("h3", {}, "Restricciones de la app"),
     btn("Vaciar historial", "ghost xs danger", async () => {
-      if (!confirm("¿Borrar TODO el historial de restricciones (levantadas o expiradas)? Las activas se conservan.")) return;
+      if (!(await askConfirm("¿Borrar TODO el historial de restricciones (levantadas o expiradas)? Las activas se conservan.", { okText: "Borrar historial", danger: true }))) return;
       try {
         const r = await api.del("/api/admin/users/" + id + "/restrictions?scope=past");
         toast(`Historial borrado (${r.deleted || 0})`);
@@ -4322,7 +4327,7 @@ async function openUserDrawer(id, onChange) {
           } catch (e) { toast("Error: " + e.message, "err"); }
         }),
         btn("🗑 Eliminar usuario", "danger xs", async () => {
-          if (!confirm("ELIMINAR PERMANENTEMENTE al usuario " + (ctx.user.name || ctx.user.email) + "?\n\nBorra también sus verificaciones de identidad. No se puede deshacer.")) return;
+          if (!(await askConfirm("¿ELIMINAR PERMANENTEMENTE al usuario " + (ctx.user.name || ctx.user.email) + "?\n\nBorra también sus verificaciones de identidad. No se puede deshacer.", { okText: "Eliminar", danger: true }))) return;
           try {
             await api.del("/api/users/" + id);
             toast("Usuario eliminado");
@@ -5371,7 +5376,9 @@ async function viewAppeals(root) {
      · Eliminar (auditoría)
 ============================================================ */
 async function viewInfractions(root) {
-  root.appendChild(viewTitle("Infracciones", "Registro global de infracciones aplicadas por moderación.", []));
+  root.appendChild(viewTitle("Infracciones", "Registro global de infracciones aplicadas por moderación.", [
+    btn("⬇ Exportar CSV", "ghost sm", () => downloadCSV("infractions")),
+  ]));
   root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
     ["⚠️", "Infracción activa"],
     ["✅", "Infracción resuelta"],
@@ -5501,10 +5508,122 @@ async function viewInfractions(root) {
         }));
       }
       acts.appendChild(btn("🗑", "danger xs", async () => {
-        if (!confirm("¿Eliminar esta infracción del historial?")) return;
+        if (!(await askConfirm("¿Eliminar esta infracción del historial?", { okText: "Eliminar", danger: true }))) return;
         try { await api.del("/api/admin/infractions/" + r.id); toast("Eliminada"); refresh(); }
         catch (e) { toast("Error: " + e.message, "err"); }
       }));
+      tb.appendChild(tr);
+    });
+    table.appendChild(tb);
+    wrap.appendChild(table);
+  }
+
+  await refresh();
+}
+
+/* V824 · Registro de auditoría: quién (admin) hizo qué acción y cuándo.
+   Se alimenta del middleware del backend que registra toda petición que
+   modifica estado (POST/PUT/PATCH/DELETE) de /api/admin/*. */
+async function viewAuditLog(root) {
+  root.appendChild(viewTitle(
+    "Auditoría",
+    "Registro de acciones de administración: quién, qué y cuándo. Se registran las operaciones que modifican datos.",
+    [ btn("⬇ Exportar CSV", "ghost sm", () => downloadCSV("audit")) ]
+  ));
+  root.appendChild(sectionLegend("¿Qué muestra este registro?", [
+    ["🟢", "GET no se registra (solo lecturas)"],
+    ["✏️", "POST / PUT / PATCH — creación o cambios"],
+    ["🗑", "DELETE — eliminaciones"],
+    ["👤", "Administrador que ejecutó la acción"],
+  ]));
+
+  const stateA = { actor: "", method: "", q: "" };
+
+  const filters = el("div", { class: "mod-filters" });
+  const methodSel = el("select", { class: "input", onchange: (e) => { stateA.method = e.target.value; refresh(); } }, [
+    el("option", { value: "" }, "Cualquier método"),
+    el("option", { value: "POST" }, "POST (crear)"),
+    el("option", { value: "PATCH" }, "PATCH (editar)"),
+    el("option", { value: "PUT" }, "PUT (editar)"),
+    el("option", { value: "DELETE" }, "DELETE (eliminar)"),
+  ]);
+  filters.appendChild(methodSel);
+  filters.appendChild(el("input", {
+    class: "input", type: "search", placeholder: "Filtrar por administrador (email)…",
+    oninput: (e) => { stateA.actor = e.target.value.trim(); refreshDebounced(); },
+  }));
+  filters.appendChild(el("input", {
+    class: "input mod-search", type: "search", placeholder: "Buscar en la ruta / acción…",
+    oninput: (e) => { stateA.q = e.target.value.trim(); refreshDebounced(); },
+  }));
+  root.appendChild(filters);
+
+  const wrap = el("section", { class: "mod-panel-v2" });
+  root.appendChild(wrap);
+
+  let debTimer = null;
+  function refreshDebounced() { clearTimeout(debTimer); debTimer = setTimeout(refresh, 300); }
+
+  // Etiqueta legible para acciones frecuentes (solo cosmético; si no hay match,
+  // se muestra la ruta tal cual).
+  function friendly(method, path) {
+    const p = path || "";
+    if (method === "DELETE" && /\/api\/users\/\d+$/.test(p)) return "Eliminar usuario";
+    if (method === "DELETE" && /full-delete/.test(p)) return "Eliminación total (RGPD)";
+    if (method === "DELETE" && /\/otp-codes$/.test(p)) return "Eliminar todos los OTP";
+    if (method === "DELETE" && /\/logs\/purge/.test(p)) return "Purgar logs";
+    if (method === "DELETE" && /\/chats\//.test(p)) return "Eliminar/cerrar chat";
+    if (method === "DELETE" && /\/staff\//.test(p)) return "Eliminar del staff";
+    if (method === "DELETE" && /\/infractions\//.test(p)) return "Eliminar infracción";
+    if (method === "POST" && /\/moderate$/.test(p)) return "Moderar usuario";
+    if (method === "POST" && /\/resolve$/.test(p)) return "Resolver";
+    if (method === "POST" && /\/refund/.test(p)) return "Reembolso";
+    if (method === "POST" && /\/gift$/.test(p)) return "Regalar plan";
+    return method + " " + p;
+  }
+
+  async function refresh() {
+    wrap.innerHTML = "";
+    wrap.appendChild(el("div", { class: "loading" }, "Cargando…"));
+    let rows = [];
+    try {
+      const p = new URLSearchParams();
+      if (stateA.actor) p.set("actor", stateA.actor);
+      if (stateA.method) p.set("method", stateA.method);
+      if (stateA.q) p.set("q", stateA.q);
+      p.set("limit", "300");
+      const data = await api.get("/api/admin/audit-log?" + p.toString());
+      rows = data.rows || [];
+    } catch { rows = []; }
+
+    wrap.innerHTML = "";
+    if (!rows.length) {
+      wrap.appendChild(el("div", { class: "mod-empty" }, [
+        el("div", { class: "mod-empty-ic" }, "🗂"),
+        el("h4", {}, "Sin registros"),
+        el("p", {}, "Todavía no hay acciones registradas con estos filtros."),
+      ]));
+      return;
+    }
+
+    const table = el("table", { class: "data-table" });
+    table.innerHTML = `<thead><tr>
+      <th>#</th><th>Fecha</th><th>Administrador</th><th>Acción</th>
+      <th>Método</th><th>Estado</th><th>IP</th>
+    </tr></thead>`;
+    const tb = document.createElement("tbody");
+    rows.forEach(r => {
+      const mIc = r.method === "DELETE" ? "🗑" : "✏️";
+      const okCls = (r.status >= 200 && r.status < 300) ? "t-ok" : (r.status >= 400 ? "t-warn" : "");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="mono">#${r.id}</td>
+        <td>${r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
+        <td>${r.actor || "—"}</td>
+        <td>${friendly(r.method, r.path).replace(/</g, "&lt;")}</td>
+        <td>${mIc} ${r.method}</td>
+        <td><span class="chip xs ${okCls}">${r.status || "—"}</span></td>
+        <td class="mono">${r.ip || "—"}</td>`;
       tb.appendChild(tr);
     });
     table.appendChild(tb);
@@ -5851,7 +5970,7 @@ async function openTicketDrawer(id) {
     }
   });
   const delBtn = btn("Eliminar ticket", "danger sm", async () => {
-    if (!confirm("¿Eliminar este ticket definitivamente?")) return;
+    if (!(await askConfirm("¿Eliminar este ticket definitivamente?", { okText: "Eliminar", danger: true }))) return;
     try { await api.del("/api/tickets/" + t.id); toast("Eliminado"); close(); route("tickets"); }
     catch { toast("Error"); }
   });
@@ -6234,7 +6353,7 @@ async function viewOtpCodes(root) {
       } }, "⬇ Exportar CSV"),
     el("button", { class: "btn danger sm",
       onclick: async () => {
-        if (!confirm("¿Eliminar TODOS los códigos OTP? Esta acción no se puede deshacer.")) return;
+        if (!(await askConfirm("¿Eliminar TODOS los códigos OTP? Esta acción no se puede deshacer.", { okText: "Eliminar todos", danger: true }))) return;
         try { const r = await api.del("/api/admin/otp-codes"); toast(`${r?.deleted ?? 0} códigos eliminados`); refresh(); }
         catch { toast("Error eliminando códigos"); }
       } }, "🗑 Eliminar todos"),
@@ -8450,10 +8569,11 @@ async function viewBackup(root){
       if (!selectedBackup) { toast("Selecciona un archivo primero"); return; }
       const sections = Object.entries(impSel).filter(([,v]) => v).map(([k]) => k);
       if (!sections.length) { toast("Selecciona al menos una sección"); return; }
-      const ok = window.confirm(
+      const ok = await askConfirm(
         `Se sobrescribirá la configuración actual con la del backup (${sections.join(", ")}).\n\n` +
         "Se creará automáticamente un backup previo por si necesitas revertir.\n\n" +
-        "¿Continuar?"
+        "¿Continuar?",
+        { okText: "Importar y aplicar", danger: true }
       );
       if (!ok) return;
       try {
@@ -8479,7 +8599,7 @@ async function viewLogs(root){
     [
       btn("Exportar CSV", "ghost sm", () => downloadCSV("logs")),
       btn("🧹 Limpiar > 30 días", "danger sm", async () => {
-        if (!confirm("¿Borrar todos los logs anteriores a 30 días?")) return;
+        if (!(await askConfirm("¿Borrar todos los logs anteriores a 30 días?", { okText: "Limpiar", danger: true }))) return;
         try {
           const r = await fetch("/api/admin/logs/purge?days=30", { method: "DELETE", headers: authHeaders() });
           if (!r.ok) throw new Error();
@@ -12385,7 +12505,7 @@ async function viewMaintenanceEmails(root) {
   bulkBtn.disabled = true;
   actions.appendChild(bulkBtn);
   actions.appendChild(btn("🧹 Borrar TODO el historial", "danger ghost", async () => {
-    const yes = confirm("¿Borrar TODO el historial de emails de mantenimiento?\n\nSe eliminarán todos los registros (enviados, fallidos, en cola). Esta acción no afecta a los emails ya recibidos por los usuarios, solo al historial en admin.\n\nEsta operación no se puede deshacer.");
+    const yes = await askConfirm("¿Borrar TODO el historial de emails de mantenimiento?\n\nSe eliminarán todos los registros (enviados, fallidos, en cola). Esta acción no afecta a los emails ya recibidos por los usuarios, solo al historial en admin.\n\nEsta operación no se puede deshacer.", { okText: "Borrar todo", danger: true });
     if (!yes) return;
     try {
       const r = await api.del("/api/admin/maintenance/recipients");
@@ -14209,7 +14329,7 @@ async function _deprecated_viewLiveMonitor_v409(root) {
       catch (e) { toast("Error: " + e.message, "err"); }
     }));
     actions.appendChild(btn("Eliminar todo", "danger sm", async () => {
-      if (!confirm("ELIMINAR fisicamente el chat y todos los mensajes? Irreversible.")) return;
+      if (!(await askConfirm("¿ELIMINAR físicamente el chat y todos los mensajes? Irreversible.", { okText: "Eliminar todo", danger: true }))) return;
       try { await api.del("/api/admin/chats/" + d.id + "?hard=1"); toast("Eliminado"); selectedChatId = null; detail.innerHTML = ""; loadList(); }
       catch (e) { toast("Error: " + e.message, "err"); }
     }));
@@ -14837,7 +14957,7 @@ async function viewStaff(root) {
       }));
     }
     acts.appendChild(btn("🗑", async () => {
-      if (!confirm(`¿Eliminar a ${m.email} del staff?`)) return;
+      if (!(await askConfirm(`¿Eliminar a ${m.email} del staff?`, { okText: "Eliminar", danger: true }))) return;
       try { await api(`/api/admin/staff/${m.id}`, { method: "DELETE" }); load(); } catch(e){ toast(e.message); }
     }));
     card.appendChild(acts);
@@ -16118,7 +16238,7 @@ async function openFullDeleteModal(userId, userEmail, userName) {
       if (confirmInput.value.trim().toLowerCase() !== String(userEmail || "").toLowerCase()) {
         toast("El email no coincide", "err"); return;
       }
-      if (!confirm(`¿Confirmar eliminación total de ${userEmail}? Esto NO se puede deshacer.`)) return;
+      if (!(await askConfirm(`¿Confirmar eliminación total de ${userEmail}? Esto NO se puede deshacer.`, { okText: "Eliminar definitivamente", danger: true }))) return;
       confirmBtn.disabled = true; confirmBtn.textContent = "Eliminando…";
       try {
         const res = await api.post(`/api/admin/users/${userId}/full-delete`, {

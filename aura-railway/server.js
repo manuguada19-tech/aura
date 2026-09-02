@@ -645,6 +645,32 @@ app.use((req, res, next) => {
   return requireAdmin(req, res, next);
 });
 
+// V824 · Auditoría de acciones de admin. Registra SOLO las peticiones que
+// modifican estado (POST/PUT/PATCH/DELETE) hechas por un admin autenticado.
+// Se engancha al final de la respuesta para conocer el código de estado y no
+// interfiere con ningún handler. Es best-effort: si falla el INSERT, se ignora.
+const AUDIT_SKIP_PATHS = new Set([
+  "/api/admin/login", "/api/admin/logout", "/api/admin/audit-log",
+]);
+app.use((req, res, next) => {
+  try {
+    const m = req.method;
+    if (m === "GET" || m === "HEAD" || m === "OPTIONS") return next();
+    if (!req.path.startsWith("/api/") || !req.admin) return next();
+    if (AUDIT_SKIP_PATHS.has(req.path)) return next();
+    const actor = (req.admin && req.admin.email) || "admin";
+    const ip = (typeof clientIp === "function" ? clientIp(req) : (req.ip || "")) || "";
+    const path = req.originalUrl ? req.originalUrl.split("?")[0].slice(0, 255) : req.path.slice(0, 255);
+    res.on("finish", () => {
+      pool.execute(
+        "INSERT INTO admin_audit_log (actor, method, path, status, ip) VALUES (?,?,?,?,?)",
+        [actor.slice(0, 190), m, path, res.statusCode || null, String(ip).slice(0, 64)]
+      ).catch(() => {});
+    });
+  } catch (e) { /* nunca bloquea la petición */ }
+  next();
+});
+
 /* ---------- Schema ---------- */
 async function migrate() {
   const stmts = [
@@ -662,6 +688,20 @@ async function migrate() {
       expires_at TIMESTAMP NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_exp (expires_at)
+    )`,
+    // V824 · Registro de auditoría de acciones de admin (quién hizo qué y cuándo).
+    // Additivo: sólo se escribe desde el middleware de auditoría; ninguna función
+    // existente depende de esta tabla.
+    `CREATE TABLE IF NOT EXISTS admin_audit_log (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      actor VARCHAR(190) NULL,
+      method VARCHAR(10) NOT NULL,
+      path VARCHAR(255) NOT NULL,
+      status INT NULL,
+      ip VARCHAR(64) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_created (created_at),
+      INDEX idx_actor (actor)
     )`,
     `CREATE TABLE IF NOT EXISTS countries (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1806,7 +1846,76 @@ app.get("/api/stats/dashboard", wrap(async (req, res) => {
   );
   const [[{ matches }]] = await pool.query("SELECT COUNT(*) matches FROM matches");
   const [[{ open_reports }]] = await pool.query("SELECT COUNT(*) open_reports FROM reports WHERE status='open'");
-  res.json({ total, active, online, subscriptions: subs, mrr: Number(mrr), matches, open_reports });
+
+  // --- Series de 7 días y tendencias REALES (sin datos inventados) ---
+  // Devuelve un array de 7 números (día -6 .. hoy) para la tabla/columna dada.
+  // Si una consulta falla (tabla ausente en una instancia antigua), se degrada
+  // a ceros en vez de romper el panel.
+  async function daily7(table, valueExpr) {
+    try {
+      const [rows] = await pool.query(
+        `SELECT DATE(created_at) d, ${valueExpr} v
+           FROM ${table}
+          WHERE created_at >= (CURDATE() - INTERVAL 6 DAY)
+          GROUP BY DATE(created_at)`
+      );
+      const map = {};
+      rows.forEach((r) => { map[String(r.d)] = Number(r.v) || 0; });
+      const out = [];
+      for (let i = 6; i >= 0; i--) {
+        const dt = new Date();
+        dt.setHours(0, 0, 0, 0);
+        dt.setDate(dt.getDate() - i);
+        const key = dt.toISOString().slice(0, 10);
+        out.push(map[key] || 0);
+      }
+      return out;
+    } catch { return [0, 0, 0, 0, 0, 0, 0]; }
+  }
+  // Suma de un rango de días [desdeInclusive, hastaExclusive) atrás en el tiempo.
+  async function rangeSum(table, valueExpr, startDaysAgo, endDaysAgo) {
+    try {
+      const [[{ v }]] = await pool.query(
+        `SELECT COALESCE(${valueExpr}, 0) v FROM ${table}
+          WHERE created_at >= (CURDATE() - INTERVAL ? DAY)
+            AND created_at <  (CURDATE() - INTERVAL ? DAY)`,
+        [startDaysAgo, endDaysAgo]
+      );
+      return Number(v) || 0;
+    } catch { return 0; }
+  }
+  // % de cambio esta semana vs la anterior. null si no hay base (evita "+0%" falso).
+  const pct = (cur, prev) => {
+    if (!prev) return cur > 0 ? "+100%" : null;
+    const p = Math.round(((cur - prev) / prev) * 100);
+    return (p >= 0 ? "+" : "") + p + "%";
+  };
+
+  const paidExpr = "SUM(CASE WHEN status='completed' THEN amount ELSE 0 END)";
+  const [signups_7d, matches_7d, mrr_7d] = await Promise.all([
+    daily7("users", "COUNT(*)"),
+    daily7("matches", "COUNT(*)"),
+    daily7("payments", paidExpr),
+  ]);
+  // Series de "en línea" no es histórica (online es un flag actual): usamos el
+  // total actual repartido para no inventar; la KPI de online no muestra tendencia.
+  const [signCur, signPrev, matchCur, matchPrev, mrrCur, mrrPrev] = await Promise.all([
+    rangeSum("users", "COUNT(*)", 7, 0),
+    rangeSum("users", "COUNT(*)", 14, 7),
+    rangeSum("matches", "COUNT(*)", 7, 0),
+    rangeSum("matches", "COUNT(*)", 14, 7),
+    rangeSum("payments", paidExpr, 7, 0),
+    rangeSum("payments", paidExpr, 14, 7),
+  ]);
+
+  res.json({
+    total, active, online, subscriptions: subs, mrr: Number(mrr), matches, open_reports,
+    signups_7d, matches_7d, mrr_7d,
+    signups_week: signCur, matches_week: matchCur,
+    signups_trend: pct(signCur, signPrev),
+    matches_trend: pct(matchCur, matchPrev),
+    mrr_trend: pct(mrrCur, mrrPrev),
+  });
 }));
 
 app.get("/api/stats/zones", wrap(async (req, res) => {
@@ -6794,6 +6903,24 @@ function toCSV(rows) {
   return [cols.join(","), ...rows.map(r => cols.map(c => esc(r[c])).join(","))].join("\n");
 }
 
+// V824 · Lectura del registro de auditoría de admin (quién hizo qué y cuándo).
+app.get("/api/admin/audit-log", requireAdmin, wrap(async (req, res) => {
+  const limit = Math.min(1000, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const clauses = [], args = [];
+  if (req.query.actor) { clauses.push("actor LIKE ?"); args.push("%" + String(req.query.actor).slice(0, 190) + "%"); }
+  if (req.query.method) { clauses.push("method=?"); args.push(String(req.query.method).toUpperCase().slice(0, 10)); }
+  if (req.query.q) { clauses.push("path LIKE ?"); args.push("%" + String(req.query.q).slice(0, 255) + "%"); }
+  const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+  args.push(limit);
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, actor, method, path, status, ip, created_at
+         FROM admin_audit_log ${where} ORDER BY id DESC LIMIT ?`, args
+    );
+    res.json({ ok: true, rows });
+  } catch (e) { res.json({ ok: true, rows: [] }); }
+}));
+
 app.get("/api/export/:kind", wrap(async (req, res) => {
   const kind = req.params.kind;
   let sql;
@@ -6801,6 +6928,8 @@ app.get("/api/export/:kind", wrap(async (req, res) => {
   else if (kind === "payments") sql = "SELECT id, invoice_no, user_id, amount, currency, method, status, created_at FROM payments ORDER BY id";
   else if (kind === "reports") sql = "SELECT id, reporter_id, target_id, reason, status, created_at FROM reports ORDER BY id";
   else if (kind === "logs") sql = "SELECT id, level, source, message, created_at FROM logs ORDER BY id";
+  else if (kind === "infractions") sql = "SELECT id, user_id, email, type, title, severity, status, created_at, resolved_at FROM admin_infractions ORDER BY id DESC";
+  else if (kind === "audit") sql = "SELECT id, actor, method, path, status, ip, created_at FROM admin_audit_log ORDER BY id DESC LIMIT 5000";
   else return res.status(400).json({ error: "invalid_kind" });
   const [rows] = await pool.query(sql);
   const csv = toCSV(rows);

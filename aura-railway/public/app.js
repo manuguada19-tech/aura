@@ -11681,7 +11681,6 @@ function audioBubble(t, seconds) {
 }
 function sendMsg() { if (window.__chatSend) window.__chatSend(); }
 function sendPhoto() { if (window.__chatSendPhoto) window.__chatSendPhoto(); }
-function sendAudio() { toast("Audios reales próximamente"); }
 
 // V562/V563 · Iniciar llamada (audio o video) desde el chat
 async function startCallFromChat(peer, mode) {
@@ -14612,10 +14611,10 @@ function screenInfoHelp(root) {
 
   const topics = [
     { ic: "🔐", h: "Cuenta y acceso", p: "Registro, verificación, cambio de contraseña y cierre de sesión.", action: () => render(screenInfoFaq) },
-    { ic: "💬", h: "Chats y matches", p: "Cómo funcionan los likes, matches, mensajería y notificaciones." },
+    { ic: "💬", h: "Chats y matches", p: "Cómo funcionan los likes, matches, mensajería y notificaciones.", action: () => render(screenInfoFaq) },
     { ic: "🛡️", h: "Seguridad y privacidad", p: "Bloqueos, reportes, verificación y control de datos.", action: () => render(screenInfoPrivacy) },
-    { ic: "💳", h: "Suscripción y pagos", p: "Planes, renovación, cancelación y facturas." },
-    { ic: "📸", h: "Perfil y fotos", p: "Requisitos, verificación de fotos y ajustes visuales." },
+    { ic: "💳", h: "Suscripción y pagos", p: "Planes, renovación, cancelación y facturas.", action: () => render(screenSubscriptions) },
+    { ic: "📸", h: "Perfil y fotos", p: "Requisitos, verificación de fotos y ajustes visuales.", action: () => render(screenEditProfile) },
     { ic: "✉️", h: "Contactar soporte", p: "¿No encuentras lo que buscas? Escríbenos.", action: () => render(screenInfoContact) },
   ];
   const grid = el("div", { class: "help-grid" });
@@ -15997,7 +15996,8 @@ function screenNotificationSettings(root) {
       const H4_STYLE = "margin:0 0 8px;color:var(--text,#ecedf3);font-size:15px;font-weight:700";
 
       // Guarda una única clave real de preferencia (merge en el backend).
-      async function savePref(key, value) {
+      // Si falla, revierte el interruptor y avisa (sin dejar la UI mintiendo).
+      async function savePref(key, value, cb) {
         try {
           const r = await fetch("/api/my/notification-prefs", {
             method: "POST",
@@ -16005,8 +16005,14 @@ function screenNotificationSettings(root) {
             body: JSON.stringify({ [key]: value }),
           });
           const d = await r.json().catch(() => ({}));
-          if (!d.ok) toast("Error");
-        } catch (e) { toast("Error"); }
+          if (!r.ok || !d.ok) {
+            if (cb) cb.checked = !value;
+            toast("No se pudo guardar. Inténtalo de nuevo.");
+          }
+        } catch (e) {
+          if (cb) cb.checked = !value;
+          toast("No se pudo guardar. Inténtalo de nuevo.");
+        }
       }
 
       // Construye una tarjeta con interruptores por tipo.
@@ -16019,7 +16025,7 @@ function screenNotificationSettings(root) {
           row.appendChild(el("span", { style: "color:var(--text,#ecedf3);font-size:14px" }, label));
           const cb = el("input", { type: "checkbox" });
           cb.checked = cur[k] !== false; // por defecto activado
-          cb.addEventListener("change", () => savePref(k, cb.checked));
+          cb.addEventListener("change", () => savePref(k, cb.checked, cb));
           row.appendChild(cb);
           box.appendChild(row);
         });

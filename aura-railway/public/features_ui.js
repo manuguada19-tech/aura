@@ -788,11 +788,20 @@
       ]);
       row.onclick = async () => {
         if (!n.read_at) {
+          // Optimista: marca como leída al instante y revierte si falla.
+          const prevIso = n.read_at;
           n.read_at = new Date().toISOString();
           row.classList.remove("unread");
           const dot = row.querySelector(".notif-dot");
           if (dot) dot.remove();
-          await api(`/api/my/notifications/${n.id}/read`, { method: "POST" }).catch(() => {});
+          const r = await api(`/api/my/notifications/${n.id}/read`, { method: "POST" }).catch(() => null);
+          if (!r || !r.ok) {
+            n.read_at = prevIso;
+            row.classList.add("unread");
+            if (dot) row.appendChild(dot);
+            toast("No se pudo marcar como leída. Inténtalo de nuevo.");
+            return;
+          }
           updateNotifBadge();
         }
       };
@@ -808,7 +817,8 @@
           h("div", { style: "display:flex;gap:8px;align-items:center" }, [
             (data.unread || 0) > 0
               ? h("button", { class: "btn ghost notif-readall", onclick: async () => {
-                  await api("/api/my/notifications/read-all", { method: "POST" }).catch(() => {});
+                  const r = await api("/api/my/notifications/read-all", { method: "POST" }).catch(() => null);
+                  if (!r || !r.ok) { toast("No se pudieron marcar como leídas. Inténtalo de nuevo."); return; }
                   updateNotifBadge();
                   closeModal();
                   openNotifications();
