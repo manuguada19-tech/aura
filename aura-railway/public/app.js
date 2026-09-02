@@ -16574,8 +16574,31 @@ async function maybePromptForPushAnon() {
       if (window.__auraBackGuard) return;
       window.__auraBackGuard = true;
       try { reportEvent("backguard_installed", (window.navigator && navigator.platform) || ""); } catch {}
-      // Cebamos la trampa: siempre debe haber una entrada que consumir.
-      arm();
+      // V819 · CAUSA REAL de "doy atrás y se cierra sin preguntar":
+      // Chrome en Android marca como "skippable" las entradas de historial
+      // creadas con pushState SIN una activación de usuario previa. El botón
+      // ATRÁS REAL SALTA esas entradas y cierra la app. (history.back() por JS
+      // sí las respeta, por eso en pruebas automáticas parecía funcionar y en
+      // el móvil real no.) Como antes cebábamos la trampa nada más cargar (sin
+      // que el usuario hubiera tocado nada), la entrada era skippable y el
+      // atrás siempre cerraba. Solución: cebar la trampa SOLO DESPUÉS de la
+      // primera interacción del usuario, que fija la "sticky activation"; a
+      // partir de ahí las entradas ya NO son skippable y el atrás las consume
+      // mostrando el diálogo. Si el usuario no ha tocado nada aún, no hay nada
+      // que confirmar (comportamiento aceptable e inevitable por política de
+      // Chrome). Los re-armados posteriores ya ocurren con activación fijada.
+      let _armedOnce = false;
+      const gestureEvents = ["pointerdown", "touchstart", "keydown", "click"];
+      const armAfterGesture = () => {
+        if (_armedOnce) return;
+        _armedOnce = true;
+        gestureEvents.forEach((ev) => { try { window.removeEventListener(ev, armAfterGesture, true); } catch {} });
+        arm();
+        try { reportEvent("backguard_armed"); } catch {}
+      };
+      gestureEvents.forEach((ev) => {
+        try { window.addEventListener(ev, armAfterGesture, { capture: true, passive: true }); } catch {}
+      });
       window.addEventListener("popstate", () => {
         if (_exiting) return; // estamos cerrando la PWA: no reinterpretar
         const handled = handleBack();
