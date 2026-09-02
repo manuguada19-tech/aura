@@ -14689,7 +14689,7 @@ function screenInfoFaq(root) {
     // ----- Matches y likes -----
     { cat: "matches", sub: "💫 Matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan «like» mutuamente. A partir de ese momento podéis chatear libremente." },
     { cat: "matches", sub: "💫 Matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con un plan de pago los likes son ilimitados." },
-    { cat: "matches", sub: "↩️ Rebobinar", q: "¿Puedo deshacer un «no me gusta» o un like por error?", a: "Sí, con un plan de pago puedes «rebobinar» tu última acción y volver a valorar ese perfil. Si ya había match con mensajes, por seguridad no se puede deshacer." },
+    { cat: "matches", sub: "↩️ Volver atrás", q: "¿Puedo deshacer un «no me gusta» o un like por error?", a: "Sí. Con un plan de pago, pulsa el botón «Volver» (la flecha ↩ a la izquierda de la fila de acciones) para deshacer tu última valoración y volver a ver ese perfil. Solo afecta a la última acción; si ya teníais match y os habíais escrito, por seguridad no se puede deshacer." },
     { cat: "matches", sub: "⭐ Super like", q: "¿Qué es un super like?", a: "Un super like avisa a la otra persona de que te ha gustado especialmente, destacando tu perfil. Recibe un aviso inmediato en la campanita y, si lo tiene activado, también por push o correo." },
 
     // ----- Chat y llamadas -----
@@ -14721,7 +14721,7 @@ function screenInfoFaq(root) {
 
     // ----- Planes y pagos -----
     { cat: "planes", sub: "💳 Suscripciones", q: "¿Cuánto cuestan los planes de pago?", a: "Hay planes Premium, Oro y Platino con opciones mensuales y anuales (la anual con descuento). Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
-    { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Los planes de pago añaden likes ilimitados, rebobinar, rompehielos, stickers, videollamadas y más. En la pantalla de planes ves el detalle de cada uno." },
+    { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Los planes de pago añaden likes ilimitados, volver atrás (deshacer la última acción), rompehielos, stickers, videollamadas y más. En la pantalla de planes ves el detalle de cada uno." },
     { cat: "planes", sub: "🔄 Gestionar y cancelar", q: "¿Cómo cancelo mi suscripción?", a: "Desde Perfil → Suscripción → Cancelar. Conservarás el acceso hasta el final del periodo ya pagado." },
     { cat: "planes", sub: "🧾 Facturas y reembolsos", q: "¿Ofrecéis reembolsos y facturas?", a: "Encuentras tus recibos en la sección de suscripción. Los reembolsos se gestionan según la política aplicable; escríbenos si tienes un caso especial." },
   ];
@@ -15242,7 +15242,7 @@ const TICKET_KB = [
   { cat: "profile", q: "Cambiar mi biografía o intereses",              a: "Yo → Editar perfil. Puedes actualizar tu bio, altura, profesión e intereses en cualquier momento." },
   // matches
   { cat: "matches", q: "Ya no veo nuevos perfiles",                     a: "Puede que hayas alcanzado tu límite diario de likes o que los filtros sean muy estrictos. Amplía tu rango de edad y distancia en Yo → Filtros. Con Premium los likes son ilimitados." },
-  { cat: "matches", q: "Deshacer un descarte por accidente",            a: "Con Premium activo tienes la acción \"Deshacer\" para revertir el último like o descarte. Está disponible durante 5 minutos tras la acción." },
+  { cat: "matches", q: "Deshacer un descarte por accidente",            a: "Con un plan de pago activo, pulsa el botón \"Volver\" (la flecha ↩ a la izquierda de la fila de acciones) para revertir tu último like o descarte y volver a ver ese perfil. Solo se puede deshacer la última acción; si ya teníais match y os habíais escrito, no se puede deshacer." },
   { cat: "matches", q: "Cómo funciona el algoritmo",                    a: "Nuestro sistema prioriza afinidad, cercanía y actividad reciente. Cuanto más interactúas y más completo está tu perfil, mejores recomendaciones recibes." },
   // chats
   { cat: "chats",   q: "No me llegan notificaciones de mensajes",       a: "Revisa que las notificaciones estén activas en Yo → Notificaciones y también en los ajustes del sistema para Aura. En modo No molestar sólo llegan resúmenes." },
