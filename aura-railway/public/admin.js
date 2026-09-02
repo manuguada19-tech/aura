@@ -4323,19 +4323,17 @@ async function openUserDrawer(id, onChange) {
         const gpsActive = !!(gps && gps.consent_given && gps.lat != null && gps.lng != null);
         const reaskRow = el("div", { class: "lv2-gps-row", style: "margin-top:6px" });
         if (gpsActive) {
-          const btn = el("button", {
-            class: "btn xs btn-ghost",
-            type: "button",
-            style: "font-size:11.5px;padding:4px 10px;opacity:.6;cursor:not-allowed",
-            title: "El usuario ya tiene el GPS activo",
-            onclick: () => {
-              const old = btn.textContent;
-              btn.textContent = "✅ El usuario ya tiene el GPS activo correctamente";
-              try { toast && toast("El usuario ya tiene el GPS activo correctamente"); } catch {}
-              setTimeout(() => { btn.textContent = old; }, 2600);
-            },
-          }, "📍 Solicitar consentimiento GPS al usuario");
-          reaskRow.appendChild(btn);
+          // V800 · GPS ya activo → la solicitud NO está disponible. Antes se
+          // pintaba un botón atenuado que parecía pulsable; ahora mostramos un
+          // texto claramente inactivo (candado, muy tenue, sin aspecto de botón
+          // ni cursor de acción) para que se vea que está bloqueado.
+          const lbl = el("span", {
+            style: "display:inline-flex;align-items:center;gap:6px;font-size:11px;"
+              + "padding:3px 8px;border:1px dashed var(--border);border-radius:999px;"
+              + "color:var(--text-muted);opacity:.5;cursor:default;user-select:none",
+            title: "No disponible: el usuario ya tiene el GPS activo",
+          }, "🔒 GPS ya activo · solicitud no disponible");
+          reaskRow.appendChild(lbl);
           liveBox.appendChild(reaskRow);
           return;
         }
