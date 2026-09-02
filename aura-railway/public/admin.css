@@ -454,6 +454,11 @@ body[data-sb-mode="overlay"] .sidebar-close { display: flex; }
 .view {
   padding: 22px;
   display: grid; gap: 18px;
+  /* V810 · La columna implícita del grid era `auto`, que se estira hasta el
+     hijo más ancho: textos largos y filas de chips forzaban el ancho de toda
+     la vista y "se salía de la pantalla" (no envolvía). minmax(0,1fr) fija la
+     columna al ancho disponible para que los hijos envuelvan/scrolleen dentro. */
+  grid-template-columns: minmax(0, 1fr);
   animation: viewIn .3s;
 }
 @keyframes viewIn {
