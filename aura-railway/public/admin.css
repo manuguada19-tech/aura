@@ -2308,8 +2308,8 @@ textarea.input { resize: vertical; min-height: 60px; }
 .ipb-devices { display: grid; gap: 6px; }
 .ipb-dev-row {
   display: grid;
-  grid-template-columns: 28px 1fr auto;
-  gap: 10px; align-items: center;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px; align-items: start;
   padding: 8px 10px;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -2322,15 +2322,22 @@ textarea.input { resize: vertical; min-height: 60px; }
 .ipb-dev-row:focus-visible { outline: 2px solid var(--brand-1); outline-offset: 2px; }
 .ipb-dev-row.ipb-current { border-color: rgba(16,185,129,.55); }
 .ipb-dev-row.ipb-blocked { border-color: rgba(239,68,68,.55); background: rgba(239,68,68,.06); }
-.ipb-dev-ico { font-size: 20px; text-align: center; }
+.ipb-dev-ico { font-size: 20px; text-align: center; padding-top: 2px; }
 .ipb-dev-main { min-width: 0; }
+/* V793 · Las etiquetas (compartida, sin ubicación…) deben poder pasar a otra
+   línea en lugar de invadir el botón «Usar». IP y etiquetas envuelven. */
 .ipb-dev-top {
-  display: flex; align-items: center; gap: 4px;
+  display: flex; align-items: center; gap: 4px 6px; flex-wrap: wrap;
   font-weight: 700; font-size: 13.5px; color: var(--text);
 }
-.ipb-dev-ip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-.ipb-dev-sub { font-size: 11.5px; line-height: 1.35; }
+.ipb-dev-top .tag { margin-left: 0 !important; white-space: nowrap; }
+.ipb-dev-ip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+.ipb-dev-sub { font-size: 11.5px; line-height: 1.35; word-break: break-word; }
 .ipb-dev-when { font-size: 11px; opacity: .8; margin-top: 2px; }
+/* Botón «Usar»: columna propia, alineado arriba, nunca se solapa ni se encoge. */
+.ipb-dev-row > .btn.ghost.xs {
+  align-self: start; white-space: nowrap; flex-shrink: 0; margin-top: 2px;
+}
 .feature-toolbar {
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-top: 4px;
