@@ -3525,6 +3525,45 @@ function buildPrivacyToggles(current) {
   return wrap;
 }
 
+// V799 · Interruptor "Ocultar mi última conexión". Es una función exclusiva del
+// plan más alto (Platinum): si el usuario lo tiene, el interruptor funciona y
+// muta `model.last_seen`; si no, se pinta BLOQUEADO (candado) y al tocarlo
+// invita a mejorar de plan. `model` es el mismo privacyModel del formulario, así
+// que se guarda junto al resto de privacidad en /api/my/profile. El servidor
+// sólo aplica el ocultamiento cuando el dueño es Platinum, de modo que si baja
+// de plan su última conexión vuelve a mostrarse automáticamente.
+function buildLastSeenToggle(model) {
+  const m = model && typeof model === "object" ? model : {};
+  const unlocked = (typeof getUserPlan === "function" ? getUserPlan() : "free") === "platinum";
+  const wrap = el("div", { class: "privacy-block", style: "margin-top:8px" });
+  if (unlocked) {
+    const input = el("input", { type: "checkbox", checked: !!m.last_seen || undefined });
+    input.addEventListener("change", () => {
+      if (input.checked) m.last_seen = true; else delete m.last_seen;
+    });
+    const row = el("label", { class: "privacy-row", "data-key": "last_seen" }, [
+      el("span", { class: "privacy-lbl" }, [
+        el("span", { class: "privacy-eye", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10 10 0 0112 20c-7 0-11-8-11-8a19.8 19.8 0 015.06-5.94M9.9 4.24A10 10 0 0112 4c7 0 11 8 11 8a19.8 19.8 0 01-3.16 4.19M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>` }),
+        el("span", {}, "Ocultar mi última conexión"),
+      ]),
+      el("span", { class: "privacy-switch" }, [ input, el("span", { class: "privacy-slider" }) ]),
+    ]);
+    wrap.appendChild(row);
+  } else {
+    // Bloqueado: candado + interruptor inerte. Al tocar, lleva a suscripciones.
+    delete m.last_seen; // por si venía marcado tras bajar de plan
+    const row = el("div", { class: "privacy-row switch-row-locked", onclick: () => render(screenSubscriptions) }, [
+      el("span", { class: "privacy-lbl" }, [
+        el("span", { class: "lock-mini", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
+        el("span", {}, "Ocultar mi última conexión · Platinum"),
+      ]),
+      el("span", { class: "privacy-switch" }, [ el("input", { type: "checkbox", disabled: true }), el("span", { class: "privacy-slider" }) ]),
+    ]);
+    wrap.appendChild(row);
+  }
+  return wrap;
+}
+
 // V741 · Formatea una distancia para mostrar. Las coordenadas aproximadas por
 // IP a veces producen valores absurdos (miles de km). Como esta app es de citas
 // locales, ocultamos distancias inverosímiles en vez de mostrar "11338 km".
@@ -12341,6 +12380,9 @@ function screenEditProfile(root) {
     state.myProfile.looking_for = lookingRef.id;
     state.myProfile.relationship = relRef.id;
     state.myProfile.interests = Array.from(selectedInterests);
+    // V799 · "Ocultar última conexión" es sólo Platinum: si el usuario no lo es,
+    // nunca persistimos ese flag (el servidor tampoco lo aplicaría).
+    if (getUserPlan() !== "platinum") delete privacyModel.last_seen;
     const payload = {
       name: nameInp.value.trim(),
       bio: bioInp.value.trim(),
@@ -12539,9 +12581,16 @@ function screenEditProfile(root) {
   // modelo se rellena al cargar el perfil del servidor (más abajo).
   const privacyModel = Object.assign({}, state.myProfile.privacy || {});
   const privacyToggles = buildPrivacyToggles(privacyModel);
+  // V799 · "Ocultar última conexión": función exclusiva del plan más alto
+  // (Platinum). Si el usuario tiene Platinum el interruptor funciona y se
+  // guarda junto al resto de privacidad; si no, se muestra BLOQUEADO (candado)
+  // y su última conexión SIEMPRE se muestra. El servidor sólo respeta este
+  // ocultamiento cuando el dueño es Platinum en ese momento.
+  const lastSeenToggle = buildLastSeenToggle(privacyModel);
   form.appendChild(el("div", { class: "field" }, [
     el("label", {}, "Privacidad del perfil"),
     privacyToggles,
+    lastSeenToggle,
   ]));
 
   // V719 · Carga el perfil real del servidor y rellena el formulario.
@@ -12612,6 +12661,9 @@ function screenEditProfile(root) {
           const key = PRIVACY_FIELDS[i] && PRIVACY_FIELDS[i].key;
           if (cb && key) cb.checked = !!privacyModel[key];
         });
+        // V799 · Sincroniza el interruptor "Ocultar última conexión" (Platinum).
+        const lsCb = lastSeenToggle.querySelector('.privacy-row[data-key="last_seen"] input[type=checkbox]');
+        if (lsCb && !lsCb.disabled) lsCb.checked = !!privacyModel.last_seen;
       }
     } catch (ex) { /* deja los valores por defecto */ }
   })();

@@ -2036,20 +2036,9 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
       .map(p => ({ q: String(p.q || "").slice(0, 120), a: String(p.a || "").slice(0, 280) }));
     updates.push("prompts=?"); params.push(JSON.stringify(arr));
   }
-  // V785 · last_login editable desde el panel (soporte). Acepta un datetime-local
-  // ("YYYY-MM-DDTHH:mm") o vacío (=> NULL). Normalizamos la "T" a espacio para
-  // MySQL. Valor inválido => se ignora para no corromper la columna.
-  if ("last_login" in req.body) {
-    const raw = req.body.last_login;
-    if (!raw) { updates.push("last_login=?"); params.push(null); }
-    else {
-      const d = new Date(String(raw));
-      if (!isNaN(d.getTime())) {
-        const s = String(raw).replace("T", " ").slice(0, 19) + (String(raw).length <= 16 ? ":00" : "");
-        updates.push("last_login=?"); params.push(s.slice(0, 19));
-      }
-    }
-  }
+  // V799 · last_login es AUTOMÁTICO y NO editable. Se ignora cualquier intento
+  // de modificarlo desde el panel; la fecha/hora la gestiona el sistema al
+  // iniciar sesión el usuario.
   if (!updates.length) return res.json({ ok: true });
   params.push(req.params.id);
   await pool.execute(`UPDATE users SET ${updates.join(", ")} WHERE id=?`, params);
@@ -6831,7 +6820,12 @@ const PRIVACY_FIELDS = [
   { key: "orientation", label: "Orientación" },
   { key: "job",         label: "Profesión" },
 ];
-const PRIVACY_KEYS = new Set(PRIVACY_FIELDS.map((f) => f.key));
+// V799 · "last_seen" es una clave de privacidad ADICIONAL (ocultar la última
+// conexión). NO se añade a PRIVACY_FIELDS a propósito: no es un campo genérico
+// disponible para todos, sino una función exclusiva del plan más alto (platinum)
+// que se pinta con su propio interruptor bloqueado en el resto de planes. Aun
+// así debe ser una clave válida/persistible en users.privacy_hidden.
+const PRIVACY_KEYS = new Set([...PRIVACY_FIELDS.map((f) => f.key), "last_seen"]);
 
 // Parsea el JSON almacenado en users.privacy_hidden → objeto {key:true}.
 function parsePrivacy(raw) {
@@ -6864,6 +6858,14 @@ function applyPrivacyToPublicRow(row) {
   if (hidden.ethnicity) row.ethnicity = null;
   if (hidden.orientation) row.orientation = null;
   if (hidden.job) row.job = null;
+  // V799 · Ocultar "última conexión": SOLO tiene efecto si el dueño está en el
+  // plan más alto (platinum) EN ESTE MOMENTO. Si bajó de plan, se muestra igual
+  // ("de lo contrario se desactiva y se muestra"). Se aplica poniendo a null
+  // last_active_secs (el cliente ya no pinta "Activa hace…" con null).
+  if (hidden.last_seen && String(row.plan || "").toLowerCase() === "platinum") {
+    if ("last_active_secs" in row) row.last_active_secs = null;
+  }
+  if ("plan" in row) delete row.plan; // el plan de terceros no se expone
   delete row.privacy_hidden; // nunca exponer la config de privacidad a terceros
   return row;
 }
@@ -7024,7 +7026,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
-            u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden, u.plan,
             u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
@@ -7193,7 +7195,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   let sql =
     `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.lat, u.lng,
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
-            u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden,
+            u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden, u.plan,
             u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,

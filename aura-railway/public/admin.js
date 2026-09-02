@@ -3097,16 +3097,20 @@ async function openUserDrawer(id, onChange) {
     el("div", {}, [ el("strong", {}, u.name), statusLine ]),
   ]));
 
-  // V785 · Última conexión editable (soporte). Formato datetime-local. Se
-  // autoguarda como el resto de campos vía PATCH (name="last_login").
-  const _llLocal = (() => {
-    if (!u.last_login) return "";
-    try { const d = new Date(u.last_login); if (isNaN(d.getTime())) return "";
-      const p = (n) => String(n).padStart(2, "0");
-      return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-    } catch { return ""; }
+  // V799 · Última conexión AUTOMÁTICA y NO editable. Se muestra en solo lectura
+  // (la fecha/hora la gestiona el sistema al iniciar sesión el usuario).
+  const _llText = (() => {
+    if (!u.last_login) return "Nunca ha entrado";
+    try {
+      const d = new Date(u.last_login);
+      if (isNaN(d.getTime())) return "—";
+      return d.toLocaleString("es-ES") + " · " + fmt.reldate(u.last_login);
+    } catch { return "—"; }
   })();
-  form.appendChild(field("Última conexión", el("input", { class: "input", name: "last_login", type: "datetime-local", value: _llLocal })));
+  form.appendChild(field(
+    "Última conexión (automática)",
+    el("div", { class: "input", style: "background:rgba(255,255,255,.03);opacity:.85;cursor:not-allowed" }, _llText)
+  ));
 
   // Badge de duplicado: si duplicate_score > 0 mostramos alerta con enlace al panel.
   if (u.duplicate_score && u.duplicate_score > 0) {
