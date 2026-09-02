@@ -14556,7 +14556,7 @@ function screenInfoFaq(root) {
     // ----- Perfil y fotos -----
     { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Cómo edito mi perfil, fotos y biografía?", a: "En Perfil → Editar perfil puedes cambiar tu foto, biografía, intereses y datos. Un perfil completo y con varias fotos consigue muchos más matches." },
     { cat: "perfil", sub: "🧑 Tu perfil", q: "¿En qué unidades introduzco mi altura y peso?", a: "Aura elige automáticamente las unidades habituales de tu país de registro (por ejemplo cm/kg en España, o ft·in/lb en países anglosajones). Puedes escribir el valor o usar el deslizador." },
-    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Puedo cambiar de zona (orientación)?", a: "Sí. En Perfil → Cambiar zona eliges la zona que corresponde a a quién quieres conocer. El cambio es inmediato y no pierdes tus matches." },
+    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Puedo cambiar de zona (orientación)?", a: "Sí, pero cada zona es una comunidad independiente, así que cambiar de zona implica eliminar tu cuenta actual y registrarte de nuevo en la otra zona. Al hacerlo pierdes todos tus datos: perfil, fotos y biografía, todos tus matches y conversaciones, los likes dados y recibidos, tu historial, tus filtros guardados y tu plan o beneficios de suscripción activos. Es un cambio irreversible: antes de confirmarlo te mostramos un aviso con todo lo que se borra." },
 
     // ----- Buscar y filtros -----
     { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Cómo uso los filtros de descubrimiento?", a: "En Perfil → Filtros de descubrimiento ajustas edad, distancia, altura, peso y más. Cada filtro numérico tiene un deslizador cómodo y, si prefieres, también puedes escribir el valor exacto a mano." },
