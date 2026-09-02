@@ -11704,16 +11704,19 @@ async function viewReadsAdmin(root){
     }));
 
     // KPIs profesionales con sparkline (mismo patrón que Anuncios)
-    const avgTicket = (r.orders && r.orders > 0) ? (r.revenue || 0) / r.orders : null;
-    const sparkRev = r.revenue_series || Array.from({ length: 14 }, () => (r.revenue || 0) * (0.5 + Math.random()) / 14);
-    const sparkCr  = r.credits_series || Array.from({ length: 14 }, () => (r.credits_sold || 0) * (0.5 + Math.random()) / 14);
+    // Ticket medio = ingresos / nº de compras. Si aún no hay ventas, mostramos
+    // "0,00 €" (coherente con Ingresos=0), no un guion suelto que parece error.
+    const avgTicket = (r.orders && r.orders > 0) ? (r.revenue || 0) / r.orders : 0;
+    // Series reales del backend. Si faltaran, planas a 0 (nunca datos inventados).
+    const sparkRev = Array.isArray(r.revenue_series) ? r.revenue_series : new Array(14).fill(0);
+    const sparkCr  = Array.isArray(r.credits_series) ? r.credits_series : new Array(14).fill(0);
     const kpis = document.createElement("div");
     kpis.className = "pro-kpis";
     kpis.appendChild(proKpi({ label: "Créditos vendidos", icon: "📖", value: fmt.num(r.credits_sold || 0),
       sparkline: sparkCr, gradA: "#0ea5e9", gradB: "#0284c7", sub: "acumulado" }));
     kpis.appendChild(proKpi({ label: "Ingresos por packs", icon: "💰", value: fmt.eur(r.revenue || 0),
       sparkline: sparkRev, gradA: "#22c55e", gradB: "#16a34a", sub: "total" }));
-    kpis.appendChild(proKpi({ label: "Ticket medio", icon: "🧾", value: avgTicket != null ? fmt.eur(avgTicket) : "—",
+    kpis.appendChild(proKpi({ label: "Ticket medio", icon: "🧾", value: fmt.eur(avgTicket),
       gradA: "#a855f7", gradB: "#7c3aed", sub: "por compra" }));
     kpis.appendChild(proKpi({ label: "Cupo gratis usado", icon: "🆓", value: fmt.num(r.free_used || 0),
       gradA: "#f59e0b", gradB: "#d97706", sub: "lecturas este mes" }));
