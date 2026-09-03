@@ -3748,6 +3748,16 @@ function activityInfo(u) {
   return { show: true, level: "old", text: "Sin actividad reciente" };
 }
 
+// V865 · ¿"Buscando ahora"? = activa en los últimos ~15 min (online o
+// last_active_secs dentro de la ventana). Se usa en el mapa y en Buscar para el
+// chip "Buscan ahora". Ventana global para que ambos coincidan.
+const NOW_ACTIVE_WINDOW_SECS = 900; // 15 min
+function searchingNow(u) {
+  if (!u) return false;
+  if (u.online === true || u.online === 1) return true;
+  return u.last_active_secs != null && Number.isFinite(+u.last_active_secs) && +u.last_active_secs <= NOW_ACTIVE_WINDOW_SECS;
+}
+
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
 const pick = (arr) => arr[rand(0, arr.length - 1)];
 const shuffle = (arr) => arr.slice().sort(() => Math.random() - 0.5);
@@ -8163,7 +8173,7 @@ async function openNearbyMap() {
   // mapa y las tarjetas de la cuadrícula (mismos campos que el filtro de
   // "Buscar"). Rango completo / vacío = sin filtro.
   const mapFilters = {
-    gender: "todos", onlyOnline: false, onlyNew: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
+    gender: "todos", onlyOnline: false, onlyNew: false, onlyNow: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
     ageMin: 18, ageMax: 99,
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
     looking_for: "any", relationship: "any",
@@ -8171,6 +8181,10 @@ async function openNearbyMap() {
   };
   // V852 · ¿Cuenta recién registrada? (account_age_h dentro de la ventana).
   const isNewUser = (u) => u && u.account_age_h != null && Number.isFinite(+u.account_age_h) && +u.account_age_h <= NEW_USER_HOURS;
+  // V865 · ¿Está "buscando ahora"? = activa en los últimos ~15 min (online o
+  // last_active_secs dentro de la ventana). Idea propia de Aura para priorizar a
+  // quien está disponible AHORA. Usa el helper global (misma ventana que Buscar).
+  const isSearchingNow = (u) => searchingNow(u);
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
   // ---- Barra superior (glass) ----
@@ -8234,6 +8248,19 @@ async function openNearbyMap() {
     repaint();
   });
 
+  // V865 · Chip "Buscan ahora": muestra solo a quien está activa en este momento
+  // (online o vista en los últimos ~15 min). Idea propia de Aura para conectar
+  // con gente disponible AHORA. Icono de rayo. Al pulsarlo se repintan pines.
+  const nowChip = el("button", { class: "map-chip map-chip-now" + (mapFilters.onlyNow ? " active" : ""), type: "button" }, [
+    el("span", { class: "map-chip-ic", html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+    "Buscan ahora",
+  ]);
+  nowChip.addEventListener("click", () => {
+    mapFilters.onlyNow = !mapFilters.onlyNow;
+    nowChip.classList.toggle("active", mapFilters.onlyNow);
+    repaint();
+  });
+
   // V851 · Chip "Filtros" (estilo Grindr): abre una hoja con edad, altura, peso,
   // qué busca, relación, intereses y estilo de vida. Una insignia muestra cuántos
   // filtros avanzados hay activos. Al aplicar se repinta (menos pines/tarjetas).
@@ -8258,7 +8285,7 @@ async function openNearbyMap() {
   // en dos) para que la barra de filtros ocupe menos alto y se vea más mapa.
   // V851 · Añadido el chip "Filtros" al final de la fila (con scroll horizontal).
   const filterbar = el("div", { class: "map-filterbar" }, [
-    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip, newChip, filtersChip ]),
+    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip, nowChip, newChip, filtersChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -8520,6 +8547,8 @@ async function openNearbyMap() {
     const f = mapFilters;
     if (!mapGenderMatches(f.gender, u.gender)) return false;
     if (f.onlyOnline && !u.online) return false;
+    // V865 · "Buscan ahora": solo activas en los últimos ~15 min.
+    if (f.onlyNow && !isSearchingNow(u)) return false;
     // V852 · "Nuevos": solo cuentas recién registradas (últimas NEW_USER_HOURS).
     if (f.onlyNew && !isNewUser(u)) return false;
     // Edad
@@ -10193,9 +10222,18 @@ function actionBtn(cls, path, onclick, label) {
 }
 
 /* ---- Search ---- */
+let searchNowOnly = false; // V865 · estado del chip "Buscan ahora" en Buscar.
 function screenSearch(root) {
+  // V865 · Chip "Buscan ahora" también en Buscar: filtra la cuadrícula a quien
+  // está activa en los últimos ~15 min. Mismo criterio que en el mapa.
+  const nowChip = el("button", { class: "chip chip-now" + (searchNowOnly ? " active" : ""), type: "button",
+    onclick: () => { searchNowOnly = !searchNowOnly; nowChip.classList.toggle("active", searchNowOnly); filterSearch(getSearchQuery()); } }, [
+    el("span", { class: "chip-ic", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+    "Buscan ahora",
+  ]);
   root.appendChild(el("div", { class: "search-bar" }, [
     el("input", { class: "search-input", placeholder: T("content.search.placeholder"), oninput: (e) => filterSearch(e.target.value) }),
+    nowChip,
     el("button", { class: "chip", onclick: openFilters }, [
       el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
       "Filtros"
@@ -10207,6 +10245,7 @@ function screenSearch(root) {
   grid._pool = null;
   populateResults(grid);
 }
+function getSearchQuery() { const i = document.querySelector(".search-input"); return i ? i.value : ""; }
 async function populateResults(grid, filter = "") {
   // Carga (una vez) el conjunto de perfiles reales. En la app real, sin datos
   // se muestra el estado vacío; solo la vista previa del admin usa demo.
@@ -10222,11 +10261,15 @@ function renderResults(grid, filter = "") {
   grid.innerHTML = "";
   const users = grid._pool || [];
   const q = (filter || "").toLowerCase();
-  const filtered = q
+  let filtered = q
     ? users.filter(u => (u.name || "").toLowerCase().includes(q) || (u.city || "").toLowerCase().includes(q) || (u.job || "").toLowerCase().includes(q))
     : users;
+  // V865 · Chip "Buscan ahora": solo perfiles activos en los últimos ~15 min.
+  if (searchNowOnly) filtered = filtered.filter(searchingNow);
   if (filtered.length === 0) {
-    grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Prueba a ampliar los filtros o cambiar el término.</p></div>`;
+    grid.innerHTML = searchNowOnly
+      ? `<div class="empty" style="grid-column:1/-1"><h3>Nadie buscando ahora</h3><p>Ahora mismo no hay perfiles activos. Prueba a quitar "Buscan ahora".</p></div>`
+      : `<div class="empty" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Prueba a ampliar los filtros o cambiar el término.</p></div>`;
     return;
   }
   filtered.forEach(u => {

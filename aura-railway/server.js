@@ -7546,6 +7546,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
             u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             u.created_at,
             TIMESTAMPDIFF(HOUR, u.created_at, NOW()) AS account_age_h,
+            TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
             (gps.lat IS NOT NULL) AS gps_ok,
             ${distExpr} AS distance
@@ -7596,6 +7597,9 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       prompts: Array.isArray(prompts) ? prompts : [],
       // V799 · antigüedad de la cuenta (horas) para marcar perfiles nuevos.
       account_age_h: (r.account_age_h == null ? null : Number(r.account_age_h)),
+      // V865 · segundos desde la última conexión, para el filtro "Buscan ahora"
+      // (activos en los últimos ~15 min) y para pintar "Activa hace…".
+      last_active_secs: (r.last_active_secs == null ? null : Number(r.last_active_secs)),
       lat: Number((lat + jLat).toFixed(5)),
       lng: Number((lng + jLng).toFixed(5)),
     });

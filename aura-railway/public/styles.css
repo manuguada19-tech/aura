@@ -1590,8 +1590,18 @@ img { max-width: 100%; display: block; }
   position: sticky; top: 0; z-index: 3;
   padding: 12px 14px;
   background: var(--surface); border-bottom: 1px solid var(--border);
-  display: grid; grid-template-columns: 1fr auto; gap: 10px;
+  /* V865 · Antes era una rejilla de 2 columnas (input + 1 chip). Ahora hay dos
+     chips ("Buscan ahora" y "Filtros"): pasamos a flex con salto de línea para
+     que en móviles estrechos los chips bajen debajo del buscador y nunca se
+     salgan de la pantalla. El input ocupa toda la primera fila. */
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
 }
+.search-bar .search-input { flex: 1 1 100%; min-width: 0; }
+.search-bar .chip { flex: 0 0 auto; cursor: pointer; }
+/* V865 · Chip "Buscan ahora" (rayo ámbar) en Buscar, coherente con el del mapa. */
+.chip-now .chip-ic { display: inline-flex; color: #f59e0b; }
+.chip-now.active { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #fff; border-color: transparent; }
+.chip-now.active .chip-ic { color: #fff; }
 .search-input {
   height: 44px; border-radius: 999px; padding: 0 14px 0 40px;
   border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text);
@@ -9595,6 +9605,13 @@ body.map-open { overflow: hidden; }
 .map-chip-new .map-chip-ic { display: inline-flex; color: #10b981; }
 .map-chip-new.active { background: linear-gradient(135deg, #34d399, #10b981); box-shadow: 0 4px 12px rgba(16,185,129,.30); }
 .map-chip-new.active .map-chip-ic { color: #fff; }
+
+/* V865 · Chip "Buscan ahora": icono de rayo ámbar (energía/actividad inmediata),
+   distinto del verde de "Nuevos" y del punto de "En línea", para que cada filtro
+   tenga su color y no se confundan. */
+.map-chip-now .map-chip-ic { display: inline-flex; color: #f59e0b; }
+.map-chip-now.active { background: linear-gradient(135deg, #fbbf24, #f59e0b); box-shadow: 0 4px 12px rgba(245,158,11,.30); }
+.map-chip-now.active .map-chip-ic { color: #fff; }
 
 /* Lienzo del mapa.
    V767 · position:relative + z-index:0 CREA un contexto de apilado propio, de
