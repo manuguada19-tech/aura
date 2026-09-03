@@ -9532,9 +9532,13 @@ body.map-open { overflow: hidden; }
 
 /* Segmento de género (Todos / Mujeres / Hombres) */
 .map-seg {
-  /* V845 · En una sola fila junto al chip "En línea": el segmento se estira para
-     ocupar el hueco disponible y el chip queda a la derecha, sin envolver. */
-  flex: 1; min-width: 0;
+  /* V859 · FIX solapamiento: al añadir los chips "Nuevos" y "Filtros" a la misma
+     fila, `flex:1;min-width:0` dejaba que el segmento se encogiera POR DEBAJO del
+     ancho de sus botones (Todos/Mujeres/Hombres), que entonces se desbordaban y
+     se pintaban ENCIMA del chip "En línea" (se leía "Muje●s Enlíneabres"). Ahora
+     el segmento conserva su ancho natural (flex:0 0 auto) y es la fila entera la
+     que hace scroll horizontal, como ya estaba previsto. */
+  flex: 0 0 auto; min-width: 0;
   display: flex; gap: 4px; padding: 4px;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
