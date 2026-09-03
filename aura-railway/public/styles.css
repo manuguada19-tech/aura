@@ -1352,6 +1352,17 @@ img { max-width: 100%; display: block; }
 }
 @keyframes matchPop { from { opacity: 0; transform: translateY(14px) scale(.96); } }
 
+/* V855 · Logo opcional (editable desde Admin) arriba de la pantalla de match. */
+.match-logo {
+  position: relative; z-index: 2; max-height: 46px; max-width: 60%;
+  object-fit: contain; margin-bottom: 4px;
+  filter: drop-shadow(0 3px 10px rgba(0,0,0,.28));
+  animation: matchPop .6s .02s both cubic-bezier(.2,.9,.2,1);
+}
+/* V855 · Sin animación de fondo: quita el halo giratorio (el degradado en
+   movimiento ya se desactiva por estilo en línea). */
+.match-noanim::before { animation: none !important; }
+
 /* ---- Tarjetas de foto tipo “carta” superpuestas ---- */
 .match-cards {
   position: relative; z-index: 2;
@@ -1514,6 +1525,14 @@ img { max-width: 100%; display: block; }
 .plan-celebrate-free .pc-title { color: #eafff4; }
 .plan-celebrate-free .pc-bar > i { background: linear-gradient(90deg, #7ee0a6, #15a267); }
 
+/* V855 · Logo opcional (editable desde Admin) en la celebración de plan. */
+.pc-logo {
+  position: relative; z-index: 2; max-height: 42px; max-width: 55%;
+  object-fit: contain; margin-bottom: 14px;
+  filter: drop-shadow(0 3px 10px rgba(0,0,0,.3));
+  animation: pcUp .6s .04s both cubic-bezier(.2,.9,.2,1);
+}
+.pc-noanim::before { animation: none !important; }
 .pc-kicker {
   position: relative; z-index: 2; margin-top: 22px;
   font-size: 12.5px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase;

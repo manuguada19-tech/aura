@@ -10712,12 +10712,36 @@ const MC_DEFAULTS = {
   "content.match.cta_message": "Enviar mensaje",
   "content.match.cta_keep": "Seguir descubriendo",
   "content.match.you": "Tú",
+  // Apariencia del match (V855). Vacío = diseño por defecto.
+  "content.match.font": "",
+  "content.match.bg_from": "",
+  "content.match.bg_to": "",
+  "content.match.accent": "",
+  "content.match.logo_url": "",
+  "content.match.btn_primary_bg": "",
+  "content.match.btn_primary_text": "",
+  "content.match.btn_secondary_bg": "",
+  "content.match.btn_secondary_text": "",
+  "content.match.anim_bg": "true",
+  "content.match.hearts": "true",
+  "content.match.confetti": "true",
   "content.celebrate.enabled": "true",
   "content.celebrate.free_enabled": "true",
   "content.celebrate.duration": "5000",
   "content.celebrate.kicker": "Plan activado",
   "content.celebrate.title": "Bienvenido a Aura {plan}",
   "content.celebrate.sub": "Tu suscripción {plan}{period} ya está lista. Disfruta de todo lo que Aura tiene para ti.",
+  // Apariencia de la celebración (V855). Vacío = diseño por defecto.
+  "content.celebrate.font": "",
+  "content.celebrate.bg_from": "",
+  "content.celebrate.bg_to": "",
+  "content.celebrate.accent": "",
+  "content.celebrate.logo_url": "",
+  "content.celebrate.anim_bg": "true",
+  "content.celebrate.confetti": "true",
+  "content.celebrate.free.bg_from": "",
+  "content.celebrate.free.bg_to": "",
+  "content.celebrate.free.accent": "",
   "content.celebrate.premium.emoji": "⭐",
   "content.celebrate.premium.label": "Premium",
   "content.celebrate.premium.perks": "Likes ilimitados\nVer quién te dio like\nSin publicidad",
@@ -10812,6 +10836,11 @@ html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:
 .pc-bar>i{display:block;height:100%;width:100%;transform-origin:left;background:linear-gradient(90deg,#ffd76a,#ff2d6f);animation:pcBar var(--pc-dur,4.5s) linear forwards}
 @keyframes pcBar{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @keyframes pcUp{from{opacity:0;transform:translateY(16px)}}
+/* ---- Logos y opción sin animación (V855) ---- */
+.match-logo{position:relative;z-index:2;max-height:46px;max-width:60%;object-fit:contain;margin-bottom:4px;filter:drop-shadow(0 3px 10px rgba(0,0,0,.28));animation:matchPop .6s .02s both cubic-bezier(.2,.9,.2,1)}
+.match-noanim::before{animation:none !important}
+.pc-logo{position:relative;z-index:2;max-height:42px;max-width:55%;object-fit:contain;margin-bottom:14px;filter:drop-shadow(0 3px 10px rgba(0,0,0,.3));animation:pcUp .6s .04s both cubic-bezier(.2,.9,.2,1)}
+.pc-noanim::before{animation:none !important}
 /* ---- Confeti ---- */
 .beta-confetti{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:5}
 .beta-confetti span{position:absolute;top:-12px;width:8px;height:12px;border-radius:2px;animation:betaConfettiFall linear forwards;opacity:.9}
@@ -10857,20 +10886,39 @@ function mcBuildMatchDoc(cfg) {
   const him = "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=600&h=800&fit=crop&crop=faces&q=80";
   const title = mcEsc(g("content.match.title")).replace(/\{name\}/g, "Hugo");
   const you = mcEsc(g("content.match.you")) || "Tú";
-  const body = `<div class="mc-host match-screen">${mcHeartsHtml()}
+  // V855 · Apariencia: aplica los overrides igual que la app real. Vacío = nada.
+  const gv = (k) => String(g(k) == null ? "" : g(k)).trim();
+  const gon = (k) => { const v = g(k); return v == null || v === "" ? true : String(v) !== "false"; };
+  const mFrom = gv("content.match.bg_from"), mTo = gv("content.match.bg_to");
+  const mAccent = gv("content.match.accent"), mFont = gv("content.match.font"), mLogo = gv("content.match.logo_url");
+  const animBg = gon("content.match.anim_bg");
+  let hostStyle = "";
+  if (mFont) hostStyle += `font-family:${mFont};`;
+  if (mFrom || mTo) {
+    const a = mFrom || mTo, b = mTo || mFrom;
+    hostStyle += `background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.20),transparent 55%),linear-gradient(300deg,${a} 0%,${b} 100%);background-size:100% 100%,100% 100%;`;
+  }
+  if (!animBg) hostStyle += "animation:matchFade .4s ease;";
+  const pBg = gv("content.match.btn_primary_bg"), pTx = gv("content.match.btn_primary_text");
+  const sBg = gv("content.match.btn_secondary_bg"), sTx = gv("content.match.btn_secondary_text");
+  let pStyle = ""; if (pBg) pStyle += `background:${pBg};`; if (pTx) pStyle += `color:${pTx};`;
+  let sStyle = ""; if (sBg) sStyle += `background:${sBg};border-color:transparent;`; if (sTx) sStyle += `color:${sTx};`;
+  const hostClass = "mc-host match-screen" + (animBg ? "" : " match-noanim");
+  const body = `<div class="${hostClass}" style="${hostStyle}">${gon("content.match.hearts") ? mcHeartsHtml() : ""}
+    ${mLogo ? `<img class="match-logo" src="${mcEsc(mLogo)}" alt="">` : ""}
     <div class="match-badge">${heartFill}<span>${mcEsc(g("content.match.badge"))}</span></div>
     <h2>${title}</h2>
     <p class="match-sub">${mcEsc(g("content.match.sub"))}</p>
     <div class="match-cards">
       <div class="mc" style="background-image:url('${me}')"><div class="mc-name">${you}</div></div>
-      <div class="match-heart">${heartFill}</div>
+      <div class="match-heart"${mAccent ? ` style="color:${mcEsc(mAccent)}"` : ""}>${heartFill}</div>
       <div class="mc" style="background-image:url('${him}')"><div class="mc-name">Hugo <span style="display:inline-flex">${verified}</span></div></div>
     </div>
     <div class="match-actions">
-      <button class="btn btn-primary">${mcEsc(g("content.match.cta_message"))}</button>
-      <button class="btn btn-ghost">${mcEsc(g("content.match.cta_keep"))}</button>
+      <button class="btn btn-primary" style="${pStyle}">${mcEsc(g("content.match.cta_message"))}</button>
+      <button class="btn btn-ghost" style="${sStyle}">${mcEsc(g("content.match.cta_keep"))}</button>
     </div>
-    ${mcConfettiHtml(24)}
+    ${gon("content.match.confetti") ? mcConfettiHtml(24) : ""}
   </div>`;
   return mcDoc(body);
 }
@@ -10896,14 +10944,37 @@ function mcBuildPlanDoc(cfg, planKey) {
   }
   const perks = String(g(`content.celebrate.${planKey}.perks`)).split("\n").map(s => s.trim()).filter(Boolean);
   const perksHtml = perks.map(p => `<div class="pc-perk"><span class="pc-check">${check}</span><span>${mcEsc(p)}</span></div>`).join("");
-  const body = `<div class="mc-host plan-celebrate${isFree ? " plan-celebrate-free" : ""}">
-    <div class="pc-emblem pc-${planKey}">${emoji}</div>
+  // V855 · Apariencia: aplica los mismos overrides que la app real. Free usa sus
+  // propias claves de fondo/acento con reserva (fallback) a las globales. Vacío = nada.
+  const gv = (k) => String(g(k) == null ? "" : g(k)).trim();
+  const gon = (k) => { const v = g(k); return v == null || v === "" ? true : String(v) !== "false"; };
+  const cFont = gv("content.celebrate.font"), cLogo = gv("content.celebrate.logo_url");
+  const animBg = gon("content.celebrate.anim_bg"), wantConfetti = gon("content.celebrate.confetti");
+  const cFrom = isFree ? (gv("content.celebrate.free.bg_from") || gv("content.celebrate.bg_from")) : gv("content.celebrate.bg_from");
+  const cTo = isFree ? (gv("content.celebrate.free.bg_to") || gv("content.celebrate.bg_to")) : gv("content.celebrate.bg_to");
+  const cAccent = isFree ? (gv("content.celebrate.free.accent") || gv("content.celebrate.accent")) : gv("content.celebrate.accent");
+  let hostStyle = "";
+  if (cFont) hostStyle += `font-family:${cFont};`;
+  if (cFrom || cTo) {
+    const a = cFrom || cTo, b = cTo || cFrom;
+    hostStyle += `background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.18),transparent 55%),linear-gradient(165deg,${a} 0%,${b} 100%);`;
+  }
+  if (!animBg) hostStyle += "animation:pcFade .35s ease;";
+  const emblemStyle = cAccent ? ` style="background:${mcEsc(cAccent)}"` : "";
+  const barStyle = cAccent ? ` style="background:${mcEsc(cAccent)}"` : "";
+  // El nombre del plan dentro del título hereda el color de acento cuando existe.
+  const planSpanStyle = cAccent ? ` style="-webkit-text-fill-color:${mcEsc(cAccent)};color:${mcEsc(cAccent)};background:none"` : "";
+  if (planSpanStyle) titleHtml = titleHtml.replace('<span class="pc-plan">', `<span class="pc-plan"${planSpanStyle}>`);
+  const hostClass = "mc-host plan-celebrate" + (isFree ? " plan-celebrate-free" : "") + (animBg ? "" : " pc-noanim");
+  const body = `<div class="${hostClass}" style="${hostStyle}">
+    ${cLogo ? `<img class="pc-logo" src="${mcEsc(cLogo)}" alt="">` : ""}
+    <div class="pc-emblem pc-${planKey}"${emblemStyle}>${emoji}</div>
     <div class="pc-kicker">${kicker}</div>
     <h2 class="pc-title">${titleHtml}</h2>
     <p class="pc-sub">${fillTpl(subTpl)}</p>
     <div class="pc-perks">${perksHtml}</div>
-    <div class="pc-bar" style="--pc-dur:${dur}ms"><i></i></div>
-    ${isFree ? "" : mcConfettiHtml(24)}
+    <div class="pc-bar" style="--pc-dur:${dur}ms"><i${barStyle}></i></div>
+    ${!isFree && wantConfetti ? mcConfettiHtml(24) : ""}
   </div>`;
   return mcDoc(body);
 }
@@ -10920,7 +10991,8 @@ async function viewMatchCelebrate(root) {
     ["{plan}", "En los planes de pago, se sustituye por el nombre del plan."],
     ["{period}", "Se sustituye por « anual» en suscripciones anuales."],
     ["⏎", "En «Ventajas», una línea por ventaja."],
-    ["💡", "La animación en sí no se edita aquí; solo los textos, emojis, duración y activación."],
+    ["🎨", "En «Apariencia» puedes cambiar fondo, acento, logo, fuente y activar o desactivar animaciones."],
+    ["💡", "Deja un color o texto vacío para conservar el diseño por defecto de Aura."],
   ]));
 
   const c = await api.get("/api/content");
@@ -10980,6 +11052,22 @@ async function viewMatchCelebrate(root) {
     inp.addEventListener("input", () => { cfg[key] = inp.value; renderPreview(); scheduleAutoSave(); });
     return el("label", { class: "field" }, [ el("span", {}, label), inp ]);
   }
+  // Campo de color: selector nativo + texto (admite hex, rgb() o «» para el
+  // diseño por defecto). El selector solo escribe hex; el texto acepta cualquier valor.
+  function colorField(label, key, ph) {
+    const isHex = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(v || "").trim());
+    const swatch = el("input", { type: "color", value: isHex(cfg[key]) ? cfg[key] : "#ff2d6f",
+      style: "width:38px;height:38px;padding:0;border:1px solid var(--border,#ccc);border-radius:8px;background:none;cursor:pointer;flex:none" });
+    const txt = el("input", { class: "input", value: cfg[key] || "", placeholder: ph || "vacío = por defecto", style: "flex:1 1 auto" });
+    const sync = () => { if (isHex(txt.value)) swatch.value = txt.value.trim(); };
+    txt.addEventListener("input", () => { cfg[key] = txt.value; sync(); renderPreview(); scheduleAutoSave(); });
+    swatch.addEventListener("input", () => { txt.value = swatch.value; cfg[key] = swatch.value; renderPreview(); scheduleAutoSave(); });
+    const clr = btn("×", "ghost sm", () => { txt.value = ""; cfg[key] = ""; renderPreview(); scheduleAutoSave(); });
+    clr.title = "Restablecer al diseño por defecto";
+    clr.style.cssText = "flex:none;min-width:34px;padding:0 8px";
+    const row = el("div", { style: "display:flex;align-items:center;gap:8px" }, [ swatch, txt, clr ]);
+    return el("label", { class: "field" }, [ el("span", {}, label), row ]);
+  }
   function planFieldset(planKey, title, extra) {
     const kids = [
       el("h4", { style: "margin:4px 0 2px;font-size:14px" }, title),
@@ -11017,13 +11105,38 @@ async function viewMatchCelebrate(root) {
     textField("Botón principal", "content.match.cta_message", "Enviar mensaje"),
     textField("Botón secundario", "content.match.cta_keep", "Seguir descubriendo"),
     textField("Etiqueta “tú” (tu tarjeta)", "content.match.you", "Tú"),
+    el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Apariencia"),
+    el("p", { class: "muted", style: "font-size:11px;margin:0 0 6px" }, "Deja un campo vacío para conservar el diseño por defecto."),
+    textField("Fuente (font-family CSS)", "content.match.font", "'Poppins', system-ui, sans-serif"),
+    colorField("Fondo · color inicial", "content.match.bg_from", "#ff2d6f"),
+    colorField("Fondo · color final", "content.match.bg_to", "#9b3cf0"),
+    colorField("Color de acento (corazón)", "content.match.accent", "#ff2d6f"),
+    textField("Logo (URL de imagen)", "content.match.logo_url", "https://…/logo.png"),
+    el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Botones"),
+    colorField("Principal · fondo", "content.match.btn_primary_bg", "#ffffff"),
+    colorField("Principal · texto", "content.match.btn_primary_text", "#ff2d6f"),
+    colorField("Secundario · fondo", "content.match.btn_secondary_bg", "rgba(255,255,255,.12)"),
+    colorField("Secundario · texto", "content.match.btn_secondary_text", "#ffffff"),
+    el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Animaciones"),
+    boolField("Fondo animado", "content.match.anim_bg"),
+    boolField("Corazones flotantes", "content.match.hearts"),
+    boolField("Confeti", "content.match.confetti"),
   ]);
   const planPane = el("div", { class: "settings-form" }, [
     el("h3", { style: "margin-bottom:4px" }, "Celebración de planes"),
     boolField("Activar celebración en planes de pago", "content.celebrate.enabled"),
     boolField("Activar celebración al volver a Free", "content.celebrate.free_enabled"),
     numField("Duración en pantalla (ms)", "content.celebrate.duration", "5000"),
-    el("h4", { style: "margin:10px 0 2px;font-size:14px" }, "Textos comunes (planes de pago)"),
+    el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Apariencia (planes de pago)"),
+    el("p", { class: "muted", style: "font-size:11px;margin:0 0 6px" }, "Deja un campo vacío para conservar el diseño por defecto. El acento colorea el emblema, la barra y el nombre del plan."),
+    textField("Fuente (font-family CSS)", "content.celebrate.font", "'Poppins', system-ui, sans-serif"),
+    colorField("Fondo · color inicial", "content.celebrate.bg_from", "#1b1030"),
+    colorField("Fondo · color final", "content.celebrate.bg_to", "#120a24"),
+    colorField("Color de acento", "content.celebrate.accent", "#ff8a3b"),
+    textField("Logo (URL de imagen)", "content.celebrate.logo_url", "https://…/logo.png"),
+    boolField("Fondo animado (rayos)", "content.celebrate.anim_bg"),
+    boolField("Confeti", "content.celebrate.confetti"),
+    el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Textos comunes (planes de pago)"),
     textField("Antetítulo", "content.celebrate.kicker", "Plan activado"),
     textField("Título (usa {plan})", "content.celebrate.title", "Bienvenido a Aura {plan}"),
     areaField("Subtítulo (usa {plan} y {period})", "content.celebrate.sub", "Tu suscripción {plan}{period} ya está lista…", 3),
@@ -11034,6 +11147,10 @@ async function viewMatchCelebrate(root) {
       textField("Antetítulo (Free)", "content.celebrate.free.kicker", "Plan actualizado"),
       textField("Título (Free)", "content.celebrate.free.title", "Ahora estás en Aura Free"),
       areaField("Subtítulo (Free)", "content.celebrate.free.sub", "Has vuelto al plan gratuito…", 3),
+      el("p", { class: "muted", style: "font-size:11px;margin:6px 0 2px" }, "Apariencia propia de Free (si se deja vacío, usa la de los planes de pago)."),
+      colorField("Fondo · color inicial (Free)", "content.celebrate.free.bg_from", "#0c1f18"),
+      colorField("Fondo · color final (Free)", "content.celebrate.free.bg_to", "#0a1712"),
+      colorField("Color de acento (Free)", "content.celebrate.free.accent", "#34c77b"),
     ]),
   ]);
 

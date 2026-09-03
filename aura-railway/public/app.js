@@ -63,6 +63,20 @@ const contentFallback = {
   "content.match.cta_message": "Enviar mensaje",
   "content.match.cta_keep": "Seguir descubriendo",
   "content.match.you": "Tú",
+  // --- Apariencia de la pantalla de match (V855). VACÍO = mantener el diseño
+  // actual (no rompe nada). Colores en cualquier formato CSS (#hex, rgb…). ---
+  "content.match.font": "",                 // familia tipográfica (p. ej. "Georgia, serif")
+  "content.match.bg_from": "",              // color inicial del degradado de fondo
+  "content.match.bg_to": "",                // color final del degradado de fondo
+  "content.match.accent": "",               // color de acento (corazón central)
+  "content.match.logo_url": "",             // logo opcional arriba (URL de imagen)
+  "content.match.btn_primary_bg": "",       // fondo del botón principal
+  "content.match.btn_primary_text": "",     // texto del botón principal
+  "content.match.btn_secondary_bg": "",     // fondo del botón secundario
+  "content.match.btn_secondary_text": "",   // texto del botón secundario
+  "content.match.anim_bg": "true",          // animar el fondo (degradado + halo)
+  "content.match.hearts": "true",           // corazones flotantes de fondo
+  "content.match.confetti": "true",         // ráfaga de confeti
 
   // === Celebración de planes (editable desde Admin → Match y celebraciones) ===
   // Globales para planes de pago. {plan} = nombre del plan, {period} = " anual".
@@ -72,6 +86,18 @@ const contentFallback = {
   "content.celebrate.kicker": "Plan activado",
   "content.celebrate.title": "Bienvenido a Aura {plan}",
   "content.celebrate.sub": "Tu suscripción {plan}{period} ya está lista. Disfruta de todo lo que Aura tiene para ti.",
+  // --- Apariencia de la celebración de planes de pago (V855). VACÍO = diseño
+  // actual. El plan Free tiene sus propios colores (content.celebrate.free.*). ---
+  "content.celebrate.font": "",             // familia tipográfica
+  "content.celebrate.bg_from": "",          // color inicial del fondo
+  "content.celebrate.bg_to": "",            // color final del fondo
+  "content.celebrate.accent": "",           // acento (título del plan + barra + emblema)
+  "content.celebrate.logo_url": "",         // logo opcional arriba
+  "content.celebrate.anim_bg": "true",      // animar rayos de fondo
+  "content.celebrate.confetti": "true",     // confeti (solo planes de pago)
+  "content.celebrate.free.bg_from": "",     // Free: color inicial del fondo
+  "content.celebrate.free.bg_to": "",       // Free: color final del fondo
+  "content.celebrate.free.accent": "",      // Free: acento
   // Por plan: emoji, etiqueta y ventajas (una por línea).
   "content.celebrate.premium.emoji": "⭐",
   "content.celebrate.premium.label": "Premium",
@@ -9856,20 +9882,46 @@ function triggerMatch(user, conversationId = null) {
   const chatOpts = conversationId ? { conversationId } : {};
   const myPhoto = (state.user && state.user.photo) || "https://i.pravatar.cc/300?img=32";
   const match = el("div", { class: "match-screen" });
-  // Capa de corazones que suben flotando de fondo.
-  const heartsLayer = el("div", { class: "match-hearts" });
-  const heartSvg = `<svg viewBox="0 0 24 24"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`;
-  for (let i = 0; i < 14; i++) {
-    const sz = 12 + Math.round(Math.random() * 22);
-    heartsLayer.appendChild(el("i", {
-      html: heartSvg,
-      style: `left:${Math.round(Math.random() * 100)}%;width:${sz}px;height:${sz}px;` +
-             `animation-duration:${(3.6 + Math.random() * 3).toFixed(2)}s;` +
-             `animation-delay:${(Math.random() * 2.4).toFixed(2)}s;` +
-             `opacity:${(0.35 + Math.random() * 0.5).toFixed(2)};`,
-    }));
+  // V855 · Apariencia editable desde Admin → Match y celebraciones. Cada clave
+  // vacía = se conserva el diseño actual (no se aplica override). booleanos con
+  // "false" desactivan animaciones/adornos.
+  const val = (k) => { const v = T(k); return (v == null ? "" : String(v)).trim(); };
+  const on = (k) => { const v = T(k); return v == null || v === "" ? true : String(v) !== "false"; };
+  const mFont = val("content.match.font");
+  const mFrom = val("content.match.bg_from"), mTo = val("content.match.bg_to");
+  const mAccent = val("content.match.accent");
+  const mLogo = val("content.match.logo_url");
+  const animBg = on("content.match.anim_bg");
+  if (mFont) match.style.fontFamily = mFont;
+  // Fondo personalizado: si hay ambos colores, degradado propio; conserva el
+  // brillo superior. Si solo hay uno, se usa como color plano de base.
+  if (mFrom || mTo) {
+    const a = mFrom || mTo, b = mTo || mFrom;
+    match.style.background =
+      `radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,.20), transparent 55%),` +
+      `linear-gradient(300deg, ${a} 0%, ${b} 100%)`;
+    match.style.backgroundSize = "100% 100%, 100% 100%";
   }
-  match.appendChild(heartsLayer);
+  // Desactivar animación de fondo (degradado en movimiento + halo giratorio).
+  if (!animBg) { match.style.animation = "matchFade .4s ease"; match.classList.add("match-noanim"); }
+  // Capa de corazones que suben flotando de fondo (se puede desactivar).
+  if (on("content.match.hearts")) {
+    const heartsLayer = el("div", { class: "match-hearts" });
+    const heartSvg = `<svg viewBox="0 0 24 24"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`;
+    for (let i = 0; i < 14; i++) {
+      const sz = 12 + Math.round(Math.random() * 22);
+      heartsLayer.appendChild(el("i", {
+        html: heartSvg,
+        style: `left:${Math.round(Math.random() * 100)}%;width:${sz}px;height:${sz}px;` +
+               `animation-duration:${(3.6 + Math.random() * 3).toFixed(2)}s;` +
+               `animation-delay:${(Math.random() * 2.4).toFixed(2)}s;` +
+               `opacity:${(0.35 + Math.random() * 0.5).toFixed(2)};`,
+      }));
+    }
+    match.appendChild(heartsLayer);
+  }
+  // Logo opcional arriba del todo (imagen del anunciante/marca).
+  if (mLogo) match.appendChild(el("img", { class: "match-logo", src: mLogo, alt: "", loading: "lazy" }));
   // Textos editables desde Admin → Match y celebraciones (claves content.match.*).
   // {name} se sustituye por el nombre del otro usuario.
   const fill = (s, name) => String(s == null ? "" : s).replace(/\{name\}/g, name);
@@ -9894,18 +9946,22 @@ function triggerMatch(user, conversationId = null) {
   const themCard = el("div", { class: "mc", style: `background-image:url('${user.photo}')` }, [
     el("div", { class: "mc-name" }, [ themName, user.verified ? el("span", { html: verifiedSvg }) : null ].filter(Boolean)),
   ]);
-  match.appendChild(el("div", { class: "match-cards" }, [
-    myCard,
-    el("div", { class: "match-heart", html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
-    themCard,
-  ]));
-  match.appendChild(el("div", { class: "match-actions" }, [
-    el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, T("content.match.cta_message")),
-    el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, T("content.match.cta_keep")),
-  ]));
+  const centerHeart = el("div", { class: "match-heart", html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` });
+  if (mAccent) centerHeart.style.color = mAccent;
+  match.appendChild(el("div", { class: "match-cards" }, [ myCard, centerHeart, themCard ]));
+  // Botones con colores propios (opcionales). Vacío = estilo por defecto.
+  const btnPrimary = el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, T("content.match.cta_message"));
+  const btnSecondary = el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, T("content.match.cta_keep"));
+  const pBg = val("content.match.btn_primary_bg"), pTx = val("content.match.btn_primary_text");
+  const sBg = val("content.match.btn_secondary_bg"), sTx = val("content.match.btn_secondary_text");
+  if (pBg) btnPrimary.style.background = pBg;
+  if (pTx) btnPrimary.style.color = pTx;
+  if (sBg) { btnSecondary.style.background = sBg; btnSecondary.style.borderColor = "transparent"; }
+  if (sTx) btnSecondary.style.color = sTx;
+  match.appendChild(el("div", { class: "match-actions" }, [ btnPrimary, btnSecondary ]));
   viewport.appendChild(match);
-  // Toque de confeti para reforzar el momento (reutiliza el confeti existente).
-  try { spawnBetaConfetti(match); } catch {}
+  // Toque de confeti para reforzar el momento (se puede desactivar).
+  if (on("content.match.confetti")) { try { spawnBetaConfetti(match); } catch {} }
 }
 
 // V810 · Celebración visual al activar un plan de pago. Overlay a pantalla
@@ -9964,22 +10020,56 @@ function celebratePlan(planKey, opts = {}) {
     titleNodes = [ fill(parts[0]), el("span", { class: "pc-plan" }, info.label), fill(parts.slice(1).join("{plan}")) ];
   }
 
+  // V855 · Apariencia editable (Admin → Match y celebraciones). Vacío = diseño
+  // por defecto. Free tiene sus propios colores; los de pago comparten los
+  // globales content.celebrate.*.
+  const val = (k) => { const v = T(k); return (v == null ? "" : String(v)).trim(); };
+  const on = (k) => { const v = T(k); return v == null || v === "" ? true : String(v) !== "false"; };
+  const cFont = val("content.celebrate.font");
+  const cFrom = info.isFree ? (val("content.celebrate.free.bg_from") || val("content.celebrate.bg_from")) : val("content.celebrate.bg_from");
+  const cTo   = info.isFree ? (val("content.celebrate.free.bg_to")   || val("content.celebrate.bg_to"))   : val("content.celebrate.bg_to");
+  const cAccent = info.isFree ? (val("content.celebrate.free.accent") || val("content.celebrate.accent")) : val("content.celebrate.accent");
+  const cLogo = val("content.celebrate.logo_url");
+  const animBg = on("content.celebrate.anim_bg");
+
   const check = () => el("span", { class: "pc-check", html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>` });
+  const emblem = el("div", { class: `pc-emblem pc-${key}` }, info.emoji);
+  const titleNode = el("h2", { class: "pc-title" }, titleNodes);
+  const bar = el("div", { class: "pc-bar", style: `--pc-dur:${durMs}ms` }, [ el("i", {}) ]);
   const overlay = el("div", { class: "plan-celebrate" + (info.isFree ? " plan-celebrate-free" : "") }, [
-    el("div", { class: `pc-emblem pc-${key}` }, info.emoji),
+    cLogo ? el("img", { class: "pc-logo", src: cLogo, alt: "", loading: "lazy" }) : null,
+    emblem,
     el("div", { class: "pc-kicker" }, kicker),
-    el("h2", { class: "pc-title" }, titleNodes),
+    titleNode,
     el("p", { class: "pc-sub" }, fill(subTpl)),
     el("div", { class: "pc-perks" }, info.perks.map(p => el("div", { class: "pc-perk" }, [ check(), el("span", {}, p) ]))),
-    el("div", { class: "pc-bar", style: `--pc-dur:${durMs}ms` }, [ el("i", {}) ]),
-  ]);
+    bar,
+  ].filter(Boolean));
+  // Overrides de estilo (solo si el admin puso un valor).
+  if (cFont) overlay.style.fontFamily = cFont;
+  if (cFrom || cTo) {
+    const a = cFrom || cTo, b = cTo || cFrom;
+    overlay.style.background =
+      `radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,.16), transparent 55%),` +
+      `linear-gradient(165deg, ${a} 0%, ${b} 100%)`;
+  }
+  if (!animBg) { overlay.style.animation = "pcFade .35s ease"; overlay.classList.add("pc-noanim"); }
+  if (cAccent) {
+    // Acento: emblema, nombre del plan resaltado y barra de progreso.
+    emblem.style.background = `linear-gradient(160deg, ${cAccent}, ${cAccent})`;
+    bar.querySelector("i").style.background = cAccent;
+    const planSpan = titleNode.querySelector(".pc-plan");
+    if (planSpan) { planSpan.style.background = "none"; planSpan.style.webkitTextFillColor = cAccent; planSpan.style.color = cAccent; }
+  }
   document.body.appendChild(overlay);
   // El plan gratuito usa un confeti más discreto (o ninguno) para diferenciar
-  // el tono; los de pago mantienen la doble tanda de confeti festivo.
-  if (!info.isFree) {
+  // el tono; los de pago mantienen la doble tanda de confeti festivo. El admin
+  // puede desactivar el confeti por completo.
+  const wantConfetti = on("content.celebrate.confetti");
+  if (!info.isFree && wantConfetti) {
     try { spawnBetaConfetti(overlay); } catch {}
   }
-  const t2 = info.isFree ? null : setTimeout(() => { try { spawnBetaConfetti(overlay); } catch {} }, 1200);
+  const t2 = (!info.isFree && wantConfetti) ? setTimeout(() => { try { spawnBetaConfetti(overlay); } catch {} }, 1200) : null;
   const close = () => {
     if (t2) clearTimeout(t2);
     overlay.classList.add("pc-out");
