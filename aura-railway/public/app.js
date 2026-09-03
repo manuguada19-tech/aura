@@ -9985,7 +9985,9 @@ function triggerMatch(user, conversationId = null) {
     el("div", { class: "mc-name" }, [ themName, user.verified ? el("span", { html: verifiedSvg }) : null ].filter(Boolean)),
   ]);
   const centerHeart = el("div", { class: "match-heart", html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` });
-  if (mAccent) centerHeart.style.color = mAccent;
+  if (mAccent) centerHeart.style.color = mAccent;               // color del ICONO del corazón
+  const mHeartBg = val("content.match.heart_bg");
+  if (mHeartBg) centerHeart.style.background = mHeartBg;         // V857 · FONDO (disco) del corazón
   match.appendChild(el("div", { class: "match-cards" }, [ myCard, centerHeart, themCard ]));
   // Botones con colores propios (opcionales). Vacío = estilo por defecto.
   const btnPrimary = el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, T("content.match.cta_message"));

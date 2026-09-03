@@ -10717,6 +10717,7 @@ const MC_DEFAULTS = {
   "content.match.bg_from": "",
   "content.match.bg_to": "",
   "content.match.accent": "",
+  "content.match.heart_bg": "",
   "content.match.logo_url": "",
   "content.match.btn_primary_bg": "",
   "content.match.btn_primary_text": "",
@@ -10891,6 +10892,7 @@ function mcBuildMatchDoc(cfg) {
   const gon = (k) => { const v = g(k); return v == null || v === "" ? true : String(v) !== "false"; };
   const mFrom = gv("content.match.bg_from"), mTo = gv("content.match.bg_to");
   const mAccent = gv("content.match.accent"), mFont = gv("content.match.font"), mLogo = gv("content.match.logo_url");
+  const mHeartBg = gv("content.match.heart_bg");
   const animBg = gon("content.match.anim_bg");
   let hostStyle = "";
   if (mFont) hostStyle += `font-family:${mFont};`;
@@ -10911,7 +10913,7 @@ function mcBuildMatchDoc(cfg) {
     <p class="match-sub">${mcEsc(g("content.match.sub"))}</p>
     <div class="match-cards">
       <div class="mc" style="background-image:url('${me}')"><div class="mc-name">${you}</div></div>
-      <div class="match-heart"${mAccent ? ` style="color:${mcEsc(mAccent)}"` : ""}>${heartFill}</div>
+      <div class="match-heart"${(mAccent || mHeartBg) ? ` style="${mAccent ? `color:${mcEsc(mAccent)};` : ""}${mHeartBg ? `background:${mcEsc(mHeartBg)};` : ""}"` : ""}>${heartFill}</div>
       <div class="mc" style="background-image:url('${him}')"><div class="mc-name">Hugo <span style="display:inline-flex">${verified}</span></div></div>
     </div>
     <div class="match-actions">
@@ -11123,7 +11125,8 @@ async function viewMatchCelebrate(root) {
     textField("Fuente (font-family CSS)", "content.match.font", "'Poppins', system-ui, sans-serif", "Tipografía de TODA la pantalla de match (título, textos y botones)."),
     colorField("Fondo · color inicial", "content.match.bg_from", "#ff2d6f", "Degradado del fondo: color de arriba/inicio."),
     colorField("Fondo · color final", "content.match.bg_to", "#9b3cf0", "Degradado del fondo: color de abajo/final."),
-    colorField("Color de acento (corazón central)", "content.match.accent", "#ff2d6f", "El CORAZÓN grande que va entre las dos fotos."),
+    colorField("Color del corazón central (icono)", "content.match.accent", "#ff2d6f", "El dibujo del CORAZÓN que va entre las dos fotos."),
+    colorField("Fondo del corazón central (disco)", "content.match.heart_bg", "#ffffff", "El círculo/disco que rodea al corazón. Admite color o degradado CSS."),
     textField("Logo (URL de imagen)", "content.match.logo_url", "https://…/logo.png", "Imagen que aparece arriba del todo, sobre la insignia «Es un match»."),
     el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Botón principal (Enviar mensaje)"),
     colorField("Fondo del botón principal", "content.match.btn_primary_bg", "#ffffff", "Relleno del botón de ARRIBA («Enviar mensaje»)."),
