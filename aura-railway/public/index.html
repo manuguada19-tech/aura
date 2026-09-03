@@ -6,6 +6,16 @@
   <meta name="theme-color" content="#000000" />
   <meta name="color-scheme" content="light dark" />
   <meta name="supported-color-schemes" content="light dark" />
+  <!-- V861 · PWA en pantalla completa (sin barra de direcciones) cuando se
+       INSTALA la app ("Añadir a pantalla de inicio"). Android/Chrome usan
+       mobile-web-app-capable + manifest display:standalone; iOS/Safari usan las
+       metas apple-*. En una pestaña normal del navegador la barra de URL la
+       controla el navegador y no se puede ocultar por diseño; por eso invitamos
+       a instalar la app (banner de instalación) para que se abra sin barra. -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Aura" />
   <meta name="description" content="Aura — Conecta con personas reales, encuentra tu match perfecto." />
   <title>Aura — Encuentra tu match</title>
   <!-- V634 · Open Graph / Twitter Card: previsualización al compartir el enlace
@@ -32,7 +42,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="styles.css?v=800" />
+  <link rel="stylesheet" href="styles.css?v=861" />
   <!-- Google AdSense: verificación de propiedad SIN cargar el código de
        anuncios en el arranque. El script pagead2 sólo se inyecta bajo demanda
        (ensureAdSenseLoader) cuando se muestra un anuncio en una pantalla con
