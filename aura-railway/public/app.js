@@ -9987,7 +9987,15 @@ function triggerMatch(user, conversationId = null) {
   const centerHeart = el("div", { class: "match-heart", html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` });
   if (mAccent) centerHeart.style.color = mAccent;               // color del ICONO del corazón
   const mHeartBg = val("content.match.heart_bg");
-  if (mHeartBg) centerHeart.style.background = mHeartBg;         // V857 · FONDO (disco) del corazón
+  if (mHeartBg) {
+    // V858 · FONDO (disco) del corazón. El disco por defecto arrastra un HALO
+    // ROSA (box-shadow rgba(255,45,111,.5)) + borde interior blanco: eso hacía
+    // que un blanco puro no "luciera" (quedaba teñido). Al definir un fondo,
+    // sustituimos ese halo por una sombra NEUTRA y un borde interior tenue, para
+    // que cualquier color (blanco incluido) se vea limpio e intencionado.
+    centerHeart.style.background = mHeartBg;
+    centerHeart.style.boxShadow = "0 14px 34px rgba(0,0,0,.28), inset 0 0 0 3px rgba(255,255,255,.35)";
+  }
   match.appendChild(el("div", { class: "match-cards" }, [ myCard, centerHeart, themCard ]));
   // Botones con colores propios (opcionales). Vacío = estilo por defecto.
   const btnPrimary = el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, T("content.match.cta_message"));
