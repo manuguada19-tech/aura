@@ -10769,7 +10769,7 @@ const MC_PREVIEW_CSS = `
 html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:'Poppins','Segoe UI',system-ui,-apple-system,sans-serif}
 .mc-host{position:fixed;inset:0;overflow:hidden}
 /* ---- Match ---- */
-.match-screen{position:absolute;inset:0;z-index:20;color:#fff;display:flex;flex-direction:column;align-items:center;padding:54px 26px 30px;overflow:hidden;
+.match-screen{position:absolute;inset:0;z-index:20;color:#fff;display:flex;flex-direction:column;align-items:center;padding:34px 26px 22px;overflow:hidden;
   background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.20),transparent 55%),linear-gradient(300deg,#ff2d6f 0%,#ff6a3d 20%,#e02d7d 40%,#9b3cf0 62%,#ff2d6f 100%);
   background-size:100% 100%,280% 280%;background-position:50% 0%,0% 50%;animation:matchFade .4s ease,matchBgFlow 10s ease-in-out infinite}
 @keyframes matchBgFlow{0%{background-position:50% 0%,0% 50%}50%{background-position:50% 0%,100% 50%}100%{background-position:50% 0%,0% 50%}}
@@ -10777,31 +10777,31 @@ html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:
 .match-screen::before{content:"";position:absolute;top:20%;left:50%;width:150vw;height:150vw;transform:translate(-50%,-50%);
   background:conic-gradient(from 0deg,rgba(255,255,255,.16),transparent 25%,rgba(255,255,255,.16) 50%,transparent 75%,rgba(255,255,255,.16));opacity:.5;pointer-events:none;animation:matchHalo 14s linear infinite}
 @keyframes matchHalo{to{transform:translate(-50%,-50%) rotate(360deg)}}
-.btn{height:52px;border-radius:26px;border:none;font:inherit;font-size:16px;font-weight:700;cursor:pointer}
+.btn{height:48px;border-radius:24px;border:none;font:inherit;font-size:15px;font-weight:700;cursor:pointer}
 .match-badge{position:relative;z-index:2;display:inline-flex;align-items:center;gap:8px;padding:8px 18px;border-radius:999px;
   background:linear-gradient(90deg,rgba(255,255,255,.22),rgba(255,255,255,.10));border:1px solid rgba(255,255,255,.45);
   font-size:12.5px;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#fff;box-shadow:0 8px 22px rgba(0,0,0,.22);animation:matchPop .6s .05s both cubic-bezier(.2,.9,.2,1)}
 .match-badge svg{width:15px;height:15px;animation:matchBeatIcon 1.5s 1.7s infinite ease-in-out}
 @keyframes matchBeatIcon{0%,100%{transform:scale(1)}15%{transform:scale(1.22)}30%{transform:scale(1)}45%{transform:scale(1.14)}60%{transform:scale(1)}}
-.match-screen h2{position:relative;z-index:2;font-size:40px;line-height:1.02;margin:16px 0 6px;font-weight:800;letter-spacing:-.03em;text-align:center;
+.match-screen h2{position:relative;z-index:2;font-size:32px;line-height:1.02;margin:10px 0 4px;font-weight:800;letter-spacing:-.03em;text-align:center;
   background:linear-gradient(180deg,#fff 0%,#ffe4ee 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 4px 18px rgba(0,0,0,.28));animation:matchPop .6s .12s both cubic-bezier(.2,.9,.2,1)}
 .match-sub{position:relative;z-index:2;margin:0;font-size:14px;opacity:.95;text-align:center;animation:matchPop .6s .18s both cubic-bezier(.2,.9,.2,1)}
 @keyframes matchPop{from{opacity:0;transform:translateY(14px) scale(.96)}}
-.match-cards{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;margin:44px 0 16px}
-.match-cards .mc{position:relative;width:142px;height:190px;border-radius:26px;background-size:cover;background-position:center;border:4px solid #fff;box-shadow:0 22px 50px rgba(0,0,0,.42);overflow:hidden}
+.match-cards{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;margin:26px 0 12px}
+.match-cards .mc{position:relative;width:118px;height:158px;border-radius:24px;background-size:cover;background-position:center;border:4px solid #fff;box-shadow:0 22px 50px rgba(0,0,0,.42);overflow:hidden}
 .match-cards .mc::after{content:"";position:absolute;inset:auto 0 0 0;height:55%;background:linear-gradient(180deg,transparent,rgba(0,0,0,.6))}
 .match-cards .mc .mc-name{position:absolute;left:10px;right:10px;bottom:10px;z-index:2;display:flex;align-items:center;justify-content:center;gap:5px;font-size:14px;font-weight:800;color:#fff;text-shadow:0 1px 6px rgba(0,0,0,.5)}
 .match-cards .mc:first-child{transform:rotate(-9deg);margin-right:-30px;animation:matchInL 1s cubic-bezier(.34,1.56,.64,1) both}
 .match-cards .mc:last-child{transform:rotate(9deg);margin-left:-30px;z-index:1;animation:matchInR 1s .12s cubic-bezier(.34,1.56,.64,1) both}
 @keyframes matchInL{from{transform:translateX(-60px) rotate(-9deg) scale(.4);opacity:0}}
 @keyframes matchInR{from{transform:translateX(60px) rotate(9deg) scale(.4);opacity:0}}
-.match-heart{position:absolute;left:50%;top:100%;transform:translate(-50%,-60%);z-index:4;width:60px;height:60px;border-radius:50%;display:grid;place-items:center;
+.match-heart{position:absolute;left:50%;top:100%;transform:translate(-50%,-60%);z-index:4;width:50px;height:50px;border-radius:50%;display:grid;place-items:center;
   background:radial-gradient(circle at 35% 30%,#fff,#ffe3ec);color:#ff2d6f;box-shadow:0 14px 34px rgba(255,45,111,.5),inset 0 0 0 3px rgba(255,255,255,.9);
   animation:matchHeart 1.1s .55s both cubic-bezier(.34,1.56,.64,1),matchBeat 1.5s 1.7s infinite ease-in-out}
-.match-heart svg{width:32px;height:32px}
+.match-heart svg{width:26px;height:26px}
 @keyframes matchHeart{from{transform:translate(-50%,-60%) scale(0) rotate(-30deg);opacity:0}}
 @keyframes matchBeat{0%,100%{transform:translate(-50%,-60%) scale(1)}15%{transform:translate(-50%,-60%) scale(1.16)}30%{transform:translate(-50%,-60%) scale(1)}45%{transform:translate(-50%,-60%) scale(1.1)}60%{transform:translate(-50%,-60%) scale(1)}}
-.match-actions{position:relative;z-index:2;margin-top:auto;display:grid;gap:12px;width:100%;animation:matchPop .6s .3s both cubic-bezier(.2,.9,.2,1)}
+.match-actions{position:relative;z-index:2;margin-top:auto;display:grid;gap:10px;width:100%;animation:matchPop .6s .3s both cubic-bezier(.2,.9,.2,1)}
 .match-actions .btn-primary{background:#fff;color:#ff2d6f;font-weight:800;box-shadow:0 12px 30px rgba(0,0,0,.22)}
 .match-actions .btn-ghost{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.45);font-weight:700}
 .match-hearts{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}
@@ -10810,8 +10810,8 @@ html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:
 .match-hearts i{animation:matchFloat linear infinite}
 @keyframes matchFloat{0%{transform:translateY(0) rotate(0) scale(1);opacity:0}12%{opacity:.9}100%{transform:translateY(-115vh) rotate(200deg) scale(1.15);opacity:0}}
 /* ---- Respuestas rápidas ---- */
-.match-quick{position:relative;z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;width:100%;margin:4px 0 14px;animation:matchPop .6s .22s both cubic-bezier(.2,.9,.2,1)}
-.match-quick-btn{-webkit-appearance:none;appearance:none;cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:9px 14px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.4);color:#fff;font:inherit;font-size:15px;font-weight:700;line-height:1}
+.match-quick{position:relative;z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:100%;margin:2px 0 10px;animation:matchPop .6s .22s both cubic-bezier(.2,.9,.2,1)}
+.match-quick-btn{-webkit-appearance:none;appearance:none;cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:7px 12px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.4);color:#fff;font:inherit;font-size:13px;font-weight:700;line-height:1}
 /* ---- Celebración de plan ---- */
 .plan-celebrate{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#fff;padding:34px 26px;overflow:hidden;
   background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.18),transparent 55%),linear-gradient(165deg,#1b1030 0%,#2a1550 48%,#120a24 100%);animation:pcFade .35s ease}
