@@ -2363,6 +2363,13 @@ const datingApi = {
    - El consentimiento se guarda en BD (art. 7 RGPD).
    - Se puede revocar desde Ajustes → Privacidad.
    ============================================================ */
+// V877 · Precisión máxima (m) para aceptar un fix como "GPS real".
+// Un GPS de móvil da 5-50 m. La trilateración por wifi/IP de un PC da cientos o
+// miles de metros: con el umbral anterior de 3000 m un fix de ±2749 m colaba y
+// pisaba la ubicación buena, dejando el punto azul a más de 1 km del sitio real.
+// 300 m es holgado para GPS real (incluso bajo techo o con mala cobertura) y
+// descarta el wifi/IP. Debe coincidir con GOOD_ACCURACY_M de server.js.
+const GPS_GOOD_ACCURACY_M = 300;
 const GPS = {
   _watchId: null,
   _lastSent: 0,
@@ -2421,9 +2428,17 @@ const GPS = {
     // podemos saber si el fix es de fiar, así que lo tratamos como impreciso.
     // Cuidado: Number(null) === 0, que colaría como "precisión perfecta". Hay
     // que descartar null/undefined ANTES de convertir a número.
+    //
+    // V877 · El umbral de 3 km estaba MAL CALIBRADO y era la razón de fondo de
+    // que "en móvil bien, en PC mal" siguiera pasando. Un fix de wifi en PC
+    // llegaba con ±2749 m, colaba por debajo de 3000 y se guardaba como si
+    // fuera GPS bueno (el admin lo mostraba como "GPS preciso (±2749 m)"),
+    // dejando el punto azul a ~1,3 km del sitio real. Un GPS de móvil da entre
+    // 5 y 50 m, así que 300 m es de sobra tolerante para GPS real y descarta
+    // cualquier trilateración por wifi/IP.
     const _accRaw = pos.coords.accuracy;
     const _acc = _accRaw == null ? NaN : Number(_accRaw);
-    if (!Number.isFinite(_acc) || _acc > 3000) return;
+    if (!Number.isFinite(_acc) || _acc > GPS_GOOD_ACCURACY_M) return;
     // V855 · Guarda SIEMPRE la última posición real (antes del debounce de envío)
     // para que el mapa pueda pintar el punto azul al instante con ella.
     try { this._lastPos = pos; } catch {}
@@ -9184,7 +9199,9 @@ async function openNearbyMap() {
   // punto azul. En móvil el GPS da metros (se acepta); en PC la posición por
   // wifi/IP suele ser de km y a menudo cae en otra ciudad: si la precisión es
   // peor que esto, NO movemos el punto azul (dejamos el bueno del backend/móvil).
-  const GOOD_ACCURACY_M = 3000;
+  // V877 · Usa la constante global (300 m). Antes era 3000 aquí, y un fix de
+  // wifi de PC (±2749 m) pasaba el filtro y movía el punto azul lejos.
+  const GOOD_ACCURACY_M = GPS_GOOD_ACCURACY_M;
   function fixIsUsable(accuracyM) {
     // Si el navegador no informa precisión, aceptamos (comportamiento previo).
     if (!Number.isFinite(accuracyM)) return true;

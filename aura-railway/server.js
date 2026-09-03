@@ -7833,7 +7833,9 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
            LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
           WHERE u.id=? LIMIT 1`, [me]);
       if (g) {
-        const gpsAccOk = g.gacc != null && Number(g.gacc) <= 3000;
+        // V877 · 300 m (antes 3000): con el umbral viejo, el fix de wifi del PC
+        // (±2749 m) contaba como GPS bueno y el punto azul salía a ~1,3 km.
+        const gpsAccOk = g.gacc != null && Number(g.gacc) <= 300;
         const useGps = (g.glat != null && g.glng != null && gpsAccOk);
         const dl = useGps ? g.glat : g.ulat;
         const dg = useGps ? g.glng : g.ulng;
@@ -12172,7 +12174,11 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
   // Regla: si ya hay una posición PRECISA y RECIENTE y llega un fix mucho MENOS
   // preciso, se descarta. Se responde 200 con {ok:true, kept:true} para que el
   // cliente no lo trate como error ni reintente.
-  const GOOD_ACCURACY_M = 3000;   // <=3 km ⇒ fix de GPS real (móvil)
+  // V877 · Antes 3000 m, mal calibrado: un fix de wifi de PC con ±2749 m colaba
+  // como "GPS real" y pisaba la ubicación buena del móvil. Un GPS de móvil da
+  // 5-50 m, así que 300 m es holgado y descarta wifi/IP. Debe coincidir con
+  // GPS_GOOD_ACCURACY_M de public/app.js.
+  const GOOD_ACCURACY_M = 300;
   const FRESH_MINUTES   = 720;    // 12 h: seguimos fiándonos del último buen fix
   const WORSE_FACTOR    = 3;      // "mucho menos preciso" = 3x peor
   const prev = rows[0];
