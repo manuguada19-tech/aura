@@ -8026,8 +8026,13 @@ function makeTestMapUser(center, realProfile) {
   // posición en el mapa. Dejamos city vacía y distance null: openNearbyMap las
   // rellena con la ciudad REAL (reverse-geocoding de su posición) y la
   // distancia REAL (Haversine desde el punto azul), como en Explorar.
-  const lat = center.lat + 0.010;
-  const lng = center.lng + 0.013;
+  // V853 · Antes iba a ~1,5 km (0.010/0.013): con el zoom inicial de calle (17)
+  // el pin quedaba FUERA de pantalla y, al superar NEARBY_TEST_KM (1 km),
+  // tampoco salía en la cuadrícula → "no aparece". Ahora se sitúa a ~300 m:
+  // visible en el mapa sin tocar el punto azul y dentro del umbral, así aparece
+  // también en la lista de "en esta zona".
+  const lat = center.lat + 0.0022;   // ~245 m al norte
+  const lng = center.lng + 0.0028;   // ~240 m al este (≈ 340 m en diagonal)
   return {
     id: (p.id != null ? p.id : "test_demo"),
     name: p.name || "Usuario de prueba",
