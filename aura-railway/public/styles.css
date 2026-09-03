@@ -9589,16 +9589,14 @@ body.map-open { overflow: hidden; }
 
 /* Botón flotante "mi ubicación" */
 .map-locate {
-  /* V771 · Subido por encima del control de zoom de Leaflet (bottomright, que
-     ocupa ~72px de alto con margen inferior 84px). Antes ambos compartían
-     bottom:84px right:14px y el círculo de "mi ubicación" tapaba los botones
-     +/− de zoom. Ahora se apilan: zoom abajo, "mi ubicación" justo encima.
-     V840 · Ancla dinámica sobre el panel de personas (--map-people-h) para no
-     quedar tapado por la cuadrícula (que puede ocupar hasta ~46vh en móvil).
-     Se suma el alto del control de zoom (~66px) + el del botón "Buscar aquí"
-     (~54px) para que los tres no se solapen. */
-  position: absolute; right: 14px;
-  bottom: calc(var(--map-people-h, 274px) + 132px); z-index: 30;
+  /* V842 · A la IZQUIERDA (antes bottomright, apilado sobre el zoom): el control
+     +/− de Leaflet vive abajo-derecha, así que compartir esa esquina hacía que
+     el botón redondo de "mi ubicación" tapara los símbolos +/−. Moviéndolo a la
+     izquierda quedan separados sin depender de cálculos frágiles de altura.
+     Sigue anclado sobre el panel de personas (--map-people-h) para no quedar
+     tapado por la cuadrícula (hasta ~46vh en móvil). */
+  position: absolute; left: 14px;
+  bottom: calc(var(--map-people-h, 274px) + 70px); z-index: 30;
   width: 46px; height: 46px; border-radius: 50%;
   display: grid; place-items: center; cursor: pointer;
   color: var(--text);
@@ -9674,8 +9672,12 @@ body.map-open { overflow: hidden; }
 }
 .map-person-meta { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; padding: 6px 8px 8px; }
 .map-person-name {
+  /* V842 · El nombre se recortaba con "…" en tarjetas estrechas (p. ej.
+     "Usuario de Pru…", "Hugo Serra…"). Ahora envuelve hasta 2 líneas (igual que
+     las tarjetas de "Cerca de ti") para que no se corte. */
   font-size: 12px; font-weight: 800; color: #fff; line-height: 1.15;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere; word-break: break-word;
   text-shadow: 0 1px 3px rgba(0,0,0,.6);
 }
 .map-person-sub {
@@ -9771,15 +9773,33 @@ body.map-open { overflow: hidden; }
 /* Asegura que los controles de Leaflet queden sobre el overlay */
 .map-overlay .leaflet-container { font: inherit; background: var(--bg); }
 .map-overlay .leaflet-control-zoom {
-  /* V840 · El control de zoom (bottomright) se eleva sobre el panel de personas
-     usando la altura real del panel (--map-people-h) + un hueco para el botón
-     "Buscar cerca de aquí". Antes tenía un margen fijo (190px) pensado para el
-     dock antiguo y quedaba tapado por la nueva cuadrícula alta. */
-  margin: 0 14px calc(var(--map-people-h, 190px) + 62px) 0 !important; border: 0;
+  /* V842 · El control de zoom (bottomright) se eleva sobre el panel de personas
+     usando la altura real del panel (--map-people-h). Ahora el botón de "mi
+     ubicación" está a la IZQUIERDA, así que zoom y ubicación quedan a la misma
+     altura pero en esquinas opuestas (ya no se solapan). */
+  margin: 0 14px calc(var(--map-people-h, 190px) + 70px) 0 !important; border: 0;
 }
 .map-overlay .leaflet-control-zoom a {
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   color: var(--text); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  -webkit-tap-highlight-color: transparent;
+  transition: background .12s ease, color .12s ease;
+}
+/* V842 · Al pulsar +/− en móvil, Leaflet dejaba el enlace con el fondo blanco
+   por defecto y el foco "pegado" (el símbolo quedaba en blanco/invisible y
+   seleccionado un buen rato). Forzamos el mismo estilo del tema en
+   hover/focus/active y quitamos el resalte de selección, para que el glifo
+   +/− SIEMPRE se lea y el estado no se quede pegado tras soltar. */
+.map-overlay .leaflet-control-zoom a:hover,
+.map-overlay .leaflet-control-zoom a:focus,
+.map-overlay .leaflet-control-zoom a:active {
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  color: var(--text);
+  outline: none;
+}
+.map-overlay .leaflet-control-zoom a.leaflet-disabled {
+  color: color-mix(in srgb, var(--text) 40%, transparent);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
 }
 
 /* V768 · Aviso grande centrado en pantalla (unos segundos) cuando no hay nadie

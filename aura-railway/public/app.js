@@ -8562,11 +8562,26 @@ async function openNearbyMap() {
   }
 
   // V840 · "Ir a una zona": coloca el pin en (lat,lng), encuadra el círculo del
-  // radio para que quepa entero y busca UNA vez.
+  // radio para que quepa entero y busca UNA vez. Se usa en acciones donde tiene
+  // sentido ver el círculo completo (cambiar de radio, buscar una ciudad).
   async function goToZone(lat, lng) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
     fitToRadius(searchLatLng);
+    await searchAt(lat, lng);
+  }
+
+  // V842 · Centrar MUY cerca del usuario (nivel calle) sin encajar todo el
+  // círculo del radio. Antes, al abrir el mapa y al pulsar "mi ubicación" se
+  // usaba fitToRadius, que con radios grandes (25 km por defecto) alejaba el
+  // zoom exageradamente y el punto azul quedaba diminuto. Ahora centramos en la
+  // ubicación a zoom cercano; el círculo se sigue dibujando (puede sobresalir de
+  // la pantalla, es solo informativo).
+  const CLOSE_ZOOM = 15;
+  async function recenterClose(lat, lng) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setSearchPoint(lat, lng);
+    try { map.setView([lat, lng], CLOSE_ZOOM, { animate: true }); } catch {}
     await searchAt(lat, lng);
   }
 
@@ -8737,15 +8752,17 @@ async function openNearbyMap() {
     paintMapThemeBtn();
   });
 
-  // Primera pintura con los datos ya cargados. Coloca el pin en el punto inicial,
-  // encuadra el círculo del radio y pinta la cuadrícula.
+  // Primera pintura con los datos ya cargados. Coloca el pin en el punto inicial
+  // y CENTRA cerca (nivel calle), en vez de alejar para encajar todo el círculo.
+  // V842 · setView a zoom cercano; drawCircle dibuja el radio (informativo).
   setSearchPoint(start.lat, start.lng);
-  fitToRadius(start);
+  try { map.setView([start.lat, start.lng], CLOSE_ZOOM); } catch {}
+  drawCircle(start, mapFilters.radiusKm);
   repaint();
 
   locateBtn.addEventListener("click", () => {
-    // V840 · Centra en mi ubicación, coloca el pin allí y busca.
-    goToZone(myLocation.lat, myLocation.lng);
+    // V842 · Centra MUY cerca de mi ubicación (nivel calle), coloca el pin y busca.
+    recenterClose(myLocation.lat, myLocation.lng);
   });
 
   // V832 · Al abrir el mapa pedimos geolocalización real del navegador (si el
@@ -8764,8 +8781,8 @@ async function openNearbyMap() {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
-          // Encuadra el círculo de la zona en la nueva ubicación real y busca.
-          goToZone(latitude, longitude);
+          // V842 · Centra MUY cerca de la ubicación real (nivel calle) y busca.
+          recenterClose(latitude, longitude);
         }
       }
     } catch {}
