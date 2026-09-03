@@ -1592,42 +1592,52 @@
     }
 
     // ---- Moderación IA ---------------------------------------------
+    // V868 · Cola REAL de moderación de fotos "Ahora mismo" (busco ahora).
+    // Estas fotos se suben con approved=0 y NO se muestran a nadie hasta que se
+    // aprueban aquí. Aprobar = visible; Rechazar = se elimina la foto. La parte
+    // automática con IA se conectará en Fase 4 (pre-filtro previo a esta cola).
     async function view_moderation_ai(container) {
+      const tok = readTok();
+      const auth = tok ? `?adminToken=${encodeURIComponent(tok)}` : "";
       DataView(container, {
-        title: "Moderación IA", subtitle: "Contenidos marcados por heurísticas y palabras", icon: "🛡️",
-        fetch: async () => (await api("/api/admin/moderation/queue")).data?.items || [],
+        title: "Fotos \u201cAhora mismo\u201d", subtitle: "Cola de aprobaci\u00f3n de fotos privadas del estado \u201cbusco ahora\u201d. No se muestran a nadie hasta aprobarlas.", icon: "\u26a1",
+        fetch: async () => (await api("/api/admin/now-photos/queue?status=pending")).data?.items || [],
         rowId: (r) => r.id,
         kpis: (rows) => [
-          { label: "Cola pendiente", value: rows.filter((r) => r.status === "pending").length, accent: "amber" },
-          { label: "Aprobadas", value: rows.filter((r) => r.status === "ok").length, accent: "green" },
-          { label: "Baneadas", value: rows.filter((r) => r.status === "banned").length, accent: "red" },
-          { label: "Total", value: rows.length, accent: "blue" },
-        ],
-        filters: [
-          { key: "status", label: "Estado", type: "select", options: [ { value: "pending", label: "Pendiente" }, { value: "ok", label: "OK" }, { value: "warned", label: "Avisado" }, { value: "banned", label: "Baneado" }, { value: "ignored", label: "Ignorado" } ] },
-          { key: "kind", label: "Tipo", type: "select", options: [ { value: "message", label: "Mensaje" }, { value: "photo", label: "Foto" }, { value: "profile", label: "Perfil" } ] },
+          { label: "Pendientes", value: rows.length, accent: "amber" },
         ],
         columns: [
           { key: "id", label: "ID", sortable: true },
-          { key: "user", label: "Usuario", render: (r) => (r.name || r.email || `#${r.user_id}`) },
-          { key: "kind", label: "Tipo" },
-          { key: "score", label: "Score", sortable: true, render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.score >= 8 ? "red" : r.score >= 4 ? "amber" : "green"); b.textContent = r.score; return b; } },
-          { key: "flags", label: "Flags", render: (r) => { const s = document.createElement("span"); s.className = "fx-muted"; s.textContent = r.flags || "—"; return s; } },
-          { key: "status", label: "Estado", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + ({ pending:"amber", ok:"ok", warned:"amber", banned:"red", ignored:"off" }[r.status]||""); b.textContent = r.status; return b; } },
+          { key: "foto", label: "Foto", render: (r) => {
+              const img = document.createElement("img");
+              img.src = r.image_url + auth; img.alt = "";
+              img.style.cssText = "width:60px;height:80px;object-fit:cover;border-radius:8px;cursor:pointer;background:#111";
+              img.onclick = () => { window.open(r.image_url + auth, "_blank"); };
+              return img;
+            } },
+          { key: "user", label: "Usuario", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.name || "")}${r.age ? ", " + r.age : ""}</div><div class="fx-muted" style="font-size:11px">#${r.user_id} \u00b7 ${escapeHtml(r.email || "")}</div>`;
+              return d;
+            } },
+          { key: "now_status_text", label: "Frase", render: (r) => {
+              const d = document.createElement("div");
+              d.style.cssText = "max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+              d.textContent = r.now_status_text || "\u2014"; d.title = r.now_status_text || "";
+              return d;
+            } },
+          { key: "city", label: "Ciudad", render: (r) => r.city || "\u2014" },
+          { key: "created_at", label: "Subida", sortable: true, render: (r) => fmtDate(r.created_at) },
         ],
         actions: [
-          { label: "OK", variant: "ghost", onClick: async (r, reload) => { await api(`/api/admin/moderation/${r.id}`, { method: "PUT", body: { status: "ok" } }); toast("OK","ok"); reload(); } },
-          { label: "Aviso", variant: "ghost", onClick: async (r, reload) => { await api(`/api/admin/moderation/${r.id}`, { method: "PUT", body: { status: "warned" } }); toast("Aviso","ok"); reload(); } },
-          { label: "Banear", variant: "danger", onClick: async (r, reload) => {
-            const ok = await confirmDialog({ title: "Banear usuario", message: `Se banea a ${r.name || r.user_id}`, danger: true, confirmLabel: "Banear" }); if (!ok) return;
-            await api(`/api/admin/moderation/${r.id}`, { method: "PUT", body: { status: "banned" } }); toast("Baneado","ok"); reload();
+          { label: "Aprobar", variant: "ghost", onClick: async (r, reload) => {
+            await api(`/api/admin/now-photos/${r.id}/approve`, { method: "POST" }); toast("Foto aprobada", "ok"); reload();
           } },
-          { label: "", icon: "&#x1f5d1;", title: "Borrar registro", variant: "danger-icon", onClick: async (r, reload) => {
-            const ok = await confirmDialog({ title: "Borrar registro", message: `#${r.id}`, danger: true, confirmLabel: "Borrar" }); if (!ok) return;
-            await api(`/api/admin/moderation/${r.id}?hard=1`, { method: "DELETE" }); toast("Borrado","ok"); reload();
+          { label: "Rechazar", variant: "danger", onClick: async (r, reload) => {
+            const ok = await confirmDialog({ title: "Rechazar foto", message: `Se eliminar\u00e1 la foto de ${r.name || ("#" + r.user_id)}. Esta acci\u00f3n no se puede deshacer.`, danger: true, confirmLabel: "Rechazar" }); if (!ok) return;
+            await api(`/api/admin/now-photos/${r.id}/reject`, { method: "POST", body: { reason: "Contenido no permitido" } }); toast("Foto rechazada", "ok"); reload();
           } },
         ],
-        bulkEndpoint: "/api/admin/moderation/bulk-delete",
       });
     }
 

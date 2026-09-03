@@ -642,6 +642,10 @@ app.use((req, res, next) => {
   // push-subscribe…) y /api/2fa/* devolvían 401 a los usuarios porque el gate
   // exigía token de admin. /api/admin/* NO pasa por aquí: sigue protegido.
   if (req.path.startsWith("/api/my/") || req.path.startsWith("/api/2fa/")) return next();
+  // V868 · Imagen "busco ahora" pública (se carga con <img src>, sin cabecera de
+  // auth). El handler SOLO devuelve la foto si está aprobada (approved=1); nunca
+  // expone fotos pendientes. Por eso es seguro dejarla pasar sin token.
+  if (req.method === "GET" && /^\/api\/now-photo\/\d+$/.test(req.path)) return next();
   return requireAdmin(req, res, next);
 });
 
@@ -1337,6 +1341,17 @@ async function migrate() {
   // actividad pasiva de "Buscan ahora" (last_active_secs): esto es voluntario.
   try { await pool.execute("ALTER TABLE users ADD COLUMN now_status_text VARCHAR(80) NULL"); } catch (e) { /* ya existe */ }
   try { await pool.execute("ALTER TABLE users ADD COLUMN now_status_until TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
+
+  // V868 · Foto "busco ahora" (opcional) asociada al estado "Ahora mismo".
+  // Se guarda en la MISMA tabla `photos` con la bandera is_now_photo=1 y
+  // approved=0 (queda OCULTA a terceros hasta que un moderador la aprueba en el
+  // panel de administración). No sustituye a la foto principal ni aparece en la
+  // galería normal del perfil. Cada usuario tiene como mucho UNA foto de este
+  // tipo. Es el mayor foco de moderación: por eso NO se muestra sin aprobar.
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN is_now_photo BOOLEAN DEFAULT FALSE"); } catch (e) { /* ya existe */ }
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN moderation_reason VARCHAR(200) NULL"); } catch (e) { /* ya existe */ }
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN reviewed_by VARCHAR(190) NULL"); } catch (e) { /* ya existe */ }
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN reviewed_at TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
 
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
@@ -3459,6 +3474,85 @@ app.get("/api/verify/id/status", wrap(async (req, res) => {
     created_at: ses.created_at,
     updated_at: ses.updated_at,
   });
+}));
+
+/* ============================================================
+   V868 · ADMIN: cola de aprobación de fotos "busco ahora"
+   ------------------------------------------------------------
+   Estas fotos se suben con approved=0 y NO se muestran a nadie hasta que un
+   moderador las revisa aquí. Circuito de moderación humana real (la parte
+   automática con IA se conectará en Fase 4 cuando haya proveedor).
+     GET  /api/admin/now-photos/queue           → cola (pendientes por defecto)
+     GET  /api/admin/now-photos/:id/image       → previsualización de la imagen
+     POST /api/admin/now-photos/:id/approve     → aprobar
+     POST /api/admin/now-photos/:id/reject      → rechazar (borra la foto)
+============================================================ */
+app.get("/api/admin/now-photos/queue", wrap(async (req, res) => {
+  const status = String(req.query.status || "pending"); // pending | approved | all
+  let cond = "p.is_now_photo=1";
+  if (status === "pending") cond += " AND p.approved=0";
+  else if (status === "approved") cond += " AND p.approved=1";
+  const limit = Math.min(500, parseInt(req.query.limit || 200, 10) || 200);
+  const [rows] = await pool.query(
+    `SELECT p.id, p.user_id, p.approved, p.moderation_reason, p.reviewed_by, p.reviewed_at, p.created_at,
+            u.name, u.email, u.age, u.city,
+            CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text
+       FROM photos p JOIN users u ON u.id = p.user_id
+      WHERE ${cond}
+      ORDER BY p.approved ASC, p.created_at DESC
+      LIMIT ?`, [limit]
+  );
+  const items = rows.map(r => ({
+    id: r.id, user_id: r.user_id, name: r.name, email: r.email, age: r.age, city: r.city,
+    now_status_text: r.now_status_text || null,
+    status: r.approved ? "approved" : "pending",
+    reason: r.moderation_reason || null,
+    reviewed_by: r.reviewed_by || null, reviewed_at: r.reviewed_at || null,
+    created_at: r.created_at,
+    image_url: `/api/admin/now-photos/${r.id}/image`,
+  }));
+  res.json({ ok: true, data: { items } });
+}));
+
+app.get("/api/admin/now-photos/:id/image", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [[p]] = await pool.query("SELECT url FROM photos WHERE id=? AND is_now_photo=1 LIMIT 1", [id]);
+  if (!p || !p.url) return res.status(404).json({ error: "not_found" });
+  const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(String(p.url));
+  if (m) {
+    res.set("Content-Type", m[1]);
+    res.set("Cache-Control", "no-store");
+    return res.send(Buffer.from(m[2], "base64"));
+  }
+  if (/^https?:\/\//i.test(String(p.url))) return res.redirect(p.url);
+  return res.status(404).json({ error: "not_found" });
+}));
+
+app.post("/api/admin/now-photos/:id/approve", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const who = (req.admin && req.admin.email) || "admin";
+  const [r] = await pool.execute(
+    "UPDATE photos SET approved=1, moderation_reason=NULL, reviewed_by=?, reviewed_at=NOW() WHERE id=? AND is_now_photo=1",
+    [String(who).slice(0, 190), id]
+  );
+  if (!r.affectedRows) return res.status(404).json({ ok: false, error: "not_found" });
+  try { await logActivity("moderation", `Foto "busco ahora" #${id} aprobada por ${who}`); } catch {}
+  res.json({ ok: true });
+}));
+
+app.post("/api/admin/now-photos/:id/reject", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const who = (req.admin && req.admin.email) || "admin";
+  const reason = String(req.body?.reason || "").slice(0, 200) || "Contenido no permitido";
+  // Rechazar = eliminar la foto (no se conserva contenido sensible rechazado).
+  const [[p]] = await pool.query("SELECT user_id FROM photos WHERE id=? AND is_now_photo=1 LIMIT 1", [id]);
+  if (!p) return res.status(404).json({ ok: false, error: "not_found" });
+  await pool.execute("DELETE FROM photos WHERE id=? AND is_now_photo=1", [id]);
+  try { await logActivity("moderation", `Foto "busco ahora" #${id} (usuario ${p.user_id}) rechazada por ${who}: ${reason}`); } catch {}
+  res.json({ ok: true, reason });
 }));
 
 /* ---- ADMIN: cola de revisión manual ------------------------ */
@@ -7283,6 +7377,7 @@ app.get("/api/discover", wrap(async (req, res) => {
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
+            (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
@@ -7311,8 +7406,8 @@ app.get("/api/discover", wrap(async (req, res) => {
     r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
-    r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)) } : null);
-    delete r.now_status_text; delete r.now_status_expires_in;
+    r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
+    delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
@@ -7457,6 +7552,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
+            (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
@@ -7487,8 +7583,8 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
-    r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)) } : null);
-    delete r.now_status_text; delete r.now_status_expires_in;
+    r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
+    delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
@@ -7567,6 +7663,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
+            (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
             (gps.lat IS NOT NULL) AS gps_ok,
             ${distExpr} AS distance
@@ -7622,7 +7719,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       last_active_secs: (r.last_active_secs == null ? null : Number(r.last_active_secs)),
       // V866 · Estado "Ahora mismo" (frase declarada). Solo llega si no ha
       // caducado (el SELECT ya lo anula cuando now_status_until <= NOW()).
-      now_status: (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)) } : null),
+      now_status: (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null),
       lat: Number((lat + jLat).toFixed(5)),
       lng: Number((lng + jLng).toFixed(5)),
     });
@@ -8047,8 +8144,9 @@ function validPhotoData(s) {
 async function syncPrimaryPhoto(uid) {
   // Deja users.photo_url = la foto principal (o la más antigua si no hay flag).
   // V725 · Usa el recorte 3:4 (crop_url) si existe; si no, la foto completa.
+  // V868 · La foto "busco ahora" (is_now_photo) NUNCA es la foto principal.
   const [[p]] = await pool.query(
-    "SELECT url, crop_url FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC LIMIT 1", [uid]
+    "SELECT url, crop_url FROM photos WHERE user_id=? AND is_now_photo=0 ORDER BY is_primary DESC, id ASC LIMIT 1", [uid]
   );
   const chosen = p ? (p.crop_url || p.url) : null;
   await pool.execute("UPDATE users SET photo_url=? WHERE id=?", [chosen, uid]);
@@ -8058,8 +8156,9 @@ async function syncPrimaryPhoto(uid) {
 app.get("/api/my/photos", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
+  // V868 · La galería normal EXCLUYE la foto "busco ahora" (is_now_photo).
   const [rows] = await pool.query(
-    "SELECT id, url, crop_url, is_primary FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC", [me]
+    "SELECT id, url, crop_url, is_primary FROM photos WHERE user_id=? AND is_now_photo=0 ORDER BY is_primary DESC, id ASC", [me]
   );
   res.json({ ok: true, items: rows });
 }));
@@ -8069,7 +8168,8 @@ app.post("/api/my/photos", wrap(async (req, res) => {
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const data = req.body?.data;
   if (!validPhotoData(data)) return res.status(400).json({ ok: false, error: "invalid_image" });
-  const [[{ c }]] = await pool.query("SELECT COUNT(*) c FROM photos WHERE user_id=?", [me]);
+  // V868 · La foto "busco ahora" no cuenta para el máximo de la galería normal.
+  const [[{ c }]] = await pool.query("SELECT COUNT(*) c FROM photos WHERE user_id=? AND is_now_photo=0", [me]);
   if (c >= MAX_MY_PHOTOS) return res.status(400).json({ ok: false, error: "max_photos", max: MAX_MY_PHOTOS });
   const isPrimary = c === 0 ? 1 : 0; // la primera foto es la principal
   const [ins] = await pool.execute(
@@ -8091,7 +8191,7 @@ app.delete("/api/my/photos/:id", wrap(async (req, res) => {
   );
   if (!p) {
     const [[first]] = await pool.query(
-      "SELECT id FROM photos WHERE user_id=? ORDER BY id ASC LIMIT 1", [me]
+      "SELECT id FROM photos WHERE user_id=? AND is_now_photo=0 ORDER BY id ASC LIMIT 1", [me]
     );
     if (first) await pool.execute("UPDATE photos SET is_primary=1 WHERE id=?", [first.id]);
   }
@@ -8119,6 +8219,74 @@ app.post("/api/my/photos/:id/primary", wrap(async (req, res) => {
   await pool.execute("UPDATE photos SET is_primary=1, crop_url=? WHERE id=? AND user_id=?", [cropVal, id, me]);
   const url = await syncPrimaryPhoto(me);
   res.json({ ok: true, photo_url: url });
+}));
+
+/* ============================================================
+   V868 · Foto "busco ahora" (opcional, asociada al estado "Ahora mismo")
+   ------------------------------------------------------------
+   El usuario puede adjuntar UNA foto privada a su estado. Se guarda en la
+   tabla `photos` con is_now_photo=1 y approved=0 (queda OCULTA a terceros
+   hasta que un moderador la aprueba en el panel). No aparece en la galería
+   normal ni cuenta para el máximo de fotos. Al subir una nueva, se sustituye
+   la anterior (siempre como máximo una por usuario) y vuelve a quedar
+   pendiente de aprobación.
+     GET    /api/my/now-photo        → estado de la foto now del propio usuario
+     POST   /api/my/now-photo        → sube/reemplaza (queda pendiente)
+     DELETE /api/my/now-photo        → la elimina
+     GET    /api/now-photo/:userId   → sirve la imagen SOLO si está aprobada
+============================================================ */
+app.get("/api/my/now-photo", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[p]] = await pool.query(
+    "SELECT id, approved, moderation_reason, reviewed_at FROM photos WHERE user_id=? AND is_now_photo=1 LIMIT 1", [me]
+  );
+  if (!p) return res.json({ ok: true, photo: null });
+  res.json({ ok: true, photo: { id: p.id, approved: !!p.approved, pending: !p.approved, reason: p.moderation_reason || null, reviewed_at: p.reviewed_at || null } });
+}));
+
+app.post("/api/my/now-photo", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const data = req.body?.data;
+  if (!validPhotoData(data)) return res.status(400).json({ ok: false, error: "invalid_image" });
+  // Solo una foto now por usuario: se borra la anterior y se inserta la nueva
+  // como PENDIENTE (approved=0). Nunca es principal ni entra en la galería.
+  await pool.execute("DELETE FROM photos WHERE user_id=? AND is_now_photo=1", [me]);
+  const [ins] = await pool.execute(
+    "INSERT INTO photos (user_id, url, is_primary, approved, is_now_photo) VALUES (?,?,0,0,1)", [me, data]
+  );
+  res.json({ ok: true, id: ins.insertId, pending: true });
+}));
+
+app.delete("/api/my/now-photo", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [r] = await pool.execute("DELETE FROM photos WHERE user_id=? AND is_now_photo=1", [me]);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+// Sirve la imagen de la foto "busco ahora" de un usuario. SOLO si está
+// aprobada por moderación (approved=1). Si no existe o está pendiente/rechazada,
+// devuelve 404 para que el cliente no la muestre. La imagen se guarda como
+// data URL en la BD; aquí la decodificamos y la servimos como binario.
+app.get("/api/now-photo/:userId", wrap(async (req, res) => {
+  const uid = parseInt(req.params.userId, 10);
+  if (!uid) return res.status(400).json({ error: "bad_id" });
+  const [[p]] = await pool.query(
+    "SELECT url FROM photos WHERE user_id=? AND is_now_photo=1 AND approved=1 LIMIT 1", [uid]
+  );
+  if (!p || !p.url) return res.status(404).json({ error: "not_found" });
+  const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(String(p.url));
+  if (m) {
+    const buf = Buffer.from(m[2], "base64");
+    res.set("Content-Type", m[1]);
+    res.set("Cache-Control", "private, max-age=60");
+    return res.send(buf);
+  }
+  // Compatibilidad: si por lo que fuera se guardó una URL http(s), redirigimos.
+  if (/^https?:\/\//i.test(String(p.url))) return res.redirect(p.url);
+  return res.status(404).json({ error: "not_found" });
 }));
 
 /* ============================================================
@@ -8218,12 +8386,16 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in, (SELECT approved FROM photos WHERE user_id=users.id AND is_now_photo=1 LIMIT 1) AS now_photo_approved FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   // V866 · Estado "Ahora mismo" propio (para que el editor lo muestre).
+  // V868 · now_photo: estado de la foto "busco ahora" del propio usuario, para
+  // que el editor sepa si tiene una y si está aprobada o pendiente de revisión.
+  //   now_photo_approved: 1=aprobada, 0=pendiente, null=no tiene foto now.
   u.now_status = (u.now_status_text ? { text: u.now_status_text, expires_in: (u.now_status_expires_in == null ? null : Number(u.now_status_expires_in)) } : null);
-  delete u.now_status_text; delete u.now_status_expires_in;
+  u.now_photo = (u.now_photo_approved == null ? null : { approved: !!u.now_photo_approved, pending: !u.now_photo_approved });
+  delete u.now_status_text; delete u.now_status_expires_in; delete u.now_photo_approved;
   let interests = [];
   try { interests = u.interests ? JSON.parse(u.interests) : []; } catch { interests = []; }
   // V776 · prompts (preguntas de perfil / rompehielos): JSON array de {q,a}.

@@ -2152,7 +2152,7 @@ function mapApiUser(row) {
     last_active_secs: (row.last_active_secs == null ? null : Number(row.last_active_secs)),
     // V866 · Estado "Ahora mismo": frase declarada y vigente {text,expires_in}
     // o null si no tiene o ya caducó. El backend nunca envía estados caducados.
-    now_status: (row.now_status && row.now_status.text ? { text: String(row.now_status.text), expires_in: (row.now_status.expires_in == null ? null : Number(row.now_status.expires_in)) } : null),
+    now_status: (row.now_status && row.now_status.text ? { text: String(row.now_status.text), expires_in: (row.now_status.expires_in == null ? null : Number(row.now_status.expires_in)), has_photo: !!row.now_status.has_photo } : null),
     height: row.height || null,
     weight: row.weight || null,
     // V776 · Campos opcionales de estilo de vida + etnia + prompts (rompehielos).
@@ -2281,6 +2281,36 @@ const datingApi = {
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
+  },
+  // V868 · Foto "busco ahora": estado / subir(reemplazar) / borrar. La foto
+  // queda PENDIENTE de aprobación (no se muestra a nadie hasta que un moderador
+  // la aprueba). getNowPhoto devuelve { ok, photo:{approved,pending,reason} } o
+  // photo:null si no hay.
+  async getNowPhoto() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/now-photo", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async setNowPhoto(dataUrl) {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const r = await fetch("/api/my/now-photo", { method: "POST", headers: this.headers(), body: JSON.stringify({ data: dataUrl }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error" };
+      return data;
+    } catch { return { error: "network" }; }
+  },
+  async deleteNowPhoto() {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const r = await fetch("/api/my/now-photo", { method: "DELETE", headers: this.headers() });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error" };
+      return data;
+    } catch { return { error: "network" }; }
   },
   // ---- Denunciar / Bloquear (función 3) ----
   async block(targetId, reason) {
@@ -8055,18 +8085,31 @@ function screenNearby(root) {
 // ponerlo/cambiarlo/quitarlo. Consulta /api/my/profile para saber el actual.
 function buildNowBar() {
   const wrap = el("div", { class: "now-bar" });
-  function paint(status) {
+  // V868 · Guarda el estado de la foto now del usuario (aprobada/pendiente/none)
+  // para que el editor lo muestre y lo pueda cambiar.
+  let nowPhotoState = null; // {approved,pending} o null
+  let lastStatus = null;    // último estado pintado (para refrescos de foto)
+  // V868 · paint(status, photoState): si status===undefined mantiene el último
+  // (útil al cambiar solo la foto); si photoState!==undefined actualiza la foto.
+  function paint(status, photoState) {
+    if (status !== undefined) lastStatus = status;
+    if (photoState !== undefined) nowPhotoState = photoState;
+    status = lastStatus;
     wrap.innerHTML = "";
     const bolt = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>`;
     if (status && status.text) {
       const mins = status.expires_in != null ? Math.max(0, Math.round(status.expires_in / 60)) : null;
+      // Sub-texto: caducidad + estado de la foto (pendiente/aprobada) si tiene.
+      let sub = mins != null ? `Activo · caduca en ${mins} min` : "Activo";
+      if (nowPhotoState && nowPhotoState.pending) sub += " · foto en revisión";
+      else if (nowPhotoState && nowPhotoState.approved) sub += " · con foto";
       wrap.appendChild(el("div", { class: "now-bar-inner active" }, [
         el("span", { class: "now-bolt", html: bolt }),
         el("div", { class: "now-bar-body" }, [
           el("div", { class: "now-bar-text" }, status.text),
-          el("div", { class: "now-bar-sub" }, mins != null ? `Activo · caduca en ${mins} min` : "Activo"),
+          el("div", { class: "now-bar-sub" }, sub),
         ]),
-        el("button", { class: "now-bar-edit", type: "button", title: "Cambiar", onclick: () => openNowStatusEditor(status.text, paint) }, "Cambiar"),
+        el("button", { class: "now-bar-edit", type: "button", title: "Cambiar", onclick: () => openNowStatusEditor(status.text, nowPhotoState, paint) }, "Cambiar"),
         el("button", { class: "now-bar-clear", type: "button", title: "Quitar", onclick: async () => {
           const r = await datingApi.setNowStatus(null);
           if (r && r.ok) { toast("Estado quitado"); paint(null); }
@@ -8079,18 +8122,52 @@ function buildNowBar() {
           el("div", { class: "now-bar-text" }, "¿Buscas algo ahora mismo?"),
           el("div", { class: "now-bar-sub" }, "Escribe una frase corta. Aparecerás destacado/a 1 hora."),
         ]),
-        el("button", { class: "now-bar-set", type: "button", onclick: () => openNowStatusEditor("", paint) }, "Activar"),
+        el("button", { class: "now-bar-set", type: "button", onclick: () => openNowStatusEditor("", nowPhotoState, paint) }, "Activar"),
       ]));
     }
   }
   paint(null);
-  // Carga el estado real del backend (por si ya tenía uno vigente).
-  (async () => { try { const p = await datingApi.myProfile(); if (p && p.ok && p.profile) paint(p.profile.now_status || null); } catch {} })();
+  // Carga el estado real del backend (por si ya tenía uno vigente) + foto now.
+  (async () => {
+    try {
+      const p = await datingApi.myProfile();
+      if (p && p.ok && p.profile) { nowPhotoState = p.profile.now_photo || null; paint(p.profile.now_status || null); }
+    } catch {}
+  })();
   return wrap;
 }
 
-// Editor (modal) para escribir/cambiar la frase del estado. onSaved(status).
-function openNowStatusEditor(current, onSaved) {
+// V868 · Lee un fichero de imagen elegido por el usuario y lo devuelve como
+// data URL (base64), redimensionado a máx 1080px para no exceder el límite del
+// backend (7 MB). Devuelve null si no es imagen o falla.
+function readImageAsDataUrl(file, maxSide = 1080, quality = 0.85) {
+  return new Promise((resolve) => {
+    if (!file || !/^image\//.test(file.type)) return resolve(null);
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          let { width: w, height: h } = img;
+          if (Math.max(w, h) > maxSide) { const s = maxSide / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+          const c = document.createElement("canvas"); c.width = w; c.height = h;
+          c.getContext("2d").drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL("image/jpeg", quality));
+        } catch { resolve(fr.result); }
+      };
+      img.onerror = () => resolve(fr.result);
+      img.src = fr.result;
+    };
+    fr.onerror = () => resolve(null);
+    fr.readAsDataURL(file);
+  });
+}
+
+// Editor (modal) para escribir/cambiar la frase del estado + gestionar la foto
+// "busco ahora" (opcional, pendiente de aprobación). onSaved(status, photoState):
+// devuelve el estado guardado y el nuevo estado de la foto (o undefined si no
+// cambió) para que buildNowBar repinte.
+function openNowStatusEditor(current, nowPhotoState, onSaved) {
   const input = el("input", { class: "now-editor-input", type: "text", maxlength: "60",
     placeholder: "Ej: Tomando algo en el centro, ¿te apuntas?", value: current || "", enterkeyhint: "done" });
   const hint = el("div", { class: "now-editor-hint" }, "Máx. 60 caracteres. Sin teléfonos, enlaces ni redes.");
@@ -8098,11 +8175,64 @@ function openNowStatusEditor(current, onSaved) {
   const suggestions = ["Tomando algo por el centro", "Me apetece cine esta tarde", "Paseo y charla ahora", "Libre esta noche", "Café en un rato"];
   const chips = el("div", { class: "now-editor-chips" }, suggestions.map(s =>
     el("button", { class: "now-editor-chip", type: "button", onclick: () => { input.value = s; input.focus(); } }, s)));
+
+  // V868 · Estado local de la foto now (se refresca al subir/borrar).
+  let photoState = nowPhotoState || null; // {approved,pending} o null
+  const photoSection = el("div", { class: "now-editor-photo" });
+  const fileInput = el("input", { type: "file", accept: "image/*", style: "display:none" });
+  async function refreshPhotoFromServer() {
+    try {
+      const r = await datingApi.getNowPhoto();
+      photoState = (r && r.ok) ? (r.photo || null) : photoState;
+    } catch {}
+    paintPhoto();
+  }
+  function paintPhoto() {
+    photoSection.innerHTML = "";
+    const title = el("div", { class: "now-editor-photo-title" }, "Foto \u201cbusco ahora\u201d (opcional)");
+    let statusLine, actionBtn;
+    if (photoState && photoState.pending) {
+      statusLine = el("div", { class: "now-editor-photo-state pending" }, "\u23F3 En revisión — solo se mostrará cuando el equipo la apruebe.");
+    } else if (photoState && photoState.approved) {
+      statusLine = el("div", { class: "now-editor-photo-state ok" }, "\u2705 Aprobada y visible en tu destacado.");
+    } else if (photoState && photoState.reason) {
+      statusLine = el("div", { class: "now-editor-photo-state rej" }, "Rechazada: " + photoState.reason);
+    } else {
+      statusLine = el("div", { class: "now-editor-photo-hint" }, "Añade una foto que acompañe a tu estado. Pasa una revisión antes de mostrarse.");
+    }
+    const addLabel = (photoState && (photoState.pending || photoState.approved)) ? "Cambiar foto" : "Añadir foto";
+    actionBtn = el("button", { class: "btn btn-outline btn-block now-editor-photo-add", type: "button",
+      onclick: () => fileInput.click() }, addLabel);
+    const rows = [title, statusLine, actionBtn];
+    if (photoState && (photoState.pending || photoState.approved || photoState.reason)) {
+      rows.push(el("button", { class: "now-editor-photo-remove", type: "button", onclick: async () => {
+        const r = await datingApi.deleteNowPhoto();
+        if (r && r.ok) { photoState = null; toast("Foto quitada"); paintPhoto(); }
+        else toast("No se pudo quitar la foto");
+      } }, "Quitar foto"));
+    }
+    photoSection.append(...rows);
+  }
+  fileInput.addEventListener("change", async () => {
+    const f = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (!f) return;
+    const dataUrl = await readImageAsDataUrl(f);
+    if (!dataUrl) { toast("No es una imagen válida"); return; }
+    toast("Subiendo foto…");
+    const r = await datingApi.setNowPhoto(dataUrl);
+    if (r && r.ok) { photoState = { approved: false, pending: true }; toast("Foto enviada a revisión"); paintPhoto(); }
+    else { toast((r && r.error === "too_large") ? "La imagen es demasiado grande" : "No se pudo subir la foto"); }
+  });
+  paintPhoto();
+  // Refresca el estado real de la foto desde el backend al abrir.
+  refreshPhotoFromServer();
+
   async function save() {
     const text = input.value.trim();
     if (!text) { err.hidden = false; err.textContent = "Escribe una frase para tu estado."; return; }
     const r = await datingApi.setNowStatus(text);
-    if (r && r.ok) { toast("¡Estado activado! Visible 1 hora"); try { modal.close(); } catch {} if (onSaved) onSaved(r.status); }
+    if (r && r.ok) { toast("¡Estado activado! Visible 1 hora"); try { modal.close(); } catch {} if (onSaved) onSaved(r.status, photoState); }
     else { err.hidden = false; err.textContent = (r && r.message) || "No se pudo guardar el estado."; }
   }
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
@@ -8110,6 +8240,7 @@ function openNowStatusEditor(current, onSaved) {
     el("div", { class: "now-editor-title" }, "Ahora mismo"),
     el("div", { class: "now-editor-lead" }, "Cuenta en una frase qué te apetece ahora. Aparecerás destacado/a en el mapa y en Buscar durante 1 hora."),
     input, hint, err, chips,
+    photoSection, fileInput,
     el("div", { class: "sheet-actions" }, [
       el("button", { class: "btn btn-brand btn-block", type: "button", onclick: save }, "Activar 1 hora"),
       el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
@@ -12027,6 +12158,17 @@ function openMapFilters(mf, onApply) {
 }
 
 /* ---- Profile detail (from discover card) ---- */
+// V868 · Visor de foto a pantalla completa (para la foto "busco ahora"). Overlay
+// simple con la imagen centrada; se cierra al tocar fuera o el botón cerrar.
+function openPhotoViewer(src) {
+  const overlay = el("div", { class: "photo-viewer" }, [
+    el("button", { class: "photo-viewer-close", "aria-label": "Cerrar", html: `<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>` }),
+    el("img", { class: "photo-viewer-img", src, alt: "" }),
+  ]);
+  const close = () => { try { overlay.remove(); } catch {} };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay || e.target.closest(".photo-viewer-close")) close(); });
+  document.body.appendChild(overlay);
+}
 function openProfileDetail(u, opts = {}) {
   document.body.classList.add("profile-open");
   render((root) => screenProfileDetail(root, u, opts));
@@ -12093,10 +12235,30 @@ function screenProfileDetail(root, u, opts = {}) {
   // usuario tiene un estado declarado y vigente.
   const pdNowText = (u.now_status && u.now_status.text) ? String(u.now_status.text) : "";
   if (pdNowText) {
-    gallery.appendChild(el("div", { class: "pd-now-badge" }, [
+    const badgeKids = [
       el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
       el("span", { class: "pd-now-text" }, pdNowText),
-    ]));
+    ];
+    // V868 · Miniatura de la foto "busco ahora" pegada a la frase (como Grindr).
+    // Solo si el usuario tiene una foto now APROBADA (has_photo). Va difuminada
+    // por defecto; se revela al tocar. La imagen se sirve por endpoint (solo si
+    // está aprobada); si no carga, se retira la miniatura.
+    if (u.now_status.has_photo && u.id != null && typeof u.id === "number") {
+      const thumb = el("div", { class: "pd-now-thumb blurred" });
+      const img = el("img", { class: "pd-now-thumb-img", alt: "", src: `/api/now-photo/${u.id}` });
+      img.addEventListener("error", () => { try { thumb.remove(); } catch {} });
+      const lock = el("span", { class: "pd-now-thumb-lock", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` });
+      thumb.appendChild(img); thumb.appendChild(lock);
+      thumb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        // Primer toque: quita el blur. Segundo toque (ya nítida): abre a pantalla completa.
+        if (thumb.classList.contains("blurred")) { thumb.classList.remove("blurred"); }
+        else { openPhotoViewer(`/api/now-photo/${u.id}`); }
+      });
+      badgeKids.push(thumb);
+    }
+    const badge = el("div", { class: "pd-now-badge" + (u.now_status.has_photo ? " has-thumb" : "") }, badgeKids);
+    gallery.appendChild(badge);
   }
   // Al pulsar el aviso, baja suavemente hasta la ficha (nombre/detalles).
   scrollHint.addEventListener("click", () => {

@@ -9722,6 +9722,53 @@ body.map-open { overflow: hidden; }
 }
 .pd-now-tag .now-bolt { color: #f59e0b; }
 
+/* V868 · Miniatura de la foto "busco ahora" pegada a la frase del badge (como
+   Grindr). Va difuminada por defecto (blur + candado); al tocar se revela y un
+   segundo toque la abre a pantalla completa. */
+.pd-now-badge.has-thumb { padding-right: 6px; }
+.pd-now-thumb {
+  position: relative; flex: 0 0 auto; width: 40px; height: 52px;
+  border-radius: 9px; overflow: hidden; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.35); background: #1a1710;
+}
+.pd-now-thumb-img { width: 100%; height: 100%; object-fit: cover; display: block; transition: filter .2s ease; }
+.pd-now-thumb.blurred .pd-now-thumb-img { filter: blur(9px) brightness(.85); }
+.pd-now-thumb-lock {
+  position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+  color: #fff; background: rgba(0,0,0,.25); pointer-events: none;
+}
+.pd-now-thumb.blurred .pd-now-thumb-lock { display: flex; }
+
+/* V868 · Visor de foto a pantalla completa (al tocar la miniatura revelada). */
+.photo-viewer {
+  position: fixed; inset: 0; z-index: 4000; display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,.92); padding: 16px; animation: pvFade .18s ease;
+}
+@keyframes pvFade { from { opacity: 0; } to { opacity: 1; } }
+.photo-viewer-img { max-width: 100%; max-height: 100%; border-radius: 12px; object-fit: contain; }
+.photo-viewer-close {
+  position: absolute; top: 14px; right: 14px; width: 42px; height: 42px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff; cursor: pointer;
+  background: rgba(255,255,255,.14); border: none;
+}
+.photo-viewer-close:hover { background: rgba(255,255,255,.24); }
+
+/* V868 · Sección de foto "busco ahora" dentro del editor de estado. */
+.now-editor-photo {
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border, rgba(128,128,128,.2));
+  display: flex; flex-direction: column; gap: 8px;
+}
+.now-editor-photo-title { font-size: 14px; font-weight: 700; color: var(--text, #111); }
+.now-editor-photo-hint { font-size: 12px; color: var(--muted, #888); }
+.now-editor-photo-state { font-size: 13px; font-weight: 600; }
+.now-editor-photo-state.pending { color: #f59e0b; }
+.now-editor-photo-state.ok { color: #16a34a; }
+.now-editor-photo-state.rej { color: #dc2626; }
+.now-editor-photo-remove {
+  align-self: flex-start; background: none; border: none; padding: 2px 0; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: #dc2626; text-decoration: underline;
+}
+
 /* Lienzo del mapa.
    V767 · position:relative + z-index:0 CREA un contexto de apilado propio, de
    forma que los paneles/controles internos de Leaflet (z-index 200-1000) quedan
