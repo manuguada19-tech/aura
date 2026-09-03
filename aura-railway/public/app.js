@@ -8079,6 +8079,12 @@ async function openNearbyMap() {
   // estuviera lejos. El backend filtra distance <= radius_km y el usuario de
   // prueba se filtra igual en el cliente.
   const NEARBY_RADIUS_KM = 5;
+  // V850 · La cuenta de PRUEBA (demo) solo cuenta como "en esta zona" si el pin
+  // está MUY cerca de ella (<1 km). Antes usaba el radio de 5 km, así que salía
+  // aunque el pin estuviera en tu ubicación (a ~1,5 km de su punto) y parecía que
+  // había alguien al lado. Ahora, con el pin en tu casa, NO aparece nadie: hay que
+  // acercar el pin a su punto para verla (sigue disponible para hacer pruebas).
+  const NEARBY_TEST_KM = 1;
   const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: NEARBY_RADIUS_KM, showTest: true };
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
@@ -8148,11 +8154,22 @@ async function openNearbyMap() {
   const searchGo = el("button", { class: "map-search-go", type: "button", "aria-label": "Buscar",
     html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>` });
   const searchBar = el("div", { class: "map-searchbar" }, [ searchInput, searchGo ]);
-  overlay.appendChild(searchBar);
+  // V850 · El buscador de ciudad ya NO flota sobre el mapa (antes lo tapaba):
+  // va DENTRO de la barra superior, en su propia fila, justo encima del mapa.
+  // Así el lienzo del mapa empieza limpio debajo, sin nada superpuesto.
+  filterbar.appendChild(searchBar);
   // V771 · Lista de sugerencias con autorrelleno (ciudades, provincias, centros
   // comerciales y puntos de interés). Se rellena mientras el usuario escribe.
   const searchSuggest = el("div", { class: "map-search-suggest", hidden: true });
   overlay.appendChild(searchSuggest);
+  // V850 · Ancla el desplegable de sugerencias justo debajo del buscador (que
+  // ahora está en la barra superior, no flotando): su posición ya no es fija.
+  function positionSuggest() {
+    try {
+      const r = searchBar.getBoundingClientRect();
+      if (r.height) { searchSuggest.style.top = Math.round(r.bottom + 6) + "px"; }
+    } catch {}
+  }
 
   // Botón flotante "mi ubicación"
   const locateBtn = el("button", { class: "map-locate", type: "button", "aria-label": "Centrar en mi ubicación",
@@ -8350,8 +8367,11 @@ async function openNearbyMap() {
       let inZone = true;
       try {
         // V840 · La zona la define el PIN de búsqueda, no el centro del mapa.
+        // V850 · La cuenta de prueba usa un umbral CORTO propio (NEARBY_TEST_KM):
+        // solo se lista si el pin está a <1 km de su punto. Con el pin en tu
+        // ubicación (a ~1,5 km) NO aparece; hay que acercar el pin para verla.
         const dkm = haversineKm(searchLatLng.lat, searchLatLng.lng, testUser.lat, testUser.lng);
-        inZone = Number.isFinite(dkm) && dkm <= mapFilters.radiusKm;
+        inZone = Number.isFinite(dkm) && dkm <= NEARBY_TEST_KM;
         // V849 · FIABILIDAD: la distancia que se muestra en la tarjeta del usuario
         // de prueba es respecto al PIN (como los usuarios reales, que el backend
         // calcula desde el punto buscado), no respecto a tu ubicación fija. Así
@@ -8397,7 +8417,18 @@ async function openNearbyMap() {
   function peopleCard(u) {
     const isTest = !!u._test;
     const li = locDistanceInfo(u);
-    const meta = [u.city || "", (li.text || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
+    // V850 · FIABILIDAD (estilo Grindr): si el pin NO está en tu ubicación
+    // (>=1 km), la distancia se dice EXPLÍCITAMENTE "a N km del pin" en la propia
+    // tarjeta, no solo en el subtítulo del panel (que podía pasar desapercibido).
+    // Así "N km" nunca se confunde con "a N km de ti".
+    let pinAway = false;
+    try {
+      const dHome = haversineKm(searchLatLng.lat, searchLatLng.lng, myLocation.lat, myLocation.lng);
+      pinAway = Number.isFinite(dHome) && dHome >= 1;
+    } catch {}
+    let distTxt = li.text;
+    if (pinAway && distTxt && !li.off) distTxt = "a " + distTxt + " del pin";
+    const meta = [u.city || "", (distTxt || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
     const isFav = !isTest && state.favorites && state.favorites.has(u.id);
     const card = el("div", { class: "result-card" + (isTest ? " test" : ""),
       style: `background-image:url('${u.photo || ""}')` }, [
@@ -8693,6 +8724,7 @@ async function openNearbyMap() {
       row.addEventListener("click", () => { goToPlace(lat, lng, isPoi ? 15 : 12); });
       searchSuggest.appendChild(row);
     });
+    positionSuggest();
     searchSuggest.hidden = false;
   }
 
