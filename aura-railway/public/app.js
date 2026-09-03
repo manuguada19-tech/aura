@@ -16028,15 +16028,30 @@ async function boot() {
           state.theme = data.theme;
           document.documentElement.dataset.theme = data.theme;
           try { paintThemeBackground(); } catch {}
-          try { applyDesign(); } catch {}
+        }
+        // Cambios de diseño en vivo desde el editor del admin (pestaña Diseño).
+        // `data.design` es un mapa { "content.design.KEY": valor } con TODOS los
+        // valores actuales del editor (incluidos los aún sin guardar). Los
+        // fusionamos en `content` para que T()/applyDesign() lean lo nuevo.
+        if (data.design && typeof data.design === "object") {
+          try { Object.assign(content, data.design); } catch {}
+        }
+        // Cambios de textos en vivo (por si el admin los empuja igual que el diseño).
+        if (data.content && typeof data.content === "object") {
+          try { Object.assign(content, data.content); } catch {}
+        }
+        if (typeof data.screen === "string") {
+          // Cambiar de pantalla: render() reaplica diseño y textos sobre los
+          // nodos recién creados.
+          try { renderPreviewScreen(data.screen); } catch {}
+        } else {
+          // Sin cambio de pantalla: reaplicamos tema/diseño/textos en vivo sobre
+          // la pantalla ya montada (sin re-render, para que no parpadee).
           try {
             const heart = document.querySelector(".welcome-heart");
             if (heart && typeof buildLogoInnerHTML === "function") heart.innerHTML = buildLogoInnerHTML();
-            if (typeof applyContent === "function") applyContent();
           } catch {}
-        }
-        if (typeof data.screen === "string") {
-          try { renderPreviewScreen(data.screen); } catch {}
+          try { applyContent(); } catch { try { applyDesign(); } catch {} }
         }
       });
     } catch {}
@@ -16046,6 +16061,28 @@ async function boot() {
     try { const sp = document.getElementById("auraSplash"); if (sp) sp.remove(); } catch {}
     // Renderizador central para vistas previas del admin.
     // Acepta nombres de sección tanto de Diseño como de Textos.
+    // Siembra una sesión mínima de demo para que las pantallas internas
+    // (Descubrir, Likes, Chats, Perfil, menú inferior) se puedan pintar en la
+    // vista previa del admin sin necesidad de login real. Los datos demo los
+    // generan las propias pantallas cuando isPreviewMode() es true.
+    function seedPreviewSession() {
+      try {
+        state.zone = state.zone || "hetero";
+        if (!state.user || !state.user.id) {
+          const demo = (typeof generateUsers === "function") ? (generateUsers(1, { zone: state.zone })[0] || {}) : {};
+          state.user = {
+            id: "preview",
+            name: demo.name || "Alex",
+            email: "demo@aura.app",
+            photo: demo.photo || "https://i.pravatar.cc/300?img=32",
+            plan: "free",
+            verified: true,
+          };
+        }
+        tabbar.hidden = false;
+        document.body.classList.add("app-open");
+      } catch {}
+    }
     function renderPreviewScreen(name) {
       const n = String(name || "").toLowerCase();
       // Preset básico para que las pantallas de registro no aparezcan vacías
@@ -16053,6 +16090,19 @@ async function boot() {
         state.registration = state.registration || {};
         state.registration.email = state.registration.email || "";
       } catch {}
+      // Pantallas internas de la app (Diseño usa estos nombres de sección).
+      if ((n === "discover" || n === "global" || n === "tabbar") && typeof screenDiscover === "function") {
+        try { seedPreviewSession(); render(screenDiscover); return; } catch {}
+      }
+      if (n === "likes" && typeof screenLikes === "function") {
+        try { seedPreviewSession(); render(screenLikes); return; } catch {}
+      }
+      if (n === "chats" && typeof screenChats === "function") {
+        try { seedPreviewSession(); render(screenChats); return; } catch {}
+      }
+      if (n === "profile" && typeof screenMe === "function") {
+        try { seedPreviewSession(); render(screenMe); return; } catch {}
+      }
       if (n === "beta") {
         // En modo vista previa NO pasamos email demo: así el input muestra
         // exactamente lo que el admin haya configurado en

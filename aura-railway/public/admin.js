@@ -10233,6 +10233,23 @@ async function viewDesign(root) {
 function renderDesignPreview(container, d, T2, section, opts) {
   opts = opts || {};
   const theme = (opts.theme === "light" ? "light" : "dark");
+
+  // Instantánea del diseño actual como mapa content.design.* (incluye valores
+  // AÚN SIN GUARDAR del editor) para empujarlo al iframe de vista previa.
+  const designPayload = {};
+  try { Object.keys(d).forEach(k => { designPayload["content.design." + k] = d[k]; }); } catch (e) {}
+
+  // Reutiliza el iframe existente si NO cambió la sección ni el tema: así los
+  // cambios de color/tipografía se reflejan al instante (postMessage) sin
+  // recargar (evita parpadeo). Debe ir ANTES de limpiar el contenedor.
+  {
+    const prev = container.__cpDesignPreview;
+    if (prev && prev.iframe && prev.iframe.isConnected && prev.section === section && prev.theme === theme) {
+      try { prev.iframe.contentWindow.postMessage({ __auraPreview: true, design: designPayload }, "*"); } catch (e) {}
+      return;
+    }
+  }
+
   container.innerHTML = "";
 
   // === Cabecera con toggle Claro/Oscuro (siempre visible) ===
@@ -10255,35 +10272,61 @@ function renderDesignPreview(container, d, T2, section, opts) {
   header.appendChild(themeToggle);
   container.appendChild(header);
 
-  // === Para welcome y beta, iframe de la app real ===
-  if (section === "welcome" || section === "beta") {
+  // === TODAS las secciones usan el iframe de la app real (fidelidad 100%) ===
+  // Antes, solo welcome/beta usaban el iframe y el resto (Descubrir, Buscar,
+  // Likes, Chats, Perfil, Menú inferior) se pintaban con mockups a mano que
+  // salían vacíos/rotos. Ahora cada sección embebe la app real en modo
+  // ?preview= y le empuja los cambios de diseño EN VIVO por postMessage, sin
+  // recargar el iframe en cada tecla.
+  {
+    // Sección de Diseño -> nombre de pantalla del modo ?preview= de la app.
+    const PREVIEW_NAME = {
+      welcome: "welcome", beta: "beta",
+      global: "discover", discover: "discover",
+      search: "search", likes: "likes", chats: "chats",
+      profile: "profile", tabbar: "discover",
+    };
+    const previewName = PREVIEW_NAME[section] || "welcome";
+    const labelMap = {
+      welcome: "Bienvenida", beta: "Pruebas privadas (beta)",
+      global: "Descubrir (vista global)", discover: "Descubrir",
+      search: "Buscar", likes: "Likes", chats: "Chats",
+      profile: "Perfil", tabbar: "Menú inferior",
+    };
+
     const wrap = el("div", { class: "cp-wrap" });
-    wrap.appendChild(el("div", { class: "cp-label" },
-      "Vista previa en vivo — " + (section === "welcome" ? "Bienvenida" : "Pruebas privadas (beta)")
-    ));
+    wrap.appendChild(el("div", { class: "cp-label" }, "Vista previa en vivo — " + (labelMap[section] || section)));
     const phoneFrame = el("div", {
       class: "cp-phone-real",
       style: "width:100%; max-width:390px; margin:0 auto; aspect-ratio:390/844; background:#111; border-radius:36px; padding:10px; box-shadow:0 24px 60px rgba(0,0,0,.35), inset 0 0 0 3px #222; position:relative;",
     });
     const iframe = el("iframe", {
-      src: `/index.html?preview=${section}&theme=${theme}&_=${Date.now()}`,
+      src: `/index.html?preview=${previewName}&theme=${theme}&_=${Date.now()}`,
       style: "width:100%; height:100%; border:0; border-radius:28px; background: transparent; display:block;",
       title: "Vista previa",
       loading: "lazy",
     });
+    // Al cargar, empuja el diseño actual (incluidos cambios sin guardar). Se
+    // reintenta un par de veces por si el listener del iframe aún no estaba
+    // registrado en el primer instante.
+    const pushDesign = () => { try { iframe.contentWindow.postMessage({ __auraPreview: true, design: designPayload }, "*"); } catch (e) {} };
+    iframe.addEventListener("load", () => { pushDesign(); setTimeout(pushDesign, 200); setTimeout(pushDesign, 600); });
     phoneFrame.appendChild(iframe);
     wrap.appendChild(phoneFrame);
-
-    // Nota informativa
     wrap.appendChild(el("p", {
       style: "text-align:center; font-size:11px; color: var(--text-muted); margin: 12px 0 0;",
-    }, "Refleja exactamente lo que verán los usuarios. Los cambios en el editor se aplican al recargar (guardar)."));
+    }, "Refleja exactamente lo que verán los usuarios, con tus cambios de diseño aplicados al instante."));
 
     container.appendChild(wrap);
+    // Guarda el estado para reutilizar el iframe en los siguientes renders.
+    container.__cpDesignPreview = { iframe, section, theme };
     return;
   }
 
-  // === Resto de pantallas: mockup con tema aplicado ===
+  // === (LEGACY / inerte) Mockups a mano por sección ===
+  // Conservado como referencia; ya NO se ejecuta porque el bloque de arriba
+  // hace `return` para todas las secciones. Se mantiene igual que los otros
+  // bloques `if (false && ...)` de este archivo.
   // Sobrescribimos d.bg y d.text si estamos en tema oscuro para que el mockup
   // luzca coherente con lo que ve el usuario en ese modo.
   const isDarkTheme = (theme === "dark");
