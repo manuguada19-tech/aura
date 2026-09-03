@@ -2188,7 +2188,7 @@ body.account-suspended .restriction-banner .rb-close {
      ubicación no cabía y se cortaba. Con auto-fill + minmax se ajustan solas a
      tantas columnas legibles como quepan, en PC y en móvil. */
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
   gap: 12px;
 }
 /* V741 · Igual que .result-card: anillo degradado permanente + esquinas suaves. */
@@ -2353,9 +2353,6 @@ body.account-suspended .restriction-banner .rb-close {
 .nearby-filters-sheet .filter-group { display: grid; gap: 6px; }
 .nearby-filters-sheet .filter-group h5 { margin: 0; font-size: 12px; text-transform: uppercase; color: var(--text-soft); letter-spacing: .04em; }
 @media (max-width: 480px) and ((pointer: coarse) or (hover: none)) {
-  .nearby-grid { grid-template-columns: repeat(3, 1fr); }
-}
-@media (max-width: 340px) and ((pointer: coarse) or (hover: none)) {
   .nearby-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -9508,6 +9505,33 @@ body.map-open { overflow: hidden; }
    (z-index 30) ni la leyenda. Antes, al inicializarse Leaflet, esos paneles
    subían por encima y "hacían desaparecer" el buscador tras cargar el mapa. */
 .map-canvas { position: relative; z-index: 0; flex: 1; width: 100%; min-height: 0; background: var(--bg); }
+
+/* V832 · Marcador FIJO en el centro del lienzo = centro de la zona de búsqueda.
+   El círculo rosa se centra siempre en el centro del mapa; al panear (arrastrar)
+   el mapa, el círculo se mueve con él. Este marcador CSS señala ese centro y no
+   se arrastra (ya no hay asa suelta que tapaba el punto azul). */
+.map-center-marker {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -100%);
+  z-index: 690; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center;
+}
+.map-center-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px; border-radius: 999px;
+  color: #fff; white-space: nowrap; font-size: 12px; font-weight: 800; letter-spacing: .2px;
+  background: linear-gradient(135deg, #ff5c8a, #ff3b6b);
+  border: 2px solid #fff;
+  box-shadow: 0 4px 12px rgba(255,59,107,.5), 0 2px 6px rgba(0,0,0,.35);
+}
+.map-center-stem {
+  width: 2px; height: 16px; margin-top: -1px;
+  background: #ff3b6b; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+.map-center-dot {
+  width: 10px; height: 10px; border-radius: 50%; margin-top: -1px;
+  background: #ff3b6b; border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+}
 .map-error { padding: 40px 24px; text-align: center; color: var(--text-soft); margin: auto; }
 .map-error strong { display: block; color: var(--text); margin-bottom: 6px; }
 
@@ -9517,7 +9541,7 @@ body.map-open { overflow: hidden; }
      ocupa ~72px de alto con margen inferior 84px). Antes ambos compartían
      bottom:84px right:14px y el círculo de "mi ubicación" tapaba los botones
      +/− de zoom. Ahora se apilan: zoom abajo, "mi ubicación" justo encima. */
-  position: absolute; right: 14px; bottom: 168px; z-index: 30;
+  position: absolute; right: 14px; bottom: 274px; z-index: 30;
   width: 46px; height: 46px; border-radius: 50%;
   display: grid; place-items: center; cursor: pointer;
   color: var(--text);
@@ -9540,6 +9564,68 @@ body.map-open { overflow: hidden; }
   box-shadow: 0 6px 18px rgba(0,0,0,.25);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
   pointer-events: none;
+}
+
+/* V832 · Dock inferior PERSISTENTE con la lista de personas en la zona (test +
+   reales) para escoger. Sustituye a la cuadrícula-modal como forma principal de
+   elegir: siempre visible mientras se explora, con desplazamiento horizontal. */
+.map-dock {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 26;
+  padding: 10px 12px calc(env(safe-area-inset-bottom, 0) + 12px);
+  background: linear-gradient(to top, color-mix(in srgb, var(--surface) 96%, transparent) 62%, transparent);
+  pointer-events: none;
+}
+.map-dock-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 0 2px 8px; pointer-events: auto;
+}
+.map-dock-title { font-size: 13px; font-weight: 800; color: var(--text); }
+.map-dock-title small { display: block; font-size: 11px; font-weight: 600; color: var(--text-soft); margin-top: 1px; }
+.map-dock-grid-btn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px; border: 0; cursor: pointer;
+  font-size: 12px; font-weight: 800; color: #fff;
+  background: linear-gradient(135deg, #ff5c8a, #ff3b6b);
+  box-shadow: 0 4px 12px rgba(255,59,107,.3);
+}
+.map-dock-scroll {
+  display: flex; gap: 10px; overflow-x: auto; padding: 2px 2px 4px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none; pointer-events: auto;
+}
+.map-dock-scroll::-webkit-scrollbar { display: none; }
+.map-dock-card {
+  flex: 0 0 auto; width: 116px; border: 0; padding: 0; cursor: pointer;
+  border-radius: 16px; overflow: hidden; text-align: left; position: relative;
+  background: var(--surface); box-shadow: 0 6px 16px rgba(0,0,0,.28);
+}
+.map-dock-photo {
+  width: 116px; height: 92px; background-size: cover; background-position: center;
+  background-color: var(--surface-2); position: relative;
+}
+.map-dock-card.test .map-dock-photo { outline: 2px solid #f59e0b; outline-offset: -2px; }
+.map-dock-tag {
+  position: absolute; left: 6px; top: 6px; padding: 2px 6px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 800; color: #1a1200;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+}
+.map-dock-dot {
+  position: absolute; right: 6px; top: 6px; width: 11px; height: 11px;
+  border-radius: 50%; background: #22c55e; border: 2px solid #fff;
+}
+.map-dock-meta { padding: 6px 8px 8px; }
+.map-dock-name {
+  font-size: 12.5px; font-weight: 700; color: var(--text); line-height: 1.15;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.map-dock-sub {
+  font-size: 10.5px; color: var(--text-soft); margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.map-dock-empty {
+  pointer-events: auto; padding: 14px 14px; border-radius: 14px; text-align: center;
+  font-size: 12.5px; font-weight: 600; color: var(--text-soft);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
 
 /* Pines teardrop con foto */
@@ -9580,7 +9666,7 @@ body.map-open { overflow: hidden; }
 }
 /* Asegura que los controles de Leaflet queden sobre el overlay */
 .map-overlay .leaflet-container { font: inherit; background: var(--bg); }
-.map-overlay .leaflet-control-zoom { margin: 0 14px 84px 0 !important; border: 0; }
+.map-overlay .leaflet-control-zoom { margin: 0 14px 190px 0 !important; border: 0; }
 .map-overlay .leaflet-control-zoom a {
   background: color-mix(in srgb, var(--surface) 88%, transparent);
   color: var(--text); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);

@@ -8115,7 +8115,10 @@ async function openNearbyMap() {
     c.addEventListener("click", () => {
       mapFilters.radiusKm = km;
       radiusChips.forEach(x => x.classList.toggle("active", x === c));
-      searchHere();
+      // V832 · Al cambiar el radio, reencuadra para que el círculo quepa entero
+      // en pantalla y busca en la misma zona (centro actual) con el nuevo radio.
+      const cc = map.getCenter();
+      goToZone(cc.lat, cc.lng);
     });
     return c;
   });
@@ -8149,8 +8152,23 @@ async function openNearbyMap() {
     html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>` });
   overlay.appendChild(locateBtn);
 
-  const legend = el("div", { class: "map-legend" }, "Arrastra el círculo para buscar en otra zona · o busca por ciudad arriba");
-  overlay.appendChild(legend);
+  // V832 · Dock inferior PERSISTENTE con la lista de personas de la zona (test +
+  // reales) para escoger. Sustituye a la leyenda de texto: la zona = centro del
+  // mapa, así que ya no hay que "arrastrar el círculo".
+  const dockTitle = el("div", { class: "map-dock-title" }, [
+    el("span", { class: "map-dock-title-main" }, "Personas en esta zona"),
+    el("small", {}, "Mueve el mapa para cambiar de zona"),
+  ]);
+  const dockScroll = el("div", { class: "map-dock-scroll" });
+  const dock = el("div", { class: "map-dock" }, [
+    el("div", { class: "map-dock-head" }, [
+      dockTitle,
+      el("button", { class: "map-dock-grid-btn", type: "button", onclick: () => openGridSheet(),
+        html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Cuadrícula</span>` }),
+    ]),
+    dockScroll,
+  ]);
+  overlay.appendChild(dock);
 
   // V768 · Aviso grande en pantalla (unos segundos) cuando no hay nadie cerca.
   const notice = el("div", { class: "map-notice", hidden: true });
@@ -8234,6 +8252,15 @@ async function openNearbyMap() {
   const markers = L.layerGroup().addTo(map);
   let searchCircle = null;
 
+  // V832 · Marcador FIJO en el centro del lienzo (= centro de la zona). No se
+  // arrastra: para cambiar de zona se mueve el mapa. Señala el centro del
+  // círculo rosa sin taparlo (pointer-events:none) y con una etiqueta clara.
+  mapEl.appendChild(el("div", { class: "map-center-marker" }, [
+    el("div", { class: "map-center-pill" }, "Centro de la zona"),
+    el("div", { class: "map-center-stem" }),
+    el("div", { class: "map-center-dot" }),
+  ]));
+
   function pinIcon(u) {
     const cls = ["map-pin"];
     if (u.online) cls.push("on");
@@ -8297,7 +8324,18 @@ async function openNearbyMap() {
   // prueba si existe (testUser puede ser null si no hay cuenta de prueba).
   function visibleList() {
     let list = (lastData && Array.isArray(lastData.users)) ? lastData.users.slice() : [];
-    if (mapFilters.showTest && testUser) list.unshift(testUser);
+    // V832 · El usuario de prueba solo se muestra si su ubicación FIJA cae dentro
+    // de la zona actual (centro del mapa + radio). Así el listado y los pines
+    // reflejan de verdad "quién hay en esta zona" al panear/cambiar de radio.
+    if (mapFilters.showTest && testUser && Number.isFinite(testUser.lat) && Number.isFinite(testUser.lng)) {
+      let inZone = true;
+      try {
+        const c = map.getCenter();
+        const dkm = haversineKm(c.lat, c.lng, testUser.lat, testUser.lng);
+        inZone = Number.isFinite(dkm) && dkm <= mapFilters.radiusKm;
+      } catch {}
+      if (inZone) list.unshift(testUser);
+    }
     return list.filter(u => mapGenderMatches(mapFilters.gender, u.gender) && (!mapFilters.onlyOnline || u.online));
   }
 
@@ -8326,61 +8364,91 @@ async function openNearbyMap() {
     try { modal.open(sheet); } catch {}
   }
 
+  // V832 · Tarjeta del dock inferior para una persona de la zona.
+  function dockCard(u) {
+    const distLabel = fmtDistance(u.distance);
+    const sub = [u.city || "", distLabel ? "a " + distLabel : ""].filter(Boolean).join(" · ")
+      || (u._test ? "Perfil de prueba" : (u.online ? "En línea" : ""));
+    return el("button", { class: "map-dock-card" + (u._test ? " test" : ""), type: "button",
+      onclick: () => openUserSheet(u) }, [
+      el("div", { class: "map-dock-photo", style: `background-image:url('${u.photo || ""}')` }, [
+        u._test ? el("span", { class: "map-dock-tag" }, "Prueba") : null,
+        u.online ? el("span", { class: "map-dock-dot" }) : null,
+      ]),
+      el("div", { class: "map-dock-meta" }, [
+        el("div", { class: "map-dock-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+        sub ? el("div", { class: "map-dock-sub" }, sub) : null,
+      ]),
+    ]);
+  }
+
+  // V832 · Rellena el dock inferior persistente + actualiza el título con el
+  // recuento. La lista incluye test + reales, para escoger tocando una tarjeta.
+  function renderDock(list) {
+    dockScroll.innerHTML = "";
+    const realCount = list.filter(u => !u._test).length;
+    const mainTxt = list.length
+      ? `Personas en esta zona · ${list.length}`
+      : "Personas en esta zona";
+    const subTxt = list.length
+      ? (realCount ? "Toca una tarjeta para ver su perfil" : "Solo la cuenta de prueba por ahora")
+      : "Mueve el mapa o busca por ciudad para cambiar de zona";
+    try {
+      dockTitle.querySelector(".map-dock-title-main").textContent = mainTxt;
+      dockTitle.querySelector("small").textContent = subTxt;
+    } catch {}
+    if (!list.length) {
+      dockScroll.appendChild(el("div", { class: "map-dock-empty" }, "No hay nadie en esta zona. Prueba a mover el mapa, ampliar el radio o buscar otra ciudad."));
+      return;
+    }
+    list.forEach(u => dockScroll.appendChild(dockCard(u)));
+  }
+
   function repaint() {
     markers.clearLayers();
     const list = visibleList();
-    const realCount = list.filter(u => !u._test).length;
-    legend.textContent = realCount
-      ? `${realCount} ${realCount === 1 ? "persona" : "personas"} en esta zona · toca un pin o usa la cuadrícula`
-      : (testUser
-          ? "No hay usuarios reales por ahora · se muestra la cuenta de prueba"
-          : "No hay usuarios reales por ahora · arrastra o busca por ciudad");
     list.forEach(u => {
       const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => openUserSheet(u));
     });
+    renderDock(list);
   }
 
-  // V768 · Círculo de búsqueda ARRASTRABLE. Se dibuja con un asa central
-  // (marcador) que el usuario puede arrastrar; al soltar, busca en esa zona.
-  // El círculo en sí sigue el asa mientras se arrastra.
-  let circleHandle = null;
-  function circleHandleIcon() {
-    // V769 · El asa ya NO va en el centro (tapaba el punto azul). Es una
-    // "pastilla" etiquetada "Mover zona" que FLOTA por encima del centro del
-    // círculo (iconAnchor desplazado 44 px hacia abajo respecto a la pastilla),
-    // de modo que el punto azul del centro queda siempre visible y el asa se
-    // identifica fácilmente.
-    return L.divIcon({ className: "map-circle-handle-wrap",
-      html: '<div class="map-circle-handle"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg><span>Mover zona</span></div>',
-      iconSize: [104, 36], iconAnchor: [52, 80] });
-  }
+  // V832 · Círculo de búsqueda CENTRADO en el centro del mapa (ya no se arrastra
+  // un asa suelta). La "zona" es el centro del mapa: al panear (arrastrar) el
+  // mapa, el círculo se mueve con él porque siempre se redibuja sobre el centro.
+  // Un marcador CSS fijo (.map-center-marker) señala ese centro sin taparlo.
   function drawCircle(center, radiusKm) {
     if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
     searchCircle = L.circle([center.lat, center.lng], {
       radius: radiusKm * 1000, color: "#ff3b6b", weight: 1.5, opacity: 0.55,
-      fillColor: "#ff3b6b", fillOpacity: 0.07,
+      fillColor: "#ff3b6b", fillOpacity: 0.07, interactive: false,
     }).addTo(map);
-    // Asa arrastrable en el centro del círculo.
-    if (!circleHandle) {
-      circleHandle = L.marker([center.lat, center.lng], {
-        icon: circleHandleIcon(), draggable: true, zIndexOffset: 800,
-        title: "Arrastra para buscar en otra zona",
-      }).addTo(map);
-      circleHandle.on("drag", (e) => {
-        const ll = e.target.getLatLng();
-        if (searchCircle) { try { searchCircle.setLatLng(ll); } catch {} }
+  }
+
+  // V832 · Ajusta el ZOOM para que el círculo de la zona quepa ENTERO en la
+  // pantalla (antes, con radios grandes a zoom 17, el círculo era gigante e
+  // invisible). Se llama solo al cambiar de radio / centrar / buscar ciudad /
+  // abrir, NUNCA al panear a mano (eso respetaría el zoom del usuario). El
+  // padding deja hueco para las barras de arriba y el dock de abajo.
+  function fitToRadius(center) {
+    const c = center || map.getCenter();
+    drawCircle(c, mapFilters.radiusKm);
+    const beforeZoom = map.getZoom();
+    const beforeCenter = map.getCenter();
+    try {
+      map.fitBounds(searchCircle.getBounds(), {
+        paddingTopLeft: [28, 150], paddingBottomRight: [28, 210],
+        animate: true, maxZoom: 16,
       });
-      circleHandle.on("dragend", (e) => {
-        const ll = e.target.getLatLng();
-        // Al arrastrar el círculo buscamos en esa zona; si no hay nadie, aviso
-        // en pantalla y vuelta a mi ubicación.
-        suppressMoveSearch = true;
-        searchAt(ll.lat, ll.lng, { recenterIfEmpty: true, fromHandle: true });
-      });
-    } else {
-      try { circleHandle.setLatLng([center.lat, center.lng]); } catch {}
-    }
+    } catch {}
+    // ¿Cambió la vista? Si sí, moveend disparará searchHere; si no, hay que
+    // buscar a mano (p. ej. el nuevo radio cabe con el mismo zoom y centro).
+    let moved = false;
+    try {
+      moved = (map.getZoom() !== beforeZoom) || !map.getCenter().equals(beforeCenter, 1e-6);
+    } catch { moved = true; }
+    return moved;
   }
 
   // V764 · "Mi ubicación": punto fijo al que redirigir cuando una búsqueda no
@@ -8436,47 +8504,32 @@ async function openNearbyMap() {
   let searchTimer = null;
   let suppressMoveSearch = false; // evita re-buscar tras un setView programático
 
-  // Busca en un punto concreto. Si recenterIfEmpty y no hay NADIE real, muestra
-  // un aviso en pantalla unos segundos y luego vuelve a la zona del usuario.
-  async function searchAt(lat, lng, opts) {
-    opts = opts || {};
+  // V832 · Busca en la zona centrada en (lat,lng). YA NO recentramos ni tapamos
+  // la pantalla con avisos cuando no hay nadie: la zona = el centro del mapa y
+  // el usuario decide dónde mirar. Si no hay nadie, el dock lo indica y ya está.
+  async function searchAt(lat, lng) {
     drawCircle({ lat, lng }, mapFilters.radiusKm);
     const data = await fetchNearbyMap(lat, lng, mapFilters.radiusKm);
-    if (data) { lastData = data; repaint(); }
-    const realCount = (data && Array.isArray(data.users)) ? data.users.length : 0;
-    // V831 · El pin de prueba (ficticio) también cuenta como "alguien" cuando
-    // cae DENTRO del círculo de búsqueda. Antes solo se miraban los usuarios
-    // reales, así que al arrastrar el círculo justo sobre el usuario de prueba
-    // salía "no hay nadie por esta zona" y el mapa se recentraba, pese a que el
-    // pin de prueba seguía visible en esa misma zona. Ahora, si está en rango,
-    // no mostramos el aviso ni recentramos.
-    let testInRange = false;
-    if (mapFilters.showTest && testUser && Number.isFinite(testUser.lat) && Number.isFinite(testUser.lng)) {
-      try {
-        const dkm = haversineKm(lat, lng, testUser.lat, testUser.lng);
-        testInRange = Number.isFinite(dkm) && dkm <= mapFilters.radiusKm;
-      } catch {}
-    }
-    if (opts.recenterIfEmpty && realCount === 0 && !testInRange) {
-      // V768 · Aviso grande en pantalla (unos segundos) indicando que no hay
-      // nadie cerca y que se volverá a la zona del usuario. Al terminar el
-      // aviso, recentramos.
-      await showMapNotice("No hay nadie por esta zona. Volviendo a tu ubicación…", 2600);
-      suppressMoveSearch = true;
-      // V795 · Volver a mi ubicación con zoom cercano (16) coherente con el resto.
-      map.setView([myLocation.lat, myLocation.lng], 16, { animate: true });
-      dropPointer(myLocation.lat, myLocation.lng);
-      drawCircle(myLocation, mapFilters.radiusKm);
-      const back = await fetchNearbyMap(myLocation.lat, myLocation.lng, mapFilters.radiusKm);
-      if (back) { lastData = back; repaint(); }
-    }
+    if (data) { lastData = data; }
+    repaint();
   }
 
-  // Búsqueda al arrastrar (centro del mapa), sin recentrado automático.
+  // V832 · "Ir a una zona": centra el mapa en (lat,lng), ajusta el zoom para que
+  // el círculo del radio quepa entero en pantalla y busca UNA vez. El moveend que
+  // provoca fitBounds se ignora (suppressMoveSearch) para no duplicar la búsqueda.
+  async function goToZone(lat, lng) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    suppressMoveSearch = true;
+    fitToRadius({ lat, lng });
+    await searchAt(lat, lng);
+  }
+
+  // Búsqueda al mover el mapa a mano: la zona es SIEMPRE el centro del mapa y se
+  // respeta el zoom que haya elegido el usuario.
   async function searchHere() {
     if (suppressMoveSearch) { suppressMoveSearch = false; return; }
     const c = map.getCenter();
-    await searchAt(c.lat, c.lng, { recenterIfEmpty: false });
+    await searchAt(c.lat, c.lng);
   }
 
   // V764 · Geocodificación por ciudad/provincia (Nominatim / OpenStreetMap, sin
@@ -8509,15 +8562,14 @@ async function openNearbyMap() {
     searchSuggest.hidden = true;
     searchSuggest.innerHTML = "";
   }
-  // Salta el mapa a un lugar concreto y busca allí; si no hay nadie, avisa.
+  // Salta el mapa a un lugar concreto (queda centrado = nueva zona) y busca allí.
+  // Reencuadra al radio para que el círculo quepa entero (el 4º arg zoom queda
+  // como sugerencia; fitToRadius manda para que la zona sea siempre visible).
   async function goToPlace(lat, lng, zoom) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     hideSuggest();
     try { searchInput.blur(); } catch {}
-    suppressMoveSearch = true;
-    map.setView([lat, lng], zoom || 13, { animate: true });
-    dropPointer(lat, lng);
-    await searchAt(lat, lng, { recenterIfEmpty: true });
+    await goToZone(lat, lng);
   }
 
   // Pinta la lista de sugerencias seleccionables.
@@ -8606,34 +8658,62 @@ async function openNearbyMap() {
     if (!searchBar.contains(e.target) && !searchSuggest.contains(e.target)) hideSuggest();
   });
 
-  // V764 · Tocar el mapa: suelta un puntero en ese punto y busca allí. Si no hay
-  // nadie, avisa y redirige a mi ubicación.
+  // V832 · Tocar el mapa CENTRA esa zona (la lleva al centro) y busca allí.
+  // Así el gesto de tocar y el de panear hacen lo mismo: mover la zona.
   map.on("click", (e) => {
     const { lat, lng } = e.latlng || {};
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    dropPointer(lat, lng);
-    suppressMoveSearch = true;
     map.setView([lat, lng], map.getZoom(), { animate: true });
-    searchAt(lat, lng, { recenterIfEmpty: true });
   });
 
-  // Primera pintura con los datos ya cargados.
-  drawCircle(start, mapFilters.radiusKm);
+  // V832 · El círculo rosa sigue al centro del mapa MIENTRAS se arrastra (antes
+  // se quedaba fijo hasta soltar). Se redibuja en vivo sobre el centro actual.
+  map.on("move", () => {
+    const c = map.getCenter();
+    if (searchCircle) { try { searchCircle.setLatLng(c); } catch {} }
+  });
+
+  // Primera pintura con los datos ya cargados. V832 · Encuadra para que el
+  // círculo de la zona se vea entero desde el principio (setView inicial usaba
+  // zoom 17, con el que un radio de 25 km quedaba fuera de pantalla).
+  fitToRadius(start);
   repaint();
 
   map.on("moveend", () => {
+    // Mantén el círculo exactamente en el centro final.
+    const c = map.getCenter();
+    if (searchCircle) { try { searchCircle.setLatLng(c); } catch {} }
     if (searchTimer) clearTimeout(searchTimer);
     searchTimer = setTimeout(searchHere, 350);
   });
 
   locateBtn.addEventListener("click", () => {
-    suppressMoveSearch = true;
-    // V795 · Al centrar en mi ubicación, acercar a nivel calle (17) como el
-    // zoom inicial, para ver el punto azul de cerca.
-    map.setView([myLocation.lat, myLocation.lng], 17, { animate: true });
-    dropPointer(myLocation.lat, myLocation.lng);
-    searchAt(myLocation.lat, myLocation.lng, { recenterIfEmpty: false });
+    // V832 · Centra en mi ubicación y encuadra el círculo de la zona entero.
+    goToZone(myLocation.lat, myLocation.lng);
   });
+
+  // V832 · Al abrir el mapa pedimos geolocalización real del navegador (si el
+  // usuario aún no la había concedido) para centrar en su posición exacta, no
+  // solo en la aproximación por IP del backend. Al concederla, recentramos.
+  (async () => {
+    try {
+      if (!GPS.hasAsked || GPS.hasAsked()) {
+        // ya consultado antes: intenta una lectura rápida no intrusiva
+      }
+      const perm = await GPS.requestBrowserPermission();
+      if (perm && perm.ok && perm.pos && perm.pos.coords) {
+        const { latitude, longitude } = perm.pos.coords;
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          try { GPS.markAsked && GPS.markAsked(); } catch {}
+          try { GPS.report && GPS.report(perm.pos); } catch {}
+          myLocation.lat = latitude; myLocation.lng = longitude;
+          try { meMarker.setLatLng([latitude, longitude]); } catch {}
+          // Encuadra el círculo de la zona en la nueva ubicación real y busca.
+          goToZone(latitude, longitude);
+        }
+      }
+    } catch {}
+  })();
 
   // Recalcula el tamaño tras insertarse en el DOM.
   setTimeout(() => { try { map.invalidateSize(); } catch {} }, 120);
