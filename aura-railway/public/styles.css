@@ -1494,6 +1494,39 @@ img { max-width: 100%; display: block; }
 .match-quick-btn:hover { background: rgba(255,255,255,.24); transform: translateY(-1px); }
 .match-quick-btn:active { transform: scale(.94); }
 
+/* V873 · En móvil el marco ocupa 100dvh: en teléfonos bajos la fila de
+   respuestas rápidas (V871) alargaba el contenido y, con overflow:hidden,
+   empujaba las acciones ("Enviar mensaje" / "Seguir descubriendo") fuera de
+   la pantalla. Compactamos el bloque según la altura real para que todo
+   quepa. Solo aplica al layout móvil a pantalla completa (mismo criterio que
+   el resto del CSS responsive); en escritorio el marco es fijo 400×820 y ya
+   cabe sin recortes. */
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) and (max-height: 780px) {
+  .match-screen { padding-top: 28px; }
+  .match-screen h2 { font-size: 34px; margin: 10px 0 4px; }
+  .match-cards { margin: 20px 0 12px; }
+  .match-cards .mc { width: 128px; height: 168px; }
+  .match-cards .match-heart { width: 52px; height: 52px; }
+  .match-cards .match-heart svg { width: 28px; height: 28px; }
+  .match-quick { margin: 2px 0 10px; }
+  .match-quick-btn { padding: 7px 12px; font-size: 14px; }
+  .match-actions { gap: 10px; }
+}
+@media (max-width: 900px) and ((pointer: coarse) or (hover: none)) and (max-height: 660px) {
+  .match-screen { padding-top: 18px; }
+  .match-screen h2 { font-size: 27px; margin: 6px 0 2px; }
+  .match-screen .match-sub { font-size: 13px; }
+  .match-badge { padding: 6px 14px; font-size: 11px; }
+  .match-cards { margin: 12px 0 8px; }
+  .match-cards .mc { width: 106px; height: 138px; }
+  .match-cards .match-heart { width: 46px; height: 46px; }
+  .match-cards .match-heart svg { width: 24px; height: 24px; }
+  .match-quick { margin: 2px 0 8px; gap: 6px; }
+  .match-quick-btn { padding: 6px 11px; font-size: 13px; }
+  .match-actions { gap: 8px; }
+  .match-actions .btn { height: 44px; }
+}
+
 /* -------- Plan celebration overlay (V810 · al activar un plan de pago) -------- */
 .plan-celebrate {
   position: fixed; inset: 0; z-index: 3000;
