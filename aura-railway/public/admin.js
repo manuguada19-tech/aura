@@ -10874,6 +10874,23 @@ html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:
 function mcEsc(s) {
   return String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
+// V882 · ¿Es un color/valor de fondo CSS válido? Usa CSS.supports (el mismo
+// motor del navegador) y admite además degradados (linear/radial/conic). Evita
+// guardar y pintar valores a medio escribir ("#", "#f") que dejaban el disco
+// del corazón transparente (se veía negro sobre el fondo).
+function isValidCssColor(v) {
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return false;
+  try {
+    if (window.CSS && CSS.supports) {
+      if (CSS.supports("color", s)) return true;
+      if (CSS.supports("background", s) && /gradient\(/i.test(s)) return true;
+      return false;
+    }
+  } catch {}
+  // Reserva sin CSS.supports: hex de 3/6/8 dígitos o rgb/hsl.
+  return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(s) || /^(rgb|hsl)a?\(/i.test(s);
+}
 // Genera N spans de confeti con estilos aleatorios (sin script en el iframe).
 function mcConfettiHtml(n) {
   const colors = ["#ff3b6b", "#ff8a3b", "#ffd23b", "#4bd4ff", "#a06bff"];
@@ -10920,10 +10937,13 @@ function mcBuildMatchDoc(cfg) {
   // V855 · Apariencia: aplica los overrides igual que la app real. Vacío = nada.
   const gv = (k) => String(g(k) == null ? "" : g(k)).trim();
   const gon = (k) => { const v = g(k); return v == null || v === "" ? true : String(v) !== "false"; };
-  const mFrom = gv("content.match.bg_from"), mTo = gv("content.match.bg_to");
-  const mAccent = gv("content.match.accent"), mFont = gv("content.match.font"), mLogo = gv("content.match.logo_url");
-  const mHeartBg = gv("content.match.heart_bg");
-  const mTextColor = gv("content.match.text_color");
+  // V882 · Color validado: un valor inválido/parcial se descarta (usa el default)
+  // en vez de pintar "background:#", que dejaba el disco transparente/negro.
+  const gc = (k) => { const v = gv(k); return isValidCssColor(v) ? v : ""; };
+  const mFrom = gc("content.match.bg_from"), mTo = gc("content.match.bg_to");
+  const mAccent = gc("content.match.accent"), mFont = gv("content.match.font"), mLogo = gv("content.match.logo_url");
+  const mHeartBg = gc("content.match.heart_bg");
+  const mTextColor = gc("content.match.text_color");
   const animBg = gon("content.match.anim_bg");
   // V881 · Color de las letras. El h2 usa un degradado recortado sobre el texto;
   // al fijar color hay que anular ese recorte (background:none + text-fill-color).
@@ -10937,8 +10957,8 @@ function mcBuildMatchDoc(cfg) {
     hostStyle += `background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.20),transparent 55%),linear-gradient(300deg,${a} 0%,${b} 100%);background-size:100% 100%,100% 100%;`;
   }
   if (!animBg) hostStyle += "animation:matchFade .4s ease;";
-  const pBg = gv("content.match.btn_primary_bg"), pTx = gv("content.match.btn_primary_text");
-  const sBg = gv("content.match.btn_secondary_bg"), sTx = gv("content.match.btn_secondary_text");
+  const pBg = gc("content.match.btn_primary_bg"), pTx = gc("content.match.btn_primary_text");
+  const sBg = gc("content.match.btn_secondary_bg"), sTx = gc("content.match.btn_secondary_text");
   let pStyle = ""; if (pBg) pStyle += `background:${pBg};`; if (pTx) pStyle += `color:${pTx};`;
   let sStyle = ""; if (sBg) sStyle += `background:${sBg};border-color:transparent;`; if (sTx) sStyle += `color:${sTx};`;
   const hostClass = "mc-host match-screen" + (animBg ? "" : " match-noanim");
@@ -11130,9 +11150,23 @@ async function viewMatchCelebrate(root) {
       style: "width:38px;height:38px;padding:0;border:1px solid var(--border,#ccc);border-radius:8px;background:none;cursor:pointer;flex:none" });
     const txt = el("input", { class: "input", value: cfg[key] || "", placeholder: ph || "vacío = por defecto", style: "flex:1 1 auto" });
     const sync = () => { if (isHex(txt.value)) swatch.value = txt.value.trim(); };
-    txt.addEventListener("input", () => { cfg[key] = txt.value; sync(); renderPreview(); scheduleAutoSave(); });
-    swatch.addEventListener("input", () => { txt.value = swatch.value; cfg[key] = swatch.value; renderPreview(); scheduleAutoSave(); });
-    const clr = btn("×", "ghost sm", () => { txt.value = ""; cfg[key] = ""; renderPreview(); scheduleAutoSave(); });
+    // V882 · Solo persistimos/aplicamos colores VÁLIDOS o vacío. Antes se guardaba
+    // cualquier texto tal cual (incluidos valores a medio escribir como "#" o
+    // "#f"): eso producía "background:#", que el navegador ignora y deja el disco
+    // TRANSPARENTE, viéndose negro sobre el fondo. Ahora un valor inválido no se
+    // guarda (se conserva el último válido) y se marca el input en rojo.
+    const commit = () => {
+      const raw = txt.value.trim();
+      if (raw === "" || isValidCssColor(raw)) {
+        txt.style.borderColor = "";
+        cfg[key] = raw; sync(); renderPreview(); scheduleAutoSave();
+      } else {
+        txt.style.borderColor = "#e11d48"; // rojo: valor inválido, no se guarda
+      }
+    };
+    txt.addEventListener("input", commit);
+    swatch.addEventListener("input", () => { txt.value = swatch.value; txt.style.borderColor = ""; cfg[key] = swatch.value; renderPreview(); scheduleAutoSave(); });
+    const clr = btn("×", "ghost sm", () => { txt.value = ""; txt.style.borderColor = ""; cfg[key] = ""; renderPreview(); scheduleAutoSave(); });
     clr.title = "Restablecer al diseño por defecto";
     clr.style.cssText = "flex:none;min-width:34px;padding:0 8px";
     const row = el("div", { style: "display:flex;align-items:center;gap:8px" }, [ swatch, txt, clr ]);

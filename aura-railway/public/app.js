@@ -10447,9 +10447,19 @@ function triggerMatch(user, conversationId = null) {
   // "false" desactivan animaciones/adornos.
   const val = (k) => { const v = T(k); return (v == null ? "" : String(v)).trim(); };
   const on = (k) => { const v = T(k); return v == null || v === "" ? true : String(v) !== "false"; };
+  // V882 · Color validado. Un valor inválido/a medio escribir ("#", "#f") se
+  // descarta y se usa el diseño por defecto, en vez de aplicar "background:#"
+  // (que el navegador ignora y dejaba el disco del corazón transparente/negro).
+  const isColor = (v) => {
+    const s = String(v == null ? "" : v).trim();
+    if (!s) return false;
+    try { if (window.CSS && CSS.supports) return CSS.supports("color", s) || (CSS.supports("background", s) && /gradient\(/i.test(s)); } catch {}
+    return /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(s) || /^(rgb|hsl)a?\(/i.test(s);
+  };
+  const valc = (k) => { const v = val(k); return isColor(v) ? v : ""; };
   const mFont = val("content.match.font");
-  const mFrom = val("content.match.bg_from"), mTo = val("content.match.bg_to");
-  const mAccent = val("content.match.accent");
+  const mFrom = valc("content.match.bg_from"), mTo = valc("content.match.bg_to");
+  const mAccent = valc("content.match.accent");
   const mLogo = val("content.match.logo_url");
   const animBg = on("content.match.anim_bg");
   if (mFont) match.style.fontFamily = mFont;
@@ -10500,7 +10510,7 @@ function triggerMatch(user, conversationId = null) {
   // V881 · Color de las letras (título + subtítulo + insignia). El título usa
   // por defecto un degradado recortado sobre el texto; al fijar un color hay que
   // anular ese recorte para que el color se vea de verdad.
-  const mTextColor = val("content.match.text_color");
+  const mTextColor = valc("content.match.text_color");
   if (mTextColor) {
     h2.style.background = "none";
     h2.style.webkitBackgroundClip = "border-box";
@@ -10524,7 +10534,7 @@ function triggerMatch(user, conversationId = null) {
   ]);
   const centerHeart = el("div", { class: "match-heart", html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` });
   if (mAccent) centerHeart.style.color = mAccent;               // color del ICONO del corazón
-  const mHeartBg = val("content.match.heart_bg");
+  const mHeartBg = valc("content.match.heart_bg");
   if (mHeartBg) {
     // V858 · FONDO (disco) del corazón. El disco por defecto arrastra un HALO
     // ROSA (box-shadow rgba(255,45,111,.5)) + borde interior blanco: eso hacía
@@ -10538,8 +10548,8 @@ function triggerMatch(user, conversationId = null) {
   // Botones con colores propios (opcionales). Vacío = estilo por defecto.
   const btnPrimary = el("button", { class: "btn btn-primary", onclick: () => { match.remove(); openChat(user, true, chatOpts); } }, T("content.match.cta_message"));
   const btnSecondary = el("button", { class: "btn btn-ghost", onclick: () => match.remove() }, T("content.match.cta_keep"));
-  const pBg = val("content.match.btn_primary_bg"), pTx = val("content.match.btn_primary_text");
-  const sBg = val("content.match.btn_secondary_bg"), sTx = val("content.match.btn_secondary_text");
+  const pBg = valc("content.match.btn_primary_bg"), pTx = valc("content.match.btn_primary_text");
+  const sBg = valc("content.match.btn_secondary_bg"), sTx = valc("content.match.btn_secondary_text");
   if (pBg) btnPrimary.style.background = pBg;
   if (pTx) btnPrimary.style.color = pTx;
   if (sBg) { btnSecondary.style.background = sBg; btnSecondary.style.borderColor = "transparent"; }
