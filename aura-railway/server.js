@@ -7820,13 +7820,21 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
   let centerSource = (Number.isFinite(cLat) && Number.isFinite(cLng)) ? "manual" : null;
   if (!Number.isFinite(cLat) || !Number.isFinite(cLng)) {
     try {
+      // V876 · Sólo tomamos user_gps como "gps" si el fix guardado es PRECISO
+      // (accuracy <= 3 km). Antes se usaba cualquier fila de user_gps, así que
+      // una posición imprecisa que hubiera dejado el PC (wifi/IP, a veces otra
+      // ciudad) se trataba como GPS bueno y el punto azul aparecía lejos, en
+      // las afueras. Si el fix guardado es impreciso lo ignoramos y caemos a
+      // u.lat/u.lng. accuracy NULL = origen desconocido ⇒ no fiable.
       const [[g]] = await pool.query(
-        `SELECT gps.lat AS glat, gps.lng AS glng, u.lat AS ulat, u.lng AS ulng
+        `SELECT gps.lat AS glat, gps.lng AS glng, gps.accuracy AS gacc,
+                u.lat AS ulat, u.lng AS ulng
            FROM users u
            LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
           WHERE u.id=? LIMIT 1`, [me]);
       if (g) {
-        const useGps = (g.glat != null && g.glng != null);
+        const gpsAccOk = g.gacc != null && Number(g.gacc) <= 3000;
+        const useGps = (g.glat != null && g.glng != null && gpsAccOk);
         const dl = useGps ? g.glat : g.ulat;
         const dg = useGps ? g.glng : g.ulng;
         if (dl != null && dg != null) { cLat = Number(dl); cLng = Number(dg); centerSource = useGps ? "gps" : "ip"; }
@@ -12168,7 +12176,10 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
   const FRESH_MINUTES   = 720;    // 12 h: seguimos fiándonos del último buen fix
   const WORSE_FACTOR    = 3;      // "mucho menos preciso" = 3x peor
   const prev = rows[0];
-  const hasPrev = prev.oldLat != null && prev.oldLng != null && Number.isFinite(Number(prev.oldAcc));
+  // Number(null) === 0, así que hay que descartar null ANTES de convertir: si no,
+  // una fila sin accuracy pasaría por "precisión perfecta".
+  const hasPrev = prev.oldLat != null && prev.oldLng != null
+    && prev.oldAcc != null && Number.isFinite(Number(prev.oldAcc));
   if (hasPrev) {
     const prevAcc = Number(prev.oldAcc);
     const ageMin  = Number(prev.oldAgeMin);

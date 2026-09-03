@@ -2414,8 +2414,16 @@ const GPS = {
     // PC pisaba la posición buena del móvil (GPS real). Si la precisión es peor
     // que ~3 km, ignoramos el fix por completo: ni se guarda como semilla del
     // mapa (_lastPos) ni se envía al backend.
-    const _acc = Number(pos.coords.accuracy);
-    if (Number.isFinite(_acc) && _acc > 3000) return;
+    // V876 · Si el navegador NO declara precisión, antes el fix COLABA: la
+    // condición `Number.isFinite(_acc) && _acc > 3000` no se cumplía y se
+    // enviaba igual. En PC eso ocurre a veces, y era la vía por la que el
+    // ordenador seguía pisando la ubicación buena del móvil. Sin precisión no
+    // podemos saber si el fix es de fiar, así que lo tratamos como impreciso.
+    // Cuidado: Number(null) === 0, que colaría como "precisión perfecta". Hay
+    // que descartar null/undefined ANTES de convertir a número.
+    const _accRaw = pos.coords.accuracy;
+    const _acc = _accRaw == null ? NaN : Number(_accRaw);
+    if (!Number.isFinite(_acc) || _acc > 3000) return;
     // V855 · Guarda SIEMPRE la última posición real (antes del debounce de envío)
     // para que el mapa pueda pintar el punto azul al instante con ella.
     try { this._lastPos = pos; } catch {}
