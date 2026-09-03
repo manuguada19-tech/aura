@@ -10726,6 +10726,8 @@ const MC_DEFAULTS = {
   "content.match.anim_bg": "true",
   "content.match.hearts": "true",
   "content.match.confetti": "true",
+  "content.match.quick": "true",
+  "content.match.quick_replies": "👋 ¡Hola!,😍,🔥,😂,☕ ¿Un café?,✨",
   "content.celebrate.enabled": "true",
   "content.celebrate.free_enabled": "true",
   "content.celebrate.duration": "5000",
@@ -10807,6 +10809,9 @@ html,body{width:100%;height:100%;overflow:hidden;background:#120a24;font-family:
 .match-hearts i svg{display:block;width:100%;height:100%;fill:currentColor}
 .match-hearts i{animation:matchFloat linear infinite}
 @keyframes matchFloat{0%{transform:translateY(0) rotate(0) scale(1);opacity:0}12%{opacity:.9}100%{transform:translateY(-115vh) rotate(200deg) scale(1.15);opacity:0}}
+/* ---- Respuestas rápidas ---- */
+.match-quick{position:relative;z-index:2;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;width:100%;margin:4px 0 14px;animation:matchPop .6s .22s both cubic-bezier(.2,.9,.2,1)}
+.match-quick-btn{-webkit-appearance:none;appearance:none;cursor:pointer;display:inline-flex;align-items:center;gap:5px;padding:9px 14px;border-radius:999px;background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.4);color:#fff;font:inherit;font-size:15px;font-weight:700;line-height:1}
 /* ---- Celebración de plan ---- */
 .plan-celebrate{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#fff;padding:34px 26px;overflow:hidden;
   background:radial-gradient(120% 80% at 50% -10%,rgba(255,255,255,.18),transparent 55%),linear-gradient(165deg,#1b1030 0%,#2a1550 48%,#120a24 100%);animation:pcFade .35s ease}
@@ -10875,6 +10880,14 @@ function mcHeartsHtml() {
   }
   return `<div class="match-hearts">${out}</div>`;
 }
+// Fila de respuestas rápidas para la preview del match.
+function mcQuickHtml(raw, accent) {
+  const items = String(raw == null ? "" : raw).split(",").map((s) => s.trim()).filter(Boolean).slice(0, 8);
+  if (!items.length) return "";
+  const style = accent ? ` style="--match-quick-accent:${mcEsc(accent)}"` : "";
+  const btns = items.map((t) => `<button class="match-quick-btn"${style}>${mcEsc(t)}</button>`).join("");
+  return `<div class="match-quick">${btns}</div>`;
+}
 function mcDoc(bodyHtml) {
   return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"><style>${MC_PREVIEW_CSS}</style></head><body>${bodyHtml}</body></html>`;
 }
@@ -10916,6 +10929,7 @@ function mcBuildMatchDoc(cfg) {
       <div class="match-heart"${(mAccent || mHeartBg) ? ` style="${mAccent ? `color:${mcEsc(mAccent)};` : ""}${mHeartBg ? `background:${mcEsc(mHeartBg)};box-shadow:0 14px 34px rgba(0,0,0,.28), inset 0 0 0 3px rgba(255,255,255,.35);` : ""}"` : ""}>${heartFill}</div>
       <div class="mc" style="background-image:url('${him}')"><div class="mc-name">Hugo <span style="display:inline-flex">${verified}</span></div></div>
     </div>
+    ${gon("content.match.quick") ? mcQuickHtml(gv("content.match.quick_replies"), mAccent) : ""}
     <div class="match-actions">
       <button class="btn btn-primary" style="${pStyle}">${mcEsc(g("content.match.cta_message"))}</button>
       <button class="btn btn-ghost" style="${sStyle}">${mcEsc(g("content.match.cta_keep"))}</button>
@@ -11138,6 +11152,9 @@ async function viewMatchCelebrate(root) {
     boolField("Fondo animado", "content.match.anim_bg", "Movimiento suave del degradado del fondo."),
     boolField("Corazones flotantes", "content.match.hearts", "Corazones que suben por la pantalla."),
     boolField("Confeti", "content.match.confetti", "Lluvia de confeti al aparecer el match."),
+    el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Respuestas rápidas"),
+    boolField("Mostrar respuestas rápidas", "content.match.quick", "Fila de botones con emojis/frases para enviar un primer mensaje al instante."),
+    textField("Respuestas (separadas por comas)", "content.match.quick_replies", "👋 ¡Hola!,😍,🔥,😂,☕ ¿Un café?,✨", "Cada elemento es un botón. Máx. 8. Al pulsarlo se abre el chat y se envía ese texto."),
   ]);
   const planPane = el("div", { class: "settings-form" }, [
     el("h3", { style: "margin-bottom:4px" }, "Celebración de planes"),

@@ -1473,6 +1473,27 @@ img { max-width: 100%; display: block; }
   border: 1px solid rgba(255,255,255,.45); font-weight: 700;
 }
 
+/* V871 · Respuestas rápidas de la pantalla de match: fila de iconos/emojis que
+   envían un primer mensaje al instante. */
+.match-quick {
+  position: relative; z-index: 2;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 8px;
+  width: 100%; margin: 4px 0 14px;
+  animation: matchPop .6s .22s both cubic-bezier(.2,.9,.2,1);
+}
+.match-quick-btn {
+  -webkit-appearance: none; appearance: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 9px 14px; border-radius: 999px;
+  background: rgba(255,255,255,.14);
+  border: 1px solid rgba(255,255,255,.4);
+  color: #fff; font-size: 15px; font-weight: 700; line-height: 1;
+  backdrop-filter: blur(4px);
+  transition: transform .12s ease, background .15s ease, box-shadow .15s ease;
+}
+.match-quick-btn:hover { background: rgba(255,255,255,.24); transform: translateY(-1px); }
+.match-quick-btn:active { transform: scale(.94); }
+
 /* -------- Plan celebration overlay (V810 · al activar un plan de pago) -------- */
 .plan-celebrate {
   position: fixed; inset: 0; z-index: 3000;

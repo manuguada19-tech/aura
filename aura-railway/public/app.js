@@ -77,6 +77,11 @@ const contentFallback = {
   "content.match.anim_bg": "true",          // animar el fondo (degradado + halo)
   "content.match.hearts": "true",           // corazones flotantes de fondo
   "content.match.confetti": "true",         // ráfaga de confeti
+  // V871 · Respuestas rápidas: fila de iconos/emojis bajo las tarjetas. Al tocar
+  // uno se abre el chat y se envía ese mensaje al instante (rompe el hielo sin
+  // escribir). Lista separada por comas; cada item puede ser un emoji o texto.
+  "content.match.quick": "true",            // mostrar la fila de respuestas rápidas
+  "content.match.quick_replies": "👋 ¡Hola!,😍,🔥,😂,☕ ¿Un café?,✨",
 
   // === Celebración de planes (editable desde Admin → Match y celebraciones) ===
   // Globales para planes de pago. {plan} = nombre del plan, {period} = " anual".
@@ -10368,6 +10373,23 @@ function triggerMatch(user, conversationId = null) {
   if (pTx) btnPrimary.style.color = pTx;
   if (sBg) { btnSecondary.style.background = sBg; btnSecondary.style.borderColor = "transparent"; }
   if (sTx) btnSecondary.style.color = sTx;
+  // V871 · Respuestas rápidas: fila de iconos/emojis. Al tocar uno se abre el
+  // chat y se envía ese mensaje al instante (rompe el hielo sin escribir). La
+  // lista y el on/off son editables desde Admin → Match y celebraciones.
+  if (on("content.match.quick")) {
+    const raw = val("content.match.quick_replies");
+    const items = (raw || "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 8);
+    if (items.length) {
+      const quickRow = el("div", { class: "match-quick" },
+        items.map((txt) => el("button", {
+          class: "match-quick-btn", type: "button", title: "Enviar: " + txt,
+          onclick: () => { match.remove(); openChat(user, true, { ...chatOpts, initialSend: txt }); },
+        }, txt))
+      );
+      if (mAccent) quickRow.style.setProperty("--match-quick-accent", mAccent);
+      match.appendChild(quickRow);
+    }
+  }
   match.appendChild(el("div", { class: "match-actions" }, [ btnPrimary, btnSecondary ]));
   viewport.appendChild(match);
   // Toque de confeti para reforzar el momento (se puede desactivar).
@@ -13002,9 +13024,20 @@ function screenChat(root, u, isNew, opts = {}) {
       // Do NOT auto-focus: keyboard should only open when the user taps the composer.
     }
     await poll();
-    // V635 · Si la conversación no tiene ningún mensaje aún, mostramos las
-    // sugerencias de primer mensaje para ayudar a romper el hielo.
-    if (lastId === 0) showFirstMsgSuggestions();
+    // V871 · Respuesta rápida desde la pantalla de match: si se abrió el chat con
+    // un texto inicial, lo enviamos al instante (como si el usuario lo escribiera
+    // y pulsara enviar). Reusa sendMsg() para que sea idéntico a un envío normal.
+    const initialSend = opts && opts.initialSend ? String(opts.initialSend).trim() : "";
+    if (initialSend && state_.convId && inp) {
+      hideFirstMsgSuggestions();
+      inp.removeAttribute("readonly");
+      inp.value = initialSend;
+      try { await sendMsg(); } catch {}
+    } else if (lastId === 0) {
+      // V635 · Si la conversación no tiene ningún mensaje aún, mostramos las
+      // sugerencias de primer mensaje para ayudar a romper el hielo.
+      showFirstMsgSuggestions();
+    }
     _chatPollTimer = setInterval(poll, 3500);
   })();
 }
