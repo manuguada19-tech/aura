@@ -7544,6 +7544,8 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
             u.privacy_hidden, u.bio, u.job, u.height, u.weight, u.ethnicity,
             u.looking_for, u.relationship, u.interests,
             u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
+            u.created_at,
+            TIMESTAMPDIFF(HOUR, u.created_at, NOW()) AS account_age_h,
             COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
             (gps.lat IS NOT NULL) AS gps_ok,
             ${distExpr} AS distance
@@ -7592,6 +7594,8 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       pets: r.pets || "", smoke: r.smoke || "", drink: r.drink || "",
       education: r.education || "", exercise: r.exercise || "",
       prompts: Array.isArray(prompts) ? prompts : [],
+      // V799 · antigüedad de la cuenta (horas) para marcar perfiles nuevos.
+      account_age_h: (r.account_age_h == null ? null : Number(r.account_age_h)),
       lat: Number((lat + jLat).toFixed(5)),
       lng: Number((lng + jLng).toFixed(5)),
     });

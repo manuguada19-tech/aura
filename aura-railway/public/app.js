@@ -8085,18 +8085,25 @@ async function openNearbyMap() {
   // había alguien al lado. Ahora, con el pin en tu casa, NO aparece nadie: hay que
   // acercar el pin a su punto para verla (sigue disponible para hacer pruebas).
   const NEARBY_TEST_KM = 1;
-  // V851 · Filtros del mapa AMPLIADOS (estilo Grindr): además del género y "en
-  // línea" que ya había, ahora hay una hoja de "Filtros" con edad, altura, peso,
-  // qué busca, tipo de relación, intereses y estilo de vida. Al aplicarlos se
-  // reducen los pines del mapa y las tarjetas de la cuadrícula (mismos campos que
-  // el filtro de "Buscar"). Rango completo / vacío = sin filtro.
+  // V852 · "Nuevos": ventana (en horas) para considerar que una cuenta es de
+  // reciente registro. El backend devuelve account_age_h (horas desde created_at).
+  // Es un concepto propio (usuarios recién llegados), no una imitación de otras
+  // apps: solo resalta a quien acaba de entrar y permite filtrar por ello.
+  const NEW_USER_HOURS = 72; // 3 días
+  // V851 · Filtros del mapa AMPLIADOS: además del género y "en línea" que ya
+  // había, hay una hoja de "Filtros" con edad, altura, peso, qué busca, tipo de
+  // relación, intereses y estilo de vida. Al aplicarlos se reducen los pines del
+  // mapa y las tarjetas de la cuadrícula (mismos campos que el filtro de
+  // "Buscar"). Rango completo / vacío = sin filtro.
   const mapFilters = {
-    gender: "todos", onlyOnline: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
+    gender: "todos", onlyOnline: false, onlyNew: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
     ageMin: 18, ageMax: 99,
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
     looking_for: "any", relationship: "any",
     interests: [], education: [], pets: [], exercise: [], smoke: [], drink: [],
   };
+  // V852 · ¿Cuenta recién registrada? (account_age_h dentro de la ventana).
+  const isNewUser = (u) => u && u.account_age_h != null && Number.isFinite(+u.account_age_h) && +u.account_age_h <= NEW_USER_HOURS;
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
   // ---- Barra superior (glass) ----
@@ -8146,6 +8153,20 @@ async function openNearbyMap() {
     repaint();
   });
 
+  // V852 · Chip "Nuevos": muestra solo a las cuentas recién registradas (últimas
+  // 72 h). Es una idea propia de la app —dar la bienvenida a quien acaba de
+  // llegar— con nombre e icono propios (una estrella/destello), no un calco de
+  // otra plataforma. Los pines de esas personas llevan una etiqueta "Nuevo".
+  const newChip = el("button", { class: "map-chip map-chip-new" + (mapFilters.onlyNew ? " active" : ""), type: "button" }, [
+    el("span", { class: "map-chip-ic", html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2.5l2.35 5.28 5.75.5-4.36 3.78 1.32 5.62L12 16.9l-5.06 2.78 1.32-5.62L3.9 8.28l5.75-.5z"/></svg>` }),
+    "Nuevos",
+  ]);
+  newChip.addEventListener("click", () => {
+    mapFilters.onlyNew = !mapFilters.onlyNew;
+    newChip.classList.toggle("active", mapFilters.onlyNew);
+    repaint();
+  });
+
   // V851 · Chip "Filtros" (estilo Grindr): abre una hoja con edad, altura, peso,
   // qué busca, relación, intereses y estilo de vida. Una insignia muestra cuántos
   // filtros avanzados hay activos. Al aplicar se repinta (menos pines/tarjetas).
@@ -8170,7 +8191,7 @@ async function openNearbyMap() {
   // en dos) para que la barra de filtros ocupe menos alto y se vea más mapa.
   // V851 · Añadido el chip "Filtros" al final de la fila (con scroll horizontal).
   const filterbar = el("div", { class: "map-filterbar" }, [
-    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip, filtersChip ]),
+    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip, newChip, filtersChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -8333,7 +8354,11 @@ async function openNearbyMap() {
     if (u.online) cls.push("on");
     if (u._test) cls.push("test");
     const dot = u.online ? '<span class="map-pin-dot"></span>' : "";
-    const tag = u._test ? '<span class="map-pin-tag">Prueba</span>' : "";
+    // V852 · Etiqueta del pin: "Prueba" para la cuenta ficticia; si no, "Nuevo"
+    // cuando la cuenta es de reciente registro (destaca a quien acaba de llegar).
+    let tag = "";
+    if (u._test) tag = '<span class="map-pin-tag">Prueba</span>';
+    else if (isNewUser(u)) tag = '<span class="map-pin-tag new">Nuevo</span>';
     const html = `<div class="${cls.join(" ")}" style="background-image:url('${u.photo || ""}')">${dot}${tag}<span class="map-pin-stem"></span></div>`;
     return L.divIcon({ className: "map-pin-wrap", html, iconSize: [50, 62], iconAnchor: [25, 60] });
   }
@@ -8366,7 +8391,9 @@ async function openNearbyMap() {
     const avatar = el("div", { class: "map-sheet-ava", style: `background-image:url('${u.photo || ""}')` });
     const badge = u._test
       ? el("span", { class: "map-sheet-badge" }, "Perfil ficticio de prueba")
-      : (u.online ? el("span", { class: "map-sheet-badge on" }, "En línea") : null);
+      : (isNewUser(u)
+          ? el("span", { class: "map-sheet-badge new" }, "Recién llegado/a")
+          : (u.online ? el("span", { class: "map-sheet-badge on" }, "En línea") : null));
     const distLabel = fmtDistance(u.distance);
     const distTxt = distLabel ? `a ${distLabel}` : "";
     const sheet = el("div", {}, [
@@ -8426,6 +8453,8 @@ async function openNearbyMap() {
     const f = mapFilters;
     if (!mapGenderMatches(f.gender, u.gender)) return false;
     if (f.onlyOnline && !u.online) return false;
+    // V852 · "Nuevos": solo cuentas recién registradas (últimas NEW_USER_HOURS).
+    if (f.onlyNew && !isNewUser(u)) return false;
     // Edad
     if (u.age != null && Number.isFinite(+u.age)) {
       if (+u.age < f.ageMin || +u.age > f.ageMax) return false;
@@ -8519,9 +8548,11 @@ async function openNearbyMap() {
     if (pinAway && distTxt && !li.off) distTxt = "a " + distTxt + " del pin";
     const meta = [u.city || "", (distTxt || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
     const isFav = !isTest && state.favorites && state.favorites.has(u.id);
+    const showNew = !isTest && isNewUser(u);
     const card = el("div", { class: "result-card" + (isTest ? " test" : ""),
       style: `background-image:url('${u.photo || ""}')` }, [
       u.online ? el("div", { class: "online" }) : null,
+      showNew ? el("span", { class: "map-new-tag" }, "Nuevo") : null,
       isTest
         ? el("span", { class: "map-person-tag" }, "Prueba")
         : el("button", { class: "heart" + (isFav ? " on" : ""),

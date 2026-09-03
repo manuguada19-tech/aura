@@ -9564,6 +9564,12 @@ body.map-open { overflow: hidden; }
 }
 .map-chip.active .map-chip-count { color: #ff3b6b; background: #fff; }
 .map-chip-count[hidden] { display: none; }
+/* V852 · Chip "Nuevos": icono de destello. Cuando está activo se tiñe de
+   verde/turquesa (mismo color que la etiqueta "Nuevo" del pin) en lugar del
+   rosa de marca, para que su función quede clara y no se confunda con el resto. */
+.map-chip-new .map-chip-ic { display: inline-flex; color: #10b981; }
+.map-chip-new.active { background: linear-gradient(135deg, #34d399, #10b981); box-shadow: 0 4px 12px rgba(16,185,129,.30); }
+.map-chip-new.active .map-chip-ic { color: #fff; }
 
 /* Lienzo del mapa.
    V767 · position:relative + z-index:0 CREA un contexto de apilado propio, de
@@ -9688,6 +9694,14 @@ body.map-open { overflow: hidden; }
   font-size: 10px; font-weight: 800; color: #1a1200;
   background: linear-gradient(135deg, #fbbf24, #f59e0b);
 }
+/* V852 · Distintivo "Nuevo" en la tarjeta de la cuadrícula (esquina superior
+   izquierda, verde/turquesa). Marca a las cuentas recién registradas. */
+.map-people-grid .result-card .map-new-tag {
+  position: absolute; left: 10px; top: 10px; z-index: 4; padding: 3px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; color: #04231a;
+  background: linear-gradient(135deg, #34d399, #10b981);
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+}
 .map-person-card {
   position: relative; aspect-ratio: 3 / 4; border: 0; padding: 0; cursor: pointer;
   border-radius: 14px; overflow: hidden; text-align: left;
@@ -9810,6 +9824,12 @@ body.map-open { overflow: hidden; }
   font-size: 10px; font-weight: 800; letter-spacing: .3px; color: #1a1200;
   background: linear-gradient(135deg, #fbbf24, #f59e0b);
   box-shadow: 0 2px 6px rgba(0,0,0,.3);
+}
+/* V852 · Etiqueta "Nuevo" del pin: verde/turquesa (distinta del ámbar de
+   "Prueba") para diferenciar de un vistazo a quien acaba de registrarse. */
+.map-pin-tag.new {
+  color: #04231a;
+  background: linear-gradient(135deg, #34d399, #10b981);
 }
 /* Asegura que los controles de Leaflet queden sobre el overlay */
 .map-overlay .leaflet-container { font: inherit; background: var(--bg); }
@@ -10038,6 +10058,7 @@ body.map-open { overflow: hidden; }
   background: linear-gradient(135deg, #fbbf24, #f59e0b);
 }
 .map-sheet-badge.on { color: #fff; background: #22c55e; }
+.map-sheet-badge.new { color: #04231a; background: linear-gradient(135deg, #34d399, #10b981); }
 
 /* V763 · Cuadrícula tipo Grindr de personas cercanas */
 .map-grid {
