@@ -11029,10 +11029,21 @@ async function viewMatchCelebrate(root) {
   }
 
   // ---- Helpers de campo ----
-  function textField(label, key, ph) {
+  // V856 · Cada campo admite una PISTA (hint) opcional: un texto pequeño bajo la
+  // etiqueta que explica EXACTAMENTE qué elemento cambia (p. ej. "el corazón del
+  // centro", "el botón de arriba"), para que se vea a qué corresponde cada color.
+  function hintEl(text) {
+    return text ? el("small", { class: "muted", style: "display:block;font-size:10.5px;line-height:1.3;margin-top:2px;opacity:.8" }, text) : null;
+  }
+  function fieldWrap(label, control, hint) {
+    const kids = [ el("span", {}, label), control ];
+    const h = hintEl(hint); if (h) kids.push(h);
+    return el("label", { class: "field" }, kids);
+  }
+  function textField(label, key, ph, hint) {
     const inp = el("input", { class: "input", value: cfg[key] || "", placeholder: ph || "" });
     inp.addEventListener("input", () => { cfg[key] = inp.value; renderPreview(); scheduleAutoSave(); });
-    return el("label", { class: "field" }, [ el("span", {}, label), inp ]);
+    return fieldWrap(label, inp, hint);
   }
   function areaField(label, key, ph, rows) {
     const ta = el("textarea", { class: "input", rows: String(rows || 3), placeholder: ph || "" });
@@ -11040,21 +11051,23 @@ async function viewMatchCelebrate(root) {
     ta.addEventListener("input", () => { cfg[key] = ta.value; renderPreview(); scheduleAutoSave(); });
     return el("label", { class: "field" }, [ el("span", {}, label), ta ]);
   }
-  function boolField(label, key) {
+  function boolField(label, key, hint) {
     const cb = el("input", { type: "checkbox" });
     cb.checked = String(cfg[key]) !== "false";
     cb.addEventListener("change", () => { cfg[key] = cb.checked ? "true" : "false"; renderPreview(); scheduleAutoSave(); });
-    const row = el("div", { style: "display:flex; align-items:center; gap:10px;" }, [ cb, el("span", {}, label) ]);
-    return el("label", { class: "field" }, [ el("span", {}, "\u00A0"), row ]);
+    const line = [ el("div", { style: "display:flex; align-items:center; gap:10px;" }, [ cb, el("span", {}, label) ]) ];
+    const h = hintEl(hint); if (h) line.push(h);
+    const box = el("div", {}, line);
+    return el("label", { class: "field" }, [ el("span", {}, "\u00A0"), box ]);
   }
-  function numField(label, key, ph) {
+  function numField(label, key, ph, hint) {
     const inp = el("input", { class: "input", type: "number", min: "1000", step: "500", value: cfg[key] || "", placeholder: ph || "" });
     inp.addEventListener("input", () => { cfg[key] = inp.value; renderPreview(); scheduleAutoSave(); });
-    return el("label", { class: "field" }, [ el("span", {}, label), inp ]);
+    return fieldWrap(label, inp, hint);
   }
   // Campo de color: selector nativo + texto (admite hex, rgb() o «» para el
   // diseño por defecto). El selector solo escribe hex; el texto acepta cualquier valor.
-  function colorField(label, key, ph) {
+  function colorField(label, key, ph, hint) {
     const isHex = (v) => /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(String(v || "").trim());
     const swatch = el("input", { type: "color", value: isHex(cfg[key]) ? cfg[key] : "#ff2d6f",
       style: "width:38px;height:38px;padding:0;border:1px solid var(--border,#ccc);border-radius:8px;background:none;cursor:pointer;flex:none" });
@@ -11066,7 +11079,7 @@ async function viewMatchCelebrate(root) {
     clr.title = "Restablecer al diseño por defecto";
     clr.style.cssText = "flex:none;min-width:34px;padding:0 8px";
     const row = el("div", { style: "display:flex;align-items:center;gap:8px" }, [ swatch, txt, clr ]);
-    return el("label", { class: "field" }, [ el("span", {}, label), row ]);
+    return fieldWrap(label, row, hint);
   }
   function planFieldset(planKey, title, extra) {
     const kids = [
@@ -11106,21 +11119,22 @@ async function viewMatchCelebrate(root) {
     textField("Botón secundario", "content.match.cta_keep", "Seguir descubriendo"),
     textField("Etiqueta “tú” (tu tarjeta)", "content.match.you", "Tú"),
     el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Apariencia"),
-    el("p", { class: "muted", style: "font-size:11px;margin:0 0 6px" }, "Deja un campo vacío para conservar el diseño por defecto."),
-    textField("Fuente (font-family CSS)", "content.match.font", "'Poppins', system-ui, sans-serif"),
-    colorField("Fondo · color inicial", "content.match.bg_from", "#ff2d6f"),
-    colorField("Fondo · color final", "content.match.bg_to", "#9b3cf0"),
-    colorField("Color de acento (corazón)", "content.match.accent", "#ff2d6f"),
-    textField("Logo (URL de imagen)", "content.match.logo_url", "https://…/logo.png"),
-    el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Botones"),
-    colorField("Principal · fondo", "content.match.btn_primary_bg", "#ffffff"),
-    colorField("Principal · texto", "content.match.btn_primary_text", "#ff2d6f"),
-    colorField("Secundario · fondo", "content.match.btn_secondary_bg", "rgba(255,255,255,.12)"),
-    colorField("Secundario · texto", "content.match.btn_secondary_text", "#ffffff"),
+    el("p", { class: "muted", style: "font-size:11px;margin:0 0 6px" }, "Deja un campo vacío para conservar el diseño por defecto. La pista bajo cada campo indica qué elemento cambia."),
+    textField("Fuente (font-family CSS)", "content.match.font", "'Poppins', system-ui, sans-serif", "Tipografía de TODA la pantalla de match (título, textos y botones)."),
+    colorField("Fondo · color inicial", "content.match.bg_from", "#ff2d6f", "Degradado del fondo: color de arriba/inicio."),
+    colorField("Fondo · color final", "content.match.bg_to", "#9b3cf0", "Degradado del fondo: color de abajo/final."),
+    colorField("Color de acento (corazón central)", "content.match.accent", "#ff2d6f", "El CORAZÓN grande que va entre las dos fotos."),
+    textField("Logo (URL de imagen)", "content.match.logo_url", "https://…/logo.png", "Imagen que aparece arriba del todo, sobre la insignia «Es un match»."),
+    el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Botón principal (Enviar mensaje)"),
+    colorField("Fondo del botón principal", "content.match.btn_primary_bg", "#ffffff", "Relleno del botón de ARRIBA («Enviar mensaje»)."),
+    colorField("Texto del botón principal", "content.match.btn_primary_text", "#ff2d6f", "Color de la letra del botón «Enviar mensaje»."),
+    el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Botón secundario (Seguir descubriendo)"),
+    colorField("Fondo del botón secundario", "content.match.btn_secondary_bg", "rgba(255,255,255,.12)", "Relleno del botón de ABAJO («Seguir descubriendo»)."),
+    colorField("Texto del botón secundario", "content.match.btn_secondary_text", "#ffffff", "Color de la letra del botón «Seguir descubriendo»."),
     el("h4", { style: "margin:12px 0 2px;font-size:13.5px" }, "Animaciones"),
-    boolField("Fondo animado", "content.match.anim_bg"),
-    boolField("Corazones flotantes", "content.match.hearts"),
-    boolField("Confeti", "content.match.confetti"),
+    boolField("Fondo animado", "content.match.anim_bg", "Movimiento suave del degradado del fondo."),
+    boolField("Corazones flotantes", "content.match.hearts", "Corazones que suben por la pantalla."),
+    boolField("Confeti", "content.match.confetti", "Lluvia de confeti al aparecer el match."),
   ]);
   const planPane = el("div", { class: "settings-form" }, [
     el("h3", { style: "margin-bottom:4px" }, "Celebración de planes"),
@@ -11128,14 +11142,14 @@ async function viewMatchCelebrate(root) {
     boolField("Activar celebración al volver a Free", "content.celebrate.free_enabled"),
     numField("Duración en pantalla (ms)", "content.celebrate.duration", "5000"),
     el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Apariencia (planes de pago)"),
-    el("p", { class: "muted", style: "font-size:11px;margin:0 0 6px" }, "Deja un campo vacío para conservar el diseño por defecto. El acento colorea el emblema, la barra y el nombre del plan."),
-    textField("Fuente (font-family CSS)", "content.celebrate.font", "'Poppins', system-ui, sans-serif"),
-    colorField("Fondo · color inicial", "content.celebrate.bg_from", "#1b1030"),
-    colorField("Fondo · color final", "content.celebrate.bg_to", "#120a24"),
-    colorField("Color de acento", "content.celebrate.accent", "#ff8a3b"),
-    textField("Logo (URL de imagen)", "content.celebrate.logo_url", "https://…/logo.png"),
-    boolField("Fondo animado (rayos)", "content.celebrate.anim_bg"),
-    boolField("Confeti", "content.celebrate.confetti"),
+    el("p", { class: "muted", style: "font-size:11px;margin:0 0 6px" }, "Deja un campo vacío para conservar el diseño por defecto. La pista bajo cada campo indica qué elemento cambia."),
+    textField("Fuente (font-family CSS)", "content.celebrate.font", "'Poppins', system-ui, sans-serif", "Tipografía de TODA la celebración (título, textos y ventajas)."),
+    colorField("Fondo · color inicial", "content.celebrate.bg_from", "#1b1030", "Degradado del fondo: color de arriba/inicio."),
+    colorField("Fondo · color final", "content.celebrate.bg_to", "#120a24", "Degradado del fondo: color de abajo/final."),
+    colorField("Color de acento", "content.celebrate.accent", "#ff8a3b", "Colorea el EMBLEMA con el icono, la barra superior y el NOMBRE del plan en el título."),
+    textField("Logo (URL de imagen)", "content.celebrate.logo_url", "https://…/logo.png", "Imagen que aparece arriba, sobre el antetítulo."),
+    boolField("Fondo animado (rayos)", "content.celebrate.anim_bg", "Rayos/haz de luz en movimiento detrás del contenido."),
+    boolField("Confeti", "content.celebrate.confetti", "Lluvia de confeti al aparecer la celebración."),
     el("h4", { style: "margin:14px 0 2px;font-size:14px" }, "Textos comunes (planes de pago)"),
     textField("Antetítulo", "content.celebrate.kicker", "Plan activado"),
     textField("Título (usa {plan})", "content.celebrate.title", "Bienvenido a Aura {plan}"),
@@ -11148,9 +11162,9 @@ async function viewMatchCelebrate(root) {
       textField("Título (Free)", "content.celebrate.free.title", "Ahora estás en Aura Free"),
       areaField("Subtítulo (Free)", "content.celebrate.free.sub", "Has vuelto al plan gratuito…", 3),
       el("p", { class: "muted", style: "font-size:11px;margin:6px 0 2px" }, "Apariencia propia de Free (si se deja vacío, usa la de los planes de pago)."),
-      colorField("Fondo · color inicial (Free)", "content.celebrate.free.bg_from", "#0c1f18"),
-      colorField("Fondo · color final (Free)", "content.celebrate.free.bg_to", "#0a1712"),
-      colorField("Color de acento (Free)", "content.celebrate.free.accent", "#34c77b"),
+      colorField("Fondo · color inicial (Free)", "content.celebrate.free.bg_from", "#0c1f18", "Degradado del fondo (arriba/inicio) SOLO en la pantalla de Free."),
+      colorField("Fondo · color final (Free)", "content.celebrate.free.bg_to", "#0a1712", "Degradado del fondo (abajo/final) SOLO en la pantalla de Free."),
+      colorField("Color de acento (Free)", "content.celebrate.free.accent", "#34c77b", "Emblema, barra y nombre del plan SOLO en la pantalla de Free."),
     ]),
   ]);
 
