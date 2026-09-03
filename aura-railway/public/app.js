@@ -8247,7 +8247,7 @@ async function openNearbyMap() {
   // "Buscar"), no un carrusel horizontal. Debajo se mantiene el texto de "no hay
   // nadie cerca" cuando la búsqueda no arroja resultados.
   const peopleTitleMain = el("span", { class: "map-people-title-main" }, "Personas en esta zona");
-  const peopleTitleSub = el("small", {}, "Arrastra el pin y pulsa «Buscar cerca de aquí»");
+  const peopleTitleSub = el("small", {}, "Mueve o amplía el mapa para ver quién hay cerca");
   const peopleGrid = el("div", { class: "map-people-grid" });
   const peopleEmpty = el("div", { class: "map-people-empty", hidden: true });
   const peoplePanel = el("div", { class: "map-people" }, [
@@ -8593,12 +8593,12 @@ async function openNearbyMap() {
       ? (pinAway
           ? "Distancias respecto al pin"
           : (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora"))
-      : "Arrastra el pin a otra zona y pulsa «Buscar cerca de aquí»";
+      : "Mueve o amplía el mapa a otra zona para ver a quién hay cerca";
     peopleGrid.innerHTML = "";
     if (!list.length) {
       peopleGrid.hidden = true;
       peopleEmpty.hidden = false;
-      peopleEmpty.textContent = "No hay nadie por esta zona. Arrastra el pin a otro punto o busca otra ciudad.";
+      peopleEmpty.textContent = "No hay nadie por esta zona. Mueve o amplía el mapa a otro punto, o busca otra ciudad.";
       return;
     }
     peopleGrid.hidden = false;
@@ -8705,13 +8705,42 @@ async function openNearbyMap() {
   }
 
   let searchSeq = 0; // descarta respuestas viejas si llega una nueva
+  // V854 · Exploración estilo mapa: al mover/ampliar el mapa se buscan solos los
+  // usuarios de la zona que estás mirando (sin pulsar botones). Estas banderas
+  // evitan bucles: suppressAutoSearch salta la búsqueda del "moveend" que provoca
+  // un centrado PROGRAMÁTICO (setView), y pinDragging la salta mientras arrastras
+  // el pin (que ya busca solo al soltarlo). autoSearchTimer aplica un antirrebote.
+  let suppressAutoSearch = false;
+  let pinDragging = false;
+  let autoSearchTimer = null;
+
+  // Devuelve el lat/lng que queda en el CENTRO de la franja visible del mapa
+  // (entre el buscador de arriba y el panel de personas / botón de abajo). Es el
+  // punto que el usuario "está mirando"; ahí colocamos el pin y buscamos.
+  function visibleCenterLatLng() {
+    try {
+      const cRect = mapEl.getBoundingClientRect();
+      let top = 0, bottom = cRect.height;
+      try { const sb = searchBar.getBoundingClientRect(); if (sb.height) top = Math.max(top, (sb.bottom - cRect.top) + 10); } catch {}
+      let low = null;
+      try { const hb = searchHereBtn.getBoundingClientRect(); if (hb.height) low = hb.top; } catch {}
+      if (low == null) { try { const p = peoplePanel.getBoundingClientRect(); if (p.height) low = p.top; } catch {} }
+      if (low != null) bottom = Math.min(bottom, (low - cRect.top) - 10);
+      const visCenterY = (bottom > top) ? (top + bottom) / 2 : cRect.height / 2;
+      const size = map.getSize();
+      return map.containerPointToLatLng(L.point(size.x / 2, visCenterY));
+    } catch {
+      const c = map.getCenter(); return { lat: c.lat, lng: c.lng };
+    }
+  }
 
   // V840 · Busca en la posición del PIN (lat,lng). Mueve el pin allí, dibuja el
   // círculo y consulta al backend. ANTI-PARPADEO: NO se vacía la lista mientras se
   // espera; solo se repinta cuando llegan datos nuevos (y solo si esta búsqueda
   // sigue siendo la última lanzada). Así los usuarios ya mostrados no desaparecen
   // unos segundos cuando la consulta tarda o vuelve vacía.
-  async function searchAt(lat, lng) {
+  async function searchAt(lat, lng, opts) {
+    opts = opts || {};
     setSearchPoint(lat, lng);
     const seq = ++searchSeq;
     searchHereBtn.classList.add("loading");
@@ -8720,6 +8749,12 @@ async function openNearbyMap() {
       if (seq !== searchSeq) return;           // llegó otra búsqueda más nueva
       if (data) lastData = data;                // solo sustituimos si hubo respuesta
       repaint();                                // repinta con datos nuevos (o los previos)
+
+      // V854 · Cuando el usuario EXPLORA moviendo el mapa (pan/zoom), NO le
+      // devolvemos a su ubicación si la zona está vacía: se queda donde miró y ve
+      // el estado "no hay nadie por esta zona" en el panel. Solo el botón, el
+      // arrastre del pin o tocar el mapa (opts.keepView falsy) recentran a casa.
+      if (opts.keepView) return;
 
       // V848 · Si NO hay nadie donde se buscó y ese punto NO es (aprox.) tu
       // ubicación, volvemos a tu ubicación y mostramos un aviso unos segundos.
@@ -8761,6 +8796,12 @@ async function openNearbyMap() {
   // real del mapa para que el punto aparezca justo en medio de la franja que sí
   // se ve, con el pin y "Tú estás aquí" bien visibles.
   function centerOnVisible(lat, lng, zoom, animate) {
+    // V854 · Este centrado es PROGRAMÁTICO (setView): marca que el "moveend" que
+    // provoque NO debe disparar una búsqueda automática (evita bucles/duplicados).
+    // Salvaguarda: si por lo que sea no llega el "moveend" (p. ej. la vista no
+    // cambió), reponemos la bandera para no bloquear futuras búsquedas al explorar.
+    suppressAutoSearch = true;
+    setTimeout(() => { suppressAutoSearch = false; }, 900);
     const z = Number.isFinite(zoom) ? zoom : (map.getZoom() || CLOSE_ZOOM);
     try {
       const cRect = mapEl.getBoundingClientRect();
@@ -8925,8 +8966,10 @@ async function openNearbyMap() {
   });
 
   // V840 · Tocar el mapa COLOCA el pin de búsqueda en ese punto y busca allí.
-  // Panear el mapa YA NO busca (antes disparaba búsquedas involuntarias que
-  // hacían parpadear la lista): solo se busca al soltar el pin o con el botón.
+  // V854 · Ahora, además, EXPLORAR el mapa (arrastrarlo/ampliarlo) busca solo en
+  // la zona que estás mirando: es más natural que pulsar un botón. Al tocar el
+  // mapa seguimos recentrando a casa si está vacío (intención directa); al
+  // explorar por pan/zoom NO (te quedas donde miras). Ver "moveend".
   map.on("click", (e) => {
     const { lat, lng } = e.latlng || {};
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -8934,14 +8977,36 @@ async function openNearbyMap() {
   });
 
   // V840 · El círculo rosa sigue al PIN mientras se arrastra; al soltarlo se
-  // busca en su nueva posición.
+  // busca en su nueva posición. pinDragging evita que el "moveend" del autopan
+  // que hace Leaflet al arrastrar el pin dispare una segunda búsqueda.
+  searchPin.on("dragstart", () => { pinDragging = true; });
   searchPin.on("drag", () => {
     const p = searchPin.getLatLng();
     searchLatLng = { lat: p.lat, lng: p.lng };
   });
   searchPin.on("dragend", () => {
     const p = searchPin.getLatLng();
+    pinDragging = false;
     searchAt(p.lat, p.lng);
+  });
+
+  // V854 · BÚSQUEDA AUTOMÁTICA AL EXPLORAR (estilo mapa). Cuando el usuario
+  // arrastra o hace zoom en el mapa, tras un breve reposo (antirrebote) movemos
+  // el pin al centro de lo que está mirando y buscamos allí, SIN recentrar a casa
+  // aunque esté vacío (keepView). Los movimientos PROGRAMÁTICOS (centrar al
+  // abrir, "mi ubicación", ir a una ciudad) se ignoran vía suppressAutoSearch, y
+  // el arrastre del pin vía pinDragging (ese ya busca al soltar).
+  map.on("movestart", () => { if (autoSearchTimer) { clearTimeout(autoSearchTimer); autoSearchTimer = null; } });
+  map.on("moveend", () => {
+    if (suppressAutoSearch) { suppressAutoSearch = false; return; }
+    if (pinDragging) return;
+    if (autoSearchTimer) clearTimeout(autoSearchTimer);
+    autoSearchTimer = setTimeout(() => {
+      const c = visibleCenterLatLng();
+      if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) {
+        searchAt(c.lat, c.lng, { keepView: true });
+      }
+    }, 450);
   });
 
   // Botón "Buscar cerca de aquí": busca en la posición actual del pin.
