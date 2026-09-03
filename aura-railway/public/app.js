@@ -8073,16 +8073,23 @@ async function openNearbyMap() {
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
   // ---- Barra superior (glass) ----
+  // V840 · Botón de tema (claro/oscuro) DENTRO del mapa. Antes no había forma de
+  // cambiar el tema desde aquí. Al pulsarlo se intercambian las teselas del mapa
+  // y las variables de color del overlay (que dependen de [data-theme]).
+  const themeBtn = el("button", { class: "map-icon-btn", type: "button", "aria-label": "Cambiar tema del mapa", title: "Tema claro/oscuro" });
+  function paintMapThemeBtn() {
+    const isDark = (state.theme || "dark") === "dark";
+    themeBtn.innerHTML = isDark
+      ? '<svg viewBox="0 0 24 24" width="20" height="20"><circle cx="12" cy="12" r="5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="12" y1="1.5" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22.5"/><line x1="1.5" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22.5" y2="12"/><line x1="4.2" y1="4.2" x2="6" y2="6"/><line x1="18" y1="18" x2="19.8" y2="19.8"/><line x1="4.2" y1="19.8" x2="6" y2="18"/><line x1="18" y1="6" x2="19.8" y2="4.2"/></g></svg>'
+      : '<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>';
+  }
+  paintMapThemeBtn();
   overlay.appendChild(el("div", { class: "map-topbar" }, [
     el("button", { class: "map-icon-btn", type: "button", "aria-label": "Cerrar mapa",
       onclick: () => { try { overlay.remove(); } catch {} document.body.classList.remove("map-open"); },
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
     el("div", { class: "map-title" }, "Explora en el mapa"),
-    // V764 · Botón de cuadrícula visible en la barra superior (antes flotaba
-    // abajo-derecha y se solapaba con el zoom, no se encontraba).
-    el("button", { class: "map-icon-btn", type: "button", "aria-label": "Ver personas en cuadrícula", title: "Cuadrícula",
-      onclick: () => openGridSheet(),
-      html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>` }),
+    themeBtn,
   ]));
 
   // ---- Barra de filtros (chips) ----
@@ -8118,10 +8125,9 @@ async function openNearbyMap() {
     c.addEventListener("click", () => {
       mapFilters.radiusKm = km;
       radiusChips.forEach(x => x.classList.toggle("active", x === c));
-      // V832 · Al cambiar el radio, reencuadra para que el círculo quepa entero
-      // en pantalla y busca en la misma zona (centro actual) con el nuevo radio.
-      const cc = map.getCenter();
-      goToZone(cc.lat, cc.lng);
+      // V840 · Al cambiar el radio, reencuadra para que el círculo quepa entero
+      // en pantalla y busca en la MISMA zona (posición del pin) con el nuevo radio.
+      goToZone(searchLatLng.lat, searchLatLng.lng);
     });
     return c;
   });
@@ -8155,23 +8161,31 @@ async function openNearbyMap() {
     html: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>` });
   overlay.appendChild(locateBtn);
 
-  // V832 · Dock inferior PERSISTENTE con la lista de personas de la zona (test +
-  // reales) para escoger. Sustituye a la leyenda de texto: la zona = centro del
-  // mapa, así que ya no hay que "arrastrar el círculo".
-  const dockTitle = el("div", { class: "map-dock-title" }, [
-    el("span", { class: "map-dock-title-main" }, "Personas en esta zona"),
-    el("small", {}, "Mueve el mapa para cambiar de zona"),
+  // V840 · Botón "Buscar cerca de aquí". La zona ya NO es el centro del mapa ni un
+  // círculo arrastrable: hay un PIN que se arrastra (o se coloca tocando el mapa)
+  // y este botón lanza la búsqueda en la posición del pin. Así panear el mapa no
+  // dispara búsquedas involuntarias (que hacían "parpadear" la lista).
+  const searchHereBtn = el("button", { class: "map-here-btn", type: "button" }, [
+    el("span", { class: "map-here-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>` }),
+    el("span", { class: "map-here-txt" }, "Buscar cerca de aquí"),
   ]);
-  const dockScroll = el("div", { class: "map-dock-scroll" });
-  const dock = el("div", { class: "map-dock" }, [
-    el("div", { class: "map-dock-head" }, [
-      dockTitle,
-      el("button", { class: "map-dock-grid-btn", type: "button", onclick: () => openGridSheet(),
-        html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Cuadrícula</span>` }),
+  overlay.appendChild(searchHereBtn);
+
+  // V840 · Panel inferior de personas en forma de CUADRÍCULA con foto (igual que
+  // "Buscar"), no un carrusel horizontal. Debajo se mantiene el texto de "no hay
+  // nadie cerca" cuando la búsqueda no arroja resultados.
+  const peopleTitleMain = el("span", { class: "map-people-title-main" }, "Personas en esta zona");
+  const peopleTitleSub = el("small", {}, "Arrastra el pin y pulsa «Buscar cerca de aquí»");
+  const peopleGrid = el("div", { class: "map-people-grid" });
+  const peopleEmpty = el("div", { class: "map-people-empty", hidden: true });
+  const peoplePanel = el("div", { class: "map-people" }, [
+    el("div", { class: "map-people-head" }, [
+      el("div", { class: "map-people-title" }, [ peopleTitleMain, peopleTitleSub ]),
     ]),
-    dockScroll,
+    peopleGrid,
+    peopleEmpty,
   ]);
-  overlay.appendChild(dock);
+  overlay.appendChild(peoplePanel);
 
   // V768 · Aviso grande en pantalla (unos segundos) cuando no hay nadie cerca.
   const notice = el("div", { class: "map-notice", hidden: true });
@@ -8250,19 +8264,24 @@ async function openNearbyMap() {
   // V795 · maxNativeZoom:16 = último nivel con teselas reales de Esri; maxZoom:18
   // permite acercar más (Leaflet re-escala las teselas del nivel 16), de modo
   // que el punto azul se ve a nivel de calle sin huecos grises.
-  L.tileLayer(tileUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
+  const tileLayer = L.tileLayer(tileUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
 
   const markers = L.layerGroup().addTo(map);
   let searchCircle = null;
 
-  // V832 · Marcador FIJO en el centro del lienzo (= centro de la zona). No se
-  // arrastra: para cambiar de zona se mueve el mapa. Señala el centro del
-  // círculo rosa sin taparlo (pointer-events:none) y con una etiqueta clara.
-  mapEl.appendChild(el("div", { class: "map-center-marker" }, [
-    el("div", { class: "map-center-pill" }, "Centro de la zona"),
-    el("div", { class: "map-center-stem" }),
-    el("div", { class: "map-center-dot" }),
-  ]));
+  // V840 · PIN de búsqueda ARRASTRABLE (sustituye al marcador fijo del centro y al
+  // círculo-zona arrastrable anterior). El usuario mueve este pin (arrastrándolo o
+  // tocando el mapa) y pulsa "Buscar cerca de aquí" para buscar en su posición.
+  // searchLatLng guarda la última posición del pin (= dónde se buscará).
+  let searchLatLng = { lat: start.lat, lng: start.lng };
+  const searchPinIcon = L.divIcon({
+    className: "map-searchpin-wrap",
+    html: '<div class="map-searchpin"><span class="map-searchpin-pill">Buscar aquí</span><span class="map-searchpin-body"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z"/><circle cx="12" cy="9" r="2.6" fill="#ff3b6b"/></svg></span></span>',
+    iconSize: [40, 54], iconAnchor: [20, 52],
+  });
+  const searchPin = L.marker([searchLatLng.lat, searchLatLng.lng], {
+    icon: searchPinIcon, draggable: true, autoPan: true, zIndexOffset: 1500,
+  }).addTo(map);
 
   function pinIcon(u) {
     const cls = ["map-pin"];
@@ -8333,8 +8352,8 @@ async function openNearbyMap() {
     if (mapFilters.showTest && testUser && Number.isFinite(testUser.lat) && Number.isFinite(testUser.lng)) {
       let inZone = true;
       try {
-        const c = map.getCenter();
-        const dkm = haversineKm(c.lat, c.lng, testUser.lat, testUser.lng);
+        // V840 · La zona la define el PIN de búsqueda, no el centro del mapa.
+        const dkm = haversineKm(searchLatLng.lat, searchLatLng.lng, testUser.lat, testUser.lng);
         inZone = Number.isFinite(dkm) && dkm <= mapFilters.radiusKm;
       } catch {}
       if (inZone) list.unshift(testUser);
@@ -8367,44 +8386,45 @@ async function openNearbyMap() {
     try { modal.open(sheet); } catch {}
   }
 
-  // V832 · Tarjeta del dock inferior para una persona de la zona.
-  function dockCard(u) {
+  // V840 · Tarjeta de persona con foto en la cuadrícula inferior (mismo estilo
+  // que "Buscar": foto grande, degradado, nombre+edad, distancia). Al tocar abre
+  // directamente el perfil (no una hoja intermedia).
+  function peopleCard(u) {
     const distLabel = fmtDistance(u.distance);
-    const sub = [u.city || "", distLabel ? "a " + distLabel : ""].filter(Boolean).join(" · ")
-      || (u._test ? "Perfil de prueba" : (u.online ? "En línea" : ""));
-    return el("button", { class: "map-dock-card" + (u._test ? " test" : ""), type: "button",
-      onclick: () => openUserSheet(u) }, [
-      el("div", { class: "map-dock-photo", style: `background-image:url('${u.photo || ""}')` }, [
-        u._test ? el("span", { class: "map-dock-tag" }, "Prueba") : null,
-        u.online ? el("span", { class: "map-dock-dot" }) : null,
-      ]),
-      el("div", { class: "map-dock-meta" }, [
-        el("div", { class: "map-dock-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
-        sub ? el("div", { class: "map-dock-sub" }, sub) : null,
+    const sub = [u.city || "", distLabel ? "a " + distLabel : ""].filter(Boolean).join(" · ");
+    return el("button", { class: "map-person-card" + (u._test ? " test" : ""), type: "button",
+      style: `background-image:url('${u.photo || ""}')`,
+      onclick: () => openUserProfile(u) }, [
+      u._test ? el("span", { class: "map-person-tag" }, "Prueba") : null,
+      u.online ? el("span", { class: "map-person-dot" }) : null,
+      el("div", { class: "map-person-meta" }, [
+        el("div", { class: "map-person-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+        sub ? el("div", { class: "map-person-sub" }, sub) : null,
       ]),
     ]);
   }
 
-  // V832 · Rellena el dock inferior persistente + actualiza el título con el
-  // recuento. La lista incluye test + reales, para escoger tocando una tarjeta.
-  function renderDock(list) {
-    dockScroll.innerHTML = "";
+  // V840 · Rellena la CUADRÍCULA inferior de personas + el título con recuento.
+  // Debajo se mantiene un texto de "no hay nadie cerca" cuando la lista queda
+  // vacía (el usuario pidió que ese texto siga apareciendo si no hay nadie).
+  function renderPeople(list) {
     const realCount = list.filter(u => !u._test).length;
-    const mainTxt = list.length
+    peopleTitleMain.textContent = list.length
       ? `Personas en esta zona · ${list.length}`
       : "Personas en esta zona";
-    const subTxt = list.length
-      ? (realCount ? "Toca una tarjeta para ver su perfil" : "Solo la cuenta de prueba por ahora")
-      : "Mueve el mapa o busca por ciudad para cambiar de zona";
-    try {
-      dockTitle.querySelector(".map-dock-title-main").textContent = mainTxt;
-      dockTitle.querySelector("small").textContent = subTxt;
-    } catch {}
+    peopleTitleSub.textContent = list.length
+      ? (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora")
+      : "Arrastra el pin y pulsa «Buscar cerca de aquí»";
+    peopleGrid.innerHTML = "";
     if (!list.length) {
-      dockScroll.appendChild(el("div", { class: "map-dock-empty" }, "No hay nadie en esta zona. Prueba a mover el mapa, ampliar el radio o buscar otra ciudad."));
+      peopleGrid.hidden = true;
+      peopleEmpty.hidden = false;
+      peopleEmpty.textContent = "No hay nadie cerca de este punto. Arrastra el pin a otra zona, amplía el radio o busca otra ciudad.";
       return;
     }
-    list.forEach(u => dockScroll.appendChild(dockCard(u)));
+    peopleGrid.hidden = false;
+    peopleEmpty.hidden = true;
+    list.forEach(u => peopleGrid.appendChild(peopleCard(u)));
   }
 
   function repaint() {
@@ -8414,13 +8434,28 @@ async function openNearbyMap() {
       const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => openUserSheet(u));
     });
-    renderDock(list);
+    renderPeople(list);
+    syncControls();
   }
 
-  // V832 · Círculo de búsqueda CENTRADO en el centro del mapa (ya no se arrastra
-  // un asa suelta). La "zona" es el centro del mapa: al panear (arrastrar) el
-  // mapa, el círculo se mueve con él porque siempre se redibuja sobre el centro.
-  // Un marcador CSS fijo (.map-center-marker) señala ese centro sin taparlo.
+  // V840 · El panel de personas tiene altura VARIABLE (una fila en PC, hasta
+  // ~46vh en móvil). Para que el botón "Buscar cerca de aquí", el botón de "mi
+  // ubicación" y el control de zoom de Leaflet queden SIEMPRE justo encima del
+  // panel (y no floten a media pantalla ni queden tapados), medimos la altura
+  // real del panel y la exponemos como variable CSS --map-people-h. El CSS
+  // posiciona esos controles relativos a esa variable.
+  function syncControls() {
+    requestAnimationFrame(() => {
+      try {
+        const h = Math.round(peoplePanel.getBoundingClientRect().height) || 0;
+        overlay.style.setProperty("--map-people-h", h + "px");
+      } catch {}
+    });
+  }
+  window.addEventListener("resize", syncControls);
+
+  // V840 · Círculo de búsqueda centrado en el PIN de búsqueda (arrastrable), no en
+  // el centro del mapa. Se redibuja cuando el pin se mueve.
   function drawCircle(center, radiusKm) {
     if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
     searchCircle = L.circle([center.lat, center.lng], {
@@ -8435,23 +8470,24 @@ async function openNearbyMap() {
   // abrir, NUNCA al panear a mano (eso respetaría el zoom del usuario). El
   // padding deja hueco para las barras de arriba y el dock de abajo.
   function fitToRadius(center) {
-    const c = center || map.getCenter();
+    const c = center || searchLatLng;
     drawCircle(c, mapFilters.radiusKm);
-    const beforeZoom = map.getZoom();
-    const beforeCenter = map.getCenter();
     try {
       map.fitBounds(searchCircle.getBounds(), {
         paddingTopLeft: [28, 150], paddingBottomRight: [28, 210],
         animate: true, maxZoom: 16,
       });
     } catch {}
-    // ¿Cambió la vista? Si sí, moveend disparará searchHere; si no, hay que
-    // buscar a mano (p. ej. el nuevo radio cabe con el mismo zoom y centro).
-    let moved = false;
-    try {
-      moved = (map.getZoom() !== beforeZoom) || !map.getCenter().equals(beforeCenter, 1e-6);
-    } catch { moved = true; }
-    return moved;
+  }
+
+  // V840 · Mueve el PIN de búsqueda a (lat,lng): actualiza searchLatLng, reposiciona
+  // el marcador y redibuja el círculo. NO busca por sí solo (eso lo hace el botón
+  // "Buscar cerca de aquí" o el fin de arrastre del pin).
+  function setSearchPoint(lat, lng) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    searchLatLng = { lat, lng };
+    try { searchPin.setLatLng([lat, lng]); } catch {}
+    drawCircle(searchLatLng, mapFilters.radiusKm);
   }
 
   // V764 · "Mi ubicación": punto fijo al que redirigir cuando una búsqueda no
@@ -8504,35 +8540,39 @@ async function openNearbyMap() {
     pointerMarker = L.marker([lat, lng], { icon: pointerIcon(), interactive: false, keyboard: false }).addTo(map);
   }
 
-  let searchTimer = null;
-  let suppressMoveSearch = false; // evita re-buscar tras un setView programático
+  let searchSeq = 0; // descarta respuestas viejas si llega una nueva
 
-  // V832 · Busca en la zona centrada en (lat,lng). YA NO recentramos ni tapamos
-  // la pantalla con avisos cuando no hay nadie: la zona = el centro del mapa y
-  // el usuario decide dónde mirar. Si no hay nadie, el dock lo indica y ya está.
+  // V840 · Busca en la posición del PIN (lat,lng). Mueve el pin allí, dibuja el
+  // círculo y consulta al backend. ANTI-PARPADEO: NO se vacía la lista mientras se
+  // espera; solo se repinta cuando llegan datos nuevos (y solo si esta búsqueda
+  // sigue siendo la última lanzada). Así los usuarios ya mostrados no desaparecen
+  // unos segundos cuando la consulta tarda o vuelve vacía.
   async function searchAt(lat, lng) {
-    drawCircle({ lat, lng }, mapFilters.radiusKm);
-    const data = await fetchNearbyMap(lat, lng, mapFilters.radiusKm);
-    if (data) { lastData = data; }
-    repaint();
+    setSearchPoint(lat, lng);
+    const seq = ++searchSeq;
+    searchHereBtn.classList.add("loading");
+    try {
+      const data = await fetchNearbyMap(lat, lng, mapFilters.radiusKm);
+      if (seq !== searchSeq) return;           // llegó otra búsqueda más nueva
+      if (data) lastData = data;                // solo sustituimos si hubo respuesta
+      repaint();                                // repinta con datos nuevos (o los previos)
+    } finally {
+      if (seq === searchSeq) searchHereBtn.classList.remove("loading");
+    }
   }
 
-  // V832 · "Ir a una zona": centra el mapa en (lat,lng), ajusta el zoom para que
-  // el círculo del radio quepa entero en pantalla y busca UNA vez. El moveend que
-  // provoca fitBounds se ignora (suppressMoveSearch) para no duplicar la búsqueda.
+  // V840 · "Ir a una zona": coloca el pin en (lat,lng), encuadra el círculo del
+  // radio para que quepa entero y busca UNA vez.
   async function goToZone(lat, lng) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    suppressMoveSearch = true;
-    fitToRadius({ lat, lng });
+    setSearchPoint(lat, lng);
+    fitToRadius(searchLatLng);
     await searchAt(lat, lng);
   }
 
-  // Búsqueda al mover el mapa a mano: la zona es SIEMPRE el centro del mapa y se
-  // respeta el zoom que haya elegido el usuario.
+  // V840 · Busca en la posición ACTUAL del pin (botón "Buscar cerca de aquí").
   async function searchHere() {
-    if (suppressMoveSearch) { suppressMoveSearch = false; return; }
-    const c = map.getCenter();
-    await searchAt(c.lat, c.lng);
+    await searchAt(searchLatLng.lat, searchLatLng.lng);
   }
 
   // V764 · Geocodificación por ciudad/provincia (Nominatim / OpenStreetMap, sin
@@ -8661,37 +8701,50 @@ async function openNearbyMap() {
     if (!searchBar.contains(e.target) && !searchSuggest.contains(e.target)) hideSuggest();
   });
 
-  // V832 · Tocar el mapa CENTRA esa zona (la lleva al centro) y busca allí.
-  // Así el gesto de tocar y el de panear hacen lo mismo: mover la zona.
+  // V840 · Tocar el mapa COLOCA el pin de búsqueda en ese punto y busca allí.
+  // Panear el mapa YA NO busca (antes disparaba búsquedas involuntarias que
+  // hacían parpadear la lista): solo se busca al soltar el pin o con el botón.
   map.on("click", (e) => {
     const { lat, lng } = e.latlng || {};
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
-    map.setView([lat, lng], map.getZoom(), { animate: true });
+    searchAt(lat, lng);
   });
 
-  // V832 · El círculo rosa sigue al centro del mapa MIENTRAS se arrastra (antes
-  // se quedaba fijo hasta soltar). Se redibuja en vivo sobre el centro actual.
-  map.on("move", () => {
-    const c = map.getCenter();
-    if (searchCircle) { try { searchCircle.setLatLng(c); } catch {} }
+  // V840 · El círculo rosa sigue al PIN mientras se arrastra; al soltarlo se
+  // busca en su nueva posición.
+  searchPin.on("drag", () => {
+    const p = searchPin.getLatLng();
+    searchLatLng = { lat: p.lat, lng: p.lng };
+    if (searchCircle) { try { searchCircle.setLatLng(p); } catch {} }
+  });
+  searchPin.on("dragend", () => {
+    const p = searchPin.getLatLng();
+    searchAt(p.lat, p.lng);
   });
 
-  // Primera pintura con los datos ya cargados. V832 · Encuadra para que el
-  // círculo de la zona se vea entero desde el principio (setView inicial usaba
-  // zoom 17, con el que un radio de 25 km quedaba fuera de pantalla).
+  // Botón "Buscar cerca de aquí": busca en la posición actual del pin.
+  searchHereBtn.addEventListener("click", () => { searchHere(); });
+
+  // V840 · Botón de tema dentro del mapa: cambia claro/oscuro globalmente,
+  // intercambia las teselas del mapa y repinta el icono del botón.
+  themeBtn.addEventListener("click", () => {
+    try { _toggleAuraTheme(); } catch {}
+    const nowDark = (state.theme || "dark") === "dark";
+    const url = nowDark
+      ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
+      : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+    try { tileLayer.setUrl(url); } catch {}
+    paintMapThemeBtn();
+  });
+
+  // Primera pintura con los datos ya cargados. Coloca el pin en el punto inicial,
+  // encuadra el círculo del radio y pinta la cuadrícula.
+  setSearchPoint(start.lat, start.lng);
   fitToRadius(start);
   repaint();
 
-  map.on("moveend", () => {
-    // Mantén el círculo exactamente en el centro final.
-    const c = map.getCenter();
-    if (searchCircle) { try { searchCircle.setLatLng(c); } catch {} }
-    if (searchTimer) clearTimeout(searchTimer);
-    searchTimer = setTimeout(searchHere, 350);
-  });
-
   locateBtn.addEventListener("click", () => {
-    // V832 · Centra en mi ubicación y encuadra el círculo de la zona entero.
+    // V840 · Centra en mi ubicación, coloca el pin allí y busca.
     goToZone(myLocation.lat, myLocation.lng);
   });
 
