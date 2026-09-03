@@ -8545,8 +8545,40 @@ async function openNearbyMap() {
   async function goToZone(lat, lng, zoom) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
-    try { map.setView([lat, lng], Number.isFinite(zoom) ? zoom : 13, { animate: true }); } catch {}
+    centerOnVisible(lat, lng, Number.isFinite(zoom) ? zoom : 13, true);
     await searchAt(lat, lng);
+  }
+
+  // V844 · Centra (lat,lng) en el CENTRO DEL MAPA VISIBLE, no en el centro
+  // geométrico del canvas. El canvas ocupa toda la pantalla, pero la parte de
+  // arriba la tapan las barras (topbar/filtros/buscador) y la de abajo el panel
+  // de personas (+ el botón "Buscar cerca de aquí"). Sin esta corrección, el
+  // punto y el pin caían detrás del panel (parecía que el mapa era una franja
+  // pequeña y que el pin no estaba "en tu zona"). Aquí desplazamos el centro
+  // real del mapa para que el punto aparezca justo en medio de la franja que sí
+  // se ve, con el pin y "Tú estás aquí" bien visibles.
+  function centerOnVisible(lat, lng, zoom, animate) {
+    const z = Number.isFinite(zoom) ? zoom : (map.getZoom() || CLOSE_ZOOM);
+    try {
+      const cRect = mapEl.getBoundingClientRect();
+      let top = 0, bottom = cRect.height;
+      try { const sb = searchBar.getBoundingClientRect(); if (sb.height) top = Math.max(top, (sb.bottom - cRect.top) + 10); } catch {}
+      // Límite inferior: el botón flotante "Buscar cerca de aquí" si está a la
+      // vista; si no, el borde superior del panel de personas.
+      let low = null;
+      try { const hb = searchHereBtn.getBoundingClientRect(); if (hb.height) low = hb.top; } catch {}
+      if (low == null) { try { const p = peoplePanel.getBoundingClientRect(); if (p.height) low = p.top; } catch {} }
+      if (low != null) bottom = Math.min(bottom, (low - cRect.top) - 10);
+      if (!(bottom > top)) { map.setView([lat, lng], z, { animate: !!animate }); return; }
+      const visCenter = (top + bottom) / 2;
+      const size = map.getSize();
+      const targetPt = map.project([lat, lng], z);
+      const centerPt = L.point(targetPt.x, targetPt.y + (size.y / 2 - visCenter));
+      const newCenter = map.unproject(centerPt, z);
+      map.setView(newCenter, z, { animate: !!animate });
+    } catch {
+      try { map.setView([lat, lng], z, { animate: !!animate }); } catch {}
+    }
   }
 
   // V842 · Centrar MUY cerca del usuario (nivel calle). Al abrir el mapa y al
@@ -8554,7 +8586,7 @@ async function openNearbyMap() {
   async function recenterClose(lat, lng) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
-    try { map.setView([lat, lng], CLOSE_ZOOM, { animate: true }); } catch {}
+    centerOnVisible(lat, lng, CLOSE_ZOOM, true);
     await searchAt(lat, lng);
   }
 
@@ -8724,10 +8756,12 @@ async function openNearbyMap() {
   });
 
   // Primera pintura con los datos ya cargados. Coloca el pin en el punto inicial
-  // y CENTRA cerca (nivel calle). V843 · Sin círculo de zona.
+  // y CENTRA cerca (nivel calle). V843 · Sin círculo de zona. V844 · Centrado
+  // sobre la franja visible del mapa (no detrás del panel de personas).
   setSearchPoint(start.lat, start.lng);
-  try { map.setView([start.lat, start.lng], CLOSE_ZOOM); } catch {}
   repaint();
+  syncControls();
+  requestAnimationFrame(() => { try { centerOnVisible(start.lat, start.lng, CLOSE_ZOOM, false); } catch {} });
 
   locateBtn.addEventListener("click", () => {
     // V842 · Centra MUY cerca de mi ubicación (nivel calle), coloca el pin y busca.

@@ -9627,7 +9627,10 @@ body.map-open { overflow: hidden; }
    lista queda vacía. Usa variables de tema para verse bien en claro y oscuro. */
 .map-people {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 26;
-  max-height: 46vh; display: flex; flex-direction: column;
+  /* V844 · Panel algo más bajo (40vh en vez de 46vh) para que se vea MÁS mapa.
+     La rejilla interna sigue con scroll propio, así que no se pierde ninguna
+     tarjeta; solo se gana altura de mapa por encima del panel. */
+  max-height: 40vh; display: flex; flex-direction: column;
   padding: 10px 12px calc(env(safe-area-inset-bottom, 0) + 12px);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
