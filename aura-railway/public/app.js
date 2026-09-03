@@ -8125,9 +8125,10 @@ async function openNearbyMap() {
   });
 
   // V843 · Sin chips de km: la distancia ya no restringe (ver SEARCH_RADIUS_KM).
+  // V845 · El segmento de género y el chip "En línea" van en UNA sola fila (antes
+  // en dos) para que la barra de filtros ocupe menos alto y se vea más mapa.
   const filterbar = el("div", { class: "map-filterbar" }, [
-    genderSeg,
-    el("div", { class: "map-filterbar-row" }, [ onlineChip ]),
+    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip ]),
   ]);
   overlay.appendChild(filterbar);
 

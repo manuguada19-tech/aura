@@ -9513,11 +9513,16 @@ body.map-open { overflow: hidden; }
 
 /* Segmento de género (Todos / Mujeres / Hombres) */
 .map-seg {
+  /* V845 · En una sola fila junto al chip "En línea": el segmento se estira para
+     ocupar el hueco disponible y el chip queda a la derecha, sin envolver. */
+  flex: 1; min-width: 0;
   display: flex; gap: 4px; padding: 4px;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 999px;
 }
+/* V845 · El chip "En línea" no se encoge ni se corta al ir en la misma fila. */
+.map-filterbar-row > .map-chip { flex: 0 0 auto; }
 .map-seg-btn {
   flex: 1; padding: 8px 6px; border: 0; border-radius: 999px;
   background: transparent; color: var(--text-soft);
@@ -9627,10 +9632,12 @@ body.map-open { overflow: hidden; }
    lista queda vacía. Usa variables de tema para verse bien en claro y oscuro. */
 .map-people {
   position: absolute; left: 0; right: 0; bottom: 0; z-index: 26;
-  /* V844 · Panel algo más bajo (40vh en vez de 46vh) para que se vea MÁS mapa.
-     La rejilla interna sigue con scroll propio, así que no se pierde ninguna
-     tarjeta; solo se gana altura de mapa por encima del panel. */
-  max-height: 40vh; display: flex; flex-direction: column;
+  /* V845 · Panel más bajo (38dvh) para que se vea MÁS mapa. La rejilla interna
+     conserva su scroll propio, así que no se pierde ninguna tarjeta; solo se
+     gana altura de mapa por encima. Usamos dvh (viewport dinámico) porque en
+     Chrome de móvil vh mide la pantalla COMPLETA (con la barra de URL oculta),
+     lo que inflaba el panel y dejaba el mapa como una franja. */
+  max-height: 38vh; max-height: 38dvh; display: flex; flex-direction: column;
   padding: 10px 12px calc(env(safe-area-inset-bottom, 0) + 12px);
   background: color-mix(in srgb, var(--surface) 94%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
@@ -9858,7 +9865,9 @@ body.map-open { overflow: hidden; }
 
 /* V764 · Buscador por ciudad/provincia flotante sobre el mapa */
 .map-searchbar {
-  position: absolute; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0) + 156px);
+  /* V845 · La barra de filtros pasó a una sola fila (más baja), así que el
+     buscador sube para pegarse a ella y dejar más mapa contiguo debajo. */
+  position: absolute; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0) + 116px);
   z-index: 30; display: flex; align-items: center; gap: 6px;
   padding: 5px 5px 5px 14px; border-radius: 999px;
   background: color-mix(in srgb, var(--surface) 90%, transparent);
@@ -9885,7 +9894,7 @@ body.map-open { overflow: hidden; }
    comerciales y POIs) bajo la barra de búsqueda del mapa. */
 .map-search-suggest {
   position: absolute; left: 12px; right: 12px;
-  top: calc(env(safe-area-inset-top, 0) + 156px + 52px);
+  top: calc(env(safe-area-inset-top, 0) + 116px + 52px);
   z-index: 31; max-height: 46vh; overflow-y: auto;
   padding: 6px; border-radius: 16px;
   background: color-mix(in srgb, var(--surface) 96%, transparent);
