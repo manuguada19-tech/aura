@@ -8071,13 +8071,14 @@ async function openNearbyMap() {
   // Estado de filtros rápidos del mapa (cliente). El radio re-consulta al backend.
   // V843 · No hay SELECTOR de km (chips) ni círculo de zona: el usuario arrastra
   // el pin y ve a los cercanos ordenados por distancia a ese punto.
-  // V847 · PERO sí hay un límite AUTOMÁTICO de "distancia aceptable": si una
-  // persona está más lejos que NEARBY_RADIUS_KM del pin, NO se muestra (ni en la
-  // lista ni como pin). Antes el radio era 500 km (prácticamente ilimitado), así
-  // que al alejar el pin seguían saliendo los mismos; ahora "Personas en esta
-  // zona" refleja de verdad la vecindad del pin. El backend ya filtra
-  // distance <= radius_km y el usuario de prueba se filtra igual en el cliente.
-  const NEARBY_RADIUS_KM = 50;
+  // V848 · El pin sirve para ver la gente AGOLPADA CERCA de ese punto: muestra de
+  // golpe en la cuadrícula a quienes estén a una distancia CORTA (nivel barrio),
+  // no a decenas de km. Por eso el radio es pequeño (NEARBY_RADIUS_KM). Si mueves
+  // el pin a un sitio donde no hay nadie cerca, se avisa y se vuelve a tu
+  // ubicación. Antes eran 50 km (demasiado): salían los mismos aunque el pin
+  // estuviera lejos. El backend filtra distance <= radius_km y el usuario de
+  // prueba se filtra igual en el cliente.
+  const NEARBY_RADIUS_KM = 5;
   const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: NEARBY_RADIUS_KM, showTest: true };
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
@@ -8551,7 +8552,7 @@ async function openNearbyMap() {
       let count = 0;
       try { count = visibleList().length; } catch {}
       if (count === 0 && !atHome) {
-        showMapNotice("Nadie por esta zona. Te llevamos de vuelta a tu ubicación.", 2800);
+        showMapNotice("No hay nadie cerca de este punto. Te llevamos de vuelta a tu ubicación.", 2800);
         recenterClose(myLocation.lat, myLocation.lng);
       }
     } finally {
