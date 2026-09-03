@@ -8352,6 +8352,11 @@ async function openNearbyMap() {
         // V840 · La zona la define el PIN de búsqueda, no el centro del mapa.
         const dkm = haversineKm(searchLatLng.lat, searchLatLng.lng, testUser.lat, testUser.lng);
         inZone = Number.isFinite(dkm) && dkm <= mapFilters.radiusKm;
+        // V849 · FIABILIDAD: la distancia que se muestra en la tarjeta del usuario
+        // de prueba es respecto al PIN (como los usuarios reales, que el backend
+        // calcula desde el punto buscado), no respecto a tu ubicación fija. Así
+        // "N km" significa siempre "a N km del pin" y es coherente con el filtro.
+        if (Number.isFinite(dkm)) testUser.distance = Math.max(0.1, dkm);
       } catch {}
       if (inZone) list.unshift(testUser);
     }
@@ -8420,8 +8425,18 @@ async function openNearbyMap() {
     peopleTitleMain.textContent = list.length
       ? `Personas en esta zona · ${list.length}`
       : "Personas en esta zona";
+    // V849 · FIABILIDAD: si el pin NO está (aprox.) en tu ubicación, las
+    // distancias de las tarjetas son respecto al PIN, no respecto a ti. Lo
+    // decimos explícitamente para que "N km" no se malinterprete.
+    let pinAway = false;
+    try {
+      const dHome = haversineKm(searchLatLng.lat, searchLatLng.lng, myLocation.lat, myLocation.lng);
+      pinAway = Number.isFinite(dHome) && dHome >= 1;
+    } catch {}
     peopleTitleSub.textContent = list.length
-      ? (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora")
+      ? (pinAway
+          ? "Distancias respecto al pin"
+          : (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora"))
       : "Arrastra el pin a otra zona y pulsa «Buscar cerca de aquí»";
     peopleGrid.innerHTML = "";
     if (!list.length) {
