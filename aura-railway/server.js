@@ -1032,6 +1032,30 @@ async function migrate() {
       period_start DATE NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )`,
+    // V880 · Bolsa diaria de minutos de "Busco ahora". Cada usuario gratis tiene
+    // NOW_FREE_MINUTES_PER_DAY minutos al día para repartir como quiera (puede
+    // activar 20 min y dejarse 40 para luego). Al agotarlos se bloquea hasta el
+    // día siguiente, salvo que compre minutos extra o tenga plan de pago.
+    // used_today se reinicia solo cuando period_day != CURDATE() (mismo patrón
+    // que chat_read_credits, que reinicia por mes).
+    `CREATE TABLE IF NOT EXISTS now_status_credits (
+      user_id INT PRIMARY KEY,
+      used_today INT NOT NULL DEFAULT 0,
+      minutes INT NOT NULL DEFAULT 0,
+      period_day DATE NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`,
+    // V880 · Compras de packs de minutos (visibilidad en admin).
+    `CREATE TABLE IF NOT EXISTS now_status_purchases (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      pack VARCHAR(30) NOT NULL,
+      minutes INT NOT NULL,
+      amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+      currency VARCHAR(6) NOT NULL DEFAULT 'EUR',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id)
+    )`,
     // Log of read-receipt pack purchases (for admin visibility).
     `CREATE TABLE IF NOT EXISTS chat_read_purchases (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3639,12 +3663,16 @@ function sanitizeAdminNowText(raw) {
 }
 
 app.get("/api/admin/now-status/list", wrap(async (req, res) => {
-  const scope = String(req.query.scope || "active"); // active | all
+  // V880 · scope: active (vigentes) | expired (caducados) | all (con frase alguna vez).
+  // Antes la vista pedía siempre "active", así que un estado caducado desaparecía
+  // del admin y no había forma de verlo ni reactivarlo.
+  const scope = String(req.query.scope || "active"); // active | expired | all
   const q = String(req.query.q || "").trim().toLowerCase();
   const limit = Math.min(1000, parseInt(req.query.limit || 300, 10) || 300);
   const clauses = [];
   const args = [];
   if (scope === "active") clauses.push("u.now_status_until > NOW()");
+  else if (scope === "expired") clauses.push("u.now_status_text IS NOT NULL AND (u.now_status_until IS NULL OR u.now_status_until <= NOW())");
   else clauses.push("u.now_status_text IS NOT NULL");
   if (q) { clauses.push("(LOWER(u.name) LIKE ? OR LOWER(u.email) LIKE ? OR u.now_status_text LIKE ?)");
            args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
@@ -3655,8 +3683,11 @@ app.get("/api/admin/now-status/list", wrap(async (req, res) => {
             TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) AS expires_in,
             (u.now_status_until > NOW()) AS active,
             (SELECT approved FROM photos WHERE user_id=u.id AND is_now_photo=1 LIMIT 1) AS photo_approved,
-            (SELECT id FROM photos WHERE user_id=u.id AND is_now_photo=1 LIMIT 1) AS photo_id
+            (SELECT id FROM photos WHERE user_id=u.id AND is_now_photo=1 LIMIT 1) AS photo_id,
+            u.plan,
+            nc.used_today, nc.minutes AS extra_minutes, nc.period_day
        FROM users u
+       LEFT JOIN now_status_credits nc ON nc.user_id = u.id AND nc.period_day = CURDATE()
        ${where}
        ORDER BY u.now_status_until DESC
        LIMIT ?`, [...args, limit]
@@ -3671,6 +3702,12 @@ app.get("/api/admin/now-status/list", wrap(async (req, res) => {
     photo_id: r.photo_id != null ? r.photo_id : null,
     photo_state: r.photo_id == null ? null : (r.photo_approved ? "approved" : "pending"),
     image_url: r.photo_id != null ? `/api/admin/now-photos/${r.photo_id}/image` : null,
+    // V880 · Bolsa de minutos, para verla y gestionarla desde la misma tabla.
+    plan: r.plan || "free",
+    unlimited: !!(r.plan && r.plan !== "free" && isTrue("now.minutes.premium_unlimited", true)),
+    free_used: r.used_today == null ? 0 : Number(r.used_today),
+    free_per_day: Math.max(0, parseInt(getSetting("now.minutes.free_per_day", String(NOW_FREE_MINUTES_PER_DAY)), 10) || 0),
+    extra_minutes: r.extra_minutes == null ? 0 : Number(r.extra_minutes),
   }));
   res.json({ ok: true, data: { items } });
 }));
@@ -8732,6 +8769,100 @@ app.post("/api/my/profile", wrap(async (req, res) => {
 const NOW_STATUS_MINUTES = 60;         // el estado caduca a los 60 min
 const NOW_STATUS_MAX_LEN = 60;         // frase corta
 
+/* V880 · Bolsa diaria de minutos de "Busco ahora".
+   Los usuarios gratis tienen 60 min al día que reparten como quieren: pueden
+   activar 20 min y guardarse 40 para más tarde. Cuando la agotan se bloquea
+   hasta el día siguiente, salvo que compren un pack de minutos o tengan plan
+   de pago (ilimitado). Reutiliza el patrón de chat_read_credits: cuota gratis
+   que se reinicia por periodo + saldo comprado que no expira. */
+const NOW_FREE_MINUTES_PER_DAY = 60;   // minutos gratis al día (configurable en ajustes)
+const NOW_MIN_ACTIVATION = 5;          // no tiene sentido activar menos de 5 min
+
+// Crea la fila si falta y reinicia la cuota gratis cuando cambia el día.
+async function ensureNowCreditsRow(uid) {
+  await pool.execute(
+    "INSERT IGNORE INTO now_status_credits (user_id, used_today, minutes, period_day) VALUES (?,0,0,CURDATE())",
+    [uid]
+  );
+  await pool.execute(
+    "UPDATE now_status_credits SET used_today=0, period_day=CURDATE() WHERE user_id=? AND (period_day IS NULL OR period_day <> CURDATE())",
+    [uid]
+  );
+}
+
+// Estado de la bolsa de un usuario. No consume nada, solo informa.
+async function getNowMinutes(uid) {
+  await ensureNowCreditsRow(uid);
+  const [[user]] = await pool.query("SELECT plan FROM users WHERE id=?", [uid]);
+  const plan = (user && user.plan) || "free";
+  const premiumUnlimited = isTrue("now.minutes.premium_unlimited", true);
+  const unlimited = premiumUnlimited && plan && plan !== "free";
+  const freeDaily = Math.max(0, parseInt(getSetting("now.minutes.free_per_day", String(NOW_FREE_MINUTES_PER_DAY)), 10) || 0);
+  const [[row]] = await pool.query("SELECT used_today, minutes FROM now_status_credits WHERE user_id=?", [uid]);
+  const used = row ? Number(row.used_today) : 0;
+  const bought = row ? Number(row.minutes) : 0;
+  const freeRemaining = Math.max(0, freeDaily - used);
+  return {
+    plan,
+    unlimited: !!unlimited,
+    free_per_day: freeDaily,
+    free_used: used,
+    free_remaining: freeRemaining,
+    extra_minutes: bought,
+    // Minutos que puede activar ahora mismo (los ilimitados no tienen tope).
+    available: unlimited ? Infinity : freeRemaining + bought,
+    can_activate: unlimited || (freeRemaining + bought) >= NOW_MIN_ACTIVATION,
+  };
+}
+
+// Descuenta `minutes` de la bolsa: primero lo gratis del día, luego lo comprado.
+// Devuelve { ok } o { ok:false, reason:"no_minutes", ... }.
+async function consumeNowMinutes(uid, minutes) {
+  const st = await getNowMinutes(uid);
+  if (st.unlimited) return { ok: true, unlimited: true, ...st };
+  const want = Math.max(1, parseInt(minutes, 10) || 0);
+  if (want > st.available) return { ok: false, reason: "no_minutes", ...st };
+  const fromFree = Math.min(st.free_remaining, want);
+  const fromExtra = want - fromFree;
+  if (fromFree > 0) {
+    await pool.execute("UPDATE now_status_credits SET used_today = used_today + ? WHERE user_id=?", [fromFree, uid]);
+  }
+  if (fromExtra > 0) {
+    await pool.execute("UPDATE now_status_credits SET minutes = GREATEST(0, minutes - ?) WHERE user_id=?", [fromExtra, uid]);
+  }
+  return { ok: true, spent: want, from_free: fromFree, from_extra: fromExtra };
+}
+
+// Devuelve a la bolsa los minutos que el usuario NO llegó a usar, cuando apaga
+// el estado antes de que caduque. Sin esto, activar 60 min y apagarlo a los 5
+// quemaba el día entero, que es justo lo contrario de "repartir la bolsa".
+//
+// El orden importa y no es indiferente: primero se baja `used_today` (cuota
+// gratis) y solo el resto va a `minutes` (comprados). Al revés sería un agujero:
+// activar 60 gratis y apagar en el acto convertiría minutos gratis —que caducan
+// esta noche— en minutos comprados que no caducan, repetible cada día.
+async function refundNowMinutes(uid, minutes) {
+  const give = Math.max(0, parseInt(minutes, 10) || 0);
+  if (!give) return { ok: true, refunded: 0 };
+  // A quien tiene ilimitado no se le descontó nada, así que devolverle algo
+  // sería fabricar minutos comprados de la nada: se los quedaría al bajarse
+  // a plan gratis. No se devuelve nada.
+  const st0 = await getNowMinutes(uid);
+  if (st0.unlimited) return { ok: true, refunded: 0, unlimited: true };
+  await ensureNowCreditsRow(uid);
+  const [[row]] = await pool.query("SELECT used_today FROM now_status_credits WHERE user_id=?", [uid]);
+  const used = row ? Number(row.used_today) : 0;
+  const toFree = Math.min(used, give);
+  const toExtra = give - toFree;
+  if (toFree > 0) {
+    await pool.execute("UPDATE now_status_credits SET used_today = GREATEST(0, used_today - ?) WHERE user_id=?", [toFree, uid]);
+  }
+  if (toExtra > 0) {
+    await pool.execute("UPDATE now_status_credits SET minutes = minutes + ? WHERE user_id=?", [toExtra, uid]);
+  }
+  return { ok: true, refunded: give, to_free: toFree, to_extra: toExtra };
+}
+
 // Limpia la frase del estado. Devuelve { ok, text } o { ok:false, reason }.
 function sanitizeNowStatus(raw) {
   let t = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
@@ -8778,9 +8909,16 @@ app.post("/api/my/now-status", wrap(async (req, res) => {
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const b = req.body || {};
   if (b.clear === true || b.clear === "1") {
+    // V880 · Le devolvemos los minutos que quedaban sin consumir. Se calcula
+    // desde now_status_until en el propio servidor, nunca desde el cliente.
+    const [[cur]] = await pool.query(
+      "SELECT TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS left_s FROM users WHERE id=? LIMIT 1", [me]);
+    const leftMin = (cur && cur.left_s != null && Number(cur.left_s) > 0)
+      ? Math.floor(Number(cur.left_s) / 60) : 0;
     await pool.execute("UPDATE users SET now_status_text=NULL, now_status_until=NULL WHERE id=?", [me]);
-    await logNowStatus({ userId: me, action: "clear", source: "user" });
-    return res.json({ ok: true, status: null });
+    if (leftMin > 0) await refundNowMinutes(me, leftMin);
+    await logNowStatus({ userId: me, action: "clear", source: "user", minutes: leftMin ? -leftMin : 0 });
+    return res.json({ ok: true, status: null, refunded: leftMin, minutes: await getNowMinutes(me) });
   }
   const clean = sanitizeNowStatus(b.text);
   if (!clean.ok) {
@@ -8789,16 +8927,108 @@ app.post("/api/my/now-status", wrap(async (req, res) => {
       : "Escribe una frase para tu estado.";
     return res.status(400).json({ ok: false, error: clean.reason, message: msg });
   }
+  // V880 · Cuota diaria de minutos. El usuario puede pedir cuántos minutos
+  // quiere gastar de su bolsa; por defecto los 60 de siempre (o lo que le
+  // quede). Si no le queda nada, 402 para que la app ofrezca comprar minutos.
+  const st = await getNowMinutes(me);
+  let minutes = parseInt(b.minutes, 10);
+  if (!Number.isFinite(minutes) || minutes < 1) {
+    minutes = st.unlimited ? NOW_STATUS_MINUTES : Math.min(NOW_STATUS_MINUTES, st.available);
+  }
+  if (!st.unlimited) {
+    if (st.available < NOW_MIN_ACTIVATION) {
+      return res.status(402).json({
+        ok: false, error: "no_minutes",
+        message: `Has gastado tus ${st.free_per_day} minutos gratis de hoy. Consigue más minutos para seguir apareciendo en "Busco ahora".`,
+        minutes: st,
+      });
+    }
+    minutes = Math.max(NOW_MIN_ACTIVATION, Math.min(minutes, st.available));
+  }
+  const spent = await consumeNowMinutes(me, minutes);
+  if (!spent.ok) {
+    return res.status(402).json({
+      ok: false, error: "no_minutes",
+      message: "No te quedan minutos suficientes.",
+      minutes: st,
+    });
+  }
   await pool.execute(
     "UPDATE users SET now_status_text=?, now_status_until=DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id=?",
-    [clean.text, NOW_STATUS_MINUTES, me]
+    [clean.text, minutes, me]
   );
   const [[row]] = await pool.query(
     "SELECT now_status_text AS text, TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS expires_in, now_status_until AS until FROM users WHERE id=? LIMIT 1", [me]
   );
   const [[ph]] = await pool.query("SELECT approved FROM photos WHERE user_id=? AND is_now_photo=1 LIMIT 1", [me]);
-  await logNowStatus({ userId: me, text: clean.text, minutes: NOW_STATUS_MINUTES, until: row.until, source: "user", action: "set", hasPhoto: !!(ph && ph.approved) });
-  res.json({ ok: true, status: { text: row.text, expires_in: Number(row.expires_in) } });
+  await logNowStatus({ userId: me, text: clean.text, minutes, until: row.until, source: "user", action: "set", hasPhoto: !!(ph && ph.approved) });
+  res.json({ ok: true, status: { text: row.text, expires_in: Number(row.expires_in) }, minutes: await getNowMinutes(me) });
+}));
+
+// V880 · Estado de la bolsa de minutos (para pintar "te quedan X min" en la app).
+app.get("/api/my/now-minutes", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const st = await getNowMinutes(me);
+  res.json({
+    ok: true,
+    minutes: { ...st, available: st.unlimited ? null : st.available },
+    packs: nowMinutePacks(),
+    currency: getSetting("now.minutes.currency", "EUR"),
+    min_activation: NOW_MIN_ACTIVATION,
+  });
+}));
+
+// V880 · Compra de un pack de minutos. Mismo flujo que los packs de lecturas:
+// registra la compra y suma minutos al saldo (que no caduca a fin de día).
+app.post("/api/my/now-minutes/buy", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const packId = String(req.body?.pack || "").toLowerCase();
+  const pick = nowMinutePacks().find((p) => p.id === packId);
+  if (!pick) return res.status(400).json({ ok: false, error: "invalid_pack" });
+  await ensureNowCreditsRow(me);
+  await pool.execute("UPDATE now_status_credits SET minutes = minutes + ? WHERE user_id=?", [pick.minutes, me]);
+  await pool.execute(
+    "INSERT INTO now_status_purchases (user_id, pack, minutes, amount, currency) VALUES (?,?,?,?,?)",
+    [me, pick.id, pick.minutes, pick.price, getSetting("now.minutes.currency", "EUR")]
+  );
+  try { await logActivity("user", `Compra pack minutos "Busco ahora" '${pick.id}' (+${pick.minutes} min) por usuario ${me}`); } catch {}
+  res.json({ ok: true, added: pick.minutes, minutes: await getNowMinutes(me) });
+}));
+
+// V880 · Admin: conceder o retirar minutos a un usuario (sin cobrar).
+app.post("/api/admin/now-status/:userId/minutes", wrap(async (req, res) => {
+  const who = (req.admin && req.admin.email) || "admin";
+  const uid = parseInt(req.params.userId, 10);
+  if (!uid) return res.status(400).json({ ok: false, error: "bad_user" });
+  const delta = parseInt(req.body?.minutes, 10);
+  if (!Number.isFinite(delta) || delta === 0) {
+    return res.status(400).json({ ok: false, error: "bad_minutes", message: "Indica los minutos (positivos para dar, negativos para quitar)." });
+  }
+  const [[u]] = await pool.query("SELECT id, name FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+  await ensureNowCreditsRow(uid);
+  if (delta > 0) {
+    await pool.execute("UPDATE now_status_credits SET minutes = minutes + ? WHERE user_id=?", [delta, uid]);
+  } else {
+    await pool.execute("UPDATE now_status_credits SET minutes = GREATEST(0, minutes - ?) WHERE user_id=?", [Math.abs(delta), uid]);
+  }
+  try {
+    await logActivity("admin", `Minutos "Busco ahora" ${delta > 0 ? "+" : ""}${delta} a ${u.name || ("#" + uid)} por ${who}`);
+  } catch {}
+  res.json({ ok: true, minutes: await getNowMinutes(uid) });
+}));
+
+// V880 · Admin: reiniciar la cuota gratis de hoy de un usuario.
+app.post("/api/admin/now-status/:userId/reset-quota", wrap(async (req, res) => {
+  const who = (req.admin && req.admin.email) || "admin";
+  const uid = parseInt(req.params.userId, 10);
+  if (!uid) return res.status(400).json({ ok: false, error: "bad_user" });
+  await ensureNowCreditsRow(uid);
+  await pool.execute("UPDATE now_status_credits SET used_today=0, period_day=CURDATE() WHERE user_id=?", [uid]);
+  try { await logActivity("admin", `Cuota diaria "Busco ahora" reiniciada al usuario #${uid} por ${who}`); } catch {}
+  res.json({ ok: true, minutes: await getNowMinutes(uid) });
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */
@@ -12696,6 +12926,35 @@ async function getReadStatus(uid) {
     credits,
     can_reveal: unlimited || free_remaining > 0 || credits > 0,
   };
+}
+
+// V880 · Packs de minutos de "Busco ahora". Mismo formato y filosofía que
+// readPacks() (JSON editable en ajustes, con valores por defecto razonables si
+// el admin no ha configurado nada todavía).
+function nowMinutePacks() {
+  const cur = getSetting("now.minutes.currency", "EUR");
+  const raw = getSetting("now.minutes.packs_json", "");
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return arr
+          .filter((p) => p && p.active !== false)
+          .map((p) => ({
+            id: String(p.id || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20) || "pack",
+            label: String(p.label || "").slice(0, 60) || ("Pack " + String(p.id || "").toUpperCase()),
+            minutes: parseInt(p.minutes, 10) || 0,
+            price: Number(p.price) || 0,
+            currency: cur,
+          }));
+      }
+    } catch {}
+  }
+  return [
+    { id: "m60",  label: "60 minutos",  minutes: 60,  price: 1.99, currency: cur },
+    { id: "m180", label: "3 horas",     minutes: 180, price: 4.99, currency: cur },
+    { id: "m600", label: "10 horas",    minutes: 600, price: 9.99, currency: cur },
+  ];
 }
 
 function readPacks() {

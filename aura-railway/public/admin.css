@@ -276,6 +276,23 @@ body[data-sb-mode="overlay"] .sidebar-close { display: flex; }
 .nav-link.active .badge { background: var(--brand-1); color: white; border-color: transparent; }
 .nav-link .badge.alert { background: rgba(239,68,68,.14); color: var(--danger); border-color: transparent; }
 
+/* V880 · Iconos del menú lateral.
+   Antes solo "Novedades" usaba emojis (con &nbsp;&nbsp; como separador) y el
+   resto SVG, así que las secciones no se distinguían entre sí y las etiquetas
+   quedaban desalineadas: cada emoji mide distinto y el nbsp no compensa.
+   Ahora el emoji va en una caja de ancho fijo, así todo el texto arranca en
+   la misma columna en las cinco secciones. */
+.nav-emoji {
+  flex: 0 0 22px; width: 22px;
+  font-size: 15px; line-height: 1;
+  text-align: center;
+  font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
+}
+.nav-link.active .nav-emoji { transform: scale(1.1); }
+/* Filete a la derecha del título de sección: separa los bloques de un vistazo */
+.nav-section { display: flex; align-items: center; gap: 8px; }
+.nav-section::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
 .admin-user {
   display: grid; grid-template-columns: 40px 1fr auto; gap: 10px; align-items: center;
   padding: 10px; border-radius: 12px; background: var(--panel-2);
@@ -2160,6 +2177,7 @@ textarea.input { resize: vertical; min-height: 60px; }
   .sidebar { width: 84%; max-width: 320px; padding-bottom: 24px; }
   .nav-link { font-size: 15px; padding: 12px 14px; }
   .nav-link svg { width: 20px; height: 20px; }
+  .nav-emoji { flex-basis: 24px; width: 24px; font-size: 17px; } /* V880 */
   .admin-user { padding: 12px; }
 
   /* Drawer sheet fills bottom half on mobile */

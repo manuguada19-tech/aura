@@ -2268,11 +2268,32 @@ const datingApi = {
   },
   // V866 · Estado "Ahora mismo". setNowStatus(text) lo fija (caduca en 60 min);
   // setNowStatus(null) lo borra. Devuelve { ok, status } o { error, message }.
-  async setNowStatus(text) {
+  // V880 · `minutes` opcional: cuántos minutos de la bolsa diaria gastar.
+  async setNowStatus(text, minutes) {
     if (!this._authed()) return { error: "unauthorized" };
     try {
-      const body = (text == null || text === "") ? JSON.stringify({ clear: true }) : JSON.stringify({ text: String(text) });
+      const body = (text == null || text === "")
+        ? JSON.stringify({ clear: true })
+        : JSON.stringify(minutes ? { text: String(text), minutes: Number(minutes) } : { text: String(text) });
       const r = await fetch("/api/my/now-status", { method: "POST", headers: this.headers(), body });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message, minutes: data && data.minutes };
+      return data;
+    } catch { return { error: "network" }; }
+  },
+  // V880 · Bolsa de minutos de "Busco ahora": cuánto queda hoy y packs a la venta.
+  async getNowMinutes() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/now-minutes", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async buyNowMinutes(pack) {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const r = await fetch("/api/my/now-minutes/buy", { method: "POST", headers: this.headers(), body: JSON.stringify({ pack: String(pack) }) });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message };
       return data;
@@ -8140,7 +8161,12 @@ function buildNowBar() {
         el("button", { class: "now-bar-edit", type: "button", title: "Cambiar", onclick: () => openNowStatusEditor(status.text, nowPhotoState, paint) }, "Cambiar"),
         el("button", { class: "now-bar-clear", type: "button", title: "Quitar", onclick: async () => {
           const r = await datingApi.setNowStatus(null);
-          if (r && r.ok) { toast("Estado quitado"); paint(null); }
+          // V880 · Si sobraban minutos vuelven a la bolsa: hay que decirlo, o
+          // parece que apagar el estado tira a la basura lo que quedaba.
+          if (r && r.ok) {
+            toast(r.refunded > 0 ? `Estado quitado · te devolvemos ${r.refunded} min` : "Estado quitado");
+            paint(null);
+          }
         } }, "Quitar"),
       ]));
     } else {
@@ -8148,7 +8174,7 @@ function buildNowBar() {
         el("span", { class: "now-bolt", html: bolt }),
         el("div", { class: "now-bar-body" }, [
           el("div", { class: "now-bar-text" }, "¿Buscas algo ahora mismo?"),
-          el("div", { class: "now-bar-sub" }, "Escribe una frase corta. Aparecerás destacado/a 1 hora."),
+          el("div", { class: "now-bar-sub" }, "Escribe una frase corta. Tienes 60 min gratis al día para repartir."),
         ]),
         el("button", { class: "now-bar-set", type: "button", onclick: () => openNowStatusEditor("", nowPhotoState, paint) }, "Activar"),
       ]));
@@ -8256,24 +8282,118 @@ function openNowStatusEditor(current, nowPhotoState, onSaved) {
   // Refresca el estado real de la foto desde el backend al abrir.
   refreshPhotoFromServer();
 
+  // V880 · Bolsa diaria de minutos. El usuario elige cuántos gastar de lo que le
+  // queda hoy; si se le ha agotado, en vez del selector ve la oferta de packs.
+  let minState = null;              // respuesta de /api/my/now-minutes
+  let chosenMinutes = 0;            // minutos elegidos para esta activación
+  const minSection = el("div", { class: "now-editor-mins" });
+  // El botón se declara aquí porque paintMinutes() actualiza su texto y estado.
+  const saveBtn = el("button", { class: "btn btn-brand btn-block", type: "button", onclick: () => save() }, "Activar");
+
+  // Ajusta el botón según los minutos disponibles y el preset elegido.
+  function paintSaveBtn() {
+    const m = minState && minState.minutes;
+    if (!m || m.unlimited) { saveBtn.textContent = "Activar"; saveBtn.disabled = false; return; }
+    const avail = Number(m.available || 0);
+    const minAct = Number(minState.min_activation || 5);
+    if (avail < minAct) { saveBtn.textContent = "Sin minutos hoy"; saveBtn.disabled = true; return; }
+    saveBtn.disabled = false;
+    saveBtn.textContent = chosenMinutes
+      ? (chosenMinutes >= 60 ? `Activar ${chosenMinutes % 60 ? (chosenMinutes / 60).toFixed(1) : chosenMinutes / 60} h` : `Activar ${chosenMinutes} min`)
+      : "Activar";
+  }
+
+  function paintMinutes() {
+    minSection.innerHTML = "";
+    if (!minState || !minState.minutes) { paintSaveBtn(); return; }
+    const m = minState.minutes;
+    if (m.unlimited) {
+      minSection.appendChild(el("div", { class: "now-mins-state ok" }, "\u2728 Tu plan incluye \u201cBusco ahora\u201d sin l\u00edmite."));
+      chosenMinutes = 0; // el backend usa la duración por defecto
+      paintSaveBtn();
+      return;
+    }
+    const avail = Number(m.available || 0);
+    const minAct = Number(minState.min_activation || 5);
+    minSection.appendChild(el("div", { class: "now-mins-title" }, "\u23F1\ufe0f Cu\u00e1nto tiempo quieres aparecer"));
+    // Resumen del saldo: gratis de hoy + comprados (que no caducan).
+    const parts = [`${m.free_remaining} de ${m.free_per_day} min gratis hoy`];
+    if (m.extra_minutes > 0) parts.push(`${m.extra_minutes} min extra`);
+    minSection.appendChild(el("div", { class: "now-mins-balance" }, parts.join(" \u00b7 ")));
+
+    if (avail < minAct) {
+      // Sin minutos: bloqueado hasta mañana o hasta que consiga más.
+      minSection.appendChild(el("div", { class: "now-mins-state blocked" },
+        `Has gastado tus ${m.free_per_day} minutos gratis de hoy. Se renuevan ma\u00f1ana.`));
+      const packs = Array.isArray(minState.packs) ? minState.packs : [];
+      if (packs.length) {
+        minSection.appendChild(el("div", { class: "now-mins-buy-lead" }, "\u00bfQuieres seguir apareciendo ahora?"));
+        minSection.appendChild(el("div", { class: "now-mins-packs" }, packs.map((p) =>
+          el("button", { class: "now-mins-pack", type: "button", onclick: async () => {
+            const r = await datingApi.buyNowMinutes(p.id);
+            if (r && r.ok) { toast(`+${r.added} minutos a\u00f1adidos`); await loadMinutes(); }
+            else toast((r && r.message) || "No se pudo completar la compra");
+          } }, [
+            el("span", { class: "now-mins-pack-min" }, `${p.minutes} min`),
+            el("span", { class: "now-mins-pack-price" }, `${Number(p.price).toFixed(2)} ${p.currency || "EUR"}`),
+          ])
+        )));
+      }
+      paintSaveBtn();
+      return;
+    }
+    // Presets que quepan en lo disponible (siempre al menos el mínimo).
+    const presets = [15, 30, 60, 120, 180].filter((v) => v <= avail);
+    if (!presets.length) presets.push(Math.max(minAct, Math.floor(avail)));
+    if (!chosenMinutes || chosenMinutes > avail) chosenMinutes = presets.includes(60) ? 60 : presets[presets.length - 1];
+    const chipRow = el("div", { class: "now-mins-chips" });
+    presets.forEach((v) => {
+      const b = el("button", { class: "now-mins-chip" + (v === chosenMinutes ? " on" : ""), type: "button",
+        onclick: () => { chosenMinutes = v; paintMinutes(); } }, v >= 60 ? `${v / 60} h` : `${v} min`);
+      chipRow.appendChild(b);
+    });
+    minSection.appendChild(chipRow);
+    if (avail <= 15) {
+      minSection.appendChild(el("div", { class: "now-mins-state low" }, `Te quedan ${avail} min hoy.`));
+    }
+    paintSaveBtn();
+  }
+
+  async function loadMinutes() {
+    try { minState = await datingApi.getNowMinutes(); } catch { minState = null; }
+    paintMinutes();
+  }
+  loadMinutes();
+
   async function save() {
     const text = input.value.trim();
     if (!text) { err.hidden = false; err.textContent = "Escribe una frase para tu estado."; return; }
-    const r = await datingApi.setNowStatus(text);
-    if (r && r.ok) { toast("¡Estado activado! Visible 1 hora"); try { modal.close(); } catch {} if (onSaved) onSaved(r.status, photoState); }
-    else { err.hidden = false; err.textContent = (r && r.message) || "No se pudo guardar el estado."; }
+    const r = await datingApi.setNowStatus(text, chosenMinutes || undefined);
+    if (r && r.ok) {
+      const mins = r.status && r.status.expires_in ? Math.round(r.status.expires_in / 60) : chosenMinutes;
+      toast(mins ? `\u00a1Estado activado! Visible ${mins >= 60 ? (mins / 60).toFixed(mins % 60 ? 1 : 0) + " h" : mins + " min"}` : "\u00a1Estado activado!");
+      try { modal.close(); } catch {}
+      if (onSaved) onSaved(r.status, photoState);
+    } else if (r && r.error === "no_minutes") {
+      // V880 · Se quedó sin minutos: refrescamos para mostrar la oferta de packs.
+      err.hidden = false;
+      err.textContent = (r && r.message) || "Te has quedado sin minutos por hoy.";
+      await loadMinutes();
+    } else { err.hidden = false; err.textContent = (r && r.message) || "No se pudo guardar el estado."; }
   }
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
   const sheet = el("div", { class: "now-editor" }, [
     el("div", { class: "now-editor-title" }, "Ahora mismo"),
-    el("div", { class: "now-editor-lead" }, "Cuenta en una frase qué te apetece ahora. Aparecerás destacado/a en el mapa y en Buscar durante 1 hora."),
+    el("div", { class: "now-editor-lead" }, "Cuenta en una frase qué te apetece ahora. Aparecerás destacado/a en el mapa y en Buscar el tiempo que elijas."),
     input, hint, err, chips,
+    minSection,
     photoSection, fileInput,
     el("div", { class: "sheet-actions" }, [
-      el("button", { class: "btn btn-brand btn-block", type: "button", onclick: save }, "Activar 1 hora"),
+      saveBtn,
       el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
     ]),
   ]);
+  paintMinutes();
   try { modal.open(sheet); } catch {}
   setTimeout(() => { try { input.focus(); } catch {} }, 60);
 }

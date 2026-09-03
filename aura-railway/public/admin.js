@@ -1303,39 +1303,31 @@ $("#nav").addEventListener("click", (e) => {
   try {
     const nav = document.getElementById("nav");
     if (!nav) return;
+    // V880 · Emoji en vez de SVG, igual que el resto del menú, y cada entrada
+    // cae en su bloque temático. Antes todas se apilaban delante de "Ajustes",
+    // así que acabaran en "Sistema" tuviera o no sentido (una newsletter no es
+    // una opción de sistema). `before` es el data-view delante del cual se
+    // inserta; si no existe, cae delante de Ajustes como antes.
     const dyn = [
-      { view: "duplicates", label: "Posibles duplicados",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><circle cx="17" cy="10" r="3"/><path d="M2 21c0-3.9 3.1-7 7-7s7 3.1 7 7"/><path d="M14 21c0-2.8 2.2-5 5-5"/></svg>` },
-      { view: "infractions", label: "Infracciones",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>` },
-      { view: "staff", label: "Staff & Permisos",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>` },
-      { view: "newsletter", label: "Newsletter",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>` },
-      { view: "popups", label: "Popups & Push",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>` },
-      { view: "push_campaigns", label: "Campañas Push",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>` },
-      { view: "device_incidents", label: "Dispositivos perdidos",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12.01" y2="18"/><path d="M2 12h2M20 12h2M12 2v2M12 22v-2"/></svg>` },
-      { view: "audit", label: "Auditoría",
-        icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>` },
+      { view: "duplicates",        label: "Posibles duplicados",    emoji: "👯", before: "moderation" },
+      { view: "infractions",       label: "Infracciones",           emoji: "⚠️", before: "tickets" },
+      { view: "newsletter",        label: "Newsletter",             emoji: "📰", before: "emails" },
+      { view: "popups",            label: "Popups y avisos in-app", emoji: "🪧", before: "emails" },
+      { view: "push_campaigns",    label: "Campañas push",          emoji: "🚀", before: "emails" },
+      { view: "device_incidents",  label: "Dispositivos perdidos",  emoji: "📱", before: "kyc" },
+      { view: "staff",             label: "Staff y permisos",       emoji: "🧑‍💼", before: "settings" },
+      { view: "audit",             label: "Auditoría",              emoji: "🧾", before: "logs" },
     ];
     dyn.forEach(item => {
       if (nav.querySelector(`[data-view="${item.view}"]`)) return;
       const anchor = document.createElement("a");
       anchor.setAttribute("data-view", item.view);
       anchor.className = "nav-link";
-      anchor.innerHTML = `<span class="nav-ico">${item.icon}</span><span class="nav-txt">${item.label}</span>`;
-      // Insertar antes de "settings" si existe, si no al final
-      const settingsLink = nav.querySelector('[data-view="settings"]');
-      if (settingsLink && settingsLink.parentNode === nav) {
-        nav.insertBefore(anchor, settingsLink);
-      } else if (settingsLink) {
-        settingsLink.parentNode.insertBefore(anchor, settingsLink);
-      } else {
-        nav.appendChild(anchor);
-      }
+      anchor.innerHTML = `<span class="nav-emoji">${item.emoji}</span><span>${item.label}</span>`;
+      const target = nav.querySelector(`[data-view="${item.before}"]`)
+                  || nav.querySelector('[data-view="settings"]');
+      if (target && target.parentNode) target.parentNode.insertBefore(anchor, target);
+      else nav.appendChild(anchor);
     });
   } catch (e) { console.warn("injectDynamicNavLinks", e); }
 })();
@@ -4340,17 +4332,38 @@ async function openUserDrawer(id, onChange) {
 
       // Chip de GPS si el usuario ha otorgado consentimiento
       const gps = ctx.gps || null;
+      // V880 · Calidad del fix. El backend solo acepta como "GPS real" los fixes
+      // de ±300 m o menos (GPS_GOOD_ACCURACY_M); por encima usa la ubicación
+      // declarada del perfil. El admin decía "GPS preciso" en cualquier caso, así
+      // que un fix de wifi/IP de ±2749 m se leía como bueno y nadie sospechaba de
+      // las distancias. Aquí se etiqueta igual que decide el servidor.
+      const GPS_GOOD_ACCURACY_M = 300;
+      function gpsQuality(g) {
+        const acc = (g && g.accuracy != null) ? Number(g.accuracy) : null;
+        if (acc == null || !isFinite(acc)) {
+          return { label: "GPS sin precisión", cls: "t-warn", good: false,
+                   note: "El dispositivo no informó de la precisión, así que no se usa para calcular distancias." };
+        }
+        if (acc <= 50) return { label: "GPS preciso", cls: "t-ok", good: true, note: "Fix de satélite. Se usa para las distancias." };
+        if (acc <= GPS_GOOD_ACCURACY_M) return { label: "GPS aceptable", cls: "t-ok", good: true, note: "Precisión suficiente. Se usa para las distancias." };
+        return { label: "GPS aproximado", cls: "t-warn", good: false,
+                 note: `Más de ${GPS_GOOD_ACCURACY_M} m: probablemente wifi o IP, no satélite. NO se usa para las distancias; se usa la ubicación del perfil.` };
+      }
       if (gps) {
         const gpsRow = el("div", { class: "lv2-gps-row" });
         if (gps.consent_given && gps.lat != null && gps.lng != null) {
-          gpsRow.appendChild(el("span", { class: "chip xs t-ok" }, "📍 GPS activo"));
+          const q = gpsQuality(gps);
+          gpsRow.appendChild(el("span", { class: "chip xs " + q.cls, title: q.note }, (q.good ? "📍 " : "⚠️ ") + q.label));
           // V807 · Ubicación REAL derivada de las coords GPS (ciudad/región).
           // Es la fuente fiable, frente a la ciudad por IP (operador → Madrid).
           if (gps.place && (gps.place.city || gps.place.region)) {
             const placeTxt = [gps.place.city, gps.place.region].filter(Boolean).join(", ");
             gpsRow.appendChild(el("span", { class: "chip xs t-ok", title: "Ubicación real según el GPS del dispositivo" }, "🏙 " + placeTxt));
           }
-          gpsRow.appendChild(el("span", { class: "chip xs" }, `± ${gps.accuracy || "?"} m`));
+          gpsRow.appendChild(el("span", {
+            class: "chip xs" + (q.good ? "" : " t-warn"),
+            title: q.note,
+          }, `± ${gps.accuracy != null ? gps.accuracy : "?"} m`));
           gpsRow.appendChild(el("span", { class: "chip xs" }, `Actualizado ${gps.stale_minutes != null ? gps.stale_minutes + " min" : "—"}`));
           gpsRow.appendChild(el("span", { class: "chip xs" }, `${(+gps.lat).toFixed(5)}, ${(+gps.lng).toFixed(5)}`));
         } else if (gps.revoked_at) {
@@ -4445,14 +4458,15 @@ async function openUserDrawer(id, onChange) {
               .setView([mapLat, mapLng], useGps ? 15 : 12);
             L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(userMapObj);
             // Marcador principal (GPS o IP)
+            const mq = useGps ? gpsQuality(gps) : null;
             const mainIcon = L.divIcon({
               className: "aura-marker " + (useGps ? "aura-marker-gps" : "aura-marker-ip"),
-              html: useGps ? "📍" : "🌐",
+              html: useGps ? (mq.good ? "📍" : "⚠️") : "🌐",
               iconSize: [34, 34], iconAnchor: [17, 17],
             });
             userMapMarker = L.marker([mapLat, mapLng], { icon: mainIcon }).addTo(userMapObj);
             const popupHtml = useGps
-              ? `<strong>${ctx.user.name}</strong><br>📍 <b>GPS preciso</b> (±${gps.accuracy || "?"} m)<br>${(+gps.lat).toFixed(5)}, ${(+gps.lng).toFixed(5)}<br><small>Actualizado ${gps.stale_minutes != null ? gps.stale_minutes + " min" : "—"}</small>`
+              ? `<strong>${ctx.user.name}</strong><br>${mq.good ? "📍" : "⚠️"} <b>${mq.label}</b> (±${gps.accuracy != null ? gps.accuracy : "?"} m)<br>${(+gps.lat).toFixed(5)}, ${(+gps.lng).toFixed(5)}<br><small>Actualizado ${gps.stale_minutes != null ? gps.stale_minutes + " min" : "—"}</small>${mq.good ? "" : `<br><small style="color:#f59e0b">${mq.note}</small>`}`
               : `<strong>${ctx.user.name}</strong><br>🌐 <b>Ubicación por IP</b><br>${geo.city || ""}, ${geo.country || ""}<br><code>${dev.ip || ""}</code>`;
             userMapMarker.bindPopup(popupHtml).openPopup();
             // Si tenemos AMBAS (GPS + IP), añade círculo con la IP para comparar
@@ -4461,11 +4475,13 @@ async function openUserDrawer(id, onChange) {
                 radius: 8, color: "#6b7280", weight: 2, fillOpacity: 0.15,
               }).addTo(userMapObj).bindPopup(`🌐 IP aprox<br>${geo.city || ""}, ${geo.country || ""}`);
             }
-            // Círculo de precisión GPS
+            // Círculo de precisión GPS · ámbar si el fix no es fiable, para que
+            // se vea de un golpe lo grande que es el margen de error.
             if (useGps && gps.accuracy) {
+              const c = mq.good ? "#ec4899" : "#f59e0b";
               L.circle([mapLat, mapLng], {
                 radius: gps.accuracy,
-                color: "#ec4899", weight: 1, fillColor: "#ec4899", fillOpacity: 0.12,
+                color: c, weight: 1, fillColor: c, fillOpacity: 0.12,
               }).addTo(userMapObj);
             }
           } catch (e) { console.warn("[map]", e.message); }

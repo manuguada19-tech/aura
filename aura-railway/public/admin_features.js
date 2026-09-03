@@ -1779,15 +1779,32 @@
       const tok = readTok();
       const auth = tok ? `?adminToken=${encodeURIComponent(tok)}` : "";
       DataView(container, {
-        title: "Busco ahora", subtitle: "Estado \u201cBusco ahora\u201d activo de cada usuario. Asigna frases con el tiempo que quieras y foto opcional.", icon: "\u26a1",
-        fetch: async () => (await api("/api/admin/now-status/list?scope=active")).data?.items || [],
+        title: "Busco ahora", subtitle: "Estados \u201cBusco ahora\u201d, minutos diarios de cada usuario y fotos destacadas. Asigna frases con el tiempo que quieras.", icon: "\u26a1",
+        // V880 · Antes pedía siempre scope=active, así que los estados caducados
+        // desaparecían del admin y no se podían ver ni reactivar. Ahora traemos
+        // todos y el filtro "Ver" decide qué se muestra (ese filtro no hacía nada).
+        fetch: async () => (await api("/api/admin/now-status/list?scope=all&limit=1000")).data?.items || [],
         rowId: (r) => r.user_id,
         kpis: (rows) => [
-          { label: "Estados activos", value: rows.length, accent: "green" },
-          { label: "Con foto", value: rows.filter((r) => r.has_photo).length, accent: "purple" },
+          { label: "Activos ahora", value: rows.filter((r) => r.active).length, accent: "green" },
+          { label: "Caducados", value: rows.filter((r) => !r.active).length, accent: "amber" },
+          { label: "Fotos por aprobar", value: rows.filter((r) => r.photo_state === "pending").length, accent: "red" },
+          { label: "Sin minutos hoy", value: rows.filter((r) => !r.unlimited && (Number(r.free_per_day) - Number(r.free_used) + Number(r.extra_minutes)) < 5).length, accent: "purple" },
         ],
         filters: [
-          { key: "scope", label: "Ver", type: "select", options: [ { value: "", label: "Solo activos" } ], apply: () => true },
+          { key: "scope", label: "Ver", type: "select", options: [
+              { value: "active", label: "Solo activos" },
+              { value: "expired", label: "Solo caducados" },
+              { value: "photo", label: "Con foto pendiente" },
+              { value: "nomin", label: "Sin minutos hoy" },
+            ],
+            apply: (r, v) => {
+              if (v === "active") return !!r.active;
+              if (v === "expired") return !r.active;
+              if (v === "photo") return r.photo_state === "pending";
+              if (v === "nomin") return !r.unlimited && (Number(r.free_per_day) - Number(r.free_used) + Number(r.extra_minutes)) < 5;
+              return true;
+            } },
         ],
         headerActions: [
           { label: "Asignar estado", variant: "primary", icon: "&#x26a1;", onClick: async () => {
@@ -1820,7 +1837,30 @@
               img.onclick = () => window.open(r.image_url + auth, "_blank");
               return img;
             } },
-          { key: "expires_in", label: "Caduca en", sortable: true, render: (r) => fmtRemain(r.expires_in) },
+          // V880 · Estado explícito: antes no se distinguía activo de caducado
+          // porque la lista solo traía los activos.
+          { key: "active", label: "Estado", sortable: true, render: (r) => {
+              const s = document.createElement("span");
+              s.className = "fx-badge " + (r.active ? "ok" : "off");
+              s.textContent = r.active ? "Activo" : "Caducado";
+              return s;
+            } },
+          // V880 · Bolsa diaria de minutos del usuario.
+          { key: "minutos", label: "Minutos hoy", render: (r) => {
+              const d = document.createElement("div");
+              if (r.unlimited) {
+                d.innerHTML = `<span class="fx-badge purple">Ilimitado</span><div class="fx-muted" style="font-size:11px">plan ${escapeHtml(r.plan || "")}</div>`;
+                return d;
+              }
+              const free = Math.max(0, Number(r.free_per_day) - Number(r.free_used));
+              const extra = Number(r.extra_minutes) || 0;
+              const total = free + extra;
+              const color = total < 5 ? "#ef4444" : (total <= 15 ? "#f59e0b" : "inherit");
+              d.innerHTML = `<div style="font-weight:600;color:${color}">${free}/${r.free_per_day} min gratis</div>` +
+                (extra > 0 ? `<div class="fx-muted" style="font-size:11px">+${extra} min comprados</div>` : "");
+              return d;
+            } },
+          { key: "expires_in", label: "Caduca en", sortable: true, render: (r) => r.active ? fmtRemain(r.expires_in) : "\u2014" },
           { key: "until", label: "Vence", render: (r) => fmtDate(r.until) },
         ],
         actions: [
@@ -1837,6 +1877,25 @@
             if (!out) return;
             try { await api("/api/admin/now-status/set", { method: "POST", body: out }); toast("Estado actualizado", "ok"); view_now_status(container); }
             catch (e) { toast((e.data && e.data.message) || "Error", "err"); }
+          } },
+          // V880 · Dar o quitar minutos de la bolsa del usuario (sin cobrar).
+          { label: "Minutos", variant: "ghost", icon: "&#x23f3;", onClick: async (r) => {
+            const v = window.prompt(
+              `Minutos a a\u00f1adir a ${r.name || ("#" + r.user_id)} (negativo para quitar).\n` +
+              `Ahora: ${Math.max(0, Number(r.free_per_day) - Number(r.free_used))} gratis + ${Number(r.extra_minutes) || 0} comprados.`, "60");
+            if (v == null) return;
+            const minutes = parseInt(v, 10);
+            if (!Number.isFinite(minutes) || minutes === 0) { toast("Minutos no v\u00e1lidos", "err"); return; }
+            try { await api(`/api/admin/now-status/${r.user_id}/minutes`, { method: "POST", body: { minutes } }); toast("Minutos actualizados", "ok"); view_now_status(container); }
+            catch (e) { toast((e.data && e.data.message) || "Error", "err"); }
+          } },
+          // V880 · Devolver los 60 min gratis de hoy (p. ej. tras una incidencia).
+          { label: "Reiniciar cuota", variant: "ghost", icon: "&#x1f504;", onClick: async (r) => {
+            const ok = await confirmDialog({ title: "Reiniciar cuota diaria",
+              message: `Se devolver\u00e1n los ${r.free_per_day} minutos gratis de hoy a ${r.name || ("#" + r.user_id)}.`, confirmLabel: "Reiniciar" });
+            if (!ok) return;
+            try { await api(`/api/admin/now-status/${r.user_id}/reset-quota`, { method: "POST", body: {} }); toast("Cuota reiniciada", "ok"); view_now_status(container); }
+            catch (e) { toast("Error", "err"); }
           } },
           { label: "Quitar", variant: "danger", icon: "&#x1f5d1;", onClick: async (r) => {
             const ok = await confirmDialog({ title: "Quitar estado", message: `Se eliminar\u00e1 el estado \u201cBusco ahora\u201d de ${r.name || ("#" + r.user_id)}.`, danger: true, confirmLabel: "Quitar" });
