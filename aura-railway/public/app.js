@@ -12087,6 +12087,17 @@ function screenProfileDetail(root, u, opts = {}) {
     el("span", { class: "pd-scroll-hint-ic", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>` }),
   ]);
   gallery.appendChild(scrollHint);
+  // V867 · Badge tipo Grindr sobre la foto (esquina inferior izquierda):
+  // rayo + frase "Ahora mismo". Es la misma pieza que en Fase 3 llevará la
+  // miniatura de la foto "busco ahora" pegada al lado. Solo se pinta si el
+  // usuario tiene un estado declarado y vigente.
+  const pdNowText = (u.now_status && u.now_status.text) ? String(u.now_status.text) : "";
+  if (pdNowText) {
+    gallery.appendChild(el("div", { class: "pd-now-badge" }, [
+      el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+      el("span", { class: "pd-now-text" }, pdNowText),
+    ]));
+  }
   // Al pulsar el aviso, baja suavemente hasta la ficha (nombre/detalles).
   scrollHint.addEventListener("click", () => {
     try { root.scrollTo({ top: gallery.offsetHeight - 40, behavior: "smooth" }); } catch { root.scrollTop = gallery.offsetHeight; }
@@ -12114,10 +12125,19 @@ function screenProfileDetail(root, u, opts = {}) {
       // V761 · Estado de actividad real (activa ahora / última vez). Si no hay
       // dato fiable, mantenemos el punto de estado online/offline sin texto inventado.
       const a = activityInfo(u);
-      return [
+      const out = [
         el("span", { class: "pd-dot-online" + (u.online ? " on" : "") + (a.show ? " act-" + a.level : "") }),
         a.show ? a.text : (u.online ? "Activa ahora" : "Desconectada"),
       ];
+      // V867 · Repite el distintivo "Ahora mismo" en la línea de estado (como
+      // Grindr muestra "· Right Now" junto a "En línea").
+      if (u.now_status && u.now_status.text) {
+        out.push(el("span", { class: "pd-now-tag" }, [
+          el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+          el("span", {}, "Ahora mismo"),
+        ]));
+      }
+      return out;
     })()),
   ]));
 
