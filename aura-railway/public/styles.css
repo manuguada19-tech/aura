@@ -6662,6 +6662,58 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
 }
 
 /* ============================================================
+   VISTA PREVIA DEL PANEL DE ADMIN (iframe ?preview=…)
+   El iframe hereda hover/pointer fino del PC anfitrión, por lo que
+   las reglas @media (hover:hover) activarían la maqueta de escritorio
+   (#stage a dos columnas + marco phone fijo de 400px) y desbordarían
+   el marco de ~330px. En preview forzamos móvil a pantalla completa:
+   sin sidebars y con el .phone ocupando todo el iframe.
+   ============================================================ */
+html.preview-mode,
+html.preview-mode body {
+  overflow: hidden !important;
+  height: 100% !important;
+  width: 100% !important;
+  margin: 0 !important;
+}
+html.preview-mode .stage {
+  grid-template-columns: 1fr !important;
+  padding: 0 !important;
+  gap: 0 !important;
+  background: transparent !important;
+  overflow: hidden !important;
+  height: 100% !important;
+}
+html.preview-mode .stage-side,
+html.preview-mode .stage-side-left,
+html.preview-mode .stage-side-right {
+  display: none !important;
+}
+html.preview-mode #phoneScaleWrap {
+  width: 100% !important;
+  height: 100% !important;
+  flex: 1 1 auto !important;
+}
+html.preview-mode .phone {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+/* El marco de teléfono real ya lo dibuja el panel (.cp-phone-real),
+   así que ocultamos el notch/home del marco simulado interno. */
+html.preview-mode .phone-notch,
+html.preview-mode .phone-home {
+  display: none !important;
+}
+
+/* ============================================================
    MODO PRUEBAS / BETA privada — welcome más compacto
    El welcome en modo beta añade: bloque "closed" + input invitación
    + botón CTA + botón "Ver estado de la beta / Soy superadmin",

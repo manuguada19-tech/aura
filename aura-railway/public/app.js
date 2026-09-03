@@ -4865,7 +4865,10 @@ function screenWelcome(root) {
   // pantalla completa a dos columnas. En móvil/tablet portrait mantenemos el
   // flujo vertical de siempre.
   const _regOpen = publicConfig?.app?.registrations_open !== false;
-  if (_welcomeIsDesktop()) {
+  // En la previa del panel de admin el iframe es un marco de teléfono (~390px)
+  // aunque el host sea un PC (hover/pointer fino se heredan). Forzamos el
+  // layout MÓVIL para que la maqueta a dos columnas no desborde la previa.
+  if (_welcomeIsDesktop() && !isPreviewMode()) {
     buildDesktopWelcome(root, _welcomeTestMode, _regOpen);
     return;
   }

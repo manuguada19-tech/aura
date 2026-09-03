@@ -185,6 +185,16 @@
         var t = localStorage.getItem("aura-theme") || "dark";
         document.documentElement.dataset.theme = t;
       } catch(e) { document.documentElement.dataset.theme = "dark"; }
+      // Vista previa del panel de admin (iframe con ?preview=…). El iframe hereda
+      // hover/pointer fino del PC anfitrión, así que sin esto se activaría la
+      // maqueta de escritorio (#stage a dos columnas + marco phone de 400px) y
+      // desbordaría el marco de ~330px. Marcamos preview-mode para forzar el
+      // layout móvil a pantalla completa.
+      try {
+        if (new URLSearchParams(location.search || "").get("preview")) {
+          document.documentElement.classList.add("preview-mode");
+        }
+      } catch(e) {}
     })();
   </script>
 </head>
@@ -359,6 +369,8 @@
 
       function isDesktop() {
         try {
+          // En la vista previa del admin (iframe estrecho) forzamos móvil.
+          if (document.documentElement.classList.contains("preview-mode")) return false;
           // Escritorio real: hover + pointer fino
           var hoverFine = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
           if (!hoverFine) return false;
