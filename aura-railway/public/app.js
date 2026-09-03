@@ -8538,6 +8538,22 @@ async function openNearbyMap() {
       if (seq !== searchSeq) return;           // llegó otra búsqueda más nueva
       if (data) lastData = data;                // solo sustituimos si hubo respuesta
       repaint();                                // repinta con datos nuevos (o los previos)
+
+      // V848 · Si NO hay nadie donde se buscó y ese punto NO es (aprox.) tu
+      // ubicación, volvemos a tu ubicación y mostramos un aviso unos segundos.
+      // Guardas anti-bucle: "atHome" es true cuando el punto buscado está a <1 km
+      // de tu ubicación, así al recentrar allí (aunque siga vacío) NO se reintenta.
+      let atHome = false;
+      try {
+        const dHome = haversineKm(lat, lng, myLocation.lat, myLocation.lng);
+        atHome = Number.isFinite(dHome) && dHome < 1;
+      } catch {}
+      let count = 0;
+      try { count = visibleList().length; } catch {}
+      if (count === 0 && !atHome) {
+        showMapNotice("Nadie por esta zona. Te llevamos de vuelta a tu ubicación.", 2800);
+        recenterClose(myLocation.lat, myLocation.lng);
+      }
     } finally {
       if (seq === searchSeq) searchHereBtn.classList.remove("loading");
     }
