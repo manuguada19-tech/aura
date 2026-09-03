@@ -7809,7 +7809,15 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
   } catch { f = {}; }
 
   // Centro del mapa: punto elegido (query) o, si no, la ubicación del usuario.
+  // V872 · Devolvemos también el ORIGEN del centro (`center_source`):
+  //   · "manual" → el usuario eligió un punto en el mapa (query lat/lng).
+  //   · "gps"    → coordenadas reales de user_gps (móvil con consentimiento).
+  //   · "ip"     → aproximación por IP (u.lat/u.lng, geoip). Poco fiable.
+  // El cliente lo usa para decidir si en PC puede refinar el punto azul con la
+  // geolocalización del navegador (que en PC es aproximada pero suele ser mejor
+  // que el geoip del servidor) SIN pisar una posición buena de GPS.
   let cLat = Number(req.query.lat), cLng = Number(req.query.lng);
+  let centerSource = (Number.isFinite(cLat) && Number.isFinite(cLng)) ? "manual" : null;
   if (!Number.isFinite(cLat) || !Number.isFinite(cLng)) {
     try {
       const [[g]] = await pool.query(
@@ -7818,14 +7826,15 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
            LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
           WHERE u.id=? LIMIT 1`, [me]);
       if (g) {
-        const dl = (g.glat != null ? g.glat : g.ulat);
-        const dg = (g.glng != null ? g.glng : g.ulng);
-        if (dl != null && dg != null) { cLat = Number(dl); cLng = Number(dg); }
+        const useGps = (g.glat != null && g.glng != null);
+        const dl = useGps ? g.glat : g.ulat;
+        const dg = useGps ? g.glng : g.ulng;
+        if (dl != null && dg != null) { cLat = Number(dl); cLng = Number(dg); centerSource = useGps ? "gps" : "ip"; }
       }
     } catch {}
   }
   if (!Number.isFinite(cLat) || !Number.isFinite(cLng)) {
-    return res.json({ ok: true, center: null, radius_km: radiusKm, users: [] });
+    return res.json({ ok: true, center: null, center_source: null, radius_km: radiusKm, users: [] });
   }
 
   const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
@@ -7917,7 +7926,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       lng: Number((lng + jLng).toFixed(5)),
     });
   }
-  res.json({ ok: true, center: { lat: cLat, lng: cLng }, radius_km: radiusKm, users });
+  res.json({ ok: true, center: { lat: cLat, lng: cLng }, center_source: centerSource, radius_km: radiusKm, users });
 }));
 
 /* ============================================================

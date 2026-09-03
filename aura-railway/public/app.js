@@ -9037,6 +9037,12 @@ async function openNearbyMap() {
   const myLocation = (first && first.center && Number.isFinite(first.center.lat))
     ? { lat: first.center.lat, lng: first.center.lng }
     : { lat: start.lat, lng: start.lng };
+  // V872 · Origen del centro que devolvió el backend. Si es "gps" (móvil real),
+  // NO dejamos que un fix impreciso del navegador (PC por wifi/IP) lo pise. Si es
+  // "ip" (geoip del servidor, poco fiable) o desconocido, SÍ permitimos refinar
+  // el punto azul con la geolocalización del navegador aunque sea aproximada:
+  // en PC suele caer mucho más cerca que el geoip y evita "sale mal en PC".
+  const centerFromGps = !!(first && first.center_source === "gps");
 
   // V772 · Sincroniza la ubicación del pin de prueba con dónde está REALMENTE
   // colocado en el mapa (cerca del punto azul), no con su ficha de la BD:
@@ -9437,10 +9443,13 @@ async function openNearbyMap() {
       const perm = await GPS.requestBrowserPermission();
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude, accuracy } = perm.pos.coords;
-        // V864 · Solo saltamos a la posición del navegador si es de buena
-        // precisión (móvil con GPS). Si es imprecisa (PC por wifi/IP), NO
-        // movemos el punto — nos quedamos en la ubicación buena y avisamos.
-        if (Number.isFinite(latitude) && Number.isFinite(longitude) && fixIsUsable(accuracy)) {
+        // V872 · Movemos el punto azul con el fix del navegador si es preciso
+        // (móvil con GPS) O si el centro del backend NO era GPS real (en PC el
+        // geoip del servidor suele fallar de ciudad; el fix del navegador, aun
+        // aproximado, cae mucho más cerca). Cuando el centro YA era GPS del móvil
+        // y el fix del PC es impreciso, lo conservamos y avisamos. GPS.report
+        // sigue ignorando fixes >3 km, así que esto NO pisa la posición buena.
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && (fixIsUsable(accuracy) || !centerFromGps)) {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
@@ -9477,11 +9486,13 @@ async function openNearbyMap() {
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude, accuracy } = perm.pos.coords;
         try { GPS.markAsked && GPS.markAsked(); } catch {}
-        // V864 · Solo movemos el punto azul si el fix es de buena precisión.
-        // En PC (wifi/IP) la precisión es de km y caería en otro sitio: en ese
-        // caso conservamos la semilla/ubicación del backend (la del móvil por
-        // GPS) sin moverla ni recentrar. GPS.report ya ignora fixes malos.
-        if (Number.isFinite(latitude) && Number.isFinite(longitude) && fixIsUsable(accuracy)) {
+        // V872 · Movemos el punto azul si el fix es preciso (móvil) O si el
+        // centro del backend NO era GPS real (p. ej. geoip en PC): en ese caso
+        // la geolocalización del navegador —aunque aproximada— sitúa mucho mejor
+        // que el geoip del servidor, que fallaba de ciudad en PC. Si el centro ya
+        // era GPS del móvil y el fix del PC es impreciso, lo conservamos.
+        // GPS.report ignora fixes >3 km, así que nunca pisa la posición buena.
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && (fixIsUsable(accuracy) || !centerFromGps)) {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
