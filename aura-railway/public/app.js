@@ -9037,12 +9037,14 @@ async function openNearbyMap() {
   const myLocation = (first && first.center && Number.isFinite(first.center.lat))
     ? { lat: first.center.lat, lng: first.center.lng }
     : { lat: start.lat, lng: start.lng };
-  // V872 · Origen del centro que devolvió el backend. Si es "gps" (móvil real),
-  // NO dejamos que un fix impreciso del navegador (PC por wifi/IP) lo pise. Si es
-  // "ip" (geoip del servidor, poco fiable) o desconocido, SÍ permitimos refinar
-  // el punto azul con la geolocalización del navegador aunque sea aproximada:
-  // en PC suele caer mucho más cerca que el geoip y evita "sale mal en PC".
-  const centerFromGps = !!(first && first.center_source === "gps");
+  // V873 · La geolocalización del navegador en PC (wifi/IP) es IMPRECISA y a
+  // menudo cae en otra ciudad (p. ej. Guadalajara a 50 km de Madrid). V872 la
+  // usaba igualmente cuando el centro del backend no era GPS y eso movía el
+  // punto azul y el pin a esa ciudad equivocada (regresión "sale mal en PC").
+  // Regla definitiva: SOLO movemos el punto azul con el fix del navegador si es
+  // PRECISO (fixIsUsable, <=3 km → móvil con GPS). Si es impreciso, conservamos
+  // el centro del backend y el usuario corrige con el buscador de ciudad. Ya no
+  // dependemos del origen del centro (center_source).
 
   // V772 · Sincroniza la ubicación del pin de prueba con dónde está REALMENTE
   // colocado en el mapa (cerca del punto azul), no con su ficha de la BD:
@@ -9443,13 +9445,11 @@ async function openNearbyMap() {
       const perm = await GPS.requestBrowserPermission();
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude, accuracy } = perm.pos.coords;
-        // V872 · Movemos el punto azul con el fix del navegador si es preciso
-        // (móvil con GPS) O si el centro del backend NO era GPS real (en PC el
-        // geoip del servidor suele fallar de ciudad; el fix del navegador, aun
-        // aproximado, cae mucho más cerca). Cuando el centro YA era GPS del móvil
-        // y el fix del PC es impreciso, lo conservamos y avisamos. GPS.report
-        // sigue ignorando fixes >3 km, así que esto NO pisa la posición buena.
-        if (Number.isFinite(latitude) && Number.isFinite(longitude) && (fixIsUsable(accuracy) || !centerFromGps)) {
+        // V873 · Solo saltamos a la posición del navegador si es de BUENA
+        // precisión (móvil con GPS). En PC (wifi/IP) la precisión es de km y
+        // cae en otra ciudad: NO movemos el punto (nos quedamos en el centro
+        // del backend) y avisamos de que use el buscador de ciudad.
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && fixIsUsable(accuracy)) {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
@@ -9486,13 +9486,11 @@ async function openNearbyMap() {
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude, accuracy } = perm.pos.coords;
         try { GPS.markAsked && GPS.markAsked(); } catch {}
-        // V872 · Movemos el punto azul si el fix es preciso (móvil) O si el
-        // centro del backend NO era GPS real (p. ej. geoip en PC): en ese caso
-        // la geolocalización del navegador —aunque aproximada— sitúa mucho mejor
-        // que el geoip del servidor, que fallaba de ciudad en PC. Si el centro ya
-        // era GPS del móvil y el fix del PC es impreciso, lo conservamos.
-        // GPS.report ignora fixes >3 km, así que nunca pisa la posición buena.
-        if (Number.isFinite(latitude) && Number.isFinite(longitude) && (fixIsUsable(accuracy) || !centerFromGps)) {
+        // V873 · Solo movemos el punto azul si el fix es de BUENA precisión
+        // (móvil con GPS). En PC (wifi/IP) la precisión es de km y caería en
+        // otra ciudad: conservamos el centro del backend sin moverlo ni
+        // recentrar. GPS.report ya ignora fixes >3 km.
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && fixIsUsable(accuracy)) {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
