@@ -2308,7 +2308,21 @@ const GPS = {
   _watchId: null,
   _lastSent: 0,
   _lastCoords: null,
+  _lastPos: null, // V855 · última posición REAL del watcher (para semilla inmediata del mapa)
   _prefKey: () => "aura.gps.asked." + (state.user?.id || "anon"),
+  // V855 · Última ubicación real conocida por el watcher (o null si aún no hay).
+  // El mapa la usa para pintar el punto azul al instante, sin esperar a un fix
+  // nuevo de alta precisión (que en algunos móviles tarda o expira y dejaba el
+  // punto en la aproximación por IP).
+  lastKnown() {
+    try {
+      const c = this._lastPos && this._lastPos.coords;
+      if (c && Number.isFinite(c.latitude) && Number.isFinite(c.longitude)) {
+        return { lat: c.latitude, lng: c.longitude };
+      }
+    } catch {}
+    return null;
+  },
   hasAsked() { try { return localStorage.getItem(this._prefKey()) === "1"; } catch { return false; } },
   markAsked() { try { localStorage.setItem(this._prefKey(), "1"); } catch {} },
   async fetchState() {
@@ -2332,6 +2346,9 @@ const GPS = {
   },
   async report(pos) {
     if (!state.user?.id || !pos?.coords) return;
+    // V855 · Guarda SIEMPRE la última posición real (antes del debounce de envío)
+    // para que el mapa pueda pintar el punto azul al instante con ella.
+    try { this._lastPos = pos; } catch {}
     const now = Date.now();
     // Debounce a 1 envío / 60 s salvo primer envío
     if (this._lastSent && now - this._lastSent < 60_000) return;
@@ -2418,13 +2435,20 @@ const GPS = {
     }
     this._watchId = null;
   },
-  async requestBrowserPermission() {
+  async requestBrowserPermission(opts) {
+    opts = opts || {};
     return new Promise((resolve) => {
       if (!("geolocation" in navigator)) return resolve({ ok: false, err: "unsupported" });
+      // V855 · maximumAge por defecto 30 s: si el watcher ya tiene un fix reciente
+      // el navegador lo devuelve al instante en vez de forzar uno NUEVO de alta
+      // precisión (que en algunos móviles compite con watchPosition y expira,
+      // dejando el mapa en la aproximación por IP). El modal de consentimiento,
+      // donde SÍ queremos un fix nuevo para confirmar permiso, pasa maximumAge:0.
+      const maximumAge = Number.isFinite(opts.maximumAge) ? opts.maximumAge : 30_000;
       navigator.geolocation.getCurrentPosition(
         (pos) => resolve({ ok: true, pos }),
-        (err) => resolve({ ok: false, err: err && err.code === 1 ? "denied" : "error" }),
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 15_000 }
+        (err) => resolve({ ok: false, err: err && err.code === 1 ? "denied" : (err && err.code === 3 ? "timeout" : "error") }),
+        { enableHighAccuracy: true, maximumAge, timeout: 15_000 }
       );
     });
   },
@@ -2569,8 +2593,9 @@ const GPS = {
     modal.querySelector(".gps-consent-yes").onclick = async (ev) => {
       const btn = ev.currentTarget;
       btn.disabled = true; btn.textContent = "…";
-      // Primero disparamos prompt del navegador
-      const perm = await GPS.requestBrowserPermission();
+      // Primero disparamos prompt del navegador. Aquí SÍ forzamos un fix nuevo
+      // (maximumAge:0) porque el objetivo es confirmar el permiso recién dado.
+      const perm = await GPS.requestBrowserPermission({ maximumAge: 0 });
       if (!perm.ok) {
         GPS.markAsked();
         if (perm.err === "denied") toast(T("content.gps.err_denied"), 4500);
@@ -9066,11 +9091,24 @@ async function openNearbyMap() {
   // V832 · Al abrir el mapa pedimos geolocalización real del navegador (si el
   // usuario aún no la había concedido) para centrar en su posición exacta, no
   // solo en la aproximación por IP del backend. Al concederla, recentramos.
+  // V855 · FIX de "mi ubicación sale mal": el punto azul se quedaba en la
+  // aproximación por IP porque el fix de alta precisión (maximumAge:0) competía
+  // con el watchPosition ya activo y expiraba. Ahora: (1) si el watcher ya tiene
+  // una posición real, pintamos el punto azul y recentramos AL INSTANTE con ella;
+  // (2) además pedimos una lectura tolerante a caché para refinarla si mejora.
   (async () => {
     try {
-      if (!GPS.hasAsked || GPS.hasAsked()) {
-        // ya consultado antes: intenta una lectura rápida no intrusiva
+      // (1) Semilla inmediata desde el watcher (si el usuario ya tenía el GPS
+      // activo). Evita el "salto" a la IP mientras llega un fix nuevo.
+      const seed = GPS.lastKnown ? GPS.lastKnown() : null;
+      if (seed && Number.isFinite(seed.lat) && Number.isFinite(seed.lng)) {
+        myLocation.lat = seed.lat; myLocation.lng = seed.lng;
+        try { meMarker.setLatLng([seed.lat, seed.lng]); } catch {}
+        recenterClose(seed.lat, seed.lng);
       }
+      // (2) Lectura del navegador (tolerante a caché por defecto): confirma el
+      // permiso y refina el punto si hay un fix mejor. Si expira (timeout),
+      // conservamos la semilla / la aproximación por IP sin recentrar de nuevo.
       const perm = await GPS.requestBrowserPermission();
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude } = perm.pos.coords;
