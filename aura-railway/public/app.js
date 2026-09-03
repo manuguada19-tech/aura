@@ -8069,12 +8069,16 @@ async function openNearbyMap() {
   const overlay = el("div", { class: "map-overlay" });
 
   // Estado de filtros rápidos del mapa (cliente). El radio re-consulta al backend.
-  // V843 · Los kilómetros ya NO limitan: se pide un radio muy amplio (máximo del
-  // backend) y el resultado se ORDENA por distancia al pin, sin excluir a nadie
-  // por estar "lejos". El usuario arrastra el pin y aparecen todos los cercanos a
-  // ese punto. Por eso desaparecen los chips de km y el círculo de zona.
-  const SEARCH_RADIUS_KM = 500;
-  const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: SEARCH_RADIUS_KM, showTest: true };
+  // V843 · No hay SELECTOR de km (chips) ni círculo de zona: el usuario arrastra
+  // el pin y ve a los cercanos ordenados por distancia a ese punto.
+  // V847 · PERO sí hay un límite AUTOMÁTICO de "distancia aceptable": si una
+  // persona está más lejos que NEARBY_RADIUS_KM del pin, NO se muestra (ni en la
+  // lista ni como pin). Antes el radio era 500 km (prácticamente ilimitado), así
+  // que al alejar el pin seguían saliendo los mismos; ahora "Personas en esta
+  // zona" refleja de verdad la vecindad del pin. El backend ya filtra
+  // distance <= radius_km y el usuario de prueba se filtra igual en el cliente.
+  const NEARBY_RADIUS_KM = 50;
+  const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: NEARBY_RADIUS_KM, showTest: true };
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
   // ---- Barra superior (glass) ----
