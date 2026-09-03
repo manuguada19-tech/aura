@@ -2150,6 +2150,9 @@ function mapApiUser(row) {
     // V761 · Actividad reciente: segundos desde la última conexión (last_login).
     // El backend lo calcula en SQL. null = desconocido (no se muestra nada).
     last_active_secs: (row.last_active_secs == null ? null : Number(row.last_active_secs)),
+    // V866 · Estado "Ahora mismo": frase declarada y vigente {text,expires_in}
+    // o null si no tiene o ya caducó. El backend nunca envía estados caducados.
+    now_status: (row.now_status && row.now_status.text ? { text: String(row.now_status.text), expires_in: (row.now_status.expires_in == null ? null : Number(row.now_status.expires_in)) } : null),
     height: row.height || null,
     weight: row.weight || null,
     // V776 · Campos opcionales de estilo de vida + etnia + prompts (rompehielos).
@@ -2254,6 +2257,27 @@ const datingApi = {
     if (!this._authed()) return null;
     try {
       const r = await fetch("/api/my/filters", { method: "PUT", headers: this.headers(), body: JSON.stringify({ filters }) });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  // V866 · Estado "Ahora mismo". setNowStatus(text) lo fija (caduca en 60 min);
+  // setNowStatus(null) lo borra. Devuelve { ok, status } o { error, message }.
+  async setNowStatus(text) {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const body = (text == null || text === "") ? JSON.stringify({ clear: true }) : JSON.stringify({ text: String(text) });
+      const r = await fetch("/api/my/now-status", { method: "POST", headers: this.headers(), body });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message };
+      return data;
+    } catch { return { error: "network" }; }
+  },
+  // V866 · Perfil propio (incluye now_status para el editor).
+  async myProfile() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/profile", { headers: this.headers(), cache: "no-store" });
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
@@ -3751,9 +3775,13 @@ function activityInfo(u) {
 // V865 · ¿"Buscando ahora"? = activa en los últimos ~15 min (online o
 // last_active_secs dentro de la ventana). Se usa en el mapa y en Buscar para el
 // chip "Buscan ahora". Ventana global para que ambos coincidan.
+// V866 · Además, un estado "Ahora mismo" declarado (now_status vigente) SIEMPRE
+// cuenta como "buscando ahora", aunque la persona no esté online justo ahora.
 const NOW_ACTIVE_WINDOW_SECS = 900; // 15 min
+function hasNowStatus(u) { return !!(u && u.now_status && u.now_status.text); }
 function searchingNow(u) {
   if (!u) return false;
+  if (hasNowStatus(u)) return true;
   if (u.online === true || u.online === 1) return true;
   return u.last_active_secs != null && Number.isFinite(+u.last_active_secs) && +u.last_active_secs <= NOW_ACTIVE_WINDOW_SECS;
 }
@@ -8011,11 +8039,119 @@ function screenNearby(root) {
     ]),
   ]);
   root.appendChild(mapBar);
+  // V866 · Barra "Ahora mismo": el usuario declara con una frase que busca algo
+  // AHORA (caduca en 1 h) + sección con quienes están buscando ahora cerca.
+  root.appendChild(buildNowBar());
+  root.appendChild(buildNowSection());
   const adTop = buildAdSlot("nearby-top");
   if (adTop) root.appendChild(adTop);
   root.appendChild(buildNearbySection());
   const adBot = buildAdSlot("nearby-bottom");
   if (adBot) root.appendChild(adBot);
+}
+
+/* ---- V866 · Estado "Ahora mismo" (editor + sección tipo "Right Now") ---- */
+// Barra propia del usuario: muestra su estado activo (si lo tiene) y permite
+// ponerlo/cambiarlo/quitarlo. Consulta /api/my/profile para saber el actual.
+function buildNowBar() {
+  const wrap = el("div", { class: "now-bar" });
+  function paint(status) {
+    wrap.innerHTML = "";
+    const bolt = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>`;
+    if (status && status.text) {
+      const mins = status.expires_in != null ? Math.max(0, Math.round(status.expires_in / 60)) : null;
+      wrap.appendChild(el("div", { class: "now-bar-inner active" }, [
+        el("span", { class: "now-bolt", html: bolt }),
+        el("div", { class: "now-bar-body" }, [
+          el("div", { class: "now-bar-text" }, status.text),
+          el("div", { class: "now-bar-sub" }, mins != null ? `Activo · caduca en ${mins} min` : "Activo"),
+        ]),
+        el("button", { class: "now-bar-edit", type: "button", title: "Cambiar", onclick: () => openNowStatusEditor(status.text, paint) }, "Cambiar"),
+        el("button", { class: "now-bar-clear", type: "button", title: "Quitar", onclick: async () => {
+          const r = await datingApi.setNowStatus(null);
+          if (r && r.ok) { toast("Estado quitado"); paint(null); }
+        } }, "Quitar"),
+      ]));
+    } else {
+      wrap.appendChild(el("div", { class: "now-bar-inner" }, [
+        el("span", { class: "now-bolt", html: bolt }),
+        el("div", { class: "now-bar-body" }, [
+          el("div", { class: "now-bar-text" }, "¿Buscas algo ahora mismo?"),
+          el("div", { class: "now-bar-sub" }, "Escribe una frase corta. Aparecerás destacado/a 1 hora."),
+        ]),
+        el("button", { class: "now-bar-set", type: "button", onclick: () => openNowStatusEditor("", paint) }, "Activar"),
+      ]));
+    }
+  }
+  paint(null);
+  // Carga el estado real del backend (por si ya tenía uno vigente).
+  (async () => { try { const p = await datingApi.myProfile(); if (p && p.ok && p.profile) paint(p.profile.now_status || null); } catch {} })();
+  return wrap;
+}
+
+// Editor (modal) para escribir/cambiar la frase del estado. onSaved(status).
+function openNowStatusEditor(current, onSaved) {
+  const input = el("input", { class: "now-editor-input", type: "text", maxlength: "60",
+    placeholder: "Ej: Tomando algo en el centro, ¿te apuntas?", value: current || "", enterkeyhint: "done" });
+  const hint = el("div", { class: "now-editor-hint" }, "Máx. 60 caracteres. Sin teléfonos, enlaces ni redes.");
+  const err = el("div", { class: "now-editor-err", hidden: true });
+  const suggestions = ["Tomando algo por el centro", "Me apetece cine esta tarde", "Paseo y charla ahora", "Libre esta noche", "Café en un rato"];
+  const chips = el("div", { class: "now-editor-chips" }, suggestions.map(s =>
+    el("button", { class: "now-editor-chip", type: "button", onclick: () => { input.value = s; input.focus(); } }, s)));
+  async function save() {
+    const text = input.value.trim();
+    if (!text) { err.hidden = false; err.textContent = "Escribe una frase para tu estado."; return; }
+    const r = await datingApi.setNowStatus(text);
+    if (r && r.ok) { toast("¡Estado activado! Visible 1 hora"); try { modal.close(); } catch {} if (onSaved) onSaved(r.status); }
+    else { err.hidden = false; err.textContent = (r && r.message) || "No se pudo guardar el estado."; }
+  }
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); save(); } });
+  const sheet = el("div", { class: "now-editor" }, [
+    el("div", { class: "now-editor-title" }, "Ahora mismo"),
+    el("div", { class: "now-editor-lead" }, "Cuenta en una frase qué te apetece ahora. Aparecerás destacado/a en el mapa y en Buscar durante 1 hora."),
+    input, hint, err, chips,
+    el("div", { class: "sheet-actions" }, [
+      el("button", { class: "btn btn-brand btn-block", type: "button", onclick: save }, "Activar 1 hora"),
+      el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
+    ]),
+  ]);
+  try { modal.open(sheet); } catch {}
+  setTimeout(() => { try { input.focus(); } catch {} }, 60);
+}
+
+// Sección "Ahora mismo": tira horizontal con personas que están buscando ahora
+// cerca (estado declarado o actividad reciente). Se llena desde nearby.
+function buildNowSection() {
+  const sec = el("div", { class: "now-section", hidden: true });
+  const head = el("div", { class: "now-section-head" }, [
+    el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+    el("span", {}, "Ahora mismo"),
+  ]);
+  const strip = el("div", { class: "now-section-strip" });
+  sec.appendChild(head); sec.appendChild(strip);
+  (async () => {
+    try {
+      const users = await datingApi.nearby(state.zone, 60);
+      if (!Array.isArray(users)) return;
+      // Prioriza estado declarado; luego online/actividad reciente.
+      const now = users.filter(searchingNow).sort((a, b) => (hasNowStatus(b) - hasNowStatus(a)));
+      if (!now.length) return;
+      now.slice(0, 20).forEach(u => {
+        const nowText = hasNowStatus(u) ? u.now_status.text : (u.online ? "En línea" : "Activa hace poco");
+        const cardCls = "now-card" + (hasNowStatus(u) ? " declared" : "");
+        const card = el("button", { class: cardCls, type: "button", onclick: () => openProfile(u) }, [
+          el("div", { class: "now-card-ava", style: `background-image:url('${u.photo}')` }, [
+            hasNowStatus(u) ? el("span", { class: "now-card-bolt", html: `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }) : null,
+          ]),
+          el("div", { class: "now-card-name" }, u.name || "Alguien"),
+          el("div", { class: "now-card-text" }, nowText),
+        ]);
+        strip.appendChild(card);
+      });
+      sec.hidden = false;
+    } catch {}
+  })();
+  return sec;
 }
 
 /* ---- V758 · Mapa "Cerca de ti" (estilo Grindr) ----------------------
@@ -8447,13 +8583,19 @@ async function openNearbyMap() {
     const cls = ["map-pin"];
     if (u.online) cls.push("on");
     if (u._test) cls.push("test");
+    // V866 · Quien tiene estado "Ahora mismo" vigente se destaca en el mapa con
+    // un aro ámbar y un rayo, para distinguirlo de "online" (punto verde).
+    const hasNow = !!(u.now_status && u.now_status.text);
+    if (hasNow) cls.push("now");
     const dot = u.online ? '<span class="map-pin-dot"></span>' : "";
     // V852 · Etiqueta del pin: "Prueba" para la cuenta ficticia; si no, "Nuevo"
     // cuando la cuenta es de reciente registro (destaca a quien acaba de llegar).
     let tag = "";
     if (u._test) tag = '<span class="map-pin-tag">Prueba</span>';
     else if (isNewUser(u)) tag = '<span class="map-pin-tag new">Nuevo</span>';
-    const html = `<div class="${cls.join(" ")}" style="background-image:url('${u.photo || ""}')">${dot}${tag}<span class="map-pin-stem"></span></div>`;
+    // V866 · Rayo (símbolo del estado) sobre el pin cuando busca ahora.
+    const bolt = hasNow ? '<span class="map-pin-bolt" title="Ahora mismo"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg></span>' : "";
+    const html = `<div class="${cls.join(" ")}" style="background-image:url('${u.photo || ""}')">${dot}${bolt}${tag}<span class="map-pin-stem"></span></div>`;
     return L.divIcon({ className: "map-pin-wrap", html, iconSize: [50, 62], iconAnchor: [25, 60] });
   }
 
@@ -8469,6 +8611,8 @@ async function openNearbyMap() {
       height: u.height, weight: u.weight, ethnicity: u.ethnicity,
       pets: u.pets, smoke: u.smoke, drink: u.drink,
       education: u.education, exercise: u.exercise, prompts: u.prompts,
+      // V866 · Conserva el estado "Ahora mismo" al abrir el detalle desde el mapa.
+      now_status: u.now_status,
     });
     // El perfil de prueba no es "real" (id no numérico): así el detalle no
     // intenta dar like/pasar contra el backend.
@@ -8490,6 +8634,12 @@ async function openNearbyMap() {
           : (u.online ? el("span", { class: "map-sheet-badge on" }, "En línea") : null));
     const distLabel = fmtDistance(u.distance);
     const distTxt = distLabel ? `a ${distLabel}` : "";
+    // V866 · Si tiene estado "Ahora mismo", se muestra la frase con el rayo.
+    const nowText = (u.now_status && u.now_status.text) ? String(u.now_status.text) : "";
+    const nowRow = nowText ? el("div", { class: "map-sheet-now" }, [
+      el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+      el("span", { class: "now-text" }, nowText),
+    ]) : null;
     const sheet = el("div", {}, [
       el("div", { class: "map-sheet-head" }, [
         avatar,
@@ -8499,6 +8649,7 @@ async function openNearbyMap() {
           badge,
         ]),
       ]),
+      nowRow,
       u._test ? el("div", { class: "sheet-body" }, "Este perfil y su ubicación son ficticios y solo sirven para probar el mapa. No corresponde a ninguna persona real.") : null,
       el("div", { class: "sheet-actions" }, [
         el("button", { class: "btn btn-brand btn-block", onclick: () => { try { modal.close(); } catch {} openUserProfile(u); } }, "Ver perfil"),
@@ -10277,11 +10428,18 @@ function renderResults(grid, filter = "") {
     // V744 · Distancia real o "GPS no permitido" por tarjeta (ubicación desactivada).
     const li = locDistanceInfo(u);
     const meta = [u.city || "", (li.text || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
-    const card = el("div", { class: "result-card", style: `background-image:url('${u.photo}')` }, [
+    // V866 · Estado "Ahora mismo": banda con rayo + frase sobre la tarjeta.
+    const nowText = (u.now_status && u.now_status.text) ? String(u.now_status.text) : "";
+    const nowBadge = nowText ? el("div", { class: "result-now", title: "Ahora mismo" }, [
+      el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+      el("span", { class: "now-text" }, nowText),
+    ]) : null;
+    const card = el("div", { class: "result-card" + (nowText ? " has-now" : ""), style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
       el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
         el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` })
       ]),
+      nowBadge,
       el("div", { class: "info" }, [
         el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
         el("small", { class: li.off ? "gps-off" : "" }, meta),

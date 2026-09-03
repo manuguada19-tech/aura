@@ -9613,6 +9613,95 @@ body.map-open { overflow: hidden; }
 .map-chip-now.active { background: linear-gradient(135deg, #fbbf24, #f59e0b); box-shadow: 0 4px 12px rgba(245,158,11,.30); }
 .map-chip-now.active .map-chip-ic { color: #fff; }
 
+/* ============================================================================
+   V866 · Estado "Ahora mismo" (frase declarada, caduca en 1 h). Color ámbar
+   (rayo) para distinguirlo del verde de "online". Piezas:
+     · .now-bar        barra propia (editor) en "Cerca de ti"
+     · .now-section    tira horizontal "Ahora mismo" (quién busca ahora cerca)
+     · .now-editor     modal para escribir la frase
+     · .map-pin.now    aro ámbar + rayo en el pin del mapa
+     · .result-now     banda con la frase en la tarjeta de Buscar
+     · .map-sheet-now  frase en la hoja del pin
+============================================================================ */
+.now-bolt { display: inline-flex; align-items: center; color: #f59e0b; }
+/* Barra editable del propio usuario */
+.now-bar { padding: 0 14px 6px; }
+.now-bar-inner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border-radius: 14px;
+  background: var(--surface-2); border: 1px solid var(--border);
+}
+.now-bar-inner.active { border-color: rgba(245,158,11,.55); background: linear-gradient(180deg, rgba(245,158,11,.10), var(--surface-2)); }
+.now-bar-body { flex: 1 1 auto; min-width: 0; }
+.now-bar-text { font-weight: 700; font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-bar-sub { font-size: 11px; color: var(--text-soft); margin-top: 1px; }
+.now-bar-set, .now-bar-edit, .now-bar-clear {
+  flex: 0 0 auto; border-radius: 999px; padding: 7px 12px; font-size: 12px; font-weight: 700;
+  border: 1px solid transparent; cursor: pointer;
+}
+.now-bar-set { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: #fff; }
+.now-bar-edit { background: var(--surface); border-color: var(--border); color: var(--text); }
+.now-bar-clear { background: transparent; color: var(--text-soft); border-color: var(--border); }
+/* Sección "Ahora mismo": tira horizontal */
+.now-section { padding: 4px 0 10px; }
+.now-section-head { display: flex; align-items: center; gap: 6px; padding: 4px 14px 8px; font-weight: 800; font-size: 14px; color: var(--text); }
+.now-section-strip { display: flex; gap: 10px; overflow-x: auto; padding: 0 14px 4px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.now-section-strip::-webkit-scrollbar { display: none; }
+.now-card {
+  flex: 0 0 auto; width: 108px; text-align: center; cursor: pointer;
+  background: none; border: none; padding: 0;
+}
+.now-card-ava {
+  position: relative; width: 84px; height: 84px; border-radius: 50%; margin: 0 auto 6px;
+  background-size: cover; background-position: center; border: 2px solid var(--border);
+}
+.now-card.declared .now-card-ava { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.18); }
+.now-card-bolt {
+  position: absolute; right: -2px; bottom: -2px; width: 22px; height: 22px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b); border: 2px solid var(--surface);
+}
+.now-card-name { font-weight: 700; font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.now-card-text { font-size: 11px; color: var(--text-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Modal editor */
+.now-editor { padding: 4px 2px; }
+.now-editor-title { font-weight: 800; font-size: 18px; color: var(--text); margin-bottom: 4px; }
+.now-editor-lead { font-size: 13px; color: var(--text-soft); margin-bottom: 12px; }
+.now-editor-input {
+  width: 100%; height: 46px; border-radius: 12px; padding: 0 14px;
+  border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text); font-size: 15px;
+}
+.now-editor-hint { font-size: 11px; color: var(--text-soft); margin: 6px 2px 0; }
+.now-editor-err { font-size: 12px; color: #ef4444; margin: 6px 2px 0; font-weight: 600; }
+.now-editor-err[hidden] { display: none; }
+.now-editor-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.now-editor-chip {
+  border-radius: 999px; padding: 7px 12px; font-size: 12px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); color: var(--text-soft);
+}
+/* Pin del mapa con estado declarado */
+.map-pin.now { box-shadow: 0 0 0 3px rgba(245,158,11,.9), 0 6px 16px rgba(0,0,0,.35); }
+.map-pin-bolt {
+  position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff; z-index: 2;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b); border: 2px solid #fff;
+}
+/* Frase en la hoja del pin */
+.map-sheet-now {
+  display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; padding: 8px 10px;
+  border-radius: 10px; background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.35);
+}
+.map-sheet-now .now-text { font-size: 13px; font-weight: 600; color: var(--text); }
+/* Banda en la tarjeta de Buscar */
+.result-now {
+  position: absolute; left: 8px; right: 8px; top: 8px; z-index: 4;
+  display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 10px;
+  background: linear-gradient(135deg, rgba(251,191,36,.95), rgba(245,158,11,.95));
+  color: #fff; box-shadow: 0 4px 10px rgba(245,158,11,.35);
+}
+.result-now .now-bolt { color: #fff; }
+.result-now .now-text { font-size: 11px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* Lienzo del mapa.
    V767 · position:relative + z-index:0 CREA un contexto de apilado propio, de
    forma que los paneles/controles internos de Leaflet (z-index 200-1000) quedan

@@ -1330,6 +1330,14 @@ async function migrate() {
   // previo). El admin SÍ ve todos los datos, pero marcados como "ocultos".
   try { await pool.execute("ALTER TABLE users ADD COLUMN privacy_hidden TEXT NULL"); } catch (e) { /* ya existe */ }
 
+  // V866 · Estado "Ahora mismo" (idea propia, inspirada en un estado efímero):
+  // el usuario declara a propósito que busca algo AHORA con una frase corta que
+  // personaliza (now_status_text). Caduca solo (now_status_until): pasada esa
+  // hora deja de mostrarse y de contar para el filtro. Es DISTINTO de la
+  // actividad pasiva de "Buscan ahora" (last_active_secs): esto es voluntario.
+  try { await pool.execute("ALTER TABLE users ADD COLUMN now_status_text VARCHAR(80) NULL"); } catch (e) { /* ya existe */ }
+  try { await pool.execute("ALTER TABLE users ADD COLUMN now_status_until TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
+
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
   // completa se conserva en `url` (así la cuadrícula la muestra entera).
@@ -7273,6 +7281,8 @@ app.get("/api/discover", wrap(async (req, res) => {
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden, u.plan,
             u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
+            CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
+            CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
@@ -7300,6 +7310,9 @@ app.get("/api/discover", wrap(async (req, res) => {
     r.distance = (r.distance == null ? null : Number(r.distance));
     r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+    // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
+    r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)) } : null);
+    delete r.now_status_text; delete r.now_status_expires_in;
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
@@ -7442,6 +7455,8 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden, u.plan,
             u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
+            CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
+            CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
@@ -7471,6 +7486,9 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     r.distance = (r.distance == null ? null : Number(r.distance));
     r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+    // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
+    r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)) } : null);
+    delete r.now_status_text; delete r.now_status_expires_in;
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
@@ -7547,6 +7565,8 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
             u.created_at,
             TIMESTAMPDIFF(HOUR, u.created_at, NOW()) AS account_age_h,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
+            CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
+            CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
             (gps.lat IS NOT NULL) AS gps_ok,
             ${distExpr} AS distance
@@ -7600,6 +7620,9 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       // V865 · segundos desde la última conexión, para el filtro "Buscan ahora"
       // (activos en los últimos ~15 min) y para pintar "Activa hace…".
       last_active_secs: (r.last_active_secs == null ? null : Number(r.last_active_secs)),
+      // V866 · Estado "Ahora mismo" (frase declarada). Solo llega si no ha
+      // caducado (el SELECT ya lo anula cuando now_status_until <= NOW()).
+      now_status: (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)) } : null),
       lat: Number((lat + jLat).toFixed(5)),
       lng: Number((lng + jLng).toFixed(5)),
     });
@@ -8195,9 +8218,12 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
+  // V866 · Estado "Ahora mismo" propio (para que el editor lo muestre).
+  u.now_status = (u.now_status_text ? { text: u.now_status_text, expires_in: (u.now_status_expires_in == null ? null : Number(u.now_status_expires_in)) } : null);
+  delete u.now_status_text; delete u.now_status_expires_in;
   let interests = [];
   try { interests = u.interests ? JSON.parse(u.interests) : []; } catch { interests = []; }
   // V776 · prompts (preguntas de perfil / rompehielos): JSON array de {q,a}.
@@ -8260,6 +8286,64 @@ app.post("/api/my/profile", wrap(async (req, res) => {
   vals.push(me);
   await pool.execute(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, vals);
   res.json({ ok: true, updated: sets.length });
+}));
+
+/* ----------------------------------------------------------------------------
+   V866 · Estado "Ahora mismo"
+   ----------------------------------------------------------------------------
+   El usuario declara a propósito una frase corta ("Tomando algo en el centro",
+   "Me apetece cine", …) que expira en NOW_STATUS_MINUTES. Mientras esté activa:
+     · aparece con un símbolo (rayo) y la frase en su pin/tarjeta,
+     · su perfil sale en la sección "Ahora mismo" y en el filtro "Buscan ahora".
+   Moderación mínima: longitud limitada + se bloquean datos de contacto (teléfono,
+   URL, redes) para evitar spam/escorting. No es infalible; complementa a la
+   revisión humana ya existente, no la sustituye.
+--------------------------------------------------------------------------- */
+const NOW_STATUS_MINUTES = 60;         // el estado caduca a los 60 min
+const NOW_STATUS_MAX_LEN = 60;         // frase corta
+
+// Limpia la frase del estado. Devuelve { ok, text } o { ok:false, reason }.
+function sanitizeNowStatus(raw) {
+  let t = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+  if (!t) return { ok: false, reason: "empty" };
+  if (t.length > NOW_STATUS_MAX_LEN) t = t.slice(0, NOW_STATUS_MAX_LEN);
+  const low = t.toLowerCase();
+  // Bloquea datos de contacto / captación fuera de la app.
+  const contact = [
+    /\b\d[\d\s.\-]{7,}\d\b/,                                  // teléfonos
+    /https?:\/\/|www\.|\.(com|es|net|org|io|link|me)\b/i,     // urls / dominios
+    /\b(whats?app|wasap|wsp|telegram|tlgrm|instagram|insta|ig|snap(chat)?|onlyfans|of|tiktok|face(book)?)\b/i,
+    /@[a-z0-9._]{2,}/i,                                       // handles / correos
+  ];
+  if (contact.some(rx => rx.test(low))) return { ok: false, reason: "contact" };
+  return { ok: true, text: t };
+}
+
+// POST /api/my/now-status  { text: "..." }  → fija el estado (caduca en 60 min).
+// POST /api/my/now-status  { clear: true } → lo borra.
+app.post("/api/my/now-status", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const b = req.body || {};
+  if (b.clear === true || b.clear === "1") {
+    await pool.execute("UPDATE users SET now_status_text=NULL, now_status_until=NULL WHERE id=?", [me]);
+    return res.json({ ok: true, status: null });
+  }
+  const clean = sanitizeNowStatus(b.text);
+  if (!clean.ok) {
+    const msg = clean.reason === "contact"
+      ? "No incluyas teléfonos, enlaces ni redes en tu estado."
+      : "Escribe una frase para tu estado.";
+    return res.status(400).json({ ok: false, error: clean.reason, message: msg });
+  }
+  await pool.execute(
+    "UPDATE users SET now_status_text=?, now_status_until=DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id=?",
+    [clean.text, NOW_STATUS_MINUTES, me]
+  );
+  const [[row]] = await pool.query(
+    "SELECT now_status_text AS text, TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS expires_in FROM users WHERE id=? LIMIT 1", [me]
+  );
+  res.json({ ok: true, status: { text: row.text, expires_in: Number(row.expires_in) } });
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */
