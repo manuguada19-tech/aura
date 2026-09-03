@@ -9554,6 +9554,16 @@ body.map-open { overflow: hidden; }
   width: 9px; height: 9px; border-radius: 50%;
   background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.25);
 }
+/* V851 · Chip "Filtros" + insignia con el nº de filtros avanzados activos. */
+.map-chip-filters .map-chip-ic { display: inline-flex; }
+.map-chip-count {
+  display: inline-grid; place-items: center; min-width: 18px; height: 18px;
+  padding: 0 5px; margin-left: 2px; border-radius: 999px;
+  font-size: 11px; font-weight: 800; line-height: 1;
+  color: #ff3b6b; background: #fff;
+}
+.map-chip.active .map-chip-count { color: #ff3b6b; background: #fff; }
+.map-chip-count[hidden] { display: none; }
 
 /* Lienzo del mapa.
    V767 · position:relative + z-index:0 CREA un contexto de apilado propio, de

@@ -8085,7 +8085,18 @@ async function openNearbyMap() {
   // había alguien al lado. Ahora, con el pin en tu casa, NO aparece nadie: hay que
   // acercar el pin a su punto para verla (sigue disponible para hacer pruebas).
   const NEARBY_TEST_KM = 1;
-  const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: NEARBY_RADIUS_KM, showTest: true };
+  // V851 · Filtros del mapa AMPLIADOS (estilo Grindr): además del género y "en
+  // línea" que ya había, ahora hay una hoja de "Filtros" con edad, altura, peso,
+  // qué busca, tipo de relación, intereses y estilo de vida. Al aplicarlos se
+  // reducen los pines del mapa y las tarjetas de la cuadrícula (mismos campos que
+  // el filtro de "Buscar"). Rango completo / vacío = sin filtro.
+  const mapFilters = {
+    gender: "todos", onlyOnline: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
+    ageMin: 18, ageMax: 99,
+    heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
+    looking_for: "any", relationship: "any",
+    interests: [], education: [], pets: [], exercise: [], smoke: [], drink: [],
+  };
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
   // ---- Barra superior (glass) ----
@@ -8135,11 +8146,31 @@ async function openNearbyMap() {
     repaint();
   });
 
+  // V851 · Chip "Filtros" (estilo Grindr): abre una hoja con edad, altura, peso,
+  // qué busca, relación, intereses y estilo de vida. Una insignia muestra cuántos
+  // filtros avanzados hay activos. Al aplicar se repinta (menos pines/tarjetas).
+  const filtersCountBadge = el("span", { class: "map-chip-count", hidden: activeMapFilterCount() === 0 }, String(activeMapFilterCount()));
+  const filtersChip = el("button", { class: "map-chip map-chip-filters", type: "button", "aria-label": "Filtros" }, [
+    el("span", { class: "map-chip-ic", html: `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>` }),
+    "Filtros",
+    filtersCountBadge,
+  ]);
+  function syncFiltersChip() {
+    const n = activeMapFilterCount();
+    filtersCountBadge.textContent = String(n);
+    filtersCountBadge.hidden = n === 0;
+    filtersChip.classList.toggle("active", n > 0);
+  }
+  filtersChip.addEventListener("click", () => {
+    openMapFilters(mapFilters, () => { syncFiltersChip(); repaint(); });
+  });
+
   // V843 · Sin chips de km: la distancia ya no restringe (ver SEARCH_RADIUS_KM).
   // V845 · El segmento de género y el chip "En línea" van en UNA sola fila (antes
   // en dos) para que la barra de filtros ocupe menos alto y se vea más mapa.
+  // V851 · Añadido el chip "Filtros" al final de la fila (con scroll horizontal).
   const filterbar = el("div", { class: "map-filterbar" }, [
-    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip ]),
+    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip, filtersChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -8380,7 +8411,65 @@ async function openNearbyMap() {
       } catch {}
       if (inZone) list.unshift(testUser);
     }
-    return list.filter(u => mapGenderMatches(mapFilters.gender, u.gender) && (!mapFilters.onlyOnline || u.online));
+    // V851 · Aplica TODOS los filtros del mapa (género, en línea + los avanzados
+    // de la hoja: edad, altura, peso, qué busca, relación, intereses, estilo de
+    // vida). Reduce pines y tarjetas, igual que en Grindr.
+    return list.filter(u => matchesMapFilters(u));
+  }
+
+  // V851 · ¿El usuario pasa los filtros activos del mapa? Rango completo / listas
+  // vacías = sin filtro. Los rangos de altura/peso se guardan en canónico (cm/kg)
+  // y 0 significa "sin límite". Los usuarios sin ese dato NO se excluyen por
+  // altura/peso (no penalizamos perfiles incompletos), pero sí por edad si la
+  // declaran fuera del rango. Es el mismo criterio que el filtro de "Buscar".
+  function matchesMapFilters(u) {
+    const f = mapFilters;
+    if (!mapGenderMatches(f.gender, u.gender)) return false;
+    if (f.onlyOnline && !u.online) return false;
+    // Edad
+    if (u.age != null && Number.isFinite(+u.age)) {
+      if (+u.age < f.ageMin || +u.age > f.ageMax) return false;
+    }
+    // Altura (cm canónico)
+    if (f.heightMin && u.height != null && Number.isFinite(+u.height) && +u.height < f.heightMin) return false;
+    if (f.heightMax && u.height != null && Number.isFinite(+u.height) && +u.height > f.heightMax) return false;
+    // Peso (kg canónico)
+    if (f.weightMin && u.weight != null && Number.isFinite(+u.weight) && +u.weight < f.weightMin) return false;
+    if (f.weightMax && u.weight != null && Number.isFinite(+u.weight) && +u.weight > f.weightMax) return false;
+    // Qué busca / tipo de relación (selección única; "any" = sin filtro)
+    if (f.looking_for !== "any" && u.looking_for !== f.looking_for) return false;
+    if (f.relationship !== "any" && u.relationship !== f.relationship) return false;
+    // Intereses (uno o más deben coincidir)
+    if (f.interests.length) {
+      const has = f.interests.some(i => (u.interests || []).includes(i));
+      if (!has) return false;
+    }
+    // Estilo de vida (exact-match contra el valor del perfil)
+    const lifestyle = [["education", u.education], ["pets", u.pets], ["exercise", u.exercise], ["smoke", u.smoke], ["drink", u.drink]];
+    for (const [key, val] of lifestyle) {
+      const sel = f[key];
+      if (sel && sel.length && !sel.includes(val)) return false;
+    }
+    return true;
+  }
+
+  // V851 · Nº de filtros AVANZADOS activos (los de la hoja), para la insignia del
+  // botón "Filtros". El género y "en línea" tienen sus propios chips aparte.
+  function activeMapFilterCount() {
+    const f = mapFilters;
+    let n = 0;
+    if (f.ageMin !== 18 || f.ageMax !== 99) n++;
+    if (f.heightMin || f.heightMax) n++;
+    if (f.weightMin || f.weightMax) n++;
+    if (f.looking_for !== "any") n++;
+    if (f.relationship !== "any") n++;
+    if (f.interests.length) n++;
+    if (f.education.length) n++;
+    if (f.pets.length) n++;
+    if (f.exercise.length) n++;
+    if (f.smoke.length) n++;
+    if (f.drink.length) n++;
+    return n;
   }
 
   // V763 · Cuadrícula tipo Grindr con las personas cercanas del mapa. Se abre
@@ -8488,6 +8577,16 @@ async function openNearbyMap() {
       const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => openUserSheet(u));
     });
+    // V851 · El pin de la cuenta de PRUEBA se dibuja SIEMPRE en el mapa (aunque el
+    // pin de búsqueda esté lejos y por eso NO cuente en la cuadrícula "en esta
+    // zona"). Antes, con el pin en tu ubicación, no se veía nada de la cuenta de
+    // prueba; ahora ves su marcador y puedes arrastrar el pin de búsqueda hasta él
+    // para que aparezca en la lista. Sigue respetando los filtros (género, etc.).
+    if (mapFilters.showTest && testUser && Number.isFinite(testUser.lat) && Number.isFinite(testUser.lng)
+        && !list.some(u => u._test) && matchesMapFilters(testUser)) {
+      const tm = L.marker([testUser.lat, testUser.lng], { icon: pinIcon(testUser), riseOnHover: true }).addTo(markers);
+      tm.on("click", () => openUserSheet(testUser));
+    }
     renderPeople(list);
     syncControls();
   }
@@ -11305,6 +11404,127 @@ function openNearbyFilters(onApply) {
     } }, "Aplicar filtros"),
     el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
       state.nearbyFilters = { ageMin: 18, ageMax: 60, distance: 50, onlyOnline: false, zone: "all", interests: [], looking_for: "any", relationship: "any" };
+      modal.close();
+      onApply && onApply();
+      toast("Filtros restablecidos");
+    } }, "Restablecer"),
+    el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cancelar"),
+  ]));
+
+  modal.open(sheet);
+}
+
+// V851 · Hoja de FILTROS del mapa "Cerca de ti" (estilo Grindr). Recibe el objeto
+// mapFilters (estado local del mapa abierto) y una función onApply que repinta.
+// Reutiliza makeUnitRange (edad/altura/peso) y los chips de "Buscar" para que la
+// experiencia sea idéntica. Al aplicar, escribe en mapFilters y llama onApply.
+function openMapFilters(mf, onApply) {
+  const _cc = myCountry();
+  const sheet = el("div", { class: "nearby-filters-sheet" });
+  sheet.appendChild(el("div", { class: "sheet-titlebar" }, [
+    el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros del mapa"),
+    el("button", { class: "sheet-close", type: "button", "aria-label": "Cerrar filtros",
+      onclick: () => modal.close(),
+      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
+  ]));
+
+  // Edad (rango). Valores canónicos en años.
+  const ageCtl = makeUnitRange({ metric: "age", loCanon: mf.ageMin, hiCanon: mf.ageMax });
+  sheet.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Edad"), ageCtl.node ]));
+
+  // Altura (cm canónico). Rango completo = sin filtro.
+  const heightCtl = makeUnitRange({ metric: "height", defaultUnitId: heightUnitForCountry(_cc), loCanon: mf.heightMin, hiCanon: mf.heightMax });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Altura"),
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-6px 0 8px;line-height:1.35" }, "Todo el rango = sin filtro."),
+    heightCtl.node,
+  ]));
+
+  // Peso (kg canónico). Rango completo = sin filtro.
+  const weightCtl = makeUnitRange({ metric: "weight", defaultUnitId: myWeightUnit(), loCanon: mf.weightMin, hiCanon: mf.weightMax });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Peso"),
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-6px 0 8px;line-height:1.35" }, "Todo el rango = sin filtro."),
+    weightCtl.node,
+  ]));
+
+  // Qué busca (selección única).
+  const lookingRef = { id: mf.looking_for || "any" };
+  const lookingRow = el("div", { class: "chip-row" });
+  [{ id: "any", label: "Cualquiera", emoji: "🎯" }, ...LOOKING_FOR_OPTIONS].forEach(o => {
+    const c = el("button", { class: "chip selectable" + (lookingRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => { lookingRef.id = o.id; lookingRow.querySelectorAll(".chip").forEach(x => x.classList.remove("active")); c.classList.add("active"); });
+    lookingRow.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Qué busca"), lookingRow ]));
+
+  // Tipo de relación (selección única).
+  const relRef = { id: mf.relationship || "any" };
+  const relRow = el("div", { class: "chip-row" });
+  RELATIONSHIP_TYPES.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (relRef.id === o.id ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => { relRef.id = o.id; relRow.querySelectorAll(".chip").forEach(x => x.classList.remove("active")); c.classList.add("active"); });
+    relRow.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Tipo de relación"), relRow ]));
+
+  // Intereses (multi).
+  const selInterests = new Set(mf.interests || []);
+  const intRow = el("div", { class: "chip-row" });
+  INTERESTS.forEach(i => {
+    const c = el("button", { class: "chip selectable" + (selInterests.has(i) ? " active" : ""), type: "button" }, i);
+    c.addEventListener("click", () => { if (selInterests.has(i)) { selInterests.delete(i); c.classList.remove("active"); } else { selInterests.add(i); c.classList.add("active"); } });
+    intRow.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Intereses (uno o más)"), intRow ]));
+
+  // Estilo de vida (multi). Reutiliza el mismo patrón de chips.
+  function buildLifestyle(title, options, current) {
+    const sel = new Set((Array.isArray(current) ? current : []).map(String));
+    const row = el("div", { class: "chip-row" });
+    options.forEach(o => {
+      const c = el("button", { class: "chip selectable" + (sel.has(o.id) ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+      c.addEventListener("click", () => { if (sel.has(o.id)) { sel.delete(o.id); c.classList.remove("active"); } else { sel.add(o.id); c.classList.add("active"); } });
+      row.appendChild(c);
+    });
+    sheet.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, title + " (opcional)"), row ]));
+    return sel;
+  }
+  const selEdu = buildLifestyle("Estudios", EDUCATION_OPTIONS, mf.education);
+  const selPets = buildLifestyle("Mascotas", PETS_OPTIONS, mf.pets);
+  const selEx = buildLifestyle("Ejercicio", EXERCISE_OPTIONS, mf.exercise);
+  const selSmoke = buildLifestyle("Fuma", SMOKE_OPTIONS, mf.smoke);
+  const selDrink = buildLifestyle("Bebe", DRINK_OPTIONS, mf.drink);
+
+  // Acciones.
+  sheet.appendChild(el("div", { class: "sheet-actions" }, [
+    el("button", { class: "btn btn-brand btn-block", type: "button", onclick: () => {
+      // Rango completo → 0 (sin filtro). Compara contra los límites de la unidad canónica.
+      let aMin = ageCtl.getLoCanon(), aMax = ageCtl.getHiCanon();
+      mf.ageMin = aMin; mf.ageMax = Math.max(aMax, aMin);
+      let hMin = heightCtl.getLoCanon(), hMax = heightCtl.getHiCanon();
+      const hFull = (hMin <= heightCtl.canonMin() && hMax >= heightCtl.canonMax());
+      mf.heightMin = hFull ? 0 : hMin; mf.heightMax = hFull ? 0 : hMax;
+      let wMin = weightCtl.getLoCanon(), wMax = weightCtl.getHiCanon();
+      const wFull = (wMin <= weightCtl.canonMin() && wMax >= weightCtl.canonMax());
+      mf.weightMin = wFull ? 0 : wMin; mf.weightMax = wFull ? 0 : wMax;
+      mf.looking_for = lookingRef.id;
+      mf.relationship = relRef.id;
+      mf.interests = Array.from(selInterests);
+      mf.education = Array.from(selEdu);
+      mf.pets = Array.from(selPets);
+      mf.exercise = Array.from(selEx);
+      mf.smoke = Array.from(selSmoke);
+      mf.drink = Array.from(selDrink);
+      modal.close();
+      onApply && onApply();
+      toast("Filtros aplicados");
+    } }, "Aplicar filtros"),
+    el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
+      mf.ageMin = 18; mf.ageMax = 99;
+      mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
+      mf.looking_for = "any"; mf.relationship = "any";
+      mf.interests = []; mf.education = []; mf.pets = []; mf.exercise = []; mf.smoke = []; mf.drink = [];
       modal.close();
       onApply && onApply();
       toast("Filtros restablecidos");
