@@ -69,6 +69,7 @@ const contentFallback = {
   "content.match.bg_from": "",              // color inicial del degradado de fondo
   "content.match.bg_to": "",                // color final del degradado de fondo
   "content.match.accent": "",               // color de acento (corazón central)
+  "content.match.text_color": "",           // color de las letras (título + subtítulo + insignia)
   "content.match.logo_url": "",             // logo opcional arriba (URL de imagen)
   "content.match.btn_primary_bg": "",       // fondo del botón principal
   "content.match.btn_primary_text": "",     // texto del botón principal
@@ -10489,12 +10490,28 @@ function triggerMatch(user, conversationId = null) {
   const subTxt = T("content.match.sub");
   const youTxt = T("content.match.you") || "Tú";
   // Insignia superior con icono de corazón.
-  match.appendChild(el("div", { class: "match-badge" }, [
+  const badgeEl = el("div", { class: "match-badge" }, [
     el("span", { html: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
     badgeTxt,
-  ]));
-  match.appendChild(el("h2", {}, titleTxt));
-  match.appendChild(el("p", { class: "match-sub" }, subTxt));
+  ]);
+  match.appendChild(badgeEl);
+  const h2 = el("h2", {}, titleTxt);
+  const subEl = el("p", { class: "match-sub" }, subTxt);
+  // V881 · Color de las letras (título + subtítulo + insignia). El título usa
+  // por defecto un degradado recortado sobre el texto; al fijar un color hay que
+  // anular ese recorte para que el color se vea de verdad.
+  const mTextColor = val("content.match.text_color");
+  if (mTextColor) {
+    h2.style.background = "none";
+    h2.style.webkitBackgroundClip = "border-box";
+    h2.style.backgroundClip = "border-box";
+    h2.style.webkitTextFillColor = mTextColor;
+    h2.style.color = mTextColor;
+    subEl.style.color = mTextColor;
+    badgeEl.style.color = mTextColor;
+  }
+  match.appendChild(h2);
+  match.appendChild(subEl);
   // Tarjetas de foto tipo “carta”: yo a la izquierda, el match a la derecha.
   const verifiedSvg = `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 1.8 3 .2 1 2.8L21 9l-1 2.6 1 2.6-1.6 2.4-1 2.8-3 .2L12 22l-2.4-1.8-3-.2-1-2.8L3 14.6 4 12 3 9.4l1.6-2.4 1-2.8 3-.2z"/><path d="M9.5 12.5l1.8 1.8 3.4-3.6" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const myName = (state.user && (state.user.name || "").split(" ")[0]) || youTxt;

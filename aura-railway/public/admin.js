@@ -10733,6 +10733,7 @@ const MC_DEFAULTS = {
   "content.match.bg_from": "",
   "content.match.bg_to": "",
   "content.match.accent": "",
+  "content.match.text_color": "",
   "content.match.heart_bg": "",
   "content.match.logo_url": "",
   "content.match.btn_primary_bg": "",
@@ -10922,7 +10923,13 @@ function mcBuildMatchDoc(cfg) {
   const mFrom = gv("content.match.bg_from"), mTo = gv("content.match.bg_to");
   const mAccent = gv("content.match.accent"), mFont = gv("content.match.font"), mLogo = gv("content.match.logo_url");
   const mHeartBg = gv("content.match.heart_bg");
+  const mTextColor = gv("content.match.text_color");
   const animBg = gon("content.match.anim_bg");
+  // V881 · Color de las letras. El h2 usa un degradado recortado sobre el texto;
+  // al fijar color hay que anular ese recorte (background:none + text-fill-color).
+  const h2Style = mTextColor ? ` style="background:none;-webkit-background-clip:border-box;background-clip:border-box;-webkit-text-fill-color:${mcEsc(mTextColor)};color:${mcEsc(mTextColor)}"` : "";
+  const subStyle = mTextColor ? ` style="color:${mcEsc(mTextColor)}"` : "";
+  const badgeStyle = mTextColor ? ` style="color:${mcEsc(mTextColor)}"` : "";
   let hostStyle = "";
   if (mFont) hostStyle += `font-family:${mFont};`;
   if (mFrom || mTo) {
@@ -10937,9 +10944,9 @@ function mcBuildMatchDoc(cfg) {
   const hostClass = "mc-host match-screen" + (animBg ? "" : " match-noanim");
   const body = `<div class="${hostClass}" style="${hostStyle}">${gon("content.match.hearts") ? mcHeartsHtml() : ""}
     ${mLogo ? `<img class="match-logo" src="${mcEsc(mLogo)}" alt="">` : ""}
-    <div class="match-badge">${heartFill}<span>${mcEsc(g("content.match.badge"))}</span></div>
-    <h2>${title}</h2>
-    <p class="match-sub">${mcEsc(g("content.match.sub"))}</p>
+    <div class="match-badge"${badgeStyle}>${heartFill}<span>${mcEsc(g("content.match.badge"))}</span></div>
+    <h2${h2Style}>${title}</h2>
+    <p class="match-sub"${subStyle}>${mcEsc(g("content.match.sub"))}</p>
     <div class="match-cards">
       <div class="mc" style="background-image:url('${me}')"><div class="mc-name">${you}</div></div>
       <div class="match-heart"${(mAccent || mHeartBg) ? ` style="${mAccent ? `color:${mcEsc(mAccent)};` : ""}${mHeartBg ? `background:${mcEsc(mHeartBg)};box-shadow:0 14px 34px rgba(0,0,0,.28), inset 0 0 0 3px rgba(255,255,255,.35);` : ""}"` : ""}>${heartFill}</div>
@@ -11056,8 +11063,26 @@ async function viewMatchCelebrate(root) {
     style: "width:300px;height:600px;border:0;border-radius:26px;background:#120a24;box-shadow:0 20px 50px rgba(0,0,0,.4)",
     title: "Vista previa",
   });
+  function currentPreviewDoc() {
+    return previewTarget === "match" ? mcBuildMatchDoc(cfg) : mcBuildPlanDoc(cfg, previewTarget);
+  }
   function renderPreview() {
-    frame.srcdoc = previewTarget === "match" ? mcBuildMatchDoc(cfg) : mcBuildPlanDoc(cfg, previewTarget);
+    frame.srcdoc = currentPreviewDoc();
+  }
+  // V881 · Descarga la animación de la vista previa como un HTML autónomo. Al
+  // abrirlo en cualquier navegador reproduce la animación idéntica (mismo CSS y
+  // marcado que el iframe). Es la forma fiable de "descargar la animación": un
+  // export a vídeo/GIF desde el navegador no es viable porque las fotos son de
+  // origen cruzado y contaminan el canvas.
+  function downloadPreview() {
+    const html = currentPreviewDoc();
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = el("a", { href: url, download: `aura-${previewTarget}-animacion.html` });
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
   // ---- Helpers de campo ----
@@ -11155,6 +11180,7 @@ async function viewMatchCelebrate(root) {
     textField("Fuente (font-family CSS)", "content.match.font", "'Poppins', system-ui, sans-serif", "Tipografía de TODA la pantalla de match (título, textos y botones)."),
     colorField("Fondo · color inicial", "content.match.bg_from", "#ff2d6f", "Degradado del fondo: color de arriba/inicio."),
     colorField("Fondo · color final", "content.match.bg_to", "#9b3cf0", "Degradado del fondo: color de abajo/final."),
+    colorField("Color de las letras", "content.match.text_color", "#ffffff", "El TÍTULO («X y tú»), el subtítulo y la insignia «Es un match». Vacío = degradado blanco por defecto."),
     colorField("Color del corazón central (icono)", "content.match.accent", "#ff2d6f", "El dibujo del CORAZÓN que va entre las dos fotos."),
     colorField("Fondo del corazón central (disco)", "content.match.heart_bg", "#ffffff", "El círculo/disco que rodea al corazón. Admite color o degradado CSS."),
     textField("Logo (URL de imagen)", "content.match.logo_url", "https://…/logo.png", "Imagen que aparece arriba del todo, sobre la insignia «Es un match»."),
@@ -11229,8 +11255,12 @@ async function viewMatchCelebrate(root) {
       el("div", { style: "display:flex;align-items:center;gap:6px" }, [ el("strong", {}, "Vista previa"), saveStatus ]),
       chips,
       frame,
+      el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;justify-content:center" }, [
+        btn("↻ Reproducir de nuevo", "ghost sm", () => renderPreview()),
+        btn("⬇ Descargar animación", "primary sm", () => downloadPreview()),
+      ]),
       el("p", { class: "muted", style: "font-size:11px;max-width:300px;text-align:center" },
-        "La animación se reproduce al cambiar la selección. Los cambios se guardan solos y los usuarios los ven al recargar la app."),
+        "La animación se reproduce al cambiar la selección. «Descargar animación» guarda un HTML que reproduce esta pantalla al abrirlo. Los cambios se guardan solos y los usuarios los ven al recargar la app."),
     ]),
   ]);
   const grid = el("div", { style: "display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap" }, [
