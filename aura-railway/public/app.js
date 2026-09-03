@@ -2348,6 +2348,15 @@ const GPS = {
   },
   async report(pos) {
     if (!state.user?.id || !pos?.coords) return;
+    // V864 · NO contaminar la ubicación compartida con fixes de baja precisión.
+    // En un PC el navegador calcula la posición por wifi/IP y su precisión suele
+    // ser de cientos/miles de metros (a veces otra ciudad). Como user_gps es
+    // ÚNICA por usuario (compartida entre móvil y PC), reportar un fix malo del
+    // PC pisaba la posición buena del móvil (GPS real). Si la precisión es peor
+    // que ~3 km, ignoramos el fix por completo: ni se guarda como semilla del
+    // mapa (_lastPos) ni se envía al backend.
+    const _acc = Number(pos.coords.accuracy);
+    if (Number.isFinite(_acc) && _acc > 3000) return;
     // V855 · Guarda SIEMPRE la última posición real (antes del debounce de envío)
     // para que el mapa pueda pintar el punto azul al instante con ella.
     try { this._lastPos = pos; } catch {}
@@ -8839,6 +8848,16 @@ async function openNearbyMap() {
   // zoom dado, por defecto nivel barrio) y busca UNA vez. Ya no encuadra ningún
   // círculo (los km no restringen). Se usa al buscar una ciudad/lugar.
   const CLOSE_ZOOM = 15;
+  // V864 · Umbral de precisión para ACEPTAR un fix del navegador y mover el
+  // punto azul. En móvil el GPS da metros (se acepta); en PC la posición por
+  // wifi/IP suele ser de km y a menudo cae en otra ciudad: si la precisión es
+  // peor que esto, NO movemos el punto azul (dejamos el bueno del backend/móvil).
+  const GOOD_ACCURACY_M = 3000;
+  function fixIsUsable(accuracyM) {
+    // Si el navegador no informa precisión, aceptamos (comportamiento previo).
+    if (!Number.isFinite(accuracyM)) return true;
+    return accuracyM <= GOOD_ACCURACY_M;
+  }
   async function goToZone(lat, lng, zoom) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
@@ -9096,20 +9115,22 @@ async function openNearbyMap() {
 
   locateBtn.addEventListener("click", async () => {
     // V842 · Centra en mi ubicación, coloca el pin y busca.
-    // V860 · Pide una lectura fresca del navegador para conocer la PRECISION y
-    // pintar el area de incertidumbre + ajustar el zoom (en PC es aproximada).
-    // Semilla inmediata con lo ultimo conocido; luego refina si llega un fix.
-    const seed = GPS.lastKnown ? GPS.lastKnown() : null;
-    recenterClose(myLocation.lat, myLocation.lng, seed && seed.accuracy);
+    // V864 · Recentramos en la ubicación ACTUAL (la del backend/móvil) al instante.
+    recenterClose(myLocation.lat, myLocation.lng);
     try {
       const perm = await GPS.requestBrowserPermission();
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude, accuracy } = perm.pos.coords;
-        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+        // V864 · Solo saltamos a la posición del navegador si es de buena
+        // precisión (móvil con GPS). Si es imprecisa (PC por wifi/IP), NO
+        // movemos el punto — nos quedamos en la ubicación buena y avisamos.
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && fixIsUsable(accuracy)) {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
           recenterClose(latitude, longitude, accuracy);
+        } else {
+          showMapNotice("Tu ordenador no tiene GPS: la ubicación es aproximada. Arrastra el pin o busca tu ciudad arriba.", 3200);
         }
       }
     } catch {}
@@ -9139,14 +9160,15 @@ async function openNearbyMap() {
       const perm = await GPS.requestBrowserPermission();
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
         const { latitude, longitude, accuracy } = perm.pos.coords;
-        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-          try { GPS.markAsked && GPS.markAsked(); } catch {}
+        try { GPS.markAsked && GPS.markAsked(); } catch {}
+        // V864 · Solo movemos el punto azul si el fix es de buena precisión.
+        // En PC (wifi/IP) la precisión es de km y caería en otro sitio: en ese
+        // caso conservamos la semilla/ubicación del backend (la del móvil por
+        // GPS) sin moverla ni recentrar. GPS.report ya ignora fixes malos.
+        if (Number.isFinite(latitude) && Number.isFinite(longitude) && fixIsUsable(accuracy)) {
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
-          // V860 · Centra con zoom acorde a la PRECISION (nivel calle si el fix
-          // es bueno; mas alejado si es aproximado, p. ej. wifi/IP en PC) y
-          // dibuja el area de incertidumbre.
           recenterClose(latitude, longitude, accuracy);
         }
       }
