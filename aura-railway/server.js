@@ -34,6 +34,14 @@ const pool = mysql.createPool(DATABASE_URL);
 const app = express();
 app.set("trust proxy", true);
 
+// V878 · Precisión máxima (m) para aceptar un fix de user_gps como "GPS real".
+// Un GPS de móvil da 5-50 m; la trilateración por wifi/IP de un PC da cientos o
+// miles de metros. Constante única: antes el umbral estaba repetido a mano en
+// cada endpoint y se quedaron dos sin actualizar (discover y nearby seguían
+// aceptando cualquier fix, incluido uno de ±2749 m, y calculaban las distancias
+// y el filtro de radio desde un punto a ~1,3 km del real).
+const GPS_GOOD_ACCURACY_M = 300;
+
 // V634 · Compresión gzip en origen. Cloudflare ya comprime en el borde, pero
 // esto ayuda al tramo origen→CF y a las respuestas JSON de la API (que CF a
 // veces no cachea). `compression` respeta automáticamente `Cache-Control:
@@ -7532,16 +7540,22 @@ app.get("/api/discover", wrap(async (req, res) => {
   if (me) {
     try {
       const [[g]] = await pool.query(
-        `SELECT gps.lat AS glat, gps.lng AS glng, u.lat AS ulat, u.lng AS ulng
+        `SELECT gps.lat AS glat, gps.lng AS glng, gps.accuracy AS gacc,
+                u.lat AS ulat, u.lng AS ulng
            FROM users u
            LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
           WHERE u.id=? LIMIT 1`,
         [me]
       );
       if (g) {
-        if (g.glat != null && g.glng != null) { myRealLat = Number(g.glat); myRealLng = Number(g.glng); }
-        const dl = (g.glat != null ? g.glat : g.ulat);
-        const dg = (g.glng != null ? g.glng : g.ulng);
+        // V878 · Sólo es "GPS real" si el fix es preciso. accuracy NULL = origen
+        // desconocido ⇒ no fiable. Sin esto, un fix de wifi del PC (±2749 m)
+        // desplazaba todas las distancias y el filtro de radio ~1,3 km.
+        const gpsAccOk = g.gacc != null && Number(g.gacc) <= GPS_GOOD_ACCURACY_M;
+        const gpsOk = g.glat != null && g.glng != null && gpsAccOk;
+        if (gpsOk) { myRealLat = Number(g.glat); myRealLng = Number(g.glng); }
+        const dl = (gpsOk ? g.glat : g.ulat);
+        const dg = (gpsOk ? g.glng : g.ulng);
         if (dl != null && dg != null) { myLat = Number(dl); myLng = Number(dg); }
       }
     } catch { /* sin coords → seguimos sin distancia */ }
@@ -7711,16 +7725,20 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   let myRealLat = null, myRealLng = null; // solo GPS real
   try {
     const [[g]] = await pool.query(
-      `SELECT gps.lat AS glat, gps.lng AS glng, u.lat AS ulat, u.lng AS ulng
+      `SELECT gps.lat AS glat, gps.lng AS glng, gps.accuracy AS gacc,
+              u.lat AS ulat, u.lng AS ulng
          FROM users u
          LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
         WHERE u.id=? LIMIT 1`,
       [me]
     );
     if (g) {
-      if (g.glat != null && g.glng != null) { myRealLat = Number(g.glat); myRealLng = Number(g.glng); }
-      const dl = (g.glat != null ? g.glat : g.ulat);
-      const dg = (g.glng != null ? g.glng : g.ulng);
+      // V878 · Igual que en /api/discover: fix impreciso ⇒ no cuenta como GPS.
+      const gpsAccOk = g.gacc != null && Number(g.gacc) <= GPS_GOOD_ACCURACY_M;
+      const gpsOk = g.glat != null && g.glng != null && gpsAccOk;
+      if (gpsOk) { myRealLat = Number(g.glat); myRealLng = Number(g.glng); }
+      const dl = (gpsOk ? g.glat : g.ulat);
+      const dg = (gpsOk ? g.glng : g.ulng);
       if (dl != null && dg != null) { myLat = Number(dl); myLng = Number(dg); }
     }
   } catch { /* sin coords → sin distancia */ }
@@ -7835,7 +7853,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       if (g) {
         // V877 · 300 m (antes 3000): con el umbral viejo, el fix de wifi del PC
         // (±2749 m) contaba como GPS bueno y el punto azul salía a ~1,3 km.
-        const gpsAccOk = g.gacc != null && Number(g.gacc) <= 300;
+        const gpsAccOk = g.gacc != null && Number(g.gacc) <= GPS_GOOD_ACCURACY_M;
         const useGps = (g.glat != null && g.glng != null && gpsAccOk);
         const dl = useGps ? g.glat : g.ulat;
         const dg = useGps ? g.glng : g.ulng;
@@ -12178,7 +12196,7 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
   // como "GPS real" y pisaba la ubicación buena del móvil. Un GPS de móvil da
   // 5-50 m, así que 300 m es holgado y descarta wifi/IP. Debe coincidir con
   // GPS_GOOD_ACCURACY_M de public/app.js.
-  const GOOD_ACCURACY_M = 300;
+  const GOOD_ACCURACY_M = GPS_GOOD_ACCURACY_M;   // V878 · constante única
   const FRESH_MINUTES   = 720;    // 12 h: seguimos fiándonos del último buen fix
   const WORSE_FACTOR    = 3;      // "mucho menos preciso" = 3x peor
   const prev = rows[0];
