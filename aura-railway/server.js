@@ -1342,6 +1342,28 @@ async function migrate() {
   try { await pool.execute("ALTER TABLE users ADD COLUMN now_status_text VARCHAR(80) NULL"); } catch (e) { /* ya existe */ }
   try { await pool.execute("ALTER TABLE users ADD COLUMN now_status_until TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
 
+  // V870 · Historial del estado "Busco ahora". Registro (append-only) de cada
+  // vez que se FIJA (set), se AMPLÍA (extend) o se BORRA (clear) el estado, ya
+  // sea por el propio usuario o por un administrador. El estado VIVO sigue en
+  // users.now_status_text/until (lo lee la app); esta tabla es el rastro para
+  // que el admin vea todas las frases por usuario, quién las puso y cuándo, y
+  // pueda gestionarlas (ampliar tiempo / eliminar) desde el panel.
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS now_status_history (
+      id INT PRIMARY KEY AUTO_INCREMENT,
+      user_id INT NOT NULL,
+      text VARCHAR(120) NULL,
+      minutes INT NULL,
+      until TIMESTAMP NULL,
+      source VARCHAR(16) NOT NULL DEFAULT 'user',
+      action VARCHAR(16) NOT NULL DEFAULT 'set',
+      actor VARCHAR(190) NULL,
+      has_photo TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX (user_id), INDEX (created_at)
+    )`);
+  } catch (e) { /* ya existe */ }
+
   // V868 · Foto "busco ahora" (opcional) asociada al estado "Ahora mismo".
   // Se guarda en la MISMA tabla `photos` con la bandera is_now_photo=1 y
   // approved=0 (queda OCULTA a terceros hasta que un moderador la aprueba en el
@@ -3553,6 +3575,177 @@ app.post("/api/admin/now-photos/:id/reject", wrap(async (req, res) => {
   await pool.execute("DELETE FROM photos WHERE id=? AND is_now_photo=1", [id]);
   try { await logActivity("moderation", `Foto "busco ahora" #${id} (usuario ${p.user_id}) rechazada por ${who}: ${reason}`); } catch {}
   res.json({ ok: true, reason });
+}));
+
+/* ============================================================
+   V870 · ADMIN: gestión del estado "Busco ahora" por usuario
+   ------------------------------------------------------------
+   Permite al administrador VER la frase "Busco ahora" activa de cada usuario,
+   ASIGNAR una frase a cualquier usuario con la duración que quiera (no solo los
+   60 min por defecto), adjuntar una foto opcional (auto-aprobada, porque la pone
+   el propio admin), AMPLIAR el tiempo de un estado y ELIMINARLO. Todo queda
+   registrado en la tabla now_status_history, que también se consulta como
+   historial para borrar entradas o volver a ampliar tiempo.
+     GET    /api/admin/now-status/list              → estados activos por usuario
+     POST   /api/admin/now-status/set               → fija {user_id,text,minutes,photo?}
+     POST   /api/admin/now-status/:userId/extend     → amplía {minutes}
+     DELETE /api/admin/now-status/:userId            → borra el estado activo
+     GET    /api/admin/now-status/history           → historial (?user_id opcional)
+     DELETE /api/admin/now-status/history/:id        → borra una entrada del historial
+============================================================ */
+
+// Frase para el admin: recorta a NOW_STATUS_MAX_LEN pero NO bloquea contactos
+// (el admin es de confianza). Devuelve texto limpio o "" si vacío.
+function sanitizeAdminNowText(raw) {
+  let t = String(raw == null ? "" : raw).replace(/\s+/g, " ").trim();
+  if (t.length > NOW_STATUS_MAX_LEN) t = t.slice(0, NOW_STATUS_MAX_LEN);
+  return t;
+}
+
+app.get("/api/admin/now-status/list", wrap(async (req, res) => {
+  const scope = String(req.query.scope || "active"); // active | all
+  const q = String(req.query.q || "").trim().toLowerCase();
+  const limit = Math.min(1000, parseInt(req.query.limit || 300, 10) || 300);
+  const clauses = [];
+  const args = [];
+  if (scope === "active") clauses.push("u.now_status_until > NOW()");
+  else clauses.push("u.now_status_text IS NOT NULL");
+  if (q) { clauses.push("(LOWER(u.name) LIKE ? OR LOWER(u.email) LIKE ? OR u.now_status_text LIKE ?)");
+           args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+  const [rows] = await pool.query(
+    `SELECT u.id AS user_id, u.name, u.email, u.age, u.city, u.now_status_text,
+            u.now_status_until,
+            TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) AS expires_in,
+            (u.now_status_until > NOW()) AS active,
+            (SELECT approved FROM photos WHERE user_id=u.id AND is_now_photo=1 LIMIT 1) AS photo_approved,
+            (SELECT id FROM photos WHERE user_id=u.id AND is_now_photo=1 LIMIT 1) AS photo_id
+       FROM users u
+       ${where}
+       ORDER BY u.now_status_until DESC
+       LIMIT ?`, [...args, limit]
+  );
+  const items = rows.map(r => ({
+    user_id: r.user_id, name: r.name, email: r.email, age: r.age, city: r.city,
+    text: r.now_status_text || null,
+    until: r.now_status_until || null,
+    expires_in: (r.expires_in == null ? null : Number(r.expires_in)),
+    active: !!r.active,
+    has_photo: r.photo_id != null,
+    photo_id: r.photo_id != null ? r.photo_id : null,
+    photo_state: r.photo_id == null ? null : (r.photo_approved ? "approved" : "pending"),
+    image_url: r.photo_id != null ? `/api/admin/now-photos/${r.photo_id}/image` : null,
+  }));
+  res.json({ ok: true, data: { items } });
+}));
+
+app.post("/api/admin/now-status/set", wrap(async (req, res) => {
+  const who = (req.admin && req.admin.email) || "admin";
+  const b = req.body || {};
+  const uid = parseInt(b.user_id, 10);
+  if (!uid) return res.status(400).json({ ok: false, error: "bad_user" });
+  const minutes = Math.min(100000, Math.max(1, parseInt(b.minutes, 10) || NOW_STATUS_MINUTES));
+  const text = sanitizeAdminNowText(b.text);
+  if (!text) return res.status(400).json({ ok: false, error: "empty", message: "Escribe una frase para el estado." });
+  const [[u]] = await pool.query("SELECT id, name FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+  await pool.execute(
+    "UPDATE users SET now_status_text=?, now_status_until=DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id=?",
+    [text, minutes, uid]
+  );
+  // Foto opcional adjuntada por el admin: se aprueba en el acto (la pone el
+  // propio admin). Reemplaza cualquier foto "busco ahora" previa del usuario.
+  let hasPhoto = false;
+  if (b.photo && validPhotoData(b.photo)) {
+    await pool.execute("DELETE FROM photos WHERE user_id=? AND is_now_photo=1", [uid]);
+    await pool.execute(
+      "INSERT INTO photos (user_id, url, is_primary, approved, is_now_photo, reviewed_by, reviewed_at) VALUES (?,?,0,1,1,?,NOW())",
+      [uid, b.photo, String(who).slice(0, 190)]
+    );
+    hasPhoto = true;
+  } else {
+    const [[ph]] = await pool.query("SELECT approved FROM photos WHERE user_id=? AND is_now_photo=1 LIMIT 1", [uid]);
+    hasPhoto = !!(ph && ph.approved);
+  }
+  const [[row]] = await pool.query(
+    "SELECT now_status_until AS until, TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS expires_in FROM users WHERE id=? LIMIT 1", [uid]
+  );
+  await logNowStatus({ userId: uid, text, minutes, until: row.until, source: "admin", action: "set", actor: who, hasPhoto });
+  try { await logActivity("admin", `Estado "Busco ahora" fijado a ${u.name || ("#" + uid)} por ${who}: "${text}" (${minutes} min${hasPhoto ? ", con foto" : ""})`); } catch {}
+  res.json({ ok: true, status: { text, until: row.until, expires_in: Number(row.expires_in), has_photo: hasPhoto } });
+}));
+
+app.post("/api/admin/now-status/:userId/extend", wrap(async (req, res) => {
+  const who = (req.admin && req.admin.email) || "admin";
+  const uid = parseInt(req.params.userId, 10);
+  if (!uid) return res.status(400).json({ ok: false, error: "bad_user" });
+  const minutes = Math.min(100000, Math.max(1, parseInt(req.body?.minutes, 10) || 0));
+  if (!minutes) return res.status(400).json({ ok: false, error: "bad_minutes" });
+  const [[u]] = await pool.query("SELECT id, name, now_status_text FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+  if (!u.now_status_text) return res.status(400).json({ ok: false, error: "no_status", message: "Ese usuario no tiene estado que ampliar." });
+  // Si el estado sigue vivo, se amplía sobre su vencimiento; si ya caducó, se
+  // cuenta desde ahora (revive el estado con la frase que tenía guardada).
+  await pool.execute(
+    "UPDATE users SET now_status_until = DATE_ADD(GREATEST(COALESCE(now_status_until, NOW()), NOW()), INTERVAL ? MINUTE) WHERE id=?",
+    [minutes, uid]
+  );
+  const [[row]] = await pool.query(
+    "SELECT now_status_text AS text, now_status_until AS until, TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS expires_in FROM users WHERE id=? LIMIT 1", [uid]
+  );
+  await logNowStatus({ userId: uid, text: row.text, minutes, until: row.until, source: "admin", action: "extend", actor: who });
+  try { await logActivity("admin", `Estado "Busco ahora" de ${u.name || ("#" + uid)} ampliado +${minutes} min por ${who}`); } catch {}
+  res.json({ ok: true, status: { text: row.text, until: row.until, expires_in: Number(row.expires_in) } });
+}));
+
+app.delete("/api/admin/now-status/:userId", wrap(async (req, res) => {
+  const who = (req.admin && req.admin.email) || "admin";
+  const uid = parseInt(req.params.userId, 10);
+  if (!uid) return res.status(400).json({ ok: false, error: "bad_user" });
+  const alsoPhoto = req.query.photo === "1" || req.body?.photo === true;
+  const [[u]] = await pool.query("SELECT id, name FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u) return res.status(404).json({ ok: false, error: "user_not_found" });
+  await pool.execute("UPDATE users SET now_status_text=NULL, now_status_until=NULL WHERE id=?", [uid]);
+  if (alsoPhoto) await pool.execute("DELETE FROM photos WHERE user_id=? AND is_now_photo=1", [uid]);
+  await logNowStatus({ userId: uid, action: "clear", source: "admin", actor: who });
+  try { await logActivity("admin", `Estado "Busco ahora" de ${u.name || ("#" + uid)} eliminado por ${who}${alsoPhoto ? " (con su foto)" : ""}`); } catch {}
+  res.json({ ok: true });
+}));
+
+app.get("/api/admin/now-status/history", wrap(async (req, res) => {
+  const uid = parseInt(req.query.user_id, 10) || 0;
+  const action = String(req.query.action || "").trim(); // set|extend|clear|""
+  const source = String(req.query.source || "").trim(); // user|admin|""
+  const limit = Math.min(1000, parseInt(req.query.limit || 300, 10) || 300);
+  const clauses = [];
+  const args = [];
+  if (uid) { clauses.push("h.user_id=?"); args.push(uid); }
+  if (action) { clauses.push("h.action=?"); args.push(action); }
+  if (source) { clauses.push("h.source=?"); args.push(source); }
+  const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+  const [rows] = await pool.query(
+    `SELECT h.id, h.user_id, h.text, h.minutes, h.until, h.source, h.action, h.actor, h.has_photo, h.created_at,
+            u.name, u.email
+       FROM now_status_history h LEFT JOIN users u ON u.id = h.user_id
+       ${where}
+       ORDER BY h.created_at DESC
+       LIMIT ?`, [...args, limit]
+  );
+  const items = rows.map(r => ({
+    id: r.id, user_id: r.user_id, name: r.name || null, email: r.email || null,
+    text: r.text || null, minutes: r.minutes, until: r.until || null,
+    source: r.source, action: r.action, actor: r.actor || null,
+    has_photo: !!r.has_photo, created_at: r.created_at,
+  }));
+  res.json({ ok: true, data: { items } });
+}));
+
+app.delete("/api/admin/now-status/history/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
+  const [r] = await pool.execute("DELETE FROM now_status_history WHERE id=?", [id]);
+  if (!r.affectedRows) return res.status(404).json({ ok: false, error: "not_found" });
+  res.json({ ok: true });
 }));
 
 /* ---- ADMIN: cola de revisión manual ------------------------ */
@@ -8491,6 +8684,28 @@ function sanitizeNowStatus(raw) {
   return { ok: true, text: t };
 }
 
+// V870 · Anota una entrada en el historial del estado "Busco ahora". No falla
+// si la tabla no existiera (defensivo). `action`: set|extend|clear. `source`:
+// user|admin. `until` puede ser null (clear).
+async function logNowStatus({ userId, text, minutes, until, source, action, actor, hasPhoto }) {
+  try {
+    await pool.execute(
+      `INSERT INTO now_status_history (user_id, text, minutes, until, source, action, actor, has_photo)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [
+        userId,
+        text != null ? String(text).slice(0, 120) : null,
+        (minutes == null ? null : Number(minutes)),
+        until || null,
+        String(source || "user").slice(0, 16),
+        String(action || "set").slice(0, 16),
+        actor ? String(actor).slice(0, 190) : null,
+        hasPhoto ? 1 : 0,
+      ]
+    );
+  } catch (e) { /* tabla ausente u otro fallo: no bloquea el flujo principal */ }
+}
+
 // POST /api/my/now-status  { text: "..." }  → fija el estado (caduca en 60 min).
 // POST /api/my/now-status  { clear: true } → lo borra.
 app.post("/api/my/now-status", wrap(async (req, res) => {
@@ -8499,6 +8714,7 @@ app.post("/api/my/now-status", wrap(async (req, res) => {
   const b = req.body || {};
   if (b.clear === true || b.clear === "1") {
     await pool.execute("UPDATE users SET now_status_text=NULL, now_status_until=NULL WHERE id=?", [me]);
+    await logNowStatus({ userId: me, action: "clear", source: "user" });
     return res.json({ ok: true, status: null });
   }
   const clean = sanitizeNowStatus(b.text);
@@ -8513,8 +8729,10 @@ app.post("/api/my/now-status", wrap(async (req, res) => {
     [clean.text, NOW_STATUS_MINUTES, me]
   );
   const [[row]] = await pool.query(
-    "SELECT now_status_text AS text, TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS expires_in FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT now_status_text AS text, TIMESTAMPDIFF(SECOND, NOW(), now_status_until) AS expires_in, now_status_until AS until FROM users WHERE id=? LIMIT 1", [me]
   );
+  const [[ph]] = await pool.query("SELECT approved FROM photos WHERE user_id=? AND is_now_photo=1 LIMIT 1", [me]);
+  await logNowStatus({ userId: me, text: clean.text, minutes: NOW_STATUS_MINUTES, until: row.until, source: "user", action: "set", hasPhoto: !!(ph && ph.approved) });
   res.json({ ok: true, status: { text: row.text, expires_in: Number(row.expires_in) } });
 }));
 

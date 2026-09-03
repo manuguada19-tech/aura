@@ -10,7 +10,7 @@
    ================================================================ */
 (function () {
   // v550 — sin dependencias externas. Se auto-inicializa.
-  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards","fx_notifications","fx_zones"];
+  const FX_VIEWS = ["fx_icebreakers","fx_stickers","fx_achievements","fx_events","fx_stories","fx_ab","fx_gdpr","fx_heatmap","fx_moderation_ai","fx_now_status","fx_video","fx_voice_notes","fx_vault","fx_push_ctx","fx_rewards","fx_notifications","fx_zones"];
 
   function readTok() {
     try {
@@ -1641,6 +1641,270 @@
       });
     }
 
+    // V870 · Gestión del estado "Busco ahora" por usuario.
+    //  · Ver la frase activa (o histórica) de cada usuario y su foto.
+    //  · Asignar una frase a cualquier usuario con el tiempo que se quiera y
+    //    foto opcional (la pone el admin → se auto-aprueba).
+    //  · Ampliar el tiempo o eliminar el estado.
+    //  · Historial completo (set/extend/clear · usuario/admin) para revisar y
+    //    borrar entradas o volver a ampliar tiempo.
+    function fmtRemain(secs) {
+      if (secs == null) return "—";
+      if (secs <= 0) return "caducado";
+      const m = Math.floor(secs / 60), h = Math.floor(m / 60);
+      if (h >= 24) return Math.floor(h / 24) + "d " + (h % 24) + "h";
+      if (h >= 1) return h + "h " + (m % 60) + "m";
+      return m + "m";
+    }
+    function fileToDataUrl(file) {
+      return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file); });
+    }
+
+    // Modal de asignación de estado. Resuelve {user_id,text,minutes,photo}|null.
+    function openAssignNowStatus(prefill) {
+      prefill = prefill || {};
+      return new Promise((resolve) => {
+        const back = document.createElement("div"); back.className = "fx-modal-back";
+        const card = document.createElement("div"); card.className = "fx-modal-card wide";
+        card.innerHTML = `
+          <div class="fx-modal-head"><h3>\u26a1 Asignar \u201cBusco ahora\u201d</h3></div>
+          <div class="fx-modal-body">
+            <div class="fx-field" style="position:relative">
+              <label>Usuario</label>
+              <input type="hidden" class="ns-uid"/>
+              <input type="text" class="fx-input ns-search" autocomplete="off" placeholder="Nombre o email del usuario\u2026"/>
+              <div class="ns-panel" style="position:absolute;left:0;right:0;top:100%;z-index:60;max-height:240px;overflow-y:auto;background:#14171f;border:1px solid #262a36;border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.45);display:none"></div>
+              <div class="ns-chip" style="display:none;align-items:center;gap:8px;margin-top:6px;padding:6px 8px;background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35);border-radius:8px;font-size:13px"></div>
+            </div>
+            <div class="fx-field" style="margin-top:12px">
+              <label>Frase (m\u00e1x. 60)</label>
+              <input type="text" class="fx-input ns-text" maxlength="60" placeholder="Tomando algo en el centro\u2026"/>
+            </div>
+            <div class="fx-field" style="margin-top:12px">
+              <label>Duraci\u00f3n (minutos)</label>
+              <input type="number" class="fx-input ns-min" min="1" value="60" style="max-width:140px"/>
+              <div class="ns-presets" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
+            </div>
+            <div class="fx-field" style="margin-top:12px">
+              <label>Foto (opcional, se aprueba autom\u00e1ticamente)</label>
+              <input type="file" accept="image/*" class="fx-input ns-file"/>
+              <div class="ns-prev" style="margin-top:8px;display:none"><img style="max-height:120px;border-radius:10px;background:#111"/></div>
+            </div>
+          </div>
+          <div class="fx-modal-foot"></div>`;
+        const uidInp = card.querySelector(".ns-uid");
+        const search = card.querySelector(".ns-search");
+        const panel = card.querySelector(".ns-panel");
+        const chip = card.querySelector(".ns-chip");
+        const textInp = card.querySelector(".ns-text");
+        const minInp = card.querySelector(".ns-min");
+        const presets = card.querySelector(".ns-presets");
+        const fileInp = card.querySelector(".ns-file");
+        const prev = card.querySelector(".ns-prev");
+        let photoData = null;
+
+        [["30 min",30],["1 h",60],["2 h",120],["8 h",480],["1 d\u00eda",1440]].forEach(([lab,mn]) => {
+          const b = btn(lab, { variant: "ghost", onClick: () => { minInp.value = String(mn); } });
+          b.style.padding = "5px 10px"; b.style.fontSize = "12px"; presets.appendChild(b);
+        });
+
+        function renderChip(u) {
+          if (!u) { chip.style.display = "none"; chip.innerHTML = ""; uidInp.value = ""; return; }
+          uidInp.value = String(u.id);
+          chip.style.display = "flex";
+          chip.innerHTML = `<div style="flex:1;min-width:0"><div style="font-weight:600">${escapeHtml(u.name || "\u2014")}</div><small style="opacity:.7">#${u.id}${u.email ? " \u00b7 " + escapeHtml(u.email) : ""}</small></div>`;
+          const x = btn("\u2715", { variant: "ghost", onClick: () => { renderChip(null); search.value = ""; search.focus(); } });
+          x.style.padding = "2px 8px"; chip.appendChild(x);
+        }
+        let timer = null, lastQ = "";
+        async function doSearch(q) {
+          lastQ = q;
+          try {
+            const rsp = await api("/api/users?q=" + encodeURIComponent(q) + "&limit=8");
+            if (q !== lastQ) return;
+            const rows = (rsp.data && rsp.data.rows) || [];
+            panel.innerHTML = "";
+            if (!rows.length) { panel.innerHTML = '<div style="padding:10px 12px;opacity:.6;font-size:13px">Sin resultados</div>'; }
+            else rows.forEach((u) => {
+              const row = document.createElement("div");
+              row.style.cssText = "display:flex;align-items:center;gap:10px;padding:8px 12px;cursor:pointer";
+              row.innerHTML = `<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:13px">${escapeHtml(u.name || "\u2014")}</div><small style="opacity:.65;font-size:11px">#${u.id}${u.email ? " \u00b7 " + escapeHtml(u.email) : ""}</small></div>`;
+              row.addEventListener("mouseenter", () => row.style.background = "rgba(124,58,237,.18)");
+              row.addEventListener("mouseleave", () => row.style.background = "transparent");
+              row.addEventListener("mousedown", (ev) => { ev.preventDefault(); renderChip(u); search.value = ""; panel.style.display = "none"; });
+              panel.appendChild(row);
+            });
+            panel.style.display = "block";
+          } catch (e) { panel.style.display = "none"; }
+        }
+        search.addEventListener("input", () => {
+          renderChip(null);
+          const q = search.value.trim(); clearTimeout(timer);
+          if (q.length < 2) { panel.style.display = "none"; return; }
+          timer = setTimeout(() => doSearch(q), 250);
+        });
+        search.addEventListener("blur", () => setTimeout(() => { panel.style.display = "none"; }, 150));
+
+        fileInp.addEventListener("change", async () => {
+          const f = fileInp.files && fileInp.files[0];
+          if (!f) { photoData = null; prev.style.display = "none"; return; }
+          try {
+            photoData = await fileToDataUrl(f);
+            prev.querySelector("img").src = photoData; prev.style.display = "block";
+          } catch { photoData = null; prev.style.display = "none"; }
+        });
+
+        if (prefill.user_id) { renderChip({ id: prefill.user_id, name: prefill.name, email: prefill.email }); }
+        if (prefill.text) textInp.value = prefill.text;
+
+        const foot = card.querySelector(".fx-modal-foot");
+        foot.appendChild(btn("Cancelar", { variant: "ghost", onClick: () => close(null) }));
+        foot.appendChild(btn("Asignar", { variant: "primary", onClick: () => {
+          const user_id = parseInt(uidInp.value, 10);
+          const text = textInp.value.trim();
+          const minutes = parseInt(minInp.value, 10);
+          if (!user_id) { toast("Elige un usuario", "err"); return; }
+          if (!text) { toast("Escribe una frase", "err"); return; }
+          if (!minutes || minutes < 1) { toast("Duraci\u00f3n no v\u00e1lida", "err"); return; }
+          close({ user_id, text, minutes, photo: photoData || undefined });
+        } }));
+        back.appendChild(card); document.body.appendChild(back);
+        function close(v) { back.remove(); resolve(v); }
+        back.addEventListener("click", (e) => { if (e.target === back) close(null); });
+        setTimeout(() => search.focus(), 50);
+      });
+    }
+
+    async function view_now_status(container) {
+      const tok = readTok();
+      const auth = tok ? `?adminToken=${encodeURIComponent(tok)}` : "";
+      DataView(container, {
+        title: "Busco ahora", subtitle: "Estado \u201cBusco ahora\u201d activo de cada usuario. Asigna frases con el tiempo que quieras y foto opcional.", icon: "\u26a1",
+        fetch: async () => (await api("/api/admin/now-status/list?scope=active")).data?.items || [],
+        rowId: (r) => r.user_id,
+        kpis: (rows) => [
+          { label: "Estados activos", value: rows.length, accent: "green" },
+          { label: "Con foto", value: rows.filter((r) => r.has_photo).length, accent: "purple" },
+        ],
+        filters: [
+          { key: "scope", label: "Ver", type: "select", options: [ { value: "", label: "Solo activos" } ], apply: () => true },
+        ],
+        headerActions: [
+          { label: "Asignar estado", variant: "primary", icon: "&#x26a1;", onClick: async () => {
+            const r = await openAssignNowStatus();
+            if (!r) return;
+            try { await api("/api/admin/now-status/set", { method: "POST", body: r }); toast("Estado asignado", "ok"); view_now_status(container); }
+            catch (e) { toast((e.data && e.data.message) || "Error asignando", "err"); }
+          } },
+          { label: "Historial", variant: "ghost", icon: "&#x1f552;", onClick: () => view_now_status_log(container) },
+        ],
+        columns: [
+          { key: "user", label: "Usuario", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.name || "")}${r.age ? ", " + r.age : ""}</div><div class="fx-muted" style="font-size:11px">#${r.user_id} \u00b7 ${escapeHtml(r.email || "")}</div>`;
+              return d;
+            } },
+          { key: "text", label: "Frase", render: (r) => {
+              const d = document.createElement("div");
+              d.style.cssText = "max-width:260px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+              d.textContent = r.text || "\u2014"; d.title = r.text || "";
+              return d;
+            } },
+          { key: "foto", label: "Foto", render: (r) => {
+              if (!r.has_photo) return "\u2014";
+              const span = document.createElement("span");
+              if (r.photo_state === "pending") { span.className = "fx-badge amber"; span.textContent = "Pendiente"; return span; }
+              const img = document.createElement("img");
+              img.src = r.image_url + auth; img.alt = "";
+              img.style.cssText = "width:44px;height:58px;object-fit:cover;border-radius:6px;cursor:pointer;background:#111";
+              img.onclick = () => window.open(r.image_url + auth, "_blank");
+              return img;
+            } },
+          { key: "expires_in", label: "Caduca en", sortable: true, render: (r) => fmtRemain(r.expires_in) },
+          { key: "until", label: "Vence", render: (r) => fmtDate(r.until) },
+        ],
+        actions: [
+          { label: "Ampliar", variant: "ghost", icon: "&#x23f1;", onClick: async (r) => {
+            const v = window.prompt(`Minutos a a\u00f1adir al estado de ${r.name || ("#" + r.user_id)}:`, "60");
+            if (v == null) return;
+            const minutes = parseInt(v, 10);
+            if (!minutes || minutes < 1) { toast("Minutos no v\u00e1lidos", "err"); return; }
+            try { await api(`/api/admin/now-status/${r.user_id}/extend`, { method: "POST", body: { minutes } }); toast("Tiempo ampliado", "ok"); view_now_status(container); }
+            catch (e) { toast((e.data && e.data.message) || "Error ampliando", "err"); }
+          } },
+          { label: "Editar", variant: "ghost", icon: "&#x270e;", onClick: async (r) => {
+            const out = await openAssignNowStatus({ user_id: r.user_id, name: r.name, email: r.email, text: r.text });
+            if (!out) return;
+            try { await api("/api/admin/now-status/set", { method: "POST", body: out }); toast("Estado actualizado", "ok"); view_now_status(container); }
+            catch (e) { toast((e.data && e.data.message) || "Error", "err"); }
+          } },
+          { label: "Quitar", variant: "danger", icon: "&#x1f5d1;", onClick: async (r) => {
+            const ok = await confirmDialog({ title: "Quitar estado", message: `Se eliminar\u00e1 el estado \u201cBusco ahora\u201d de ${r.name || ("#" + r.user_id)}.`, danger: true, confirmLabel: "Quitar" });
+            if (!ok) return;
+            try { await api(`/api/admin/now-status/${r.user_id}`, { method: "DELETE" }); toast("Estado eliminado", "ok"); view_now_status(container); }
+            catch (e) { toast("Error", "err"); }
+          } },
+        ],
+      });
+    }
+
+    async function view_now_status_log(container) {
+      const ACTION = { set: "Fijado", extend: "Ampliado", clear: "Borrado" };
+      DataView(container, {
+        title: "Historial \u201cBusco ahora\u201d", subtitle: "Registro de estados fijados, ampliados y borrados (por usuarios y por admin).", icon: "\ud83d\udd52",
+        fetch: async () => (await api("/api/admin/now-status/history?limit=500")).data?.items || [],
+        rowId: (r) => r.id,
+        kpis: (rows) => [
+          { label: "Entradas", value: rows.length, accent: "blue" },
+          { label: "Puestas por admin", value: rows.filter((r) => r.source === "admin").length, accent: "purple" },
+        ],
+        filters: [
+          { key: "action", label: "Acci\u00f3n", type: "select", options: [ { value: "set", label: "Fijado" }, { value: "extend", label: "Ampliado" }, { value: "clear", label: "Borrado" } ] },
+          { key: "source", label: "Origen", type: "select", options: [ { value: "user", label: "Usuario" }, { value: "admin", label: "Admin" } ] },
+        ],
+        headerActions: [
+          { label: "Estados activos", variant: "ghost", icon: "&#x26a1;", onClick: () => view_now_status(container) },
+        ],
+        columns: [
+          { key: "created_at", label: "Fecha", sortable: true, render: (r) => fmtDate(r.created_at) },
+          { key: "user", label: "Usuario", render: (r) => {
+              const d = document.createElement("div");
+              d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.name || ("#" + r.user_id))}</div><div class="fx-muted" style="font-size:11px">#${r.user_id}${r.email ? " \u00b7 " + escapeHtml(r.email) : ""}</div>`;
+              return d;
+            } },
+          { key: "action", label: "Acci\u00f3n", render: (r) => {
+              const span = document.createElement("span");
+              span.className = "fx-badge " + (r.action === "clear" ? "red" : r.action === "extend" ? "amber" : "ok");
+              span.textContent = ACTION[r.action] || r.action; return span;
+            } },
+          { key: "text", label: "Frase", render: (r) => {
+              const d = document.createElement("div");
+              d.style.cssText = "max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+              d.textContent = r.text || "\u2014"; d.title = r.text || "";
+              return d;
+            } },
+          { key: "minutes", label: "Min", render: (r) => r.minutes != null ? r.minutes : "\u2014" },
+          { key: "source", label: "Origen", render: (r) => r.source === "admin" ? (r.actor || "admin") : "usuario" },
+        ],
+        actions: [
+          { label: "Ampliar", variant: "ghost", icon: "&#x23f1;", title: "A\u00f1adir tiempo al estado actual de este usuario", onClick: async (r) => {
+            const v = window.prompt(`Minutos a a\u00f1adir al estado actual de ${r.name || ("#" + r.user_id)}:`, "60");
+            if (v == null) return;
+            const minutes = parseInt(v, 10);
+            if (!minutes || minutes < 1) { toast("Minutos no v\u00e1lidos", "err"); return; }
+            try { await api(`/api/admin/now-status/${r.user_id}/extend`, { method: "POST", body: { minutes } }); toast("Tiempo ampliado", "ok"); view_now_status_log(container); }
+            catch (e) { toast((e.data && e.data.message) || "Ese usuario no tiene estado activo", "err"); }
+          } },
+          { label: "Borrar", variant: "danger", icon: "&#x1f5d1;", title: "Borrar esta entrada del historial", onClick: async (r) => {
+            const ok = await confirmDialog({ title: "Borrar del historial", message: "Se eliminar\u00e1 esta entrada del historial (no afecta al estado activo del usuario).", danger: true, confirmLabel: "Borrar" });
+            if (!ok) return;
+            try { await api(`/api/admin/now-status/history/${r.id}`, { method: "DELETE" }); toast("Entrada borrada", "ok"); view_now_status_log(container); }
+            catch (e) { toast("Error", "err"); }
+          } },
+        ],
+      });
+    }
+
     // ---- Video-llamadas --------------------------------------------
     async function view_video(container) {
       const DEPT_LABEL = { safety: "🛡️ Seguridad", quality: "⚙️ Calidad", legal: "⚖️ Legal", support: "🎧 Soporte", none: "—" };
@@ -2727,6 +2991,7 @@
       fx_gdpr: wrapView(view_gdpr),
       fx_heatmap: wrapView(view_heatmap),
       fx_moderation_ai: wrapView(view_moderation_ai),
+      fx_now_status: wrapView(view_now_status),
       fx_video: wrapView(view_video),
       fx_voice_notes: wrapView(view_voice_notes),
       fx_vault: wrapView(view_vault),
@@ -2735,7 +3000,7 @@
       fx_notifications: wrapView(view_notifications),
       fx_zones: wrapView(view_zones),
     });
-    console.log("[admin_features] v613 · 16 vistas + zonas");
+    console.log("[admin_features] v870 · 17 vistas + Busco ahora");
   }
 
   // -------------------------------------------------------------------
