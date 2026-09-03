@@ -10043,14 +10043,7 @@ body.map-open { overflow: hidden; }
 }
 .map-me-tip::before { display: none; }
 
-/* V860 · Circulo de PRECISION del punto azul (estilo Google Maps). Se muestra
-   cuando la ubicacion es aproximada (p. ej. wifi/IP en ordenador): un area
-   translucida azul que comunica la incertidumbre real de la posicion. Es un
-   <path> SVG de Leaflet (L.circle), asi que estilamos por la clase que le damos. */
-.map-me-accuracy {
-  fill: #2a7dff; fill-opacity: .12;
-  stroke: #2a7dff; stroke-opacity: .45; stroke-width: 1;
-}
+/* V862 · Se retira el circulo de precision de V860 (a peticion del usuario). */
 
 /* V764 · Puntero que se "suelta" al tocar el mapa para buscar en ese punto */
 .map-pointer-wrap { background: none; border: 0; }

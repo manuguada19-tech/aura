@@ -8744,41 +8744,11 @@ async function openNearbyMap() {
   }).addTo(map);
   meMarker.bindTooltip("Tú estás aquí", { direction: "top", offset: [0, -10], className: "map-me-tip" });
 
-  // V860 · Circulo de PRECISION alrededor del punto azul (estilo Google Maps).
-  // En ordenadores la ubicacion se calcula por wifi/IP y puede tener cientos de
-  // metros (o km) de error; pintarla como un punto exacto hacia creer que el
-  // mapa "situa mal". Mostrando el area real de incertidumbre el usuario entiende
-  // que su posicion es aproximada, y ademas ajustamos el zoom a ese radio.
-  let meAccuracyCircle = null;
-  let meAccuracyRadius = 0;   // metros (0 = desconocido/oculto)
-  function setMyAccuracy(lat, lng, accuracyM) {
-    const r = Number.isFinite(accuracyM) ? accuracyM : 0;
-    meAccuracyRadius = r;
-    // Por debajo de ~60 m la precision es buena: no ensuciamos el mapa con el
-    // circulo (el punto azul basta). Por encima, mostramos el area.
-    if (!(r > 60)) {
-      if (meAccuracyCircle) { try { map.removeLayer(meAccuracyCircle); } catch {} meAccuracyCircle = null; }
-      return;
-    }
-    if (!meAccuracyCircle) {
-      meAccuracyCircle = L.circle([lat, lng], { radius: r, className: "map-me-accuracy",
-        interactive: false, stroke: true, weight: 1 }).addTo(map);
-    } else {
-      try { meAccuracyCircle.setLatLng([lat, lng]); meAccuracyCircle.setRadius(r); } catch {}
-    }
-  }
-  // Elige un zoom coherente con la precision: si el error es grande (PC), no
-  // acercamos a nivel de calle (daria una falsa sensacion de exactitud).
-  function zoomForAccuracy(accuracyM) {
-    const r = Number.isFinite(accuracyM) ? accuracyM : 0;
-    if (!(r > 0)) return CLOSE_ZOOM;          // sin dato: comportamiento previo
-    if (r <= 80)   return CLOSE_ZOOM;         // GPS bueno: nivel calle
-    if (r <= 300)  return 14;
-    if (r <= 1000) return 13;
-    if (r <= 3000) return 12;
-    if (r <= 8000) return 11;
-    return 10;                                 // error muy grande
-  }
+  // V862 · Se RETIRA el circulo de precision de V860 (el usuario lo pidio: "el
+  // circulo azul alrededor sobra") y el zoom-por-precision. En PC la ubicacion
+  // es aproximada por naturaleza (wifi/IP, el ordenador no tiene GPS): el circulo
+  // grande y el alejado hacian creer que el mapa "situaba mal". Volvemos al punto
+  // azul simple centrado a nivel calle, como en movil.
 
   // V764 · Marcador que el usuario "suelta" al tocar el mapa para buscar en ese
   // punto exacto (además del arrastre). Se dibuja donde tocó.
@@ -8919,12 +8889,10 @@ async function openNearbyMap() {
   async function recenterClose(lat, lng, accuracyM) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
-    // V860 · Si conocemos la precision, dibujamos el area de incertidumbre y
-    // elegimos un zoom acorde (en PC la ubicacion es aproximada: no acercamos a
-    // nivel de calle para no dar una falsa sensacion de exactitud).
-    try { setMyAccuracy(lat, lng, accuracyM); } catch {}
-    const z = zoomForAccuracy(accuracyM);
-    centerOnVisible(lat, lng, z, true);
+    // V862 · Centrado simple a nivel calle (se retiro el circulo/zoom por
+    // precision de V860). El parametro accuracyM se ignora, se conserva en la
+    // firma para no tocar todas las llamadas.
+    centerOnVisible(lat, lng, CLOSE_ZOOM, true);
     await searchAt(lat, lng);
   }
 
