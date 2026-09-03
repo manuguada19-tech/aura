@@ -2318,7 +2318,9 @@ const GPS = {
     try {
       const c = this._lastPos && this._lastPos.coords;
       if (c && Number.isFinite(c.latitude) && Number.isFinite(c.longitude)) {
-        return { lat: c.latitude, lng: c.longitude };
+        // V860 · Devuelve tambien la precision (m) para que el mapa dibuje el
+        // area de incertidumbre y ajuste el zoom (util en PC, wifi/IP).
+        return { lat: c.latitude, lng: c.longitude, accuracy: Number.isFinite(c.accuracy) ? c.accuracy : null };
       }
     } catch {}
     return null;
@@ -8742,6 +8744,42 @@ async function openNearbyMap() {
   }).addTo(map);
   meMarker.bindTooltip("Tú estás aquí", { direction: "top", offset: [0, -10], className: "map-me-tip" });
 
+  // V860 · Circulo de PRECISION alrededor del punto azul (estilo Google Maps).
+  // En ordenadores la ubicacion se calcula por wifi/IP y puede tener cientos de
+  // metros (o km) de error; pintarla como un punto exacto hacia creer que el
+  // mapa "situa mal". Mostrando el area real de incertidumbre el usuario entiende
+  // que su posicion es aproximada, y ademas ajustamos el zoom a ese radio.
+  let meAccuracyCircle = null;
+  let meAccuracyRadius = 0;   // metros (0 = desconocido/oculto)
+  function setMyAccuracy(lat, lng, accuracyM) {
+    const r = Number.isFinite(accuracyM) ? accuracyM : 0;
+    meAccuracyRadius = r;
+    // Por debajo de ~60 m la precision es buena: no ensuciamos el mapa con el
+    // circulo (el punto azul basta). Por encima, mostramos el area.
+    if (!(r > 60)) {
+      if (meAccuracyCircle) { try { map.removeLayer(meAccuracyCircle); } catch {} meAccuracyCircle = null; }
+      return;
+    }
+    if (!meAccuracyCircle) {
+      meAccuracyCircle = L.circle([lat, lng], { radius: r, className: "map-me-accuracy",
+        interactive: false, stroke: true, weight: 1 }).addTo(map);
+    } else {
+      try { meAccuracyCircle.setLatLng([lat, lng]); meAccuracyCircle.setRadius(r); } catch {}
+    }
+  }
+  // Elige un zoom coherente con la precision: si el error es grande (PC), no
+  // acercamos a nivel de calle (daria una falsa sensacion de exactitud).
+  function zoomForAccuracy(accuracyM) {
+    const r = Number.isFinite(accuracyM) ? accuracyM : 0;
+    if (!(r > 0)) return CLOSE_ZOOM;          // sin dato: comportamiento previo
+    if (r <= 80)   return CLOSE_ZOOM;         // GPS bueno: nivel calle
+    if (r <= 300)  return 14;
+    if (r <= 1000) return 13;
+    if (r <= 3000) return 12;
+    if (r <= 8000) return 11;
+    return 10;                                 // error muy grande
+  }
+
   // V764 · Marcador que el usuario "suelta" al tocar el mapa para buscar en ese
   // punto exacto (además del arrastre). Se dibuja donde tocó.
   let pointerMarker = null;
@@ -8878,10 +8916,15 @@ async function openNearbyMap() {
 
   // V842 · Centrar MUY cerca del usuario (nivel calle). Al abrir el mapa y al
   // pulsar "mi ubicación" centramos en la ubicación a zoom cercano.
-  async function recenterClose(lat, lng) {
+  async function recenterClose(lat, lng, accuracyM) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
-    centerOnVisible(lat, lng, CLOSE_ZOOM, true);
+    // V860 · Si conocemos la precision, dibujamos el area de incertidumbre y
+    // elegimos un zoom acorde (en PC la ubicacion es aproximada: no acercamos a
+    // nivel de calle para no dar una falsa sensacion de exactitud).
+    try { setMyAccuracy(lat, lng, accuracyM); } catch {}
+    const z = zoomForAccuracy(accuracyM);
+    centerOnVisible(lat, lng, z, true);
     await searchAt(lat, lng);
   }
 
@@ -9083,9 +9126,25 @@ async function openNearbyMap() {
   syncControls();
   requestAnimationFrame(() => { try { centerOnVisible(start.lat, start.lng, CLOSE_ZOOM, false); } catch {} });
 
-  locateBtn.addEventListener("click", () => {
-    // V842 · Centra MUY cerca de mi ubicación (nivel calle), coloca el pin y busca.
-    recenterClose(myLocation.lat, myLocation.lng);
+  locateBtn.addEventListener("click", async () => {
+    // V842 · Centra en mi ubicación, coloca el pin y busca.
+    // V860 · Pide una lectura fresca del navegador para conocer la PRECISION y
+    // pintar el area de incertidumbre + ajustar el zoom (en PC es aproximada).
+    // Semilla inmediata con lo ultimo conocido; luego refina si llega un fix.
+    const seed = GPS.lastKnown ? GPS.lastKnown() : null;
+    recenterClose(myLocation.lat, myLocation.lng, seed && seed.accuracy);
+    try {
+      const perm = await GPS.requestBrowserPermission();
+      if (perm && perm.ok && perm.pos && perm.pos.coords) {
+        const { latitude, longitude, accuracy } = perm.pos.coords;
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          try { GPS.report && GPS.report(perm.pos); } catch {}
+          myLocation.lat = latitude; myLocation.lng = longitude;
+          try { meMarker.setLatLng([latitude, longitude]); } catch {}
+          recenterClose(latitude, longitude, accuracy);
+        }
+      }
+    } catch {}
   });
 
   // V832 · Al abrir el mapa pedimos geolocalización real del navegador (si el
@@ -9104,21 +9163,23 @@ async function openNearbyMap() {
       if (seed && Number.isFinite(seed.lat) && Number.isFinite(seed.lng)) {
         myLocation.lat = seed.lat; myLocation.lng = seed.lng;
         try { meMarker.setLatLng([seed.lat, seed.lng]); } catch {}
-        recenterClose(seed.lat, seed.lng);
+        recenterClose(seed.lat, seed.lng, seed.accuracy);
       }
       // (2) Lectura del navegador (tolerante a caché por defecto): confirma el
       // permiso y refina el punto si hay un fix mejor. Si expira (timeout),
       // conservamos la semilla / la aproximación por IP sin recentrar de nuevo.
       const perm = await GPS.requestBrowserPermission();
       if (perm && perm.ok && perm.pos && perm.pos.coords) {
-        const { latitude, longitude } = perm.pos.coords;
+        const { latitude, longitude, accuracy } = perm.pos.coords;
         if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
           try { GPS.markAsked && GPS.markAsked(); } catch {}
           try { GPS.report && GPS.report(perm.pos); } catch {}
           myLocation.lat = latitude; myLocation.lng = longitude;
           try { meMarker.setLatLng([latitude, longitude]); } catch {}
-          // V842 · Centra MUY cerca de la ubicación real (nivel calle) y busca.
-          recenterClose(latitude, longitude);
+          // V860 · Centra con zoom acorde a la PRECISION (nivel calle si el fix
+          // es bueno; mas alejado si es aproximado, p. ej. wifi/IP en PC) y
+          // dibuja el area de incertidumbre.
+          recenterClose(latitude, longitude, accuracy);
         }
       }
     } catch {}
