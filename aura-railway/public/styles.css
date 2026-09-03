@@ -9661,6 +9661,15 @@ body.map-open { overflow: hidden; }
   -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
 .map-people-grid::-webkit-scrollbar { display: none; }
+/* V846 · En el mapa las tarjetas son CUADRADAS (no 3/4 como en "Buscar"). Así
+   la tarjeta entera —incluida la última línea (ciudad · km)— cabe sin recortarse
+   y el panel queda MÁS BAJO, dejando ver bastante más mapa. El texto de la ficha
+   se reduce un punto para que el nombre completo (p. ej. "Usuario de prueba, 25")
+   quepa dentro del cuadrado sin cortarse. */
+.map-people-grid .result-card { aspect-ratio: 1 / 1; }
+.map-people-grid .result-card .info { padding: 6px 9px; border-radius: 13px; }
+.map-people-grid .result-card .info strong { font-size: 13px; line-height: 1.15; }
+.map-people-grid .result-card .info small { font-size: 11px; }
 /* V843 · La cuenta de prueba conserva su etiqueta "Prueba" (arriba-izquierda,
    donde iría el corazón) y un borde ámbar para distinguirla. */
 .map-people-grid .result-card.test { outline: 2px solid #f59e0b; outline-offset: -2px; }
