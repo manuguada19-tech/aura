@@ -42,12 +42,40 @@ app.set("trust proxy", true);
 // y el filtro de radio desde un punto a ~1,3 km del real).
 const GPS_GOOD_ACCURACY_M = 300;
 
+// V879 · Estado del arranque. Antes app.listen() era LO ÚLTIMO, después de
+// migrate() (~224 sentencias DDL), el backfill de geoip (hasta 5000 UPDATEs en
+// serie) y 13 phaseN.migrate(). Hasta que todo eso acababa el puerto estaba
+// cerrado, así que /api/health no respondía y Railway daba el deploy por
+// fallido a los 120 s (healthcheckTimeout). Y el arranque se alarga solo a
+// medida que crecen los usuarios, así que subir el timeout sólo aplaza el
+// problema. Ahora abrimos el puerto de inmediato y migramos en segundo plano:
+// el healthcheck pasa al instante y la API contesta 503 hasta que esté listo.
+let BOOT_READY = false;
+let BOOT_ERROR = null;
+
 // V634 · Compresión gzip en origen. Cloudflare ya comprime en el borde, pero
 // esto ayuda al tramo origen→CF y a las respuestas JSON de la API (que CF a
 // veces no cachea). `compression` respeta automáticamente `Cache-Control:
 // no-transform` y NO comprime `text/event-stream`, así que el SSE de
 // /api/my/restrictions/stream sigue funcionando sin buffering.
 app.use(compression());
+
+// V879 · Candado de arranque. Mientras las migraciones corren, la base puede no
+// tener aún las tablas ni el secreto de firma de tokens, así que no podemos
+// atender API: devolvemos 503 con Retry-After en vez de errores raros o, peor,
+// firmar tokens con un secreto que va a cambiar. /api/health y /api/version se
+// dejan pasar (los necesita el healthcheck) y los estáticos también, para que
+// la web cargue y el cliente reintente solo.
+app.use((req, res, next) => {
+  if (BOOT_READY) return next();
+  if (!req.path.startsWith("/api/")) return next();
+  if (req.path === "/api/health" || req.path === "/api/version") return next();
+  // Los webhooks de pago/verificación los reintenta el proveedor si devolvemos
+  // 5xx, así que un 503 aquí no pierde el evento: Stripe reintenta durante días
+  // y Didit también. Mejor 503 que atenderlos sin esquema.
+  res.set("Retry-After", "5");
+  return res.status(503).json({ ok: false, error: "starting", detail: "El servidor está arrancando." });
+});
 // El webhook de Didit necesita el cuerpo bruto para validar HMAC,
 // por eso se salta express.json y se procesa con express.raw en su ruta.
 app.use((req, res, next) => {
@@ -13460,7 +13488,13 @@ app.get("/api/admin-branding", (req, res) => {
 });
 
 // Health
-app.get("/api/health", (req, res) => res.json({ ok: true, ts: Date.now() }));
+// V879 · Responde 200 desde el primer instante (aunque siga migrando) para que
+// el healthcheck de Railway pase y el deploy no se marque como fallido. El campo
+// `ready` dice si la API ya está abierta, útil para diagnosticar sin logs.
+app.get("/api/health", (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, ready: BOOT_READY, ts: Date.now() });
+});
 
 // V724 · Versión del build (para auto-actualización del cliente).
 // Se calcula una sola vez al arrancar, hasheando el contenido de los assets
@@ -13884,10 +13918,14 @@ adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 ·
 adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V713 · 2º lote endpoints admin
 webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice, isTrue, logActivity }); // V714 · WebAuthn
 
+// V879 · El puerto se abre YA, antes de migrar. Railway comprueba /api/health
+// y el deploy queda verde en segundo(s); las migraciones siguen por detrás.
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT, "· migrando…"));
+
 (async () => {
   try {
     await migrate();
-    await backfillUserGeoFromDevices(); // V737 · coords aprox. por IP para usuarios ya existentes
     await seed();
     await repairDuplicateDemo();
     await ensureDemoUser();
@@ -13917,10 +13955,20 @@ webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, 
     } catch (e) {
       console.error("[phases] init error:", e);
     }
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT));
+
+    // V879 · Ya hay esquema y secreto de firma: se abre la API.
+    BOOT_READY = true;
+    console.log("Aura backend listo · API abierta");
+
+    // V879 · El backfill de coords por IP era el tramo más largo del arranque
+    // (hasta 5000 usuarios, un UPDATE por cada uno, en serie) y no hace falta
+    // para servir: sólo rellena users.lat/lng que estén NULL. Va al final y sin
+    // await, así que no retrasa ni el healthcheck ni la apertura de la API.
+    backfillUserGeoFromDevices().catch((e) =>
+      console.warn("[V737] backfill omitido:", e && e.message));
   } catch (e) {
     console.error("Startup error:", e);
+    BOOT_ERROR = e;
     process.exit(1);
   }
 })();
