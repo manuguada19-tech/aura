@@ -9642,11 +9642,23 @@ body.map-open { overflow: hidden; }
 .map-people-title { font-size: 13px; font-weight: 800; color: var(--text); }
 .map-people-title small { display: block; font-size: 11px; font-weight: 600; color: var(--text-soft); margin-top: 1px; }
 .map-people-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 8px; overflow-y: auto; padding: 2px; min-height: 0;
+  /* V843 · Tarjetas .result-card iguales que en "Buscar". La rejilla es
+     RESPONSIVE: en el ancho de móvil (~390px) salen 2 columnas como en "Buscar";
+     en el mapa a pantalla completa en PC caben más columnas sin que las tarjetas
+     se agiganten (antes, con 2 columnas fijas, en PC medían ~700px de ancho). */
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 14px; overflow-y: auto; padding: 4px 2px 2px; min-height: 0;
   -webkit-overflow-scrolling: touch; scrollbar-width: none;
 }
 .map-people-grid::-webkit-scrollbar { display: none; }
+/* V843 · La cuenta de prueba conserva su etiqueta "Prueba" (arriba-izquierda,
+   donde iría el corazón) y un borde ámbar para distinguirla. */
+.map-people-grid .result-card.test { outline: 2px solid #f59e0b; outline-offset: -2px; }
+.map-people-grid .result-card .map-person-tag {
+  position: absolute; left: 10px; top: 10px; z-index: 4; padding: 3px 8px; border-radius: 999px;
+  font-size: 10px; font-weight: 800; color: #1a1200;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+}
 .map-person-card {
   position: relative; aspect-ratio: 3 / 4; border: 0; padding: 0; cursor: pointer;
   border-radius: 14px; overflow: hidden; text-align: left;

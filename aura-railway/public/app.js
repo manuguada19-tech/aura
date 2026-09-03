@@ -8069,7 +8069,12 @@ async function openNearbyMap() {
   const overlay = el("div", { class: "map-overlay" });
 
   // Estado de filtros rápidos del mapa (cliente). El radio re-consulta al backend.
-  const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: 25, showTest: true };
+  // V843 · Los kilómetros ya NO limitan: se pide un radio muy amplio (máximo del
+  // backend) y el resultado se ORDENA por distancia al pin, sin excluir a nadie
+  // por estar "lejos". El usuario arrastra el pin y aparecen todos los cercanos a
+  // ese punto. Por eso desaparecen los chips de km y el círculo de zona.
+  const SEARCH_RADIUS_KM = 500;
+  const mapFilters = { gender: "todos", onlyOnline: false, radiusKm: SEARCH_RADIUS_KM, showTest: true };
   let lastData = null; // últimos datos crudos del backend para re-filtrar sin re-consultar
 
   // ---- Barra superior (glass) ----
@@ -8119,23 +8124,10 @@ async function openNearbyMap() {
     repaint();
   });
 
-  const radiusWrap = el("div", { class: "map-radius" });
-  const radiusChips = [5, 10, 25, 50, 100].map(km => {
-    const c = el("button", { class: "map-chip" + (mapFilters.radiusKm === km ? " active" : ""), type: "button" }, km + " km");
-    c.addEventListener("click", () => {
-      mapFilters.radiusKm = km;
-      radiusChips.forEach(x => x.classList.toggle("active", x === c));
-      // V840 · Al cambiar el radio, reencuadra para que el círculo quepa entero
-      // en pantalla y busca en la MISMA zona (posición del pin) con el nuevo radio.
-      goToZone(searchLatLng.lat, searchLatLng.lng);
-    });
-    return c;
-  });
-  radiusChips.forEach(c => radiusWrap.appendChild(c));
-
+  // V843 · Sin chips de km: la distancia ya no restringe (ver SEARCH_RADIUS_KM).
   const filterbar = el("div", { class: "map-filterbar" }, [
     genderSeg,
-    el("div", { class: "map-filterbar-row" }, [ onlineChip, radiusWrap ]),
+    el("div", { class: "map-filterbar-row" }, [ onlineChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -8267,7 +8259,6 @@ async function openNearbyMap() {
   const tileLayer = L.tileLayer(tileUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
 
   const markers = L.layerGroup().addTo(map);
-  let searchCircle = null;
 
   // V840 · PIN de búsqueda ARRASTRABLE (sustituye al marcador fijo del centro y al
   // círculo-zona arrastrable anterior). El usuario mueve este pin (arrastrándolo o
@@ -8386,22 +8377,33 @@ async function openNearbyMap() {
     try { modal.open(sheet); } catch {}
   }
 
-  // V840 · Tarjeta de persona con foto en la cuadrícula inferior (mismo estilo
-  // que "Buscar": foto grande, degradado, nombre+edad, distancia). Al tocar abre
-  // directamente el perfil (no una hoja intermedia).
+  // V843 · Tarjeta de persona IDÉNTICA a la de "Buscar" (misma clase .result-card:
+  // anillo de marca, degradado, panel de info cristal, corazón de favorito y
+  // punto de "en línea"). Antes usaba un estilo propio (.map-person-card) que no
+  // coincidía con "Buscar". Al tocar abre el perfil (openUserProfile respeta el
+  // usuario de prueba). El usuario de prueba muestra la etiqueta "Prueba" en vez
+  // del corazón (no se puede marcar como favorito una cuenta ficticia).
   function peopleCard(u) {
-    const distLabel = fmtDistance(u.distance);
-    const sub = [u.city || "", distLabel ? "a " + distLabel : ""].filter(Boolean).join(" · ");
-    return el("button", { class: "map-person-card" + (u._test ? " test" : ""), type: "button",
-      style: `background-image:url('${u.photo || ""}')`,
-      onclick: () => openUserProfile(u) }, [
-      u._test ? el("span", { class: "map-person-tag" }, "Prueba") : null,
-      u.online ? el("span", { class: "map-person-dot" }) : null,
-      el("div", { class: "map-person-meta" }, [
-        el("div", { class: "map-person-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
-        sub ? el("div", { class: "map-person-sub" }, sub) : null,
+    const isTest = !!u._test;
+    const li = locDistanceInfo(u);
+    const meta = [u.city || "", (li.text || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
+    const isFav = !isTest && state.favorites && state.favorites.has(u.id);
+    const card = el("div", { class: "result-card" + (isTest ? " test" : ""),
+      style: `background-image:url('${u.photo || ""}')` }, [
+      u.online ? el("div", { class: "online" }) : null,
+      isTest
+        ? el("span", { class: "map-person-tag" }, "Prueba")
+        : el("button", { class: "heart" + (isFav ? " on" : ""),
+            onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
+            el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
+          ]),
+      el("div", { class: "info" }, [
+        el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+        meta ? el("small", { class: li.off ? "gps-off" : "" }, meta) : null,
       ]),
     ]);
+    card.addEventListener("click", () => openUserProfile(u));
+    return card;
   }
 
   // V840 · Rellena la CUADRÍCULA inferior de personas + el título con recuento.
@@ -8414,12 +8416,12 @@ async function openNearbyMap() {
       : "Personas en esta zona";
     peopleTitleSub.textContent = list.length
       ? (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora")
-      : "Arrastra el pin y pulsa «Buscar cerca de aquí»";
+      : "Arrastra el pin a otra zona y pulsa «Buscar cerca de aquí»";
     peopleGrid.innerHTML = "";
     if (!list.length) {
       peopleGrid.hidden = true;
       peopleEmpty.hidden = false;
-      peopleEmpty.textContent = "No hay nadie cerca de este punto. Arrastra el pin a otra zona, amplía el radio o busca otra ciudad.";
+      peopleEmpty.textContent = "No hay nadie por esta zona. Arrastra el pin a otro punto o busca otra ciudad.";
       return;
     }
     peopleGrid.hidden = false;
@@ -8454,40 +8456,15 @@ async function openNearbyMap() {
   }
   window.addEventListener("resize", syncControls);
 
-  // V840 · Círculo de búsqueda centrado en el PIN de búsqueda (arrastrable), no en
-  // el centro del mapa. Se redibuja cuando el pin se mueve.
-  function drawCircle(center, radiusKm) {
-    if (searchCircle) { try { map.removeLayer(searchCircle); } catch {} }
-    searchCircle = L.circle([center.lat, center.lng], {
-      radius: radiusKm * 1000, color: "#ff3b6b", weight: 1.5, opacity: 0.55,
-      fillColor: "#ff3b6b", fillOpacity: 0.07, interactive: false,
-    }).addTo(map);
-  }
-
-  // V832 · Ajusta el ZOOM para que el círculo de la zona quepa ENTERO en la
-  // pantalla (antes, con radios grandes a zoom 17, el círculo era gigante e
-  // invisible). Se llama solo al cambiar de radio / centrar / buscar ciudad /
-  // abrir, NUNCA al panear a mano (eso respetaría el zoom del usuario). El
-  // padding deja hueco para las barras de arriba y el dock de abajo.
-  function fitToRadius(center) {
-    const c = center || searchLatLng;
-    drawCircle(c, mapFilters.radiusKm);
-    try {
-      map.fitBounds(searchCircle.getBounds(), {
-        paddingTopLeft: [28, 150], paddingBottomRight: [28, 210],
-        animate: true, maxZoom: 16,
-      });
-    } catch {}
-  }
-
-  // V840 · Mueve el PIN de búsqueda a (lat,lng): actualiza searchLatLng, reposiciona
-  // el marcador y redibuja el círculo. NO busca por sí solo (eso lo hace el botón
-  // "Buscar cerca de aquí" o el fin de arrastre del pin).
+  // V843 · Mueve el PIN de búsqueda a (lat,lng): actualiza searchLatLng y
+  // reposiciona el marcador. Ya NO hay círculo de zona: el pin marca el punto y
+  // se muestran TODAS las personas cercanas ordenadas por distancia (los km no
+  // restringen). NO busca por sí solo (eso lo hace el fin de arrastre del pin,
+  // tocar el mapa o el botón "Buscar cerca de aquí").
   function setSearchPoint(lat, lng) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     searchLatLng = { lat, lng };
     try { searchPin.setLatLng([lat, lng]); } catch {}
-    drawCircle(searchLatLng, mapFilters.radiusKm);
   }
 
   // V764 · "Mi ubicación": punto fijo al que redirigir cuando una búsqueda no
@@ -8561,23 +8538,19 @@ async function openNearbyMap() {
     }
   }
 
-  // V840 · "Ir a una zona": coloca el pin en (lat,lng), encuadra el círculo del
-  // radio para que quepa entero y busca UNA vez. Se usa en acciones donde tiene
-  // sentido ver el círculo completo (cambiar de radio, buscar una ciudad).
-  async function goToZone(lat, lng) {
+  // V843 · "Ir a una zona": coloca el pin en (lat,lng), CENTRA el mapa ahí (a un
+  // zoom dado, por defecto nivel barrio) y busca UNA vez. Ya no encuadra ningún
+  // círculo (los km no restringen). Se usa al buscar una ciudad/lugar.
+  const CLOSE_ZOOM = 15;
+  async function goToZone(lat, lng, zoom) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
-    fitToRadius(searchLatLng);
+    try { map.setView([lat, lng], Number.isFinite(zoom) ? zoom : 13, { animate: true }); } catch {}
     await searchAt(lat, lng);
   }
 
-  // V842 · Centrar MUY cerca del usuario (nivel calle) sin encajar todo el
-  // círculo del radio. Antes, al abrir el mapa y al pulsar "mi ubicación" se
-  // usaba fitToRadius, que con radios grandes (25 km por defecto) alejaba el
-  // zoom exageradamente y el punto azul quedaba diminuto. Ahora centramos en la
-  // ubicación a zoom cercano; el círculo se sigue dibujando (puede sobresalir de
-  // la pantalla, es solo informativo).
-  const CLOSE_ZOOM = 15;
+  // V842 · Centrar MUY cerca del usuario (nivel calle). Al abrir el mapa y al
+  // pulsar "mi ubicación" centramos en la ubicación a zoom cercano.
   async function recenterClose(lat, lng) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     setSearchPoint(lat, lng);
@@ -8621,13 +8594,12 @@ async function openNearbyMap() {
     searchSuggest.innerHTML = "";
   }
   // Salta el mapa a un lugar concreto (queda centrado = nueva zona) y busca allí.
-  // Reencuadra al radio para que el círculo quepa entero (el 4º arg zoom queda
-  // como sugerencia; fitToRadius manda para que la zona sea siempre visible).
+  // V843 · El zoom sugerido (POI más cerca, ciudad más lejos) ahora sí se aplica.
   async function goToPlace(lat, lng, zoom) {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
     hideSuggest();
     try { searchInput.blur(); } catch {}
-    await goToZone(lat, lng);
+    await goToZone(lat, lng, zoom);
   }
 
   // Pinta la lista de sugerencias seleccionables.
@@ -8730,7 +8702,6 @@ async function openNearbyMap() {
   searchPin.on("drag", () => {
     const p = searchPin.getLatLng();
     searchLatLng = { lat: p.lat, lng: p.lng };
-    if (searchCircle) { try { searchCircle.setLatLng(p); } catch {} }
   });
   searchPin.on("dragend", () => {
     const p = searchPin.getLatLng();
@@ -8753,11 +8724,9 @@ async function openNearbyMap() {
   });
 
   // Primera pintura con los datos ya cargados. Coloca el pin en el punto inicial
-  // y CENTRA cerca (nivel calle), en vez de alejar para encajar todo el círculo.
-  // V842 · setView a zoom cercano; drawCircle dibuja el radio (informativo).
+  // y CENTRA cerca (nivel calle). V843 · Sin círculo de zona.
   setSearchPoint(start.lat, start.lng);
   try { map.setView([start.lat, start.lng], CLOSE_ZOOM); } catch {}
-  drawCircle(start, mapFilters.radiusKm);
   repaint();
 
   locateBtn.addEventListener("click", () => {
