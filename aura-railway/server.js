@@ -12144,10 +12144,45 @@ app.post("/api/my/gps/report", wrap(async (req, res) => {
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return res.status(400).json({ error: "out_of_range" });
   // Comprobar consentimiento vigente
   const [rows] = await pool.query(
-    `SELECT consent_given, revoked_at FROM user_gps WHERE user_id=? LIMIT 1`, [uid]);
+    `SELECT consent_given, revoked_at, lat AS oldLat, lng AS oldLng, accuracy AS oldAcc,
+            TIMESTAMPDIFF(MINUTE, captured_at, NOW()) AS oldAgeMin
+       FROM user_gps WHERE user_id=? LIMIT 1`, [uid]);
   if (!rows.length || !rows[0].consent_given || rows[0].revoked_at) {
     return res.status(403).json({ error: "no_consent" });
   }
+
+  // V875 · El PC no pisa la ubicación buena del móvil.
+  // Móvil y PC comparten cuenta y escriben en la MISMA fila de user_gps, y hasta
+  // ahora el último en escribir ganaba. El PC no tiene GPS: su fix por wifi/IP
+  // tiene precisión de kilómetros y a menudo cae en otra ciudad, así que al abrir
+  // la app en el ordenador sobrescribía las coordenadas buenas del móvil. De ahí
+  // "en móvil aparece bien pero en pc no". El filtro de cliente (fixIsUsable,
+  // V873) sólo evitaba mover el punto azul al PINTAR el mapa; no impedía guardar
+  // el fix malo, así que la posición seguía estropeada en BD y otros usuarios te
+  // veían en la ciudad equivocada (las búsquedas de cercanía usan estas coords).
+  //
+  // Regla: si ya hay una posición PRECISA y RECIENTE y llega un fix mucho MENOS
+  // preciso, se descarta. Se responde 200 con {ok:true, kept:true} para que el
+  // cliente no lo trate como error ni reintente.
+  const GOOD_ACCURACY_M = 3000;   // <=3 km ⇒ fix de GPS real (móvil)
+  const FRESH_MINUTES   = 720;    // 12 h: seguimos fiándonos del último buen fix
+  const WORSE_FACTOR    = 3;      // "mucho menos preciso" = 3x peor
+  const prev = rows[0];
+  const hasPrev = prev.oldLat != null && prev.oldLng != null && Number.isFinite(Number(prev.oldAcc));
+  if (hasPrev) {
+    const prevAcc = Number(prev.oldAcc);
+    const ageMin  = Number(prev.oldAgeMin);
+    const prevIsGood  = prevAcc <= GOOD_ACCURACY_M;
+    const prevIsFresh = Number.isFinite(ageMin) && ageMin <= FRESH_MINUTES;
+    // Sin precisión declarada lo tratamos como impreciso (el navegador de PC
+    // a veces no la informa): así no cuela por la puerta de atrás.
+    const newAcc = Number.isFinite(acc) ? Number(acc) : Infinity;
+    const newIsWorse = newAcc > GOOD_ACCURACY_M && newAcc > prevAcc * WORSE_FACTOR;
+    if (prevIsGood && prevIsFresh && newIsWorse) {
+      return res.json({ ok: true, kept: true, reason: "kept_better_fix" });
+    }
+  }
+
   await pool.execute(
     `UPDATE user_gps SET lat=?, lng=?, accuracy=?, heading=?, speed=?, captured_at=NOW() WHERE user_id=?`,
     [lat, lng, acc, heading, speed, uid]
