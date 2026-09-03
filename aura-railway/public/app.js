@@ -12259,6 +12259,12 @@ function screenProfileDetail(root, u, opts = {}) {
     }
     const badge = el("div", { class: "pd-now-badge" + (u.now_status.has_photo ? " has-thumb" : "") }, badgeKids);
     gallery.appendChild(badge);
+    // V869 · Con el badge en la esquina inferior izquierda, el aviso "Desliza
+    // para ver el perfil" (centrado abajo) se solapaba con él. Marcamos la
+    // galería para que el CSS suba el aviso por encima del badge y no choquen.
+    // El badge con miniatura es más alto, así que usamos una clase extra.
+    gallery.classList.add("has-now-badge");
+    if (u.now_status.has_photo) gallery.classList.add("has-now-thumb");
   }
   // Al pulsar el aviso, baja suavemente hasta la ficha (nombre/detalles).
   scrollHint.addEventListener("click", () => {
@@ -12291,12 +12297,13 @@ function screenProfileDetail(root, u, opts = {}) {
         el("span", { class: "pd-dot-online" + (u.online ? " on" : "") + (a.show ? " act-" + a.level : "") }),
         a.show ? a.text : (u.online ? "Activa ahora" : "Desconectada"),
       ];
-      // V867 · Repite el distintivo "Ahora mismo" en la línea de estado (como
-      // Grindr muestra "· Right Now" junto a "En línea").
+      // V867 · Repite el distintivo en la línea de estado (como Grindr muestra
+      // "· Right Now" junto a "En línea"). V869 · Texto "Busco ahora" (más claro
+      // que "Ahora mismo", que se confundía con un rótulo genérico).
       if (u.now_status && u.now_status.text) {
         out.push(el("span", { class: "pd-now-tag" }, [
           el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
-          el("span", {}, "Ahora mismo"),
+          el("span", {}, "Busco ahora"),
         ]));
       }
       return out;

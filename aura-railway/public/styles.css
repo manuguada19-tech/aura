@@ -9722,6 +9722,12 @@ body.map-open { overflow: hidden; }
 }
 .pd-now-tag .now-bolt { color: #f59e0b; }
 
+/* V869 · Cuando hay badge "busco ahora" en la esquina inferior izquierda, el
+   aviso "Desliza para ver el perfil" (centrado abajo) se solapaba con él. Lo
+   subimos por encima del badge para que no choquen. */
+.pd-gallery.has-now-badge .pd-scroll-hint { bottom: 58px; }
+.pd-gallery.has-now-thumb .pd-scroll-hint { bottom: 82px; }
+
 /* V868 · Miniatura de la foto "busco ahora" pegada a la frase del badge (como
    Grindr). Va difuminada por defecto (blur + candado); al tocar se revela y un
    segundo toque la abre a pantalla completa. */
