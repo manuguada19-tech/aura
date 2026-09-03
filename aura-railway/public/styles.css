@@ -9524,11 +9524,13 @@ body.map-open { overflow: hidden; }
   border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
 .map-filterbar-row {
-  display: flex; align-items: center; gap: 8px;
-  overflow-x: auto; -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  /* V863 · Los filtros se AJUSTAN a varias líneas (flex-wrap) en vez de hacer
+     scroll horizontal. Con scroll, en móviles estrechos "Nuevos" salía cortado y
+     "Filtros" quedaba oculto fuera de pantalla (el usuario no sabía que existían).
+     Ahora, cuando no caben en una línea, bajan a la siguiente y SIEMPRE se ven
+     todos. */
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
 }
-.map-filterbar-row::-webkit-scrollbar { display: none; }
 
 /* Segmento de género (Todos / Mujeres / Hombres) */
 .map-seg {
