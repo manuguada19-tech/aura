@@ -1828,7 +1828,7 @@ const state = {
   currentTag: null,
   filters: {
     ageMin: 21, ageMax: 40, distance: 50,
-    genders: ["Todos"], onlyVerified: false, onlyOnline: false,
+    genders: ["Todos"], orientation: "todas", onlyVerified: false, onlyOnline: false, // V904 · orientación
     cities: [], ethnicities: [], // V748 · ubicación (multi) y etnia (multi)
     lookingFor: "any", relationship: "any", interests: [], // V757 · más filtros
     // V776 · filtros opcionales de estilo de vida (multi, exact-match).
@@ -3570,6 +3570,17 @@ function genderOptionsForZone(zone, currentValue) {
   const base = (zone === "lgtb")
     ? GENDER_OPTIONS.slice()
     : ["Mujer", "Hombre", "Prefiero no decirlo"];
+  const cur = currentValue ? String(currentValue) : "";
+  if (cur && !base.includes(cur)) base.push(cur);
+  return base;
+}
+// V904 · Orientaciones según la zona (mismo criterio que los géneros): en Zona
+// Hetero la única orientación coherente es "Heterosexual"; en Zona LGTB+ se
+// ofrece la lista completa. Se usa en el registro, el editor de perfil y los
+// filtros. Si el valor guardado no está en la lista de su zona, se conserva.
+const ORIENTATION_LGTB = ["Lesbiana", "Gay", "Bisexual", "Pansexual", "Asexual", "Demisexual", "Queer", "Prefiero no decirlo"];
+function orientationOptionsForZone(zone, currentValue) {
+  const base = (zone === "lgtb") ? ORIENTATION_LGTB.slice() : ["Heterosexual"];
   const cur = currentValue ? String(currentValue) : "";
   if (cur && !base.includes(cur)) base.push(cur);
   return base;
@@ -7284,9 +7295,8 @@ function screenRegisterProfile(root) {
     genderOptionsForZone(state.zone, state.registration.gender)
       .map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
   const fOrient = el("select", { required: true },
-    (state.zone === "lgtb"
-      ? ["Lesbiana","Gay","Bisexual","Pansexual","Asexual","Demisexual","Queer","Prefiero no decirlo"]
-      : ["Heterosexual"]).map(o => el("option", { value: o, selected: o === state.registration.orientation || undefined }, o)));
+    orientationOptionsForZone(state.zone, state.registration.orientation)
+      .map(o => el("option", { value: o, selected: o === state.registration.orientation || undefined }, o)));
 
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Nombre"), fName ]));
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Fecha de nacimiento"), fBirth ]));
@@ -11288,6 +11298,32 @@ function openFilters() {
     grpGenderRow,
   ]));
 
+  // V904 · Filtro de orientación (selección única tipo radio). Solo se muestra en
+  // Zona LGTB+, donde hay varias orientaciones; en Hetero todas son Heterosexual
+  // y el filtro no aportaría nada. "Todas" = sin filtro.
+  const orientChips = [];
+  const orientRef = { value: state.filters.orientation || "todas" };
+  if (zone === "lgtb") {
+    const grpOrientRow = el("div", { class: "chip-row" });
+    [{ label: "Todas", value: "todas" }, ...ORIENTATION_LGTB.map(o => ({ label: o, value: o }))].forEach(opt => {
+      const active = opt.value === orientRef.value || (opt.value === "todas" && !ORIENTATION_LGTB.includes(orientRef.value));
+      const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
+      c._value = opt.value;
+      c.addEventListener("click", () => {
+        orientRef.value = opt.value;
+        orientChips.forEach(x => x.classList.toggle("active", x === c));
+      });
+      orientChips.push(c);
+      grpOrientRow.appendChild(c);
+    });
+    wrap.appendChild(el("div", { class: "filter-group" }, [
+      el("h5", {}, "Orientación"),
+      el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
+        "Elige una orientación o «Todas» para verlas todas."),
+      grpOrientRow,
+    ]));
+  }
+
   // V792 · Unidad por defecto según el país del usuario (registro/perfil). El
   // usuario puede cambiarla con los chips para comparar en las unidades del país
   // donde busca. Los valores se guardan/filtran SIEMPRE en canónico (años/km/cm/kg).
@@ -11608,6 +11644,10 @@ function openFilters() {
       const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
       state.filters.genders = concrete.length ? concrete : ["Todos"];
       const genderVal = concrete.length ? concrete[0] : "todos"; // backend: 1 valor
+      // V904 · Orientación (selección única). Solo aplica en LGTB; "todas" = sin
+      // filtro. En Hetero el grupo no se pinta, así que se guarda "todas".
+      const orientVal = (zone === "lgtb" && orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas";
+      state.filters.orientation = orientVal;
       // Ubicación / etnia (multi).
       state.filters.cities = Array.from(citySelected);
       state.filters.ethnicities = Array.from(ethSelected);
@@ -11633,6 +11673,7 @@ function openFilters() {
         age_max: state.filters.ageMax,
         distance_km: state.filters.distance,
         gender: genderVal,
+        orientation: orientVal, // V904 · orientación (LGTB); "todas" = sin filtro
         cities: state.filters.cities,
         ethnicities: state.filters.ethnicities,
         looking_for: state.filters.lookingFor,
@@ -13036,6 +13077,9 @@ function screenProfileDetail(root, u, opts = {}) {
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
     el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, gLabel) ]),
+    // V904 · Orientación visible en el perfil. El servidor la pone a null cuando el
+    // dueño activa "Ocultar orientación", así que solo se pinta si viene con valor.
+    u.orientation ? el("div", { class: "pd-row" }, [ el("span", {}, "Orientación"), el("b", {}, String(u.orientation)) ]) : null,
     u.city ? el("div", { class: "pd-row" }, [ el("span", {}, "Ciudad"), el("b", {}, u.city) ]) : null,
     pdDist ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", { class: pdLi.off ? "gps-off" : "" }, pdDist) ]) : null,
     heightTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Altura"), el("b", {}, heightTxt) ]) : null,
@@ -14706,6 +14750,7 @@ function screenEditProfile(root) {
       height: heightInp.value ? (peHeight.u === "ftin" ? inToCm(heightInp.value) : (parseInt(heightInp.value, 10) || null)) : null,
       weight: weightInp.value ? unitToKg(weightInp.value, peWeight.u) : null, // V791 · siempre kg
       gender: genderInp.value,
+      orientation: orientInp.value || null, // V904 · orientación editable
       ethnicity: ethInp.value || null,
       looking_for: lookingRef.id,
       relationship: relRef.id,
@@ -14775,6 +14820,18 @@ function screenEditProfile(root) {
   const genderField = el("div", { class: "field" });
   genderField.appendChild(el("label", {}, T("content.me.field_gender") || "Género"));
   genderField.appendChild(genderInp); form.appendChild(genderField);
+
+  // V904 · Orientación editable, coherente con la zona (Hetero → Heterosexual;
+  // LGTB → lista completa). Antes solo existía el interruptor "Ocultar
+  // orientación" pero no se podía ver ni editar el valor. Se prerrellena al
+  // cargar el perfil real (más abajo).
+  const curOrient = (u.orientation && String(u.orientation)) || "";
+  const orientInp = el("select", {},
+    orientationOptionsForZone(state.zone, curOrient)
+      .map(o => el("option", { value: o, selected: o === curOrient || undefined }, o)));
+  const orientField = el("div", { class: "field" });
+  orientField.appendChild(el("label", {}, "Orientación"));
+  orientField.appendChild(orientInp); form.appendChild(orientField);
 
   // V757 · Etnia (opcional). Alimenta el filtro de etnia del buscador.
   const curEth = (u.ethnicity && String(u.ethnicity)) || "";
@@ -14975,6 +15032,15 @@ function screenEditProfile(root) {
       if (p.height != null) heightInp.value = peHeight.u === "ftin" ? cmToIn(p.height) : p.height; // V792
       if (p.weight != null) weightInp.value = kgToUnit(p.weight, peWeight.u); // V791
       if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
+      // V904 · Orientación: si el valor guardado no está entre las opciones de la
+      // zona, se añade para no perderlo antes de asignarlo al select.
+      if (p.orientation != null && String(p.orientation)) {
+        const ov = String(p.orientation);
+        if (!Array.from(orientInp.options).some(o => o.value === ov)) {
+          orientInp.appendChild(el("option", { value: ov }, ov));
+        }
+        orientInp.value = ov;
+      }
       if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
       // V776 · Rellena los grupos de estilo de vida (selección única).
       const setSingle = (wrapEl, ref, options, id) => {

@@ -1680,6 +1680,24 @@ async function migrate() {
     "ALTER TABLE users ADD INDEX idx_zone_status (zone, status)",
     "ALTER TABLE conversations ADD INDEX idx_user_b (user_b)",
   ]) { try { await pool.execute(stmt); } catch {} }
+
+  // V904 · Cuenta de PRUEBA en Zona LGTB+ para poder probar la zona. El seed()
+  // solo corre con la BD vacía, así que en producción la fila ya existe y hay
+  // que actualizarla con un UPDATE puntual. Se ejecuta UNA sola vez (guardado
+  // con un flag en settings): así, si más tarde se cambia a mano la zona del
+  // usuario de prueba, esta migración NO vuelve a pisarla. Idempotente y solo
+  // toca la cuenta prueba@aura.app; ninguna otra fila.
+  try {
+    const [[flag]] = await pool.query("SELECT v FROM settings WHERE k='test_user_lgtb_v904'");
+    if (!flag || flag.v !== "1") {
+      await pool.execute(
+        "UPDATE users SET zone='lgtb', orientation='Bisexual', gender='No binario' WHERE email='prueba@aura.app'"
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES ('test_user_lgtb_v904','1') ON DUPLICATE KEY UPDATE v='1'"
+      );
+    }
+  } catch (e) { /* additivo: si falla, no bloquea el arranque */ }
 }
 
 /* ---------- Seed data (only if empty) ---------- */
@@ -1773,7 +1791,7 @@ async function seed() {
     `INSERT INTO users (email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, plan, status, verified, online, photo_url)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
-      "prueba@aura.app", "Usuario de Prueba", 28, "Otro", "Heterosexual", "hetero",
+      "prueba@aura.app", "Usuario de Prueba", 28, "No binario", "Bisexual", "lgtb",
       "Madrid", "España", 172, 68, "Latina/o",
       "Cuenta de demostración. Explora libremente todas las funciones de Aura.",
       "premium", "active", true, true,
@@ -7936,6 +7954,12 @@ function applyPreferenceFilters(where, params, f) {
   if (lf && lf !== "any" && String(lf).trim()) { where.push("u.looking_for = ?"); params.push(String(lf).trim()); }
   const rel = f.relationship;
   if (rel && rel !== "any" && String(rel).trim()) { where.push("u.relationship = ?"); params.push(String(rel).trim()); }
+  // V904 · Orientación (comparación exacta). "todas"/"todos"/vacío = sin filtro.
+  //   Solo tiene efecto en la Zona LGTB+ (en Hetero todas son "Heterosexual").
+  const ori = f.orientation;
+  if (ori && ori !== "todas" && ori !== "todos" && ori !== "any" && String(ori).trim()) {
+    where.push("u.orientation = ?"); params.push(String(ori).trim());
+  }
   let ints = Array.isArray(f.interests) ? f.interests : (f.interests != null ? [f.interests] : []);
   ints = ints.map(v => String(v == null ? "" : v).trim()).filter(Boolean).slice(0, 30);
   if (ints.length) {
@@ -9201,7 +9225,7 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, tribe, body_type, meet_at, nsfw_ok, health_practices, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in, (SELECT approved FROM photos WHERE user_id=users.id AND is_now_photo=1 LIMIT 1) AS now_photo_approved FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, country, job, height, weight, gender, orientation, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, tribe, body_type, meet_at, nsfw_ok, health_practices, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in, (SELECT approved FROM photos WHERE user_id=users.id AND is_now_photo=1 LIMIT 1) AS now_photo_approved FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   // V866 · Estado "Ahora mismo" propio (para que el editor lo muestre).
@@ -9276,6 +9300,8 @@ app.post("/api/my/profile", wrap(async (req, res) => {
   }
   // V741 · Género editable desde el perfil (etiquetas en español).
   if ("gender" in b) { sets.push("gender=?"); vals.push(b.gender ? String(b.gender).slice(0, 30) : null); }
+  // V904 · Orientación editable desde el perfil (coherente con la zona).
+  if ("orientation" in b) { sets.push("orientation=?"); vals.push(b.orientation ? String(b.orientation).slice(0, 40) : null); }
   // V757 · Etnia editable desde el perfil (alimenta el filtro de etnia).
   if ("ethnicity" in b) { sets.push("ethnicity=?"); vals.push(b.ethnicity ? String(b.ethnicity).slice(0, 40) : null); }
   if ("looking_for" in b) { sets.push("looking_for=?"); vals.push(b.looking_for ? String(b.looking_for).slice(0, 30) : null); }

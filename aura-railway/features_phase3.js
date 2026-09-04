@@ -408,7 +408,7 @@ function register(app, pool, helpers) {
     //   tribe / body_type / meet_at / health_practices (multi) + nsfw_ok y
     //   not_chatted_today (flags). Se aplican en applyPreferenceFilters y
     //   /api/discover. Aditivo y retrocompatible.
-    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities","looking_for","relationship","interests","education","pets","exercise","smoke","drink","height_min","height_max","weight_min","weight_max","tribe","body_type","meet_at","health_practices","nsfw_ok","not_chatted_today"];
+    const basic = ["age_min","age_max","distance_km","gender","orientation","city","cities","ethnicities","looking_for","relationship","interests","education","pets","exercise","smoke","drink","height_min","height_max","weight_min","weight_max","tribe","body_type","meet_at","health_practices","nsfw_ok","not_chatted_today"];
     // Filtros avanzados (solo Oro+)
     const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages"];
     const finalFilters = {};
