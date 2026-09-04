@@ -28,6 +28,14 @@ function secretKey() {
 function isConfigured() {
   return /^sk_(test|live)_/.test(secretKey());
 }
+// Modo de la clave secreta: "live" | "test" | null (sin clave válida). Sirve
+// para que el admin vea de un vistazo si está cobrando de verdad o en pruebas.
+function mode() {
+  const sk = secretKey();
+  if (/^sk_live_/.test(sk)) return "live";
+  if (/^sk_test_/.test(sk)) return "test";
+  return null;
+}
 
 /* --- Codificador form-urlencoded con notación de corchetes de Stripe -------
    { line_items:[{price_data:{currency:"eur"}}] }
@@ -136,6 +144,7 @@ function verifyWebhookSignature(rawBody, sigHeader, secret, toleranceSec = 300) 
 
 module.exports = {
   isConfigured,
+  mode,
   createCheckoutSession,
   retrieveSession,
   verifyWebhookSignature,

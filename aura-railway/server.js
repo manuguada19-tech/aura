@@ -14449,6 +14449,9 @@ app.get("/api/public-config", (req, res) => {
       //   `checkout_live` = true solo si además hay claves configuradas.
       provider: getSetting("payments.provider", "simulado"),
       checkout_live: getSetting("payments.provider", "simulado") === "stripe" && stripeClient.isConfigured(),
+      // Modo de las claves de Stripe: "live" | "test" | null. "test" significa
+      // que se cobra en pruebas (el checkout muestra "Entorno de prueba").
+      stripe_mode: stripeClient.mode(),
     },
     ads: {
       enabled: isTrue("ads.enabled", true),

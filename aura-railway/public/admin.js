@@ -7929,6 +7929,11 @@ async function viewSettings(root){
   ]));
 
   const s = await api.get("/api/settings");
+  // V891 · Modo real/prueba de Stripe. Lo expone /api/public-config como
+  // payments.stripe_mode ("live" | "test" | null). Sirve para avisar en el
+  // panel si se está cobrando de verdad o en pruebas (evita la confusión de
+  // ver "Entorno de prueba" en el checkout por tener una clave sk_test_).
+  const pubCfg = await api.get("/api/public-config").catch(() => ({}));
   const form = el("form", { class: "settings-form", onsubmit: async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -8246,7 +8251,40 @@ async function viewSettings(root){
     ]);
   })();
 
+  // V891 · Aviso visible del modo Stripe (real vs prueba). Rojo si "test".
+  const stripeModeField = (() => {
+    const pay = (pubCfg && pubCfg.payments) || {};
+    const mode = pay.stripe_mode || null; // "live" | "test" | null
+    let bg, border, dot, title, desc;
+    if (mode === "live") {
+      bg = "rgba(31,138,76,.12)"; border = "rgba(31,138,76,.45)"; dot = "#1f8a4c";
+      title = "Stripe: cobro REAL (live)";
+      desc = "Las claves configuradas son de producción (sk_live_). Los pagos se cobran de verdad.";
+    } else if (mode === "test") {
+      bg = "rgba(255,59,107,.12)"; border = "rgba(255,59,107,.5)"; dot = "#ff3b6b";
+      title = "⚠ Stripe en modo PRUEBA (test) — NO se cobra de verdad";
+      desc = "La clave STRIPE_SECRET_KEY empieza por sk_test_. En el checkout aparece "
+        + "«Entorno de prueba» y no salen Google Pay / Apple Pay reales. Para cobrar de "
+        + "verdad, pon en Railway la clave sk_live_ y el STRIPE_WEBHOOK_SECRET del modo real.";
+    } else {
+      bg = "var(--panel-2)"; border = "var(--border)"; dot = "#7b7f8a";
+      title = "Stripe: sin clave válida";
+      desc = "No hay STRIPE_SECRET_KEY configurada (o no es sk_test_/sk_live_). El cobro real está desactivado.";
+    }
+    return el("div", {
+      style: `display:flex; align-items:flex-start; gap:10px; margin:0 0 4px; padding:12px 14px; `
+        + `border-radius:12px; background:${bg}; border:1px solid ${border};`
+    }, [
+      el("span", { style: `flex-shrink:0; width:10px; height:10px; margin-top:5px; border-radius:50%; background:${dot}` }),
+      el("div", { style: "flex:1; min-width:0" }, [
+        el("div", { style: "font-weight:700; font-size:13.5px; color:var(--text)" }, title),
+        el("small", { class: "muted", style: "display:block; margin-top:2px" }, desc),
+      ]),
+    ]);
+  })();
+
   form.appendChild(group("Pagos", [
+    stripeModeField,
     paymentsProviderField,
     toggleField("payments.stripe", "Stripe"),
     toggleField("payments.paypal", "PayPal"),
