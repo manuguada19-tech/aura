@@ -11866,6 +11866,45 @@ function openPremiumLockModal() {
    - Cupón y CTA Premium en la misma sección de acciones, no ocupan alto extra.
    - Cierre visible con "X" arriba a la derecha.
 --------------------------------------------------------------------------- */
+/* V901 · Abrir la pasarela de Stripe en el NAVEGADOR DEL SISTEMA cuando la app
+   corre como PWA instalada (display: standalone).
+   ---------------------------------------------------------------------------
+   Problema: al pagar dentro de la PWA con `location.href`, Stripe se abría en el
+   contenedor de la app (un WebView), que NO tiene la sesión de Google Pay del
+   sistema. Resultado: solo salía "tarjeta", nunca Google Pay, aunque el usuario
+   tuviera tarjetas en Google Wallet y Google Pay activado en Stripe. Google Pay
+   (y las carteras en general) requieren un Chrome "real".
+
+   Solución: si estamos en modo standalone, abrimos la URL de Checkout en una
+   pestaña del navegador del sistema. Como los navegadores BLOQUEAN window.open
+   si no ocurre dentro del gesto del clic, el patrón es:
+     1) al pulsar "Comprar", ANTES de esperar la red, abrimos una pestaña vacía
+        (openCheckoutTab) — eso conserva el gesto de usuario;
+     2) cuando llega la URL de Stripe, la volcamos en esa pestaña (fillCheckoutTab).
+   Fuera de standalone (navegador normal) seguimos con location.href de siempre. */
+function isStandalonePWA() {
+  try {
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+           window.navigator.standalone === true;
+  } catch { return false; }
+}
+// Abre (síncrono, dentro del clic) la pestaña destino si procede. Devuelve la
+// referencia a la ventana o null si vamos a navegar en la misma.
+function openCheckoutTab() {
+  if (!isStandalonePWA()) return null;
+  try {
+    const w = window.open("", "_blank");
+    if (w) { try { w.opener = null; } catch {} return w; }
+  } catch {}
+  return null; // si el navegador lo bloquea, caeremos al fallback
+}
+// Vuelca la URL en la pestaña abierta; si no hay pestaña (o falló), navega en la
+// ventana actual como antes.
+function fillCheckoutTab(win, url) {
+  if (win && !win.closed) { try { win.location.href = url; return; } catch {} }
+  window.location.href = url;
+}
+
 // V890 · Boost: activar (gasta 1 de la bolsa) y, si no queda, abrir la hoja de
 // compra / mejora de plan. El botón de Descubrir llama a activateBoostFlow().
 async function activateBoostFlow() {
@@ -11953,8 +11992,12 @@ async function openBoostPaywall(prefBoost, prefPacks) {
         const restore = () => { card.disabled = false; goLabel.textContent = prev; };
         try {
           if (publicConfig?.payments?.checkout_live) {
+            // V901 · En PWA instalada, abre la pestaña del sistema DENTRO del clic
+            // (antes del await) para que no la bloquee el navegador.
+            const payTab = openCheckoutTab();
             const cs = await datingApi.checkoutBoost(p.id);
-            if (cs && cs.url) { window.location.href = cs.url; return; }
+            if (cs && cs.url) { fillCheckoutTab(payTab, cs.url); return; }
+            if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
             toast((cs && (cs.reason || cs.message)) || "No se pudo iniciar el pago");
             restore();
             return;
@@ -12278,12 +12321,14 @@ async function openReadsPaywall(prefStatus) {
             //   sesión de Checkout y redirigimos a la página de pago de Stripe.
             //   El crédito se concede al volver, vía webhook verificado.
             if (publicConfig?.payments?.checkout_live) {
+              const payTab = openCheckoutTab(); // V901 · abrir en Chrome del sistema si es PWA
               const cs = await fetch("/api/my/checkout/reads", {
                 method: "POST", headers: chatApi.headers(),
                 body: JSON.stringify({ pack: p.id }),
               });
               const csj = await cs.json().catch(() => ({}));
-              if (cs.ok && csj.url) { window.location.href = csj.url; return; }
+              if (cs.ok && csj.url) { fillCheckoutTab(payTab, csj.url); return; }
+              if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
               toast(csj.reason || "No se pudo iniciar el pago");
               restore();
               return;
@@ -16694,6 +16739,7 @@ function screenSubscriptions(root) {
               if (publicConfig?.payments?.checkout_live) {
                 const prev = btn.textContent;
                 btn.disabled = true; btn.textContent = "Redirigiendo al pago…";
+                const payTab = openCheckoutTab(); // V901 · abrir en Chrome del sistema si es PWA
                 try {
                   // Recuerda el plan elegido para celebrarlo al volver del pago.
                   try { sessionStorage.setItem("aura_pay_plan", JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "annual" : "monthly" })); } catch {}
@@ -16702,9 +16748,13 @@ function screenSubscriptions(root) {
                     body: JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "yearly" : "monthly" }),
                   });
                   const csj = await cs.json().catch(() => ({}));
-                  if (cs.ok && csj.url) { window.location.href = csj.url; return; }
+                  if (cs.ok && csj.url) { fillCheckoutTab(payTab, csj.url); return; }
+                  if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
                   toast(csj.reason || "No se pudo iniciar el pago");
-                } catch { toast("Error iniciando el pago"); }
+                } catch {
+                  if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
+                  toast("Error iniciando el pago");
+                }
                 btn.disabled = false; btn.textContent = prev;
                 return;
               }
