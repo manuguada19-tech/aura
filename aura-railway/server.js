@@ -1434,6 +1434,13 @@ async function migrate() {
   try { await pool.execute("ALTER TABLE photos ADD COLUMN moderation_reason VARCHAR(200) NULL"); } catch (e) { /* ya existe */ }
   try { await pool.execute("ALTER TABLE photos ADD COLUMN reviewed_by VARCHAR(190) NULL"); } catch (e) { /* ya existe */ }
   try { await pool.execute("ALTER TABLE photos ADD COLUMN reviewed_at TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
+  // V886 · Resultado del prefiltro con IA (si está configurado). Aditivo: si la
+  // IA está apagada o no hay clave, estas columnas quedan a NULL y todo sigue
+  // siendo moderación 100% humana. ai_score 0..1 (mayor = más probable que
+  // infrinja), ai_label = categoría dominante, ai_checked_at = cuándo se analizó.
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN ai_score FLOAT NULL"); } catch (e) { /* ya existe */ }
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN ai_label VARCHAR(60) NULL"); } catch (e) { /* ya existe */ }
+  try { await pool.execute("ALTER TABLE photos ADD COLUMN ai_checked_at TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
 
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
@@ -3559,11 +3566,136 @@ app.get("/api/verify/id/status", wrap(async (req, res) => {
 }));
 
 /* ============================================================
+   V886 · MODERACIÓN AUTOMÁTICA CON IA (prefiltro de fotos)
+   ------------------------------------------------------------
+   Analiza una foto (data URL o URL http) con el proveedor configurado y
+   devuelve { ok, score(0..1), label, provider, raw }. score alto = más probable
+   que la imagen infrinja (desnudez, gore, etc.). NUNCA lanza: si algo falla
+   (sin clave, red, formato) devuelve { ok:false, error } y el circuito sigue
+   siendo manual. La clave vive en settings 'moderation.ai.api_key' (fuera de
+   content.*, que es público). Proveedores soportados de verdad:
+     · sightengine → API de imágenes (nudity/gore/offensive/weapon…).
+     · openai      → endpoint omni-moderation (multimodal image_url).
+   'aws' (Rekognition) requiere firma SigV4/SDK: se marca como no disponible y
+   la foto va a revisión humana (no rompe nada).
+============================================================ */
+// Convierte una foto guardada (data URL o http) a algo que el proveedor acepte.
+function aiPhotoToInput(url) {
+  const s = String(url || "");
+  const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(s);
+  if (m) return { kind: "base64", mime: m[1], b64: m[2] };
+  if (/^https?:\/\//i.test(s)) return { kind: "url", url: s };
+  return null;
+}
+// Llama a Sightengine (multipart si es base64, query si es URL). Devuelve el
+// máximo score entre las categorías que nos interesan.
+async function aiModerateSightengine(input, apiKey) {
+  // apiKey se guarda como "user:secret" (api_user:api_secret de Sightengine).
+  const [apiUser, apiSecret] = String(apiKey).split(":");
+  if (!apiUser || !apiSecret) return { ok: false, error: "sightengine_key_format" };
+  const models = "nudity-2.1,gore-2.0,offensive-2.0,weapon";
+  let resp;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    if (input.kind === "url") {
+      const qs = new URLSearchParams({ url: input.url, models, api_user: apiUser, api_secret: apiSecret });
+      resp = await fetch("https://api.sightengine.com/1.0/check.json?" + qs.toString(), { signal: ctrl.signal });
+    } else {
+      const fd = new FormData();
+      fd.append("media", new Blob([Buffer.from(input.b64, "base64")], { type: input.mime }), "photo");
+      fd.append("models", models);
+      fd.append("api_user", apiUser);
+      fd.append("api_secret", apiSecret);
+      resp = await fetch("https://api.sightengine.com/1.0/check.json", { method: "POST", body: fd, signal: ctrl.signal });
+    }
+  } catch (e) { clearTimeout(timer); return { ok: false, error: "network:" + (e.name || e.message) }; }
+  clearTimeout(timer);
+  let j; try { j = await resp.json(); } catch (e) { return { ok: false, error: "bad_json" }; }
+  if (!resp.ok || (j && j.status === "failure")) return { ok: false, error: (j && j.error && j.error.message) || ("http_" + resp.status) };
+  // Extrae el peor score de las categorías relevantes.
+  const cand = [];
+  try {
+    const n = j.nudity || {};
+    // nudity-2.1: sexual_activity, sexual_display, erotica, very_suggestive…
+    ["sexual_activity", "sexual_display", "erotica", "very_suggestive", "suggestive"].forEach((k) => { if (typeof n[k] === "number") cand.push([k, n[k]]); });
+    if (typeof j.gore?.prob === "number") cand.push(["gore", j.gore.prob]);
+    if (typeof j.offensive?.prob === "number") cand.push(["offensive", j.offensive.prob]);
+    if (typeof j.weapon === "number") cand.push(["weapon", j.weapon]);
+    else if (typeof j.weapon?.classes === "object") { const w = Math.max(0, ...Object.values(j.weapon.classes).filter((x) => typeof x === "number")); if (w) cand.push(["weapon", w]); }
+  } catch (e) {}
+  if (!cand.length) return { ok: true, score: 0, label: "clean", raw: j };
+  cand.sort((a, b) => b[1] - a[1]);
+  return { ok: true, score: cand[0][1], label: cand[0][0], raw: j };
+}
+// Llama al endpoint omni-moderation de OpenAI (acepta image_url, incl. data URL).
+async function aiModerateOpenAI(input, apiKey) {
+  const image_url = input.kind === "url" ? input.url : `data:${input.mime};base64,${input.b64}`;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  let resp;
+  try {
+    resp = await fetch("https://api.openai.com/v1/moderations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + apiKey },
+      body: JSON.stringify({ model: "omni-moderation-latest", input: [{ type: "image_url", image_url: { url: image_url } }] }),
+      signal: ctrl.signal,
+    });
+  } catch (e) { clearTimeout(timer); return { ok: false, error: "network:" + (e.name || e.message) }; }
+  clearTimeout(timer);
+  let j; try { j = await resp.json(); } catch (e) { return { ok: false, error: "bad_json" }; }
+  if (!resp.ok) return { ok: false, error: (j && j.error && j.error.message) || ("http_" + resp.status) };
+  const r = j.results && j.results[0];
+  if (!r) return { ok: false, error: "no_result" };
+  const scores = r.category_scores || {};
+  let best = ["clean", 0];
+  for (const [k, v] of Object.entries(scores)) { if (typeof v === "number" && v > best[1]) best = [k, v]; }
+  return { ok: true, score: best[1], label: best[0], raw: r };
+}
+// Punto de entrada: decide proveedor según la config y delega. Lee la config de
+// runtimeSettings (refrescada por el middleware). Devuelve siempre un objeto.
+async function moderatePhotoWithAI(photoUrl) {
+  const enabled = getSetting("moderation.ai.enabled", "false") === "true";
+  const apiKey = getSetting("moderation.ai.api_key", "");
+  if (!enabled) return { ok: false, error: "disabled" };
+  if (!apiKey) return { ok: false, error: "no_key" };
+  const input = aiPhotoToInput(photoUrl);
+  if (!input) return { ok: false, error: "bad_photo" };
+  const provider = getSetting("moderation.ai.provider", "openai");
+  if (provider === "sightengine") return { provider, ...(await aiModerateSightengine(input, apiKey)) };
+  if (provider === "openai") return { provider, ...(await aiModerateOpenAI(input, apiKey)) };
+  return { ok: false, error: "provider_unavailable", provider };
+}
+// Aplica el resultado de la IA a una foto ya insertada (pendiente). Guarda el
+// score/label y, si supera el umbral Y auto_reject está activo, la elimina
+// (rechazo automático). Si no, la deja pendiente para revisión humana. Devuelve
+// { checked, score, label, auto_rejected }.
+async function applyAiModeration(photoId, photoUrl) {
+  const res = await moderatePhotoWithAI(photoUrl);
+  if (!res || !res.ok) return { checked: false, error: (res && res.error) || "unknown" };
+  const score = Math.max(0, Math.min(1, Number(res.score) || 0));
+  const label = String(res.label || "").slice(0, 60);
+  try {
+    await pool.execute("UPDATE photos SET ai_score=?, ai_label=?, ai_checked_at=NOW() WHERE id=? AND is_now_photo=1", [score, label, photoId]);
+  } catch (e) {}
+  const threshold = parseFloat(getSetting("moderation.ai.threshold", "0.85"));
+  const autoReject = getSetting("moderation.ai.auto_reject", "false") === "true";
+  if (autoReject && Number.isFinite(threshold) && score >= threshold) {
+    try {
+      await pool.execute("DELETE FROM photos WHERE id=? AND is_now_photo=1", [photoId]);
+      await logActivity("ai-moderation", `Foto "busco ahora" #${photoId} RECHAZADA por IA (${label} ${score.toFixed(2)} ≥ ${threshold})`);
+    } catch (e) {}
+    return { checked: true, score, label, auto_rejected: true };
+  }
+  return { checked: true, score, label, auto_rejected: false };
+}
+
+/* ============================================================
    V868 · ADMIN: cola de aprobación de fotos "busco ahora"
    ------------------------------------------------------------
    Estas fotos se suben con approved=0 y NO se muestran a nadie hasta que un
-   moderador las revisa aquí. Circuito de moderación humana real (la parte
-   automática con IA se conectará en Fase 4 cuando haya proveedor).
+   moderador las revisa aquí. Circuito de moderación humana real; la parte
+   automática con IA (V886) prefiltra al subir si hay proveedor+clave.
      GET  /api/admin/now-photos/queue           → cola (pendientes por defecto)
      GET  /api/admin/now-photos/:id/image       → previsualización de la imagen
      POST /api/admin/now-photos/:id/approve     → aprobar
@@ -3577,6 +3709,7 @@ app.get("/api/admin/now-photos/queue", wrap(async (req, res) => {
   const limit = Math.min(500, parseInt(req.query.limit || 200, 10) || 200);
   const [rows] = await pool.query(
     `SELECT p.id, p.user_id, p.approved, p.moderation_reason, p.reviewed_by, p.reviewed_at, p.created_at,
+            p.ai_score, p.ai_label, p.ai_checked_at,
             u.name, u.email, u.age, u.city,
             CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text
        FROM photos p JOIN users u ON u.id = p.user_id
@@ -3591,6 +3724,10 @@ app.get("/api/admin/now-photos/queue", wrap(async (req, res) => {
     reason: r.moderation_reason || null,
     reviewed_by: r.reviewed_by || null, reviewed_at: r.reviewed_at || null,
     created_at: r.created_at,
+    // V886 · Resultado del prefiltro IA (null si no se analizó / IA apagada).
+    ai_score: (r.ai_score == null ? null : Number(r.ai_score)),
+    ai_label: r.ai_label || null,
+    ai_checked_at: r.ai_checked_at || null,
     image_url: `/api/admin/now-photos/${r.id}/image`,
   }));
   res.json({ ok: true, data: { items } });
@@ -3637,6 +3774,19 @@ app.post("/api/admin/now-photos/:id/reject", wrap(async (req, res) => {
   res.json({ ok: true, reason });
 }));
 
+// V886 · Analizar una foto concreta con la IA a demanda (botón del panel).
+// Útil para probar la configuración o revisar una foto dudosa manualmente.
+// Respeta auto_reject: si está activo y supera el umbral, la elimina.
+app.post("/api/admin/now-photos/:id/ai-check", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ ok: false, error: "bad_id" });
+  const [[p]] = await pool.query("SELECT url FROM photos WHERE id=? AND is_now_photo=1 LIMIT 1", [id]);
+  if (!p) return res.status(404).json({ ok: false, error: "not_found" });
+  const out = await applyAiModeration(id, p.url);
+  if (!out.checked) return res.status(200).json({ ok: false, error: out.error || "ai_unavailable" });
+  res.json({ ok: true, data: out });
+}));
+
 /* ============================================================
    V884 · ADMIN: configuración de la moderación con IA
    ------------------------------------------------------------
@@ -3680,6 +3830,11 @@ app.put("/api/admin/moderation/ai-config", requireAdmin, wrap(async (req, res) =
   // Solo se escribe la clave si viene una nueva no vacía (así "conservar" funciona).
   if (typeof b.api_key === "string" && b.api_key.trim()) {
     await set("moderation.ai.api_key", b.api_key.trim().slice(0, 300));
+  }
+  // V886 · clear_key:true elimina la clave guardada (para dejar de usar la IA sin
+  // rastro). Es explícito para no chocar con la semántica de "vacío = conservar".
+  if (b.clear_key === true) {
+    try { await pool.execute("DELETE FROM settings WHERE k='moderation.ai.api_key'"); } catch (e) {}
   }
   await loadRuntimeSettings();
   const who = (req.admin && req.admin.email) || "admin";
@@ -8601,7 +8756,14 @@ app.post("/api/my/now-photo", wrap(async (req, res) => {
   const [ins] = await pool.execute(
     "INSERT INTO photos (user_id, url, is_primary, approved, is_now_photo) VALUES (?,?,0,0,1)", [me, data]
   );
-  res.json({ ok: true, id: ins.insertId, pending: true });
+  // V886 · Prefiltro con IA (si está configurado). Analiza la foto recién subida
+  // en segundo plano: guarda el score y, si auto_reject está activo y supera el
+  // umbral, la elimina automáticamente. NO bloquea la respuesta al usuario (la
+  // foto queda "pendiente" igualmente); si la IA está apagada o falla, no pasa
+  // nada y la revisa un humano. Se ejecuta tras responder para no ralentizar.
+  const newId = ins.insertId;
+  setImmediate(() => { applyAiModeration(newId, data).catch(() => {}); });
+  res.json({ ok: true, id: newId, pending: true });
 }));
 
 app.delete("/api/my/now-photo", wrap(async (req, res) => {
@@ -13813,7 +13975,12 @@ app.get("/api/health", (req, res) => {
 const BUILD_ID = (() => {
   try {
     const h = crypto.createHash("sha1");
-    for (const f of ["app.js", "styles.css", "index.html"]) {
+    // V886 · Incluimos también los assets del PANEL DE ADMIN (admin.js y
+    // admin_features.js). Antes el hash solo cubría la app de usuarios, así que
+    // al desplegar cambios del admin el navegador servía la versión cacheada y
+    // había que forzar recarga a mano. Ahora cualquier cambio en estos ficheros
+    // cambia el BUILD_ID y el checker del cliente recarga solo.
+    for (const f of ["app.js", "styles.css", "index.html", "admin.js", "admin_features.js"]) {
       try { h.update(fs.readFileSync(path.join(__dirname, "public", f))); } catch {}
     }
     return h.digest("hex").slice(0, 12);

@@ -246,5 +246,43 @@
       document.body.appendChild(s2);
     })();
   </script>
+  <script>
+    // V886 · Auto-actualización del PANEL DE ADMIN. Igual que la app de usuarios,
+    // compara el build cargado con /api/version cada minuto (y al volver a la
+    // pestaña) y, si hay un despliegue nuevo, recarga con los assets frescos.
+    // Antes esto solo lo hacía la app; el admin se quedaba con la versión vieja
+    // hasta recargar a mano. Precaución: NO recarga si hay un modal/diálogo
+    // abierto o un formulario a medias, para no perder trabajo del moderador.
+    (function(){
+      var CHECK_MS = 60000, currentBuild = null, reloading = false;
+      async function fetchBuild(){
+        try { var r = await fetch("/api/version", { cache: "no-store" }); if (!r.ok) return null; var d = await r.json(); return (d && d.build) ? String(d.build) : null; }
+        catch(e){ return null; }
+      }
+      function busy(){
+        try {
+          // Diálogos/modales abiertos del panel (prompt2, confirmDialog, overlays…).
+          if (document.querySelector(".ac-overlay, .fx-modal, .fx-modal-overlay, [role='dialog']")) return true;
+          // Un input/textarea con foco = el admin está escribiendo algo.
+          var a = document.activeElement;
+          if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return true;
+        } catch(e){}
+        return false;
+      }
+      async function purgeAndReload(){
+        if (reloading) return; reloading = true;
+        try { if (window.caches && caches.keys) { var keys = await caches.keys(); await Promise.all(keys.map(function(k){ return caches.delete(k); })); } } catch(e){}
+        location.reload();
+      }
+      async function check(){
+        var b = await fetchBuild(); if (!b) return;
+        if (currentBuild == null) { currentBuild = b; return; }
+        if (b !== currentBuild && !busy()) purgeAndReload();
+      }
+      check();
+      setInterval(check, CHECK_MS);
+      document.addEventListener("visibilitychange", function(){ if (document.visibilityState === "visible") check(); });
+    })();
+  </script>
 </body>
 </html>

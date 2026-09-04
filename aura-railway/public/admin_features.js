@@ -1697,6 +1697,17 @@
         });
       }
 
+      // V886 · Etiqueta del resultado de la IA para una foto (si se analizó).
+      // Verde = bajo riesgo, ámbar = medio, rojo = supera/roza el umbral.
+      function aiBadgeHtml(r) {
+        if (r.ai_score == null) return "";
+        const thr = parseFloat((state.ai && state.ai.threshold) || "0.85");
+        const s = Number(r.ai_score);
+        const cls = s >= thr ? "red" : (s >= thr * 0.6 ? "amber" : "ok");
+        const pct = Math.round(s * 100);
+        return `<span class="fx-modq-ai-score fx-badge ${cls}" title="Prefiltro IA: ${escapeHtml(r.ai_label || "")} ${pct}%">\ud83e\udd16 ${pct}%${r.ai_label ? " \u00b7 " + escapeHtml(r.ai_label) : ""}</span>`;
+      }
+
       function makeCard(r) {
         const pending = r.status === "pending";
         const c = document.createElement("div"); c.className = "fx-modq-card";
@@ -1710,6 +1721,7 @@
             <div class="fx-modq-name">${escapeHtml(r.name || "\u2014")}${r.age ? ", " + r.age : ""}</div>
             <div class="fx-modq-sub">#${r.user_id}${r.email ? " \u00b7 " + escapeHtml(r.email) : ""}</div>
             <div class="fx-modq-phrase">${r.now_status_text ? ("\u201c" + escapeHtml(r.now_status_text) + "\u201d") : "\u2014 sin frase \u2014"}</div>
+            ${aiBadgeHtml(r) ? `<div class="fx-modq-airow">${aiBadgeHtml(r)}</div>` : ""}
             <div class="fx-modq-meta"><span>\ud83d\udccd ${escapeHtml(r.city || "\u2014")}</span><span>\ud83d\udd52 ${fmtDate(r.created_at)}</span></div>
           </div>`;
         c.querySelector(".fx-modq-photo").addEventListener("click", () => window.open(r.image_url + auth, "_blank"));
@@ -1721,6 +1733,19 @@
           acts.appendChild(btn("Rechazar", { variant: "danger", icon: "&#x2715;", onClick: () => rejectFlow(r) }));
         } else {
           acts.appendChild(btn("Quitar foto", { variant: "danger-outline", icon: "&#x1f5d1;", onClick: () => rejectFlow(r) }));
+        }
+        // Analizar con IA a demanda (solo si la IA está activa y con clave).
+        if (state.ai && state.ai.enabled && state.ai.has_key) {
+          acts.appendChild(btn("", { variant: "ghost", icon: "\ud83e\udd16", title: "Analizar con IA", onClick: async () => {
+            toast("Analizando con IA\u2026", "info");
+            try {
+              const resp = await api(`/api/admin/now-photos/${r.id}/ai-check`, { method: "POST" });
+              const d = (resp && resp.data && (resp.data.data || resp.data)) || {};
+              if (d && d.checked) { toast(d.auto_rejected ? `Rechazada por IA (${d.label} ${Math.round(d.score*100)}%)` : `IA: ${d.label} ${Math.round(d.score*100)}%`, d.auto_rejected ? "err" : "ok"); }
+              else { toast("La IA no pudo analizar (" + ((d && d.error) || "sin clave/desactivada") + ")", "err"); }
+              reload();
+            } catch (e) { toast("Error al analizar con IA", "err"); }
+          } }));
         }
         acts.appendChild(btn("", { variant: "ghost", icon: "\u26a0\ufe0f", title: "Sancionar al usuario", onClick: () => sanctionFlow(r) }));
         c.appendChild(acts);
@@ -1763,14 +1788,17 @@
         if (!ai) { try { ai = unwrap(await api("/api/admin/moderation/ai-config")); } catch { ai = {}; } }
         const out = await prompt2({ title: "\ud83e\udd16 Moderaci\u00f3n con IA", submitLabel: "Guardar", fields: [
           { name: "enabled", label: "Prefiltro autom\u00e1tico con IA", type: "select", options: [ { value: "1", label: "Activado" }, { value: "0", label: "Desactivado" } ], default: ai.enabled ? "1" : "0" },
-          { name: "provider", label: "Proveedor", type: "select", options: [ { value: "openai", label: "OpenAI (moderation)" }, { value: "sightengine", label: "Sightengine" }, { value: "aws", label: "AWS Rekognition" } ], default: ai.provider || "openai" },
-          { name: "api_key", label: ai.has_key ? `Clave API (guardada: ${ai.key_hint || "\u2022\u2022\u2022\u2022"}) \u2014 deja vac\u00edo para conservar` : "Clave API", type: "password", placeholder: ai.has_key ? "\u2022\u2022\u2022\u2022 conservar actual" : "sk-\u2026" },
+          { name: "provider", label: "Proveedor", type: "select", options: [ { value: "openai", label: "OpenAI (omni-moderation)" }, { value: "sightengine", label: "Sightengine (recomendado para fotos)" }, { value: "aws", label: "AWS Rekognition (no disponible a\u00fan)" } ], default: ai.provider || "openai" },
+          { name: "api_key", label: ai.has_key ? `Clave API (guardada: ${ai.key_hint || "\u2022\u2022\u2022\u2022"}) \u2014 deja vac\u00edo para conservar` : "Clave API \u00b7 OpenAI: sk-\u2026 \u00b7 Sightengine: usuario:secreto", type: "password", placeholder: ai.has_key ? "\u2022\u2022\u2022\u2022 conservar actual" : "sk-\u2026  \u00f3  api_user:api_secret" },
           { name: "threshold", label: "Umbral de confianza (0\u20131)", type: "number", default: ai.threshold || "0.85" },
           { name: "auto_reject", label: "Rechazo autom\u00e1tico si supera el umbral", type: "select", options: [ { value: "0", label: "No (siempre revisi\u00f3n humana)" }, { value: "1", label: "S\u00ed" } ], default: ai.auto_reject ? "1" : "0" },
-        ] });
+        ].concat(ai.has_key ? [
+          { name: "clear_key", label: "Eliminar la clave guardada", type: "select", options: [ { value: "0", label: "No, conservar" }, { value: "1", label: "S\u00ed, borrarla" } ], default: "0" },
+        ] : []) });
         if (!out) return;
         const body = { enabled: out.enabled === "1", provider: out.provider, threshold: out.threshold, auto_reject: out.auto_reject === "1" };
-        if (out.api_key && out.api_key.trim()) body.api_key = out.api_key.trim();
+        if (out.clear_key === "1") body.clear_key = true;
+        else if (out.api_key && out.api_key.trim()) body.api_key = out.api_key.trim();
         try { await api("/api/admin/moderation/ai-config", { method: "PUT", body }); toast("Configuraci\u00f3n de IA guardada", "ok"); reload(); }
         catch (e) { toast("Error guardando", "err"); }
       }
@@ -3417,6 +3445,8 @@
   .fx-modq-name { font-weight:700; font-size:14px; }
   .fx-modq-sub { font-size:11px; color:#96a0b8; margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .fx-modq-phrase { font-size:12.5px; color:#c9d0e0; margin-top:8px; font-style:italic; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:34px; }
+  .fx-modq-airow { margin-top:8px; }
+  .fx-modq-ai-score { font-size:11px; }
   .fx-modq-meta { display:flex; justify-content:space-between; gap:8px; font-size:10.5px; color:#7c8394; margin-top:8px; }
   .fx-modq-acts { display:flex; gap:6px; padding:10px 12px 12px; border-top:1px solid rgba(255,255,255,0.05); align-items:center; }
   .fx-modq-acts .fx-btn { flex:1; justify-content:center; padding:8px 6px; }
