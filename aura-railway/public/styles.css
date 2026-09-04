@@ -9615,24 +9615,31 @@ body.map-open { overflow: hidden; }
   display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
 }
 
-/* Segmento de género (Todos / Mujeres / Hombres) */
+/* Segmento de género (Todos / Mujeres / Hombres / identidades LGTB) */
 .map-seg {
-  /* V859 · FIX solapamiento: al añadir los chips "Nuevos" y "Filtros" a la misma
-     fila, `flex:1;min-width:0` dejaba que el segmento se encogiera POR DEBAJO del
-     ancho de sus botones (Todos/Mujeres/Hombres), que entonces se desbordaban y
-     se pintaban ENCIMA del chip "En línea" (se leía "Muje●s Enlíneabres"). Ahora
-     el segmento conserva su ancho natural (flex:0 0 auto) y es la fila entera la
-     que hace scroll horizontal, como ya estaba previsto. */
-  flex: 0 0 auto; min-width: 0;
+  /* V909 · En la Zona LGTB+ el segmento tiene hasta 6 opciones (No binario,
+     Trans, Género fluido…) y con `flex:0 0 auto` (ancho natural, sin ajuste ni
+     scroll) se SALÍA por la derecha en móviles estrechos: la última opción se
+     cortaba y los textos largos se partían en dos líneas. Ahora el segmento
+     ocupa toda la fila (basis 100%) y, si no cabe, hace SCROLL horizontal sin
+     cortar nada (los botones no se parten ni se solapan). En Hetero, con 3
+     opciones, los botones siguen repartiéndose a lo ancho como antes. */
+  flex: 1 1 100%; max-width: 100%;
   display: flex; gap: 4px; padding: 4px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; -ms-overflow-style: none;
   background: color-mix(in srgb, var(--bg) 55%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 999px;
 }
+.map-seg::-webkit-scrollbar { display: none; }
 /* V845 · El chip "En línea" no se encoge ni se corta al ir en la misma fila. */
 .map-filterbar-row > .map-chip { flex: 0 0 auto; }
 .map-seg-btn {
-  flex: 1; padding: 8px 6px; border: 0; border-radius: 999px;
+  /* V909 · grow para repartirse a lo ancho cuando sobran (Hetero) pero shrink 0
+     y nowrap para no comprimirse ni partir el texto cuando no caben (LGTB). */
+  flex: 1 0 auto; white-space: nowrap;
+  padding: 8px 12px; border: 0; border-radius: 999px;
   background: transparent; color: var(--text-soft);
   font-weight: 700; font-size: 13px; cursor: pointer;
   transition: background .15s ease, color .15s ease;
