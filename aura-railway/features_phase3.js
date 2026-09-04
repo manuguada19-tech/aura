@@ -404,7 +404,11 @@ function register(app, pool, helpers) {
     // education/pets/exercise/smoke/drink. Se aplican en applyPreferenceFilters.
     // V788 · Altura y peso (rangos) pasan a filtros BÁSICOS: se muestran en la
     // hoja de filtros para todos los usuarios, igual que edad o distancia.
-    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities","looking_for","relationship","interests","education","pets","exercise","smoke","drink","height_min","height_max","weight_min","weight_max"];
+    // V887 · Nuevos filtros del buscador (básicos, disponibles para todos):
+    //   tribe / body_type / meet_at / health_practices (multi) + nsfw_ok y
+    //   not_chatted_today (flags). Se aplican en applyPreferenceFilters y
+    //   /api/discover. Aditivo y retrocompatible.
+    const basic = ["age_min","age_max","distance_km","gender","city","cities","ethnicities","looking_for","relationship","interests","education","pets","exercise","smoke","drink","height_min","height_max","weight_min","weight_max","tribe","body_type","meet_at","health_practices","nsfw_ok","not_chatted_today"];
     // Filtros avanzados (solo Oro+)
     const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages"];
     const finalFilters = {};

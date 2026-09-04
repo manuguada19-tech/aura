@@ -1368,6 +1368,25 @@ async function migrate() {
     try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
   }
 
+  // V887 · Nuevos campos de perfil para ampliar el buscador (estilo Grindr):
+  //   · tribe            → "tribu" (un valor).
+  //   · body_type        → tipo de cuerpo (un valor).
+  //   · meet_at          → dónde prefiere quedar (un valor).
+  //   · nsfw_ok          → acepta recibir fotos NSFW (0/1).
+  //   · health_practices → prácticas de salud (JSON array multi-selección).
+  // Todo aditivo, opcional y retrocompatible: NULL/0 = sin dato (comportamiento
+  // previo). El filtro por cada uno es opt-in (solo se aplica si el usuario
+  // filtra por ese campo). health_practices es JSON como interests/prompts.
+  for (const stmt of [
+    "ALTER TABLE users ADD COLUMN tribe VARCHAR(40) NULL",
+    "ALTER TABLE users ADD COLUMN body_type VARCHAR(40) NULL",
+    "ALTER TABLE users ADD COLUMN meet_at VARCHAR(30) NULL",
+    "ALTER TABLE users ADD COLUMN nsfw_ok TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN health_practices TEXT NULL",
+  ]) {
+    try { await pool.execute(stmt); } catch (e) { /* ya existe */ }
+  }
+
   // V782: mismo blindaje para el RESTO de columnas que solo vivían en el
   // CREATE TABLE. Así ninguna base de datos antigua se queda sin ellas (evita
   // repetir el fallo del peso). Todo idempotente y retrocompatible.
@@ -7747,6 +7766,34 @@ function applyPreferenceFilters(where, params, f) {
   };
   applyRange("u.height", f.height_min, f.height_max, 120, 230);
   applyRange("u.weight", f.weight_min, f.weight_max, 35, 250);
+
+  // V887 · Nuevos filtros del buscador. Mismo criterio opt-in que los anteriores:
+  //   · tribe / body_type / meet_at → multi-selección IN (...). NULL excluido
+  //     SOLO si el usuario filtra por ese campo. Vacío = sin filtro.
+  //   · nsfw_ok → si el usuario pide "solo quien acepta NSFW", exige = 1.
+  //   · health_practices → JSON array; coincide si el perfil tiene AL MENOS UNA
+  //     de las elegidas (igual que interests). Perfil sin datos excluido solo al
+  //     filtrar por este campo.
+  const facetCols = [
+    ["tribe", "u.tribe"], ["body_type", "u.body_type"], ["meet_at", "u.meet_at"],
+  ];
+  for (const [key, col] of facetCols) {
+    let list = Array.isArray(f[key]) ? f[key] : (f[key] != null ? [f[key]] : []);
+    list = list.map(v => String(v == null ? "" : v).trim()).filter(Boolean).slice(0, 20);
+    if (!list.length) continue;
+    where.push(`(${col} IN (${list.map(() => "?").join(",")}))`);
+    for (const v of list) params.push(v);
+  }
+  if (f.nsfw_ok === true || f.nsfw_ok === 1 || f.nsfw_ok === "1") {
+    where.push("u.nsfw_ok = 1");
+  }
+  let hps = Array.isArray(f.health_practices) ? f.health_practices : (f.health_practices != null ? [f.health_practices] : []);
+  hps = hps.map(v => String(v == null ? "" : v).trim()).filter(Boolean).slice(0, 20);
+  if (hps.length) {
+    const ors = hps.map(() => "JSON_CONTAINS(u.health_practices, ?)");
+    where.push(`(u.health_practices IS NOT NULL AND (${ors.join(" OR ")}))`);
+    for (const v of hps) params.push(JSON.stringify(v));
+  }
 }
 
 app.get("/api/discover", wrap(async (req, res) => {
@@ -7775,6 +7822,19 @@ app.get("/api/discover", wrap(async (req, res) => {
     // Excluir bloqueos en ambos sentidos
     where.push("u.id NOT IN (SELECT target_id FROM blocks WHERE user_id = ?)"); params.push(me);
     where.push("u.id NOT IN (SELECT user_id FROM blocks WHERE target_id = ?)"); params.push(me);
+    // V887 · "No ha chateado hoy": excluye perfiles con los que YA tengo una
+    // conversación cuyo último mensaje es de hoy (fecha local del servidor).
+    // Opt-in: solo se aplica si el usuario activa el filtro. Retrocompatible.
+    if (f.not_chatted_today === true || f.not_chatted_today === 1 || f.not_chatted_today === "1") {
+      where.push(`u.id NOT IN (
+        SELECT CASE WHEN c.user_a = ? THEN c.user_b ELSE c.user_a END
+          FROM conversations c
+         WHERE (c.user_a = ? OR c.user_b = ?)
+           AND c.last_message_at IS NOT NULL
+           AND DATE(c.last_message_at) = CURDATE()
+      )`);
+      params.push(me, me, me);
+    }
   }
 
   // Filtro de edad (básico)
@@ -7851,6 +7911,7 @@ app.get("/api/discover", wrap(async (req, res) => {
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden, u.plan,
             u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
+            u.tribe, u.body_type, u.meet_at, u.nsfw_ok, u.health_practices,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
@@ -7882,6 +7943,9 @@ app.get("/api/discover", wrap(async (req, res) => {
     r.distance = (r.distance == null ? null : Number(r.distance));
     r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+    // V887 · health_practices se guarda como JSON string → array para la UI.
+    try { r.health_practices = r.health_practices ? JSON.parse(r.health_practices) : []; } catch { r.health_practices = []; }
+    r.nsfw_ok = !!r.nsfw_ok;
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
     r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
     delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
@@ -8030,6 +8094,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
             u.height, u.weight, u.bio, u.photo_url, u.verified, u.online,
             u.job, u.looking_for, u.relationship, u.interests, u.privacy_hidden, u.plan,
             u.ethnicity, u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
+            u.tribe, u.body_type, u.meet_at, u.nsfw_ok, u.health_practices,
             TIMESTAMPDIFF(SECOND, u.last_login, NOW()) AS last_active_secs,
             CASE WHEN u.now_status_until > NOW() THEN u.now_status_text ELSE NULL END AS now_status_text,
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
@@ -8063,6 +8128,9 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     r.distance = (r.distance == null ? null : Number(r.distance));
     r.gps_ok = !!r.gps_ok; // V744 · true = ese usuario tiene GPS activo (distancia real); false = ubicación desactivada
     try { r.interests = r.interests ? JSON.parse(r.interests) : []; } catch { r.interests = []; }
+    // V887 · health_practices se guarda como JSON string → array para la UI.
+    try { r.health_practices = r.health_practices ? JSON.parse(r.health_practices) : []; } catch { r.health_practices = []; }
+    r.nsfw_ok = !!r.nsfw_ok;
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
     r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
     delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
@@ -8893,7 +8961,7 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [[u]] = await pool.query(
-    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in, (SELECT approved FROM photos WHERE user_id=users.id AND is_now_photo=1 LIMIT 1) AS now_photo_approved FROM users WHERE id=? LIMIT 1", [me]
+    "SELECT id, name, bio, city, country, job, height, weight, gender, ethnicity, looking_for, relationship, interests, pets, smoke, drink, education, exercise, prompts, tribe, body_type, meet_at, nsfw_ok, health_practices, privacy_hidden, photo_url, CASE WHEN now_status_until > NOW() THEN now_status_text ELSE NULL END AS now_status_text, CASE WHEN now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), now_status_until) ELSE NULL END AS now_status_expires_in, (SELECT approved FROM photos WHERE user_id=users.id AND is_now_photo=1 LIMIT 1) AS now_photo_approved FROM users WHERE id=? LIMIT 1", [me]
   );
   if (!u) return res.status(404).json({ ok: false, error: "not_found" });
   // V866 · Estado "Ahora mismo" propio (para que el editor lo muestre).
@@ -8909,6 +8977,11 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   let prompts = [];
   try { prompts = u.prompts ? JSON.parse(u.prompts) : []; } catch { prompts = []; }
   u.prompts = Array.isArray(prompts) ? prompts : [];
+  // V887 · health_practices (JSON array) y nsfw_ok (bool) para el editor/filtros.
+  let healthPractices = [];
+  try { healthPractices = u.health_practices ? JSON.parse(u.health_practices) : []; } catch { healthPractices = []; }
+  u.health_practices = Array.isArray(healthPractices) ? healthPractices : [];
+  u.nsfw_ok = !!u.nsfw_ok;
   // V742 · privacidad: devolvemos el objeto {campo:true} para pintar los toggles.
   const privacy = parsePrivacy(u.privacy_hidden);
   delete u.privacy_hidden;
@@ -8940,6 +9013,18 @@ app.post("/api/my/profile", wrap(async (req, res) => {
   if ("drink" in b) { sets.push("drink=?"); vals.push(b.drink ? String(b.drink).slice(0, 30) : null); }
   if ("education" in b) { sets.push("education=?"); vals.push(b.education ? String(b.education).slice(0, 60) : null); }
   if ("exercise" in b) { sets.push("exercise=?"); vals.push(b.exercise ? String(b.exercise).slice(0, 30) : null); }
+  // V887 · Campos nuevos del buscador (Grindr-style). Cadenas cortas saneadas.
+  if ("tribe" in b) { sets.push("tribe=?"); vals.push(b.tribe ? String(b.tribe).slice(0, 40) : null); }
+  if ("body_type" in b) { sets.push("body_type=?"); vals.push(b.body_type ? String(b.body_type).slice(0, 40) : null); }
+  if ("meet_at" in b) { sets.push("meet_at=?"); vals.push(b.meet_at ? String(b.meet_at).slice(0, 30) : null); }
+  if ("nsfw_ok" in b) { sets.push("nsfw_ok=?"); vals.push(b.nsfw_ok ? 1 : 0); }
+  // health_practices: JSON array de ids saneado (multi-selección).
+  if ("health_practices" in b) {
+    const arr = Array.isArray(b.health_practices)
+      ? b.health_practices.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim().slice(0, 40)).slice(0, 20)
+      : [];
+    sets.push("health_practices=?"); vals.push(JSON.stringify(arr));
+  }
   // V776 · Prompts (preguntas de perfil / rompehielos): array de {q,a} saneado.
   if ("prompts" in b) {
     let arr = Array.isArray(b.prompts) ? b.prompts : [];

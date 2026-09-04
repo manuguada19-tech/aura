@@ -1835,6 +1835,10 @@ const state = {
     pets: [], smoke: [], drink: [], education: [], exercise: [],
     // V788 · rangos de altura (cm) y peso (kg). 0/vacío = sin filtro.
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
+    // V887 · filtros nuevos del buscador (multi): tribu, tipo de cuerpo,
+    // dónde quedar, prácticas de salud; nsfwOnly y notChattedToday (bool).
+    tribe: [], bodyType: [], meetAt: [], healthPractices: [],
+    nsfwOnly: false, notChattedToday: false,
   },
   favorites: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
@@ -3636,6 +3640,44 @@ const EXERCISE_OPTIONS = [
   { id: "often",     label: "A menudo",  emoji: "🏃" },
   { id: "sometimes", label: "A veces",   emoji: "🚶" },
   { id: "never",     label: "Nunca",     emoji: "🛋️" },
+];
+// V887 · Nuevos campos de perfil / filtros del buscador (estilo Grindr). Mismo
+// formato {id,label,emoji}. El `id` es lo que se guarda y filtra en el backend.
+const TRIBE_OPTIONS = [
+  { id: "bear",       label: "Oso",          emoji: "🐻" },
+  { id: "otter",      label: "Nutria",       emoji: "🦦" },
+  { id: "muscle",     label: "Musculado",    emoji: "💪" },
+  { id: "twink",      label: "Twink",        emoji: "✨" },
+  { id: "daddy",      label: "Papá",         emoji: "👨" },
+  { id: "chaser",     label: "Chaser",       emoji: "🎯" },
+  { id: "discreet",   label: "Discreto",     emoji: "🤫" },
+  { id: "trans",      label: "Trans",        emoji: "⚧️" },
+  { id: "leather",    label: "Leather",      emoji: "🖤" },
+  { id: "geek",       label: "Geek",         emoji: "🤓" },
+  { id: "jock",       label: "Deportista",   emoji: "🏅" },
+  { id: "clean_cut",  label: "Convencional", emoji: "🙂" },
+];
+const BODY_TYPE_OPTIONS = [
+  { id: "slim",     label: "Delgado",        emoji: "🌱" },
+  { id: "fit",      label: "Fit / Atlético", emoji: "🏃" },
+  { id: "average",  label: "Promedio",       emoji: "🙂" },
+  { id: "muscular", label: "Musculado",      emoji: "💪" },
+  { id: "large",    label: "Robusto",        emoji: "🧸" },
+  { id: "curvy",    label: "Con curvas",     emoji: "🍑" },
+];
+const MEET_AT_OPTIONS = [
+  { id: "my_place",  label: "Mi casa",     emoji: "🏠" },
+  { id: "your_place",label: "Tu casa",     emoji: "🚪" },
+  { id: "either",    label: "Cualquiera",  emoji: "🔁" },
+  { id: "out",       label: "Fuera",       emoji: "🍸" },
+  { id: "unsure",    label: "Aún no lo sé", emoji: "🤔" },
+];
+const HEALTH_PRACTICES_OPTIONS = [
+  { id: "prep",         label: "PrEP",             emoji: "💊" },
+  { id: "tested",       label: "Al día en pruebas", emoji: "🧪" },
+  { id: "undetectable", label: "Indetectable",     emoji: "✅" },
+  { id: "ask_me",       label: "Pregúntame",       emoji: "💬" },
+  { id: "no_say",       label: "Prefiero no decir", emoji: "🤐" },
 ];
 // V776 · Preguntas de perfil / rompehielos: frases cortas para que el usuario
 // complete. Se guardan como array de {q,a}. El usuario elige cuáles responder.
@@ -8594,6 +8636,8 @@ async function openNearbyMap() {
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
     looking_for: "any", relationship: "any",
     interests: [], education: [], pets: [], exercise: [], smoke: [], drink: [],
+    // V887 · Nuevos filtros del buscador (paridad con "Buscar").
+    tribe: [], bodyType: [], meetAt: [], healthPractices: [], nsfwOnly: false,
   };
   // V852 · ¿Cuenta recién registrada? (account_age_h dentro de la ventana).
   const isNewUser = (u) => u && u.account_age_h != null && Number.isFinite(+u.account_age_h) && +u.account_age_h <= NEW_USER_HOURS;
@@ -9006,6 +9050,19 @@ async function openNearbyMap() {
       const sel = f[key];
       if (sel && sel.length && !sel.includes(val)) return false;
     }
+    // V887 · Nuevos filtros: tribu / tipo de cuerpo / quedar en (exact-match).
+    const facets = [["tribe", u.tribe], ["bodyType", u.body_type], ["meetAt", u.meet_at]];
+    for (const [key, val] of facets) {
+      const sel = f[key];
+      if (sel && sel.length && !sel.includes(val)) return false;
+    }
+    // V887 · Prácticas de salud (al menos una debe coincidir).
+    if (f.healthPractices && f.healthPractices.length) {
+      const has = f.healthPractices.some(h => (u.health_practices || []).includes(h));
+      if (!has) return false;
+    }
+    // V887 · Solo quien acepta fotos NSFW.
+    if (f.nsfwOnly && !u.nsfw_ok) return false;
     return true;
   }
 
@@ -9025,6 +9082,11 @@ async function openNearbyMap() {
     if (f.exercise.length) n++;
     if (f.smoke.length) n++;
     if (f.drink.length) n++;
+    if (f.tribe && f.tribe.length) n++;
+    if (f.bodyType && f.bodyType.length) n++;
+    if (f.meetAt && f.meetAt.length) n++;
+    if (f.healthPractices && f.healthPractices.length) n++;
+    if (f.nsfwOnly) n++;
     return n;
   }
 
@@ -11174,6 +11236,27 @@ function openFilters() {
   const selEx = buildLifestyleFilter("Ejercicio", EXERCISE_OPTIONS, state.filters.exercise);
   const selSmoke = buildLifestyleFilter("Fuma", SMOKE_OPTIONS, state.filters.smoke);
   const selDrink = buildLifestyleFilter("Bebe", DRINK_OPTIONS, state.filters.drink);
+  // V887 · Nuevos filtros del buscador (multi-selección, mismo patrón).
+  const selTribe = buildLifestyleFilter("Tribu", TRIBE_OPTIONS, state.filters.tribe);
+  const selBody = buildLifestyleFilter("Tipo de cuerpo", BODY_TYPE_OPTIONS, state.filters.bodyType);
+  const selMeet = buildLifestyleFilter("Quedar en", MEET_AT_OPTIONS, state.filters.meetAt);
+  const selHealth = buildLifestyleFilter("Prácticas de salud", HEALTH_PRACTICES_OPTIONS, state.filters.healthPractices);
+  // V887 · Interruptores: solo NSFW-friendly y ocultar quien ya chateó hoy.
+  const nsfwInp = el("input", { type: "checkbox", checked: state.filters.nsfwOnly || undefined });
+  nsfwInp.addEventListener("change", () => { state.filters.nsfwOnly = nsfwInp.checked; });
+  const notChatInp = el("input", { type: "checkbox", checked: state.filters.notChattedToday || undefined });
+  notChatInp.addEventListener("change", () => { state.filters.notChattedToday = notChatInp.checked; });
+  wrap.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Preferencias"),
+    el("div", { class: "switch-row" }, [
+      el("span", { style: "font-size:14px" }, "Solo quien acepta fotos NSFW"),
+      el("label", { class: "switch" }, [ nsfwInp, el("span") ]),
+    ]),
+    el("div", { class: "switch-row" }, [
+      el("span", { style: "font-size:14px" }, "No ha chateado hoy"),
+      el("label", { class: "switch" }, [ notChatInp, el("span") ]),
+    ]),
+  ]));
 
   // Facetas reales (ciudades/etnias disponibles). Rellenan ubicación y etnia.
   // V773 · `facetsLoaded` distingue "aún cargando" de "cargado y vacío": antes
@@ -11352,6 +11435,13 @@ function openFilters() {
       state.filters.exercise = Array.from(selEx);
       state.filters.smoke = Array.from(selSmoke);
       state.filters.drink = Array.from(selDrink);
+      // V887 · Nuevos filtros del buscador.
+      state.filters.tribe = Array.from(selTribe);
+      state.filters.bodyType = Array.from(selBody);
+      state.filters.meetAt = Array.from(selMeet);
+      state.filters.healthPractices = Array.from(selHealth);
+      state.filters.nsfwOnly = !!nsfwInp.checked;
+      state.filters.notChattedToday = !!notChatInp.checked;
       datingApi.saveFilters({
         age_min: state.filters.ageMin,
         age_max: state.filters.ageMax,
@@ -11372,6 +11462,13 @@ function openFilters() {
         height_max: state.filters.heightMax || 0,
         weight_min: state.filters.weightMin || 0,
         weight_max: state.filters.weightMax || 0,
+        // V887 · nuevos filtros del buscador.
+        tribe: state.filters.tribe,
+        body_type: state.filters.bodyType,
+        meet_at: state.filters.meetAt,
+        health_practices: state.filters.healthPractices,
+        nsfw_ok: state.filters.nsfwOnly ? 1 : 0,
+        not_chatted_today: state.filters.notChattedToday ? 1 : 0,
       });
       modal.close(); toast("Filtros aplicados");
       const grid = $("#resultsGrid");
@@ -12324,6 +12421,20 @@ function openMapFilters(mf, onApply) {
   const selEx = buildLifestyle("Ejercicio", EXERCISE_OPTIONS, mf.exercise);
   const selSmoke = buildLifestyle("Fuma", SMOKE_OPTIONS, mf.smoke);
   const selDrink = buildLifestyle("Bebe", DRINK_OPTIONS, mf.drink);
+  // V887 · Nuevos filtros del buscador (paridad con "Buscar").
+  const selTribe = buildLifestyle("Tribu", TRIBE_OPTIONS, mf.tribe);
+  const selBody = buildLifestyle("Tipo de cuerpo", BODY_TYPE_OPTIONS, mf.bodyType);
+  const selMeet = buildLifestyle("Quedar en", MEET_AT_OPTIONS, mf.meetAt);
+  const selHealth = buildLifestyle("Prácticas de salud", HEALTH_PRACTICES_OPTIONS, mf.healthPractices);
+  const nsfwInp = el("input", { type: "checkbox", checked: mf.nsfwOnly || undefined });
+  nsfwInp.addEventListener("change", () => { mf.nsfwOnly = nsfwInp.checked; });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Preferencias"),
+    el("div", { class: "switch-row" }, [
+      el("span", { style: "font-size:14px" }, "Solo quien acepta fotos NSFW"),
+      el("label", { class: "switch" }, [ nsfwInp, el("span") ]),
+    ]),
+  ]));
 
   // Acciones.
   sheet.appendChild(el("div", { class: "sheet-actions" }, [
@@ -12345,6 +12456,12 @@ function openMapFilters(mf, onApply) {
       mf.exercise = Array.from(selEx);
       mf.smoke = Array.from(selSmoke);
       mf.drink = Array.from(selDrink);
+      // V887 · Nuevos filtros.
+      mf.tribe = Array.from(selTribe);
+      mf.bodyType = Array.from(selBody);
+      mf.meetAt = Array.from(selMeet);
+      mf.healthPractices = Array.from(selHealth);
+      mf.nsfwOnly = !!nsfwInp.checked;
       modal.close();
       onApply && onApply();
       toast("Filtros aplicados");
@@ -12354,6 +12471,8 @@ function openMapFilters(mf, onApply) {
       mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
       mf.looking_for = "any"; mf.relationship = "any";
       mf.interests = []; mf.education = []; mf.pets = []; mf.exercise = []; mf.smoke = []; mf.drink = [];
+      // V887 · Reset de los nuevos filtros.
+      mf.tribe = []; mf.bodyType = []; mf.meetAt = []; mf.healthPractices = []; mf.nsfwOnly = false;
       modal.close();
       onApply && onApply();
       toast("Filtros restablecidos");
@@ -14042,6 +14161,12 @@ function screenEditProfile(root) {
       drink: drinkRef.id || null,
       education: eduRef.id || null,
       exercise: exRef.id || null,
+      // V887 · Campos nuevos del buscador ("" = sin dato).
+      tribe: tribeRef.id || null,
+      body_type: bodyRef.id || null,
+      meet_at: meetRef.id || null,
+      nsfw_ok: !!nsfwRef.on,
+      health_practices: Array.from(selectedHealth),
       // V776 · Prompts: solo los que tengan respuesta no vacía.
       prompts: promptModel.filter(p => String(p.a || "").trim()).map(p => ({ q: p.q, a: p.a.trim() })),
       privacy: privacyModel, // V742 · campos ocultos del perfil público
@@ -14183,6 +14308,39 @@ function screenEditProfile(root) {
   const eduWrap = buildSingleSelect("Estudios (opcional)", EDUCATION_OPTIONS, eduRef);
   const exWrap = buildSingleSelect("Ejercicio (opcional)", EXERCISE_OPTIONS, exRef);
 
+  // V887 · Campos nuevos del buscador. Tribu / tipo de cuerpo / quedar en son de
+  // selección única (mismo patrón que estilo de vida). Prácticas de salud es
+  // multi-selección (como intereses). NSFW es un interruptor simple.
+  const tribeRef = { id: u.tribe || "" };
+  const bodyRef = { id: u.body_type || "" };
+  const meetRef = { id: u.meet_at || "" };
+  const tribeWrap = buildSingleSelect("Tribu (opcional)", TRIBE_OPTIONS, tribeRef);
+  const bodyWrap = buildSingleSelect("Tipo de cuerpo (opcional)", BODY_TYPE_OPTIONS, bodyRef);
+  const meetWrap = buildSingleSelect("Prefiero quedar en (opcional)", MEET_AT_OPTIONS, meetRef);
+
+  const selectedHealth = new Set(Array.isArray(u.health_practices) ? u.health_practices : []);
+  const healthWrap = el("div", { class: "chip-row" });
+  HEALTH_PRACTICES_OPTIONS.forEach(o => {
+    const c = el("button", { class: "chip selectable" + (selectedHealth.has(o.id) ? " active" : ""), type: "button" }, `${o.emoji} ${o.label}`);
+    c.addEventListener("click", () => {
+      if (selectedHealth.has(o.id)) { selectedHealth.delete(o.id); c.classList.remove("active"); }
+      else { selectedHealth.add(o.id); c.classList.add("active"); }
+    });
+    healthWrap.appendChild(c);
+  });
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Prácticas de salud (opcional, elige varias)"),
+    healthWrap,
+  ]));
+
+  const nsfwRef = { on: !!u.nsfw_ok };
+  const nsfwChip = el("button", { class: "chip selectable" + (nsfwRef.on ? " active" : ""), type: "button" }, "🔞 Acepto recibir fotos NSFW");
+  nsfwChip.addEventListener("click", () => { nsfwRef.on = !nsfwRef.on; nsfwChip.classList.toggle("active", nsfwRef.on); });
+  form.appendChild(el("div", { class: "field" }, [
+    el("label", {}, "Contenido para adultos"),
+    el("div", { class: "chip-row" }, [ nsfwChip ]),
+  ]));
+
   // V776 · Preguntas de perfil / rompehielos (opcional). El usuario elige una
   // pregunta y escribe una respuesta corta. Hasta 6. Se guardan como {q,a}.
   const promptModel = Array.isArray(u.prompts) ? u.prompts.slice(0, 6).map(p => ({ q: String(p.q || ""), a: String(p.a || "") })) : [];
@@ -14271,6 +14429,17 @@ function screenEditProfile(root) {
       setSingle(drinkWrap, drinkRef, DRINK_OPTIONS, p.drink);
       setSingle(eduWrap, eduRef, EDUCATION_OPTIONS, p.education);
       setSingle(exWrap, exRef, EXERCISE_OPTIONS, p.exercise);
+      // V887 · Rellena los campos nuevos del buscador.
+      setSingle(tribeWrap, tribeRef, TRIBE_OPTIONS, p.tribe);
+      setSingle(bodyWrap, bodyRef, BODY_TYPE_OPTIONS, p.body_type);
+      setSingle(meetWrap, meetRef, MEET_AT_OPTIONS, p.meet_at);
+      if (Array.isArray(p.health_practices)) {
+        selectedHealth.clear();
+        p.health_practices.forEach((h) => selectedHealth.add(h));
+        healthWrap.querySelectorAll(".chip").forEach((x, i) => x.classList.toggle("active", selectedHealth.has(HEALTH_PRACTICES_OPTIONS[i].id)));
+      }
+      nsfwRef.on = !!p.nsfw_ok;
+      nsfwChip.classList.toggle("active", nsfwRef.on);
       // V776 · Rellena las preguntas de perfil guardadas.
       if (Array.isArray(p.prompts)) {
         promptModel.length = 0;
