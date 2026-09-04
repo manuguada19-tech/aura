@@ -8188,6 +8188,9 @@ function buildBoostAction() {
     if (cap) cap.textContent = active ? fmtBoostLeft(secs) : "Boost";
   }
   function tick() {
+    // Si esta tarjeta ya se reemplazó por otra (re-render de Descubrir), el nodo
+    // deja de estar en el documento: paramos su ticker para no acumular timers.
+    if (!item.isConnected) { stop(); return; }
     secs = Math.max(0, secs - 1);
     if (secs <= 0) { stop(); paint(); refreshBoostAction(); return; }
     paint();
@@ -8203,10 +8206,13 @@ function buildBoostAction() {
   async function refresh() {
     // Solo tiene sentido con sesión: sin ella el Boost no aplica.
     if (!(datingApi._authed && datingApi._authed())) { stop(); secs = 0; paint(); return; }
-    // Si el nodo ya no está en el documento, dejamos de refrescar.
-    if (!item.isConnected) { stop(); return; }
+    // OJO: NO comprobamos isConnected aquí. En el arranque, buildBoostAction()
+    // construye el botón ANTES de que la pantalla se inserte en el DOM, así que
+    // el nodo aún no está conectado. Consultamos igualmente y pintamos sobre las
+    // referencias retenidas (btn/cap); cuando la pantalla se monte, el estado ya
+    // estará aplicado. (Antes esta guarda abortaba la consulta inicial y el botón
+    // solo se actualizaba tras pulsarlo.)
     const st = await datingApi.getBoost();
-    if (!item.isConnected) { stop(); return; }
     apply(st);
   }
   // Guardamos la función de refresco en un puntero de módulo para poder
