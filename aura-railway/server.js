@@ -9781,6 +9781,261 @@ app.post("/api/my/checkout/boost", wrap(async (req, res) => {
   }
 }));
 
+/* =========================================================
+   V892 · BOOST · Panel de administración
+   ---------------------------------------------------------
+   Endpoints para gestionar el Boost desde el admin, calcados del panel de
+   Lecturas: configuración (duración, cuota gratis Gold, ilimitado Platinum,
+   moneda), editor de packs de compra, tabla de usuarios con su bolsa (añadir /
+   restar boosts, reiniciar la cuota mensual, activar / parar el boost) e
+   historial de movimientos con borrado permanente para limpiar datos de prueba.
+   Todas cuelgan de /api/admin/* → protegidas por el gate global de admin.
+   ========================================================= */
+
+// Devuelve TODOS los packs de Boost (incluye inactivos) — solo para admin.
+function boostPacksAll() {
+  const cur = getSetting("boost.currency", "EUR");
+  const raw = getSetting("boost.packs_json", "");
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return arr.map((p) => ({
+          id: String(p.id || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20) || "pack",
+          label: String(p.label || "").slice(0, 60) || ("Pack " + String(p.id || "").toUpperCase()),
+          boosts: parseInt(p.boosts, 10) || 0,
+          price: Number(p.price) || 0,
+          active: p.active !== false,
+          currency: cur,
+        }));
+      }
+    } catch {}
+  }
+  return boostPacks().map((p) => ({ ...p, active: true }));
+}
+
+// GET /api/admin/boost/summary → métricas agregadas para las KPIs del panel.
+app.get("/api/admin/boost/summary", wrap(async (req, res) => {
+  const [[tot]] = await pool.query(
+    `SELECT COALESCE(SUM(amount),0) AS revenue,
+            COALESCE(SUM(boosts),0) AS boosts_sold,
+            COUNT(*)                AS orders
+       FROM boost_purchases
+      WHERE amount > 0`
+  );
+  const [[free]] = await pool.query("SELECT COALESCE(SUM(used_month),0) AS free_used FROM boost_credits");
+  const [[act]] = await pool.query("SELECT COUNT(*) AS active_now FROM users WHERE boost_until > NOW()");
+  const [days] = await pool.query(
+    `SELECT DATE(created_at) AS d,
+            COALESCE(SUM(amount),0) AS rev,
+            COALESCE(SUM(boosts),0) AS cr
+       FROM boost_purchases
+      WHERE amount > 0 AND created_at >= (CURDATE() - INTERVAL 13 DAY)
+      GROUP BY DATE(created_at)`
+  );
+  const dayKey = (v) => {
+    const d = (v instanceof Date) ? v : new Date(v);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const byDay = new Map();
+  for (const r of days) byDay.set(dayKey(r.d), r);
+  const revenue_series = [], boosts_series = [];
+  for (let i = 13; i >= 0; i--) {
+    const dt = new Date(); dt.setDate(dt.getDate() - i);
+    const hit = byDay.get(dayKey(dt));
+    revenue_series.push(hit ? Number(hit.rev) : 0);
+    boosts_series.push(hit ? Number(hit.cr) : 0);
+  }
+  const packs = boostPacks();
+  res.json({
+    revenue: Number(tot.revenue) || 0,
+    boosts_sold: Number(tot.boosts_sold) || 0,
+    orders: Number(tot.orders) || 0,
+    free_used: Number(free.free_used) || 0,
+    active_now: Number(act.active_now) || 0,
+    packs_active: Array.isArray(packs) ? packs.length : 0,
+    duration_min: Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN),
+    currency: getSetting("boost.currency", "EUR"),
+    revenue_series, boosts_series,
+  });
+}));
+
+// GET /api/admin/boost/credits → lista de usuarios con su bolsa de Boost.
+app.get("/api/admin/boost/credits", wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.email, u.plan, u.online,
+            COALESCE(bc.used_month,0) AS used_month,
+            COALESCE(bc.credits,0)    AS credits,
+            TIMESTAMPDIFF(SECOND, NOW(), u.boost_until) AS active_left,
+            (SELECT COUNT(*)              FROM boost_purchases p WHERE p.user_id=u.id) AS purchases_count,
+            (SELECT COALESCE(SUM(p.amount),0) FROM boost_purchases p WHERE p.user_id=u.id) AS purchases_total
+       FROM users u
+       LEFT JOIN boost_credits bc ON bc.user_id = u.id
+      WHERE u.role='user' OR u.role IS NULL
+      ORDER BY (u.boost_until > NOW()) DESC, (COALESCE(bc.credits,0)+COALESCE(bc.used_month,0)) DESC, u.id DESC
+      LIMIT 200`
+  );
+  const out = rows.map((u) => {
+    const freeMonthly = boostFreePerMonth(u.plan);
+    const unlimited = boostUnlimited(u.plan);
+    const activeLeft = u.active_left != null && Number(u.active_left) > 0 ? Number(u.active_left) : 0;
+    return {
+      ...u,
+      free_per_month: freeMonthly,
+      free_remaining: Math.max(0, freeMonthly - Number(u.used_month || 0)),
+      unlimited,
+      active: activeLeft > 0,
+      active_seconds_left: activeLeft,
+    };
+  });
+  res.json({
+    rows: out,
+    packs: boostPacks(),
+    free_gold: boostFreePerMonth("gold"),
+    platinum_unlimited: isTrue("boost.platinum_unlimited", true),
+    duration_min: Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN),
+    currency: getSetting("boost.currency", "EUR"),
+  });
+}));
+
+// GET /api/admin/boost/credits/:uid → detalle + compras de un usuario.
+app.get("/api/admin/boost/credits/:uid", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const st = await getBoostStatus(uid);
+  const [purchases] = await pool.query(
+    "SELECT id, pack, boosts, amount, currency, created_at FROM boost_purchases WHERE user_id=? ORDER BY id DESC LIMIT 50", [uid]
+  );
+  res.json({ ...st, purchases });
+}));
+
+// POST /api/admin/boost/credits/:uid/grant  { boosts, reason? } → suma/resta.
+app.post("/api/admin/boost/credits/:uid/grant", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  const delta = parseInt(req.body?.boosts, 10);
+  if (!uid || !Number.isFinite(delta) || delta === 0) return res.status(400).json({ error: "invalid_input" });
+  await ensureBoostCreditsRow(uid);
+  const [rows] = await pool.execute("SELECT credits FROM boost_credits WHERE user_id=?", [uid]);
+  const cur = (rows[0] && rows[0].credits) || 0;
+  const next = Math.max(0, cur + delta);
+  const applied = next - cur;
+  if (applied === 0) return res.json({ ok: true, credits: cur, applied: 0, note: "no_change" });
+  await pool.execute("UPDATE boost_credits SET credits=? WHERE user_id=?", [next, uid]);
+  const pack = applied > 0 ? "grant" : "revoke";
+  await pool.execute(
+    "INSERT INTO boost_purchases (user_id, pack, boosts, amount, currency) VALUES (?,?,?,?,?)",
+    [uid, pack, applied, 0, getSetting("boost.currency", "EUR")]
+  );
+  const action = applied > 0 ? `Concedidos ${applied}` : `Retirados ${Math.abs(applied)}`;
+  await logActivity("admin", `${action} Boost al usuario ${uid} (${req.body?.reason || "sin motivo"})`);
+  res.json({ ok: true, credits: next, applied });
+}));
+
+// POST /api/admin/boost/credits/:uid/reset-free → reinicia la cuota del mes.
+app.post("/api/admin/boost/credits/:uid/reset-free", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  await pool.execute(
+    "INSERT INTO boost_credits (user_id, used_month, credits, period_month) VALUES (?,0,0, DATE_FORMAT(CURDATE(),'%Y-%m')) ON DUPLICATE KEY UPDATE used_month=0, period_month=DATE_FORMAT(CURDATE(),'%Y-%m')",
+    [uid]
+  );
+  await logActivity("admin", `Reset cuota mensual de Boost — usuario ${uid}`);
+  res.json({ ok: true });
+}));
+
+// POST /api/admin/boost/credits/:uid/activate → activa el boost desde el admin
+// (sin gastar bolsa). Útil para destacar a un usuario manualmente.
+app.post("/api/admin/boost/credits/:uid/activate", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [[u]] = await pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u) return res.status(404).json({ error: "user_not_found" });
+  const dur = Math.min(100000, Math.max(1, parseInt(req.body?.minutes, 10)
+    || (parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN)));
+  await pool.execute("UPDATE users SET boost_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id=?", [dur, uid]);
+  await logActivity("admin", `Boost activado manualmente (${dur} min) al usuario ${uid}`);
+  res.json({ ok: true, duration_min: dur, boost: await getBoostStatus(uid) });
+}));
+
+// POST /api/admin/boost/credits/:uid/stop → detiene el boost activo.
+app.post("/api/admin/boost/credits/:uid/stop", wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  await pool.execute("UPDATE users SET boost_until = NULL WHERE id=?", [uid]);
+  await logActivity("admin", `Boost detenido manualmente — usuario ${uid}`);
+  res.json({ ok: true, boost: await getBoostStatus(uid) });
+}));
+
+// GET /api/admin/boost/purchases → historial (ventas + ajustes manuales).
+app.get("/api/admin/boost/purchases", wrap(async (req, res) => {
+  const type = String(req.query.type || "all");
+  const q = String(req.query.q || "").trim();
+  const limit = Math.min(500, Math.max(1, parseInt(req.query.limit, 10) || 200));
+  const conds = [], args = [];
+  if (type === "sales") conds.push("p.amount > 0");
+  else if (type === "grants") conds.push("p.pack = 'grant'");
+  else if (type === "revokes") conds.push("p.pack = 'revoke'");
+  else if (type === "manual") conds.push("p.pack IN ('grant','revoke')");
+  if (q) { conds.push("(u.name LIKE ? OR u.email LIKE ?)"); args.push("%" + q + "%", "%" + q + "%"); }
+  const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+  const [rows] = await pool.query(
+    `SELECT p.id, p.user_id, p.pack, p.boosts, p.amount, p.currency, p.created_at,
+            u.name AS user_name, u.email AS user_email
+       FROM boost_purchases p
+       LEFT JOIN users u ON u.id = p.user_id
+       ${where}
+       ORDER BY p.id DESC
+       LIMIT ${limit}`,
+    args
+  );
+  const [[agg]] = await pool.query("SELECT COUNT(*) AS total FROM boost_purchases");
+  res.json({ rows, total: Number(agg.total) || 0, currency: getSetting("boost.currency", "EUR") });
+}));
+
+// POST /api/admin/boost/purchases/delete { ids:[...] } → borra del historial.
+app.post("/api/admin/boost/purchases/delete", wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids)
+    ? req.body.ids.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n))
+    : [];
+  if (!ids.length) return res.status(400).json({ error: "no_ids" });
+  const placeholders = ids.map(() => "?").join(",");
+  const [r] = await pool.query(`DELETE FROM boost_purchases WHERE id IN (${placeholders})`, ids);
+  await logActivity("admin", `Eliminadas ${r.affectedRows} fila(s) del historial de Boost`);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+// GET /api/admin/boost/packs → todos los packs (incluye inactivos).
+app.get("/api/admin/boost/packs", wrap(async (req, res) => {
+  res.json({ ok: true, packs: boostPacksAll(), currency: getSetting("boost.currency", "EUR") });
+}));
+
+// PUT /api/admin/boost/packs { packs:[{id,label,boosts,price,active}] }
+app.put("/api/admin/boost/packs", wrap(async (req, res) => {
+  const arr = Array.isArray(req.body?.packs) ? req.body.packs : null;
+  if (!arr) return res.status(400).json({ error: "packs_required" });
+  const seen = new Set();
+  const cleaned = arr.map((p, idx) => {
+    let id = String(p.id || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20);
+    if (!id) id = "pack" + (idx + 1);
+    let base = id, n = 1;
+    while (seen.has(id)) { id = base + "_" + (++n); }
+    seen.add(id);
+    return {
+      id,
+      label: String(p.label || "").slice(0, 60) || ("Pack " + id.toUpperCase()),
+      boosts: Math.max(0, parseInt(p.boosts, 10) || 0),
+      price: Math.max(0, Number(p.price) || 0),
+      active: p.active !== false,
+    };
+  });
+  await pool.execute(
+    "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+    ["boost.packs_json", JSON.stringify(cleaned)]
+  );
+  await logActivity("admin", `Packs de Boost actualizados (${cleaned.length} packs)`);
+  res.json({ ok: true, packs: boostPacksAll() });
+}));
+
 /* ---- Conversation demo seed (idempotent) ---- */
 async function seedConversations() {
   if (await isDemoPurged()) return;

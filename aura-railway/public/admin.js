@@ -1353,7 +1353,7 @@ function route(view) {
     dashboard: viewDashboard, users: viewUsers, moderation: viewModeration,
     reports: viewReports, appeals: viewAppeals, tickets: viewTickets, chats: viewChatsAdmin, otp: viewOtpCodes,
     subscriptions: viewSubscriptions,
-    payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, stats: viewStats,
+    payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, boost: viewBoostAdmin, stats: viewStats,
     notifications: viewNotifications, emails: viewEmails, settings: viewSettings, logs: viewLogs,
     content: viewContent, design: viewDesign, match_celebrate: viewMatchCelebrate, ads: viewAdsAdmin, backup: viewBackup,
     waitlist: viewWaitlist,
@@ -12751,6 +12751,477 @@ async function viewReadsAdmin(root){
               ]))),
             ])
           : el("div", { class: "empty small" }, "Sin actividad."),
+      ]);
+      const dEl = document.getElementById("drawer");
+      const body = document.getElementById("drawerBody");
+      if (dEl && body) {
+        body.innerHTML = "";
+        body.appendChild(drawer);
+        dEl.hidden = false;
+        dEl.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", () => { dEl.hidden = true; }, { once: true }));
+      }
+    } catch { toast("No se pudo cargar el detalle"); }
+  }
+
+  await refreshList();
+  await refreshHistory();
+}
+
+/* =========================================================
+   V892 · Boost / Impulso — panel de administración
+   Estructura calcada de "Lecturas de chat": Pro Hero + KPIs, configuración
+   general, editor de packs, tabla de usuarios (añadir/restar boosts, reiniciar
+   cuota, activar/parar boost) e historial con borrado permanente.
+   ========================================================= */
+async function viewBoostAdmin(root){
+  // --- Pro Hero + KPIs ---
+  try {
+    const r = await api.get("/api/admin/boost/summary").catch(() => ({}));
+    root.appendChild(proHero({
+      icon: "🚀",
+      title: "Boost / Impulso",
+      desc: "Destaca perfiles temporalmente. Cuota mensual gratis por plan (Gold 5/mes, Platinum ilimitado) y packs de compra para el resto.",
+      gradA: "#ff3b6b", gradB: "#ff8a3b",
+      stats: [
+        { v: fmt.num(r.boosts_sold || 0), l: "Boosts vendidos" },
+        { v: fmt.eur(r.revenue || 0), l: "Ingresos" },
+        { v: fmt.num(r.active_now || 0), l: "Activos ahora" },
+        { v: (r.duration_min || 30) + " min", l: "Duración" },
+      ],
+    }));
+    const avgTicket = (r.orders && r.orders > 0) ? (r.revenue || 0) / r.orders : 0;
+    const sparkRev = Array.isArray(r.revenue_series) ? r.revenue_series : new Array(14).fill(0);
+    const sparkCr  = Array.isArray(r.boosts_series) ? r.boosts_series : new Array(14).fill(0);
+    const kpis = document.createElement("div");
+    kpis.className = "pro-kpis";
+    kpis.appendChild(proKpi({ label: "Boosts vendidos", icon: "🚀", value: fmt.num(r.boosts_sold || 0),
+      sparkline: sparkCr, gradA: "#ff3b6b", gradB: "#e11d48", sub: "acumulado" }));
+    kpis.appendChild(proKpi({ label: "Ingresos por packs", icon: "💰", value: fmt.eur(r.revenue || 0),
+      sparkline: sparkRev, gradA: "#22c55e", gradB: "#16a34a", sub: "total" }));
+    kpis.appendChild(proKpi({ label: "Ticket medio", icon: "🧾", value: fmt.eur(avgTicket),
+      gradA: "#a855f7", gradB: "#7c3aed", sub: "por compra" }));
+    kpis.appendChild(proKpi({ label: "Cuota gratis usada", icon: "🆓", value: fmt.num(r.free_used || 0),
+      gradA: "#f59e0b", gradB: "#d97706", sub: "este mes" }));
+    root.appendChild(kpis);
+  } catch (e) { /* silent */ }
+
+  root.appendChild(viewTitle(
+    "Boost / Impulso",
+    "Destaca perfiles en Descubrir y Cerca de ti durante un tiempo. Gold recibe boosts gratis cada mes y Platinum es ilimitado; Free y Premium compran packs. Aquí ajustas la economía y gestionas la bolsa de cada usuario.",
+    []
+  ));
+
+  root.appendChild(sectionLegend("¿Qué significa cada icono en Boost?", [
+    ["🚀", "Boost disponible para destacar el perfil."],
+    ["🆓", "Cuota mensual gratuita (según el plan)."],
+    ["📦", "Pack de boosts que un usuario puede comprar."],
+    ["💎", "Platinum tiene boosts ilimitados."],
+    ["⚡", "Boost activo ahora mismo (perfil destacado)."],
+    ["🎁", "Conceder o retirar boosts manualmente."],
+    ["📊", "Historial y estadísticas de consumo."],
+  ]));
+
+  const settings = await api.get("/api/settings").catch(() => ({}));
+
+  function currentCurrency() {
+    const inp = document.querySelector('input[name="boost.currency"]');
+    return (inp && inp.value) || settings["boost.currency"] || "EUR";
+  }
+
+  /* --- Configuración general --- */
+  const cfgForm = el("form", { class: "settings-form", onsubmit: async (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const body = {};
+    fd.forEach((v, k) => body[k] = v);
+    e.target.querySelectorAll("input[type=checkbox]").forEach(c => { body[c.name] = c.checked ? "true" : "false"; });
+    await api.put("/api/settings", body);
+    if (!e.target.dataset.autoSubmitting) toast("Configuración de Boost guardada");
+  }});
+
+  function textField(key, label, def) {
+    return el("label", { class: "field" }, [
+      el("span", {}, label),
+      el("input", { class: "input", name: key, value: settings[key] != null && settings[key] !== "" ? settings[key] : (def || "") }),
+    ]);
+  }
+  function toggleFieldB(key, label, defOn) {
+    const checked = settings[key] != null ? settings[key] === "true" : !!defOn;
+    return el("label", { class: "check" }, [
+      el("input", { type: "checkbox", name: key, checked }),
+      el("span", {}, label),
+    ]);
+  }
+
+  const cfgBody = [
+    el("div", { class: "grid-2" }, [
+      textField("boost.duration_min", "Duración de cada Boost (minutos)", "30"),
+      textField("boost.free_per_month.gold", "Boosts gratis al mes (Gold)", "5"),
+      toggleFieldB("boost.platinum_unlimited", "Platinum: Boosts ilimitados", true),
+      textField("boost.currency", "Moneda (EUR, USD…)", "EUR"),
+    ]),
+    el("p", { class: "help" }, "Free y Premium tienen 0 boosts gratis (compran packs). Gold recibe la cuota indicada cada mes natural. Platinum es ilimitado si está activado."),
+    el("div", { class: "form-actions" }, [
+      el("button", { class: "btn primary", type: "submit" }, "Guardar cambios"),
+    ]),
+  ];
+  cfgBody.forEach(node => cfgForm.appendChild(node));
+  root.appendChild(panel("Configuración general", [], [cfgForm]));
+
+  /* --- Editor de packs --- */
+  const packsList = el("div", { class: "reads-packs-list", style: "display:flex; flex-direction:column; gap:10px" });
+  let packsState = [];
+
+  function renderPacksEditor() {
+    packsList.innerHTML = "";
+    if (!packsState.length) {
+      packsList.appendChild(el("div", { class: "empty" }, "No hay packs. Añade uno con el botón de abajo."));
+    }
+    const cur = currentCurrency();
+    packsState.forEach((p, idx) => {
+      const active = p.active !== false;
+      const row = el("div", { class: "pack-edit-card" + (active ? "" : " is-off") });
+      const perBoostEl = el("span", { class: "pack-edit-perread" }, "");
+      const updatePerBoost = () => {
+        const cr = Number(p.boosts) || 0;
+        const pr = Number(p.price) || 0;
+        perBoostEl.textContent = (cr > 0 && pr > 0)
+          ? (pr / cr).toFixed(3).replace(/0+$/, "").replace(/\.$/, "") + " " + currencySymbol(currentCurrency()) + "/boost"
+          : "—";
+      };
+      const fId = el("input", { class: "input", value: p.id, placeholder: "id", maxlength: 20 });
+      fId.addEventListener("input", () => { p.id = fId.value; });
+      const fLabel = el("input", { class: "input", value: p.label, placeholder: "Nombre visible" });
+      fLabel.addEventListener("input", () => { p.label = fLabel.value; });
+      const fBoosts = el("input", { class: "input", type: "number", min: "0", step: "1", value: String(p.boosts), placeholder: "Boosts" });
+      fBoosts.addEventListener("input", () => { p.boosts = parseInt(fBoosts.value, 10) || 0; updatePerBoost(); });
+      const fPrice = el("input", { class: "input", type: "number", min: "0", step: "0.01", value: String(p.price), placeholder: "Precio" });
+      fPrice.addEventListener("input", () => { p.price = Number(fPrice.value) || 0; updatePerBoost(); });
+      const activeChk = el("input", { type: "checkbox", checked: active, onchange: (e) => { p.active = e.target.checked; row.classList.toggle("is-off", !e.target.checked); } });
+      const fActive = el("label", { class: "pack-edit-switch", title: "Desmarca para ocultar el pack sin borrarlo" }, [ activeChk, el("span", {}, "Activo") ]);
+      const removeBtn = el("button", { type: "button", class: "btn ghost sm pack-edit-del", title: "Elimina este pack", "aria-label": "Eliminar pack",
+        onclick: () => { packsState.splice(idx, 1); renderPacksEditor(); } }, "🗑");
+      row.appendChild(el("div", { class: "pack-edit-head" }, [
+        el("span", { class: "pack-edit-num" }, "📦 " + (idx + 1)),
+        perBoostEl,
+        el("div", { class: "pack-edit-head-actions" }, [ fActive, removeBtn ]),
+      ]));
+      row.appendChild(el("div", { class: "pack-edit-grid" }, [
+        el("label", { class: "field" }, [ el("span", {}, "ID"), fId ]),
+        el("label", { class: "field pack-edit-name" }, [ el("span", {}, "Nombre"), fLabel ]),
+        el("label", { class: "field" }, [ el("span", {}, "Boosts"), fBoosts ]),
+        el("label", { class: "field" }, [ el("span", {}, "Precio (" + currencySymbol(cur) + ")"), fPrice ]),
+      ]));
+      updatePerBoost();
+      packsList.appendChild(row);
+    });
+  }
+
+  const addPackBtn = btn("+ Añadir pack", "primary sm", () => {
+    packsState.push({ id: "b" + (packsState.length + 1), label: "Pack nuevo", boosts: 5, price: 6.99, active: true });
+    renderPacksEditor();
+  });
+  const savePacksBtn = btn("Guardar packs", "primary", async () => {
+    const ids = packsState.map(p => (p.id || "").trim().toLowerCase()).filter(Boolean);
+    if (new Set(ids).size !== ids.length) { toast("Hay IDs de pack duplicados"); return; }
+    try {
+      const r = await api.put("/api/admin/boost/packs", { packs: packsState });
+      packsState = r.packs || packsState;
+      renderPacksEditor();
+      toast("Packs guardados");
+    } catch { toast("Error al guardar packs"); }
+  });
+
+  const packsEditor = el("div", { class: "reads-packs-editor" }, [
+    el("p", { class: "help" }, "Cada pack tiene un ID único, un nombre visible, un número de boosts y un precio. Desmarca \"Activo\" para ocultarlo sin borrarlo. Los boosts comprados no caducan."),
+    packsList,
+    el("div", { style: "display:flex; gap:8px; margin-top:12px; flex-wrap:wrap" }, [ addPackBtn, savePacksBtn ]),
+  ]);
+  root.appendChild(panel("Packs de compra (editables)", [], [packsEditor]));
+
+  async function loadPacksEditor() {
+    try {
+      const r = await api.get("/api/admin/boost/packs");
+      packsState = (r && r.packs) || [];
+      renderPacksEditor();
+    } catch {
+      packsList.innerHTML = "";
+      packsList.appendChild(el("div", { class: "error" }, "Error cargando packs."));
+    }
+  }
+  await loadPacksEditor();
+
+  /* --- Tabla de usuarios y bolsa de Boost --- */
+  const listWrap = el("div", { class: "table-wrap" });
+  root.appendChild(panel(
+    "Usuarios y Boost",
+    [ btn("Actualizar", "ghost sm", async () => { await refreshList(); }) ],
+    [
+      el("div", { class: "table-toolbar" }, [
+        el("input", { class: "input", id: "boostSearch", placeholder: "Buscar por nombre o email…", oninput: () => refreshList() }),
+      ]),
+      listWrap,
+    ]
+  ));
+
+  /* --- Historial de movimientos con borrado permanente --- */
+  const histSelected = new Set();
+  const histWrap = el("div", { class: "table-wrap" });
+  let histRowsCache = [];
+
+  const histBulkBar = el("div", { class: "bulk-bar", id: "boostHistBulk" });
+  const histBulkCount = el("span", { class: "count" }, "0 seleccionadas");
+  histBulkBar.appendChild(histBulkCount);
+  histBulkBar.appendChild(el("span", { class: "spacer", style: "flex:1" }));
+  histBulkBar.appendChild(btn("🗑 Eliminar seleccionadas", "danger sm", () => deleteHistSelected()));
+  histBulkBar.appendChild(btn("✖ Deseleccionar", "sm", () => { histSelected.clear(); renderHistory(histRowsCache); }));
+
+  const histTypeSel = el("select", { class: "input", id: "boostHistType", onchange: () => refreshHistory() }, [
+    el("option", { value: "all" }, "Todos los movimientos"),
+    el("option", { value: "sales" }, "Solo ventas (packs)"),
+    el("option", { value: "manual" }, "Solo ajustes manuales"),
+    el("option", { value: "grants" }, "Solo concesiones (+)"),
+    el("option", { value: "revokes" }, "Solo retiradas (−)"),
+  ]);
+
+  root.appendChild(panel(
+    "Panel avanzado · Historial de movimientos",
+    [ btn("Actualizar", "ghost sm", async () => { await refreshHistory(); }) ],
+    [
+      el("p", { class: "help" }, "Historial de ventas de packs y ajustes manuales de boosts. Selecciona filas y elimínalas permanentemente para limpiar datos de prueba. El borrado no se puede deshacer y no reajusta la bolsa del usuario."),
+      el("div", { class: "table-toolbar", style: "display:flex; gap:8px; flex-wrap:wrap; align-items:center" }, [
+        histTypeSel,
+        el("input", { class: "input", id: "boostHistSearch", placeholder: "Buscar por nombre o email…", oninput: () => debounceHistory() }),
+      ]),
+      histBulkBar,
+      histWrap,
+    ]
+  ));
+
+  function updateHistBulk() {
+    histBulkBar.classList.toggle("on", histSelected.size > 0);
+    histBulkCount.textContent = `${histSelected.size} seleccionadas`;
+  }
+  function movementCell(p) {
+    if (p.pack === "grant") return tag("➕ Concesión", "plan-premium");
+    if (p.pack === "revoke") return tag("➖ Retirada", "muted");
+    return tag("🛒 " + String(p.pack || "pack").toUpperCase(), "plan-gold");
+  }
+  function renderHistory(rows) {
+    histRowsCache = rows || [];
+    histWrap.innerHTML = "";
+    if (!histRowsCache.length) { histWrap.appendChild(el("div", { class: "empty" }, "Sin movimientos.")); updateHistBulk(); return; }
+    const cur = currentCurrency();
+    const headCb = el("input", { type: "checkbox", title: "Seleccionar todos" });
+    headCb.checked = histRowsCache.every(p => histSelected.has(p.id));
+    headCb.addEventListener("change", () => {
+      if (headCb.checked) histRowsCache.forEach(p => histSelected.add(p.id));
+      else histRowsCache.forEach(p => histSelected.delete(p.id));
+      table.querySelectorAll("tbody input.hist-cb").forEach(cb => { cb.checked = headCb.checked; });
+      updateHistBulk();
+    });
+    const table = el("table", { class: "data-table" }, [
+      el("thead", {}, el("tr", {}, [
+        el("th", { style: "width:32px" }, headCb),
+        el("th", {}, "Usuario"),
+        el("th", {}, "Movimiento"),
+        el("th", {}, "Boosts"),
+        el("th", {}, "Importe"),
+        el("th", {}, "Fecha"),
+      ])),
+      el("tbody", {}, histRowsCache.map(p => {
+        const rowCb = el("input", { type: "checkbox", class: "hist-cb" });
+        if (histSelected.has(p.id)) rowCb.checked = true;
+        rowCb.addEventListener("change", () => { if (rowCb.checked) histSelected.add(p.id); else histSelected.delete(p.id); updateHistBulk(); });
+        return el("tr", {}, [
+          el("td", {}, rowCb),
+          el("td", {}, el("div", {}, [
+            el("b", {}, p.user_name || ("#" + p.user_id)),
+            el("small", { style: "display:block; opacity:.7" }, p.user_email || ("id " + p.user_id)),
+          ])),
+          el("td", {}, movementCell(p)),
+          el("td", {}, (Number(p.boosts) > 0 ? "+" : "") + String(p.boosts)),
+          el("td", {}, (Number(p.amount) > 0 ? fmtMoney(p.amount, p.currency || cur) : "—")),
+          el("td", {}, fmt.date(p.created_at)),
+        ]);
+      })),
+    ]);
+    histWrap.appendChild(el("div", { class: "table-scroll" }, [table]));
+    labelTables(histWrap);
+    updateHistBulk();
+  }
+  let __histDebounce = null;
+  function debounceHistory() { clearTimeout(__histDebounce); __histDebounce = setTimeout(() => refreshHistory(), 300); }
+  async function refreshHistory() {
+    histWrap.innerHTML = "";
+    histWrap.appendChild(el("div", { class: "loading" }, "Cargando historial…"));
+    const type = document.getElementById("boostHistType")?.value || "all";
+    const q = (document.getElementById("boostHistSearch")?.value || "").trim();
+    try {
+      const params = new URLSearchParams({ type, limit: "300" });
+      if (q) params.set("q", q);
+      const data = await api.get("/api/admin/boost/purchases?" + params.toString());
+      const rows = (data && data.rows) || [];
+      const visible = new Set(rows.map(r => r.id));
+      Array.from(histSelected).forEach(id => { if (!visible.has(id)) histSelected.delete(id); });
+      renderHistory(rows);
+    } catch (e) {
+      histWrap.innerHTML = "";
+      histWrap.appendChild(el("div", { class: "error" }, "Error cargando el historial."));
+    }
+  }
+  async function deleteHistSelected() {
+    const ids = Array.from(histSelected);
+    if (!ids.length) return;
+    if (!confirm(`¿Eliminar permanentemente ${ids.length} movimiento(s) del historial?\n\nEsta acción NO se puede deshacer y no reajusta la bolsa de boosts de los usuarios.`)) return;
+    try {
+      const r = await api.post("/api/admin/boost/purchases/delete", { ids });
+      toast(`Eliminadas ${r.deleted ?? ids.length} fila(s)`);
+      histSelected.clear();
+      await refreshHistory();
+      try { route("boost"); } catch {}
+    } catch (e) { toast("Error al eliminar: " + (e.message || "desconocido")); }
+  }
+
+  function fmtLeft(secs) {
+    const s = Math.max(0, parseInt(secs, 10) || 0);
+    if (s <= 0) return "—";
+    const m = Math.floor(s / 60), r = s % 60;
+    return m > 0 ? `${m} min ${r}s` : `${r}s`;
+  }
+
+  async function refreshList() {
+    const q = (document.getElementById("boostSearch")?.value || "").trim().toLowerCase();
+    listWrap.innerHTML = "";
+    listWrap.appendChild(el("div", { class: "loading" }, "Cargando…"));
+    try {
+      const data = await api.get("/api/admin/boost/credits");
+      const all = (data && data.rows) || [];
+      const rows = q ? all.filter(u => (u.name||"").toLowerCase().includes(q) || (u.email||"").toLowerCase().includes(q)) : all;
+      listWrap.innerHTML = "";
+      if (!rows.length) { listWrap.appendChild(el("div", { class: "empty" }, "Sin resultados.")); return; }
+      const tbl = el("table", { class: "data-table" }, [
+        el("thead", {}, el("tr", {}, [
+          el("th", {}, "Usuario"),
+          el("th", {}, "Plan"),
+          el("th", {}, "Estado"),
+          el("th", {}, "Gratis (mes)"),
+          el("th", {}, "Comprados"),
+          el("th", {}, "Compras"),
+          el("th", {}, "Acciones"),
+        ])),
+        el("tbody", {}, rows.map(u => {
+          const estado = u.active
+            ? el("span", { style: "color:#22c55e; font-weight:700" }, "⚡ Activo · " + fmtLeft(u.active_seconds_left))
+            : el("span", { style: "color:var(--text-muted)" }, "—");
+          const gratis = u.unlimited ? "∞" : (String(u.free_remaining ?? 0) + " / " + String(u.free_per_month ?? 0));
+          return el("tr", {}, [
+            el("td", {}, el("div", { class: "user-cell" }, [
+              avatar(u.photo_url || "", 32),
+              el("div", {}, [ el("b", {}, u.name || "—"), el("small", {}, u.email || "") ]),
+            ])),
+            el("td", {}, planTag(u.plan || "free")),
+            el("td", {}, estado),
+            el("td", {}, gratis),
+            el("td", {}, el("b", {}, u.unlimited ? "∞" : String(u.credits ?? 0))),
+            el("td", {}, String(u.purchases_count ?? 0) + " · " + fmtMoney(u.purchases_total, (data && data.currency) || "EUR")),
+            el("td", { class: "actions" }, [
+              btn("Ver", "ghost sm", () => openUserBoostDrawer(u)),
+              btn("Añadir", "primary sm", () => grantPrompt(u, "add")),
+              btn("Quitar", "ghost sm", () => grantPrompt(u, "remove")),
+              (u.active
+                ? btn("Parar", "warn sm", () => stopBoost(u))
+                : btn("Activar", "ghost sm", () => activateBoost(u))),
+              btn("Reiniciar gratis", "ghost sm", () => resetFree(u)),
+            ]),
+          ]);
+        })),
+      ]);
+      listWrap.appendChild(tbl);
+      labelTables(listWrap);
+    } catch (e) {
+      listWrap.innerHTML = "";
+      listWrap.appendChild(el("div", { class: "error" }, "Error cargando la lista."));
+    }
+  }
+
+  async function grantPrompt(u, mode) {
+    const isRemove = (mode === "remove");
+    const who = u.name || u.email;
+    const currentBalance = Number(u.credits ?? 0);
+    const label = isRemove
+      ? `¿Cuántos Boosts retirar a ${who}?\nSaldo actual: ${currentBalance}. No podrá quedar por debajo de 0.`
+      : `¿Cuántos Boosts añadir a ${who}?\nSaldo actual: ${currentBalance}.`;
+    const v = prompt(label, isRemove ? "1" : "5");
+    if (v === null) return;
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n) || n <= 0) return toast("Cantidad inválida (introduce un número positivo)");
+    const delta = isRemove ? -n : n;
+    const reason = prompt(isRemove ? "Motivo de la retirada (opcional):" : "Motivo (opcional):", isRemove ? "ajuste_manual" : "manual_admin");
+    if (reason === null) return;
+    try {
+      const r = await api.post("/api/admin/boost/credits/" + u.id + "/grant", { boosts: delta, reason: reason || (isRemove ? "ajuste_manual" : "manual_admin") });
+      if (r && r.applied === 0) toast("Sin cambios (el saldo ya era 0)");
+      else if (r && typeof r.applied === "number") toast(r.applied > 0 ? `+${r.applied} boosts (nuevo saldo: ${r.credits})` : `${r.applied} boosts (nuevo saldo: ${r.credits})`);
+      else toast(isRemove ? "Boosts retirados" : "Boosts otorgados");
+      await refreshList();
+    } catch { toast(isRemove ? "Error retirando boosts" : "Error otorgando boosts"); }
+  }
+  async function resetFree(u) {
+    if (!confirm("¿Reiniciar la cuota mensual gratis de Boost de " + (u.name || u.email) + "?")) return;
+    try { await api.post("/api/admin/boost/credits/" + u.id + "/reset-free", {}); toast("Cuota mensual reiniciada"); await refreshList(); }
+    catch { toast("Error"); }
+  }
+  async function activateBoost(u) {
+    const v = prompt(`¿Cuántos minutos destacar a ${u.name || u.email}?\n(No gasta la bolsa del usuario.)`, String(settings["boost.duration_min"] || 30));
+    if (v === null) return;
+    const minutes = parseInt(v, 10);
+    if (!Number.isFinite(minutes) || minutes <= 0) return toast("Minutos inválidos");
+    try { await api.post("/api/admin/boost/credits/" + u.id + "/activate", { minutes }); toast(`Boost activado (${minutes} min)`); await refreshList(); }
+    catch { toast("Error al activar"); }
+  }
+  async function stopBoost(u) {
+    if (!confirm("¿Detener el Boost activo de " + (u.name || u.email) + "?")) return;
+    try { await api.post("/api/admin/boost/credits/" + u.id + "/stop", {}); toast("Boost detenido"); await refreshList(); }
+    catch { toast("Error al detener"); }
+  }
+
+  async function openUserBoostDrawer(u) {
+    try {
+      const data = await api.get("/api/admin/boost/credits/" + u.id);
+      const drawer = el("div", { class: "drawer-panel" }, [
+        el("div", { class: "drawer-head" }, [
+          el("h3", {}, "Boost · " + (u.name || u.email)),
+          el("button", { class: "btn ghost sm", "data-close": true }, "Cerrar"),
+        ]),
+        el("div", { class: "grid-3" }, [
+          el("div", { class: "kpi" }, [ el("small", {}, "Plan"), el("b", {}, PLAN_ES[u.plan] || PLAN_ES.free) ]),
+          el("div", { class: "kpi" }, [ el("small", {}, "Gratis restantes"), el("b", {}, data.unlimited ? "∞" : String(data.free_remaining ?? 0)) ]),
+          el("div", { class: "kpi" }, [ el("small", {}, "Comprados"), el("b", {}, data.unlimited ? "∞" : String(data.extra_boosts ?? 0)) ]),
+        ]),
+        el("div", { class: "kpi", style: "margin-top:8px" }, [
+          el("small", {}, "Estado"),
+          el("b", {}, data.active ? ("⚡ Activo · " + fmtLeft(data.active_seconds_left)) : "Sin boost activo"),
+        ]),
+        el("div", { style: "display:flex; gap:8px; margin-top:10px; flex-wrap:wrap" }, [
+          btn("Añadir boosts", "primary sm", async () => { const uc = { ...u, credits: data.extra_boosts ?? 0 }; await grantPrompt(uc, "add"); try { const d = document.getElementById("drawer"); if (d) d.hidden = true; } catch {} }),
+          btn("Retirar boosts", "ghost sm", async () => { const uc = { ...u, credits: data.extra_boosts ?? 0 }; await grantPrompt(uc, "remove"); try { const d = document.getElementById("drawer"); if (d) d.hidden = true; } catch {} }),
+          (data.active
+            ? btn("Parar boost", "warn sm", async () => { await stopBoost({ ...u }); try { const d = document.getElementById("drawer"); if (d) d.hidden = true; } catch {} })
+            : btn("Activar boost", "ghost sm", async () => { await activateBoost({ ...u }); try { const d = document.getElementById("drawer"); if (d) d.hidden = true; } catch {} })),
+        ]),
+        el("h4", { style: "margin:14px 0 6px" }, "Compras recientes"),
+        (data.purchases && data.purchases.length)
+          ? el("table", { class: "data-table" }, [
+              el("thead", {}, el("tr", {}, [ el("th", {}, "Fecha"), el("th", {}, "Pack"), el("th", {}, "Boosts"), el("th", {}, "Importe") ])),
+              el("tbody", {}, data.purchases.map(p => el("tr", {}, [
+                el("td", {}, new Date(p.created_at).toLocaleString()),
+                el("td", {}, String(p.pack || "").toUpperCase()),
+                el("td", {}, (Number(p.boosts) > 0 ? "+" : "") + String(p.boosts)),
+                el("td", {}, (p.amount != null && Number(p.amount) > 0 ? fmtMoney(p.amount, p.currency) : "—")),
+              ]))),
+            ])
+          : el("div", { class: "empty small" }, "Sin compras."),
       ]);
       const dEl = document.getElementById("drawer");
       const body = document.getElementById("drawerBody");
