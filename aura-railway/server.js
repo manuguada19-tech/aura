@@ -1687,14 +1687,23 @@ async function migrate() {
   // con un flag en settings): así, si más tarde se cambia a mano la zona del
   // usuario de prueba, esta migración NO vuelve a pisarla. Idempotente y solo
   // toca la cuenta prueba@aura.app; ninguna otra fila.
+  // V906 · La migración V904 no movió la cuenta de prueba en producción: su
+  // email real NO es exactamente 'prueba@aura.app' (coincide con /api/demo por
+  // el NOMBRE, no por el email), así que el UPDATE tocó 0 filas y el flag quedó
+  // marcado igual, bloqueando el reintento. Repetimos con el MISMO criterio
+  // flexible que /api/demo (email exacto O nombre "usuario de prueba") y una
+  // clave de flag nueva para que se ejecute una sola vez más.
   try {
-    const [[flag]] = await pool.query("SELECT v FROM settings WHERE k='test_user_lgtb_v904'");
+    const [[flag]] = await pool.query("SELECT v FROM settings WHERE k='test_user_lgtb_v906'");
     if (!flag || flag.v !== "1") {
       await pool.execute(
-        "UPDATE users SET zone='lgtb', orientation='Bisexual', gender='No binario' WHERE email='prueba@aura.app'"
+        `UPDATE users SET zone='lgtb', orientation='Bisexual', gender='No binario'
+          WHERE email='prueba@aura.app'
+             OR LOWER(name) LIKE '%usuario de prueba%'
+             OR LOWER(name) LIKE '%usuario prueba%'`
       );
       await pool.execute(
-        "INSERT INTO settings (k, v) VALUES ('test_user_lgtb_v904','1') ON DUPLICATE KEY UPDATE v='1'"
+        "INSERT INTO settings (k, v) VALUES ('test_user_lgtb_v906','1') ON DUPLICATE KEY UPDATE v='1'"
       );
     }
   } catch (e) { /* additivo: si falla, no bloquea el arranque */ }

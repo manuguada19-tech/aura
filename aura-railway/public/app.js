@@ -1822,7 +1822,12 @@ const state = {
   // aunque el usuario aterrice directo en la pantalla de bloqueo.
   user: (() => { try { return JSON.parse(localStorage.getItem("aura-session") || "null") || null; } catch { return null; } })(),
   _prev_user: null,
-  zone: null, // 'hetero' | 'lgtb'
+  // V906 · Hidratamos la zona desde la sesión guardada (aura-session.zone) para
+  // que el PRIMER /api/discover al reabrir la PWA use ya la zona real y no caiga
+  // a "hetero" por defecto (causaba el "parpadeo": el mazo se pintaba en hetero
+  // y luego syncUserPlan lo cambiaba a lgtb y lo vaciaba). syncUserPlan sigue
+  // siendo la fuente de verdad y corrige si el servidor difiere.
+  zone: (() => { try { const u = JSON.parse(localStorage.getItem("aura-session") || "null"); return (u && (u.zone === "hetero" || u.zone === "lgtb")) ? u.zone : null; } catch { return null; } })(), // 'hetero' | 'lgtb'
   theme: localStorage.getItem("aura-theme") || "dark",
   currentTab: "discover",
   currentTag: null,
