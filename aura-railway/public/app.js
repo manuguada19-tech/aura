@@ -8150,7 +8150,10 @@ function screenDiscover(root) {
       actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
       actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
       actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
-      actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => activateBoostFlow(), "Boost"),
+      // V896 · El botón Boost refleja el estado ACTIVO del propio usuario con el
+      // tiempo restante (antes solo salía un toast momentáneo al pulsarlo, así
+      // que no se veía que el Boost seguía en marcha).
+      buildBoostAction(),
     ]),
   ]));
   // Ad slot (visible only to Free plan)
@@ -8159,6 +8162,64 @@ function screenDiscover(root) {
   const adBottom = buildAdSlot("discover-bottom");
   if (adBottom) root.appendChild(adBottom);
 }
+
+/* ---- Botón Boost de Descubrir con estado activo (V896) ----
+   Construye la acción "Boost" y, si el propio usuario tiene un Boost en marcha,
+   la resalta (clase .on), le añade un punto ⚡ y cambia la leyenda por el tiempo
+   restante, que va bajando con un ticker de 1 s. Al agotarse (o al pulsarla)
+   vuelve a consultar /api/my/boost para reflejar el estado real. */
+function buildBoostAction() {
+  const item = actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => {
+    activateBoostFlow().then(() => setTimeout(refreshBoostAction, 400));
+  }, "Boost");
+  // actionBtn con label devuelve un .action-item (columna botón+leyenda).
+  const btn = item.querySelector(".action-btn");
+  const cap = item.querySelector(".action-cap");
+  if (btn) {
+    // Punto/badge ⚡ que solo se ve cuando el Boost está activo.
+    const dot = el("span", { class: "boost-live-dot", "aria-hidden": "true", html: `<svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` });
+    btn.appendChild(dot);
+  }
+  item._boostCap = cap;
+  item._boostBtn = btn;
+  let secs = 0, timer = null;
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+  function paint() {
+    const active = secs > 0;
+    if (btn) btn.classList.toggle("on", active);
+    if (cap) cap.textContent = active ? fmtBoostLeft(secs) : "Boost";
+  }
+  function tick() {
+    secs = Math.max(0, secs - 1);
+    if (secs <= 0) { stop(); paint(); refreshBoostAction(); return; }
+    paint();
+  }
+  function apply(st) {
+    const b = st && st.boost;
+    const on = !!(b && b.active && b.active_seconds_left > 0);
+    stop();
+    secs = on ? Math.floor(b.active_seconds_left) : 0;
+    paint();
+    if (on) timer = setInterval(tick, 1000);
+  }
+  async function refresh() {
+    // Solo tiene sentido con sesión: sin ella el Boost no aplica.
+    if (!(datingApi._authed && datingApi._authed())) { stop(); secs = 0; paint(); return; }
+    // Si el nodo ya no está en el documento, dejamos de refrescar.
+    if (!item.isConnected) { stop(); return; }
+    const st = await datingApi.getBoost();
+    if (!item.isConnected) { stop(); return; }
+    apply(st);
+  }
+  // Guardamos la función de refresco en un puntero de módulo para poder
+  // dispararla tras activar/comprar Boost desde otras vistas.
+  _boostActionRefresh = refresh;
+  refresh();
+  return item;
+}
+// Puntero al refresco del botón Boost de Descubrir (si está montado).
+let _boostActionRefresh = null;
+function refreshBoostAction() { try { if (_boostActionRefresh) _boostActionRefresh(); } catch {} }
 
 /* ---- Cerca de ti (pestaña propia del tabbar) ---- */
 function screenNearby(root) {
@@ -11809,10 +11870,12 @@ async function activateBoostFlow() {
   if (r && r.ok && r.already_active) {
     const left = r.boost && r.boost.active_seconds_left ? Math.ceil(r.boost.active_seconds_left / 60) : null;
     toast(left ? `Tu Boost ya está activo · quedan ${left} min` : "Tu Boost ya está activo");
+    refreshBoostAction();
     return;
   }
   if (r && r.ok && r.activated) {
     toast(`¡Boost activado! Destacas ${r.duration_min || 30} min`);
+    refreshBoostAction();
     return;
   }
   if (r && (r.error === "no_boosts" || r.status === 402)) {

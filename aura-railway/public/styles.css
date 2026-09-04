@@ -1290,6 +1290,32 @@ img { max-width: 100%; display: block; }
 .action-btn.super { color: #3b82f6; }
 .action-btn.like { color: #22c55e; }
 .action-btn.boost { color: #a855f7; }
+/* V896 · Botón Boost cuando el propio usuario tiene un Boost ACTIVO: relleno
+   degradado, icono blanco, halo pulsante y punto ⚡ arriba a la derecha. La
+   leyenda pasa a mostrar el tiempo restante (lo pinta el JS). */
+.action-btn.boost.on {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, #a855f7 0%, #ff3b6b 100%);
+  box-shadow: 0 6px 16px rgba(168,85,247,.45);
+  animation: boostPulse 1.8s ease-in-out infinite;
+}
+.action-btn .boost-live-dot {
+  position: absolute; top: -2px; right: -2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: #ffca3a; color: #7a4b00;
+  display: none; place-items: center;
+  border: 2px solid var(--surface);
+}
+.action-btn.boost.on .boost-live-dot { display: grid; }
+.action-item .action-cap { transition: color .15s; }
+.action-item:has(.action-btn.boost.on) .action-cap {
+  color: #a855f7; font-weight: 700;
+}
+@keyframes boostPulse {
+  0%, 100% { box-shadow: 0 6px 16px rgba(168,85,247,.45); }
+  50% { box-shadow: 0 6px 22px rgba(255,59,107,.65); }
+}
+.action-btn { position: relative; }
 .action-btn svg { width: 26px; height: 26px; }
 .action-btn.big svg { width: 30px; height: 30px; }
 
