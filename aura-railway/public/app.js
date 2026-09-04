@@ -11310,15 +11310,19 @@ function openFilters() {
     grpGenderRow,
   ]));
 
-  // V904 · Filtro de orientación (selección única tipo radio). Solo se muestra en
-  // Zona LGTB+, donde hay varias orientaciones; en Hetero todas son Heterosexual
-  // y el filtro no aportaría nada. "Todas" = sin filtro.
+  // V907 · Filtro de orientación (selección única tipo radio). Ahora se muestra
+  // en AMBAS zonas (antes solo en LGTB, por eso "no salía" en Explorar ni Buscar
+  // cuando estabas en Zona Hetero). Las opciones dependen de la zona:
+  // orientationOptionsForZone → en Hetero solo "Heterosexual"; en LGTB la lista
+  // completa. "Todas" = sin filtro.
+  const orientOpts = orientationOptionsForZone(zone, state.filters.orientation);
   const orientChips = [];
-  const orientRef = { value: state.filters.orientation || "todas" };
-  if (zone === "lgtb") {
+  const _curOrient = state.filters.orientation || "todas";
+  const orientRef = { value: orientOpts.includes(_curOrient) ? _curOrient : "todas" };
+  {
     const grpOrientRow = el("div", { class: "chip-row" });
-    [{ label: "Todas", value: "todas" }, ...ORIENTATION_LGTB.map(o => ({ label: o, value: o }))].forEach(opt => {
-      const active = opt.value === orientRef.value || (opt.value === "todas" && !ORIENTATION_LGTB.includes(orientRef.value));
+    [{ label: "Todas", value: "todas" }, ...orientOpts.map(o => ({ label: o, value: o }))].forEach(opt => {
+      const active = opt.value === orientRef.value;
       const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
       c._value = opt.value;
       c.addEventListener("click", () => {
@@ -11331,7 +11335,9 @@ function openFilters() {
     wrap.appendChild(el("div", { class: "filter-group" }, [
       el("h5", {}, "Orientación"),
       el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
-        "Elige una orientación o «Todas» para verlas todas."),
+        zone === "lgtb"
+          ? "Elige una orientación o «Todas» para verlas todas."
+          : "En esta zona los perfiles son heterosexuales."),
       grpOrientRow,
     ]));
   }
@@ -11659,9 +11665,8 @@ function openFilters() {
       const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
       state.filters.genders = concrete.length ? concrete : ["Todos"];
       const genderVal = concrete.length ? concrete[0] : "todos"; // backend: 1 valor
-      // V904 · Orientación (selección única). Solo aplica en LGTB; "todas" = sin
-      // filtro. En Hetero el grupo no se pinta, así que se guarda "todas".
-      const orientVal = (zone === "lgtb" && orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas";
+      // V907 · Orientación (selección única) en ambas zonas. "todas" = sin filtro.
+      const orientVal = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas";
       state.filters.orientation = orientVal;
       // Ubicación / etnia (multi).
       state.filters.cities = Array.from(citySelected);
