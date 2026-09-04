@@ -11038,6 +11038,64 @@ function mcBuildPlanDoc(cfg, planKey) {
   return mcDoc(body);
 }
 
+// ===== V885 · Exportar la animación de la vista previa a VÍDEO (MP4/WebM) =====
+// El usuario pidió descargar en vídeo (mp4/mpg) en vez de HTML. Los navegadores
+// NO saben producir MPG/MPEG; sí MP4 (Safari y Chrome recientes) y, si no,
+// WebM. Grabamos en el propio navegador (sin tocar el servidor): se re-renderiza
+// el MISMO marcado y CSS de la preview cuadro a cuadro dentro de un <svg>
+// <foreignObject>, se dibuja en un <canvas> y se captura con MediaRecorder. Las
+// fotos (origen cruzado) se incrustan como data URL para NO contaminar el canvas.
+function mcPickVideoMime() {
+  const cand = [
+    ["video/mp4;codecs=avc1.42E01E,mp4a.40.2", "mp4"],
+    ["video/mp4;codecs=avc1", "mp4"],
+    ["video/mp4", "mp4"],
+    ["video/webm;codecs=vp9", "webm"],
+    ["video/webm;codecs=vp8", "webm"],
+    ["video/webm", "webm"],
+  ];
+  if (window.MediaRecorder && MediaRecorder.isTypeSupported) {
+    for (const [m, e] of cand) { try { if (MediaRecorder.isTypeSupported(m)) return { mime: m, ext: e }; } catch (_) {} }
+  }
+  return { mime: "", ext: "webm" };
+}
+// Descarga una URL como fichero con el nombre dado.
+async function mcFetchDataUrl(url) {
+  try {
+    const r = await fetch(url, { mode: "cors", credentials: "omit" });
+    if (!r.ok) return null;
+    const b = await r.blob();
+    return await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(b); });
+  } catch (_) { return null; }
+}
+// Convierte un documento de preview en un DOM cuyas imágenes http(s) están
+// incrustadas como data URL (evita contaminar el canvas). Si una imagen no se
+// puede incrustar (CORS), se elimina para que la grabación no falle.
+async function mcInlineImages(html) {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  for (const im of Array.from(doc.querySelectorAll("img"))) {
+    const src = im.getAttribute("src") || "";
+    if (/^https?:/i.test(src)) { const d = await mcFetchDataUrl(src); if (d) im.setAttribute("src", d); else im.remove(); }
+  }
+  for (const nEl of Array.from(doc.querySelectorAll('[style*="url("]'))) {
+    let st = nEl.getAttribute("style") || "";
+    for (const mm of [...st.matchAll(/url\((['"]?)(https?:[^'")]+)\1\)/gi)]) {
+      const d = await mcFetchDataUrl(mm[2]); if (d) st = st.replace(mm[0], `url('${d}')`);
+    }
+    nEl.setAttribute("style", st);
+  }
+  return doc;
+}
+// CSS que "congela" TODAS las animaciones en el instante t (ms): un retardo
+// negativo desplaza la línea de tiempo hasta t y play-state:paused la fija ahí.
+// Además fuerza el contenedor a flujo normal con tamaño fijo, porque dentro de un
+// <foreignObject> el position:fixed original no tiene viewport de referencia.
+function mcFreezeCss(t) {
+  const ms = Math.max(0, Math.round(t));
+  return `.mc-host{position:relative!important;left:0!important;top:0!important;width:300px!important;height:600px!important;overflow:hidden!important}
+  *,*::before,*::after{animation-delay:-${ms}ms!important;animation-play-state:paused!important}`;
+}
+
 async function viewMatchCelebrate(root) {
   root.appendChild(viewTitle(
     "Match y celebraciones",
@@ -11089,20 +11147,109 @@ async function viewMatchCelebrate(root) {
   function renderPreview() {
     frame.srcdoc = currentPreviewDoc();
   }
-  // V881 · Descarga la animación de la vista previa como un HTML autónomo. Al
-  // abrirlo en cualquier navegador reproduce la animación idéntica (mismo CSS y
-  // marcado que el iframe). Es la forma fiable de "descargar la animación": un
-  // export a vídeo/GIF desde el navegador no es viable porque las fotos son de
-  // origen cruzado y contaminan el canvas.
-  function downloadPreview() {
-    const html = currentPreviewDoc();
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  // Descarga un Blob con el nombre indicado.
+  function mcSaveBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
-    const a = el("a", { href: url, download: `aura-${previewTarget}-animacion.html` });
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    const a = el("a", { href: url, download: filename });
+    document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+  // Reserva: descarga el HTML autónomo (comportamiento anterior a V885). Se usa
+  // si el navegador no permite grabar vídeo (p. ej. Firefox marca el canvas como
+  // "contaminado" al dibujar foreignObject).
+  function downloadPreviewHtml() {
+    mcSaveBlob(new Blob([currentPreviewDoc()], { type: "text/html;charset=utf-8" }), `aura-${previewTarget}-animacion.html`);
+  }
+  // V885 · Descarga la animación como VÍDEO (MP4 donde el navegador lo soporta;
+  // si no, WebM). Graba en el propio navegador: re-renderiza el mismo marcado y
+  // CSS de la preview cuadro a cuadro en un <canvas> y lo captura con
+  // MediaRecorder. Las fotos se incrustan como data URL para no contaminar el
+  // canvas. Los navegadores NO pueden producir MPG/MPEG. Si algo falla, cae a HTML.
+  let mcBusy = false;
+  async function downloadPreview(triggerBtn) {
+    if (mcBusy) return;
+    if (!window.MediaRecorder || !HTMLCanvasElement.prototype.captureStream) {
+      toast("Este navegador no permite grabar vídeo; se descarga en HTML.");
+      return downloadPreviewHtml();
+    }
+    mcBusy = true;
+    const target = previewTarget;
+    const label0 = triggerBtn ? triggerBtn.textContent : "";
+    const setLbl = (t) => { if (triggerBtn) triggerBtn.textContent = t; };
+    if (triggerBtn) triggerBtn.disabled = true;
+    const W = 300, H = 600, fps = 25;
+    // Duración: match ~4.8 s (para captar entrada + un latido); planes usan la
+    // duración configurada de la barra + un pequeño margen.
+    const dur = target === "match" ? 4800 : (parseInt(cfg["content.celebrate.duration"], 10) || 5000) + 700;
+    try {
+      setLbl("Preparando… 0%");
+      const doc = await mcInlineImages(currentPreviewDoc());
+      const baseCss = (doc.querySelector("head style") || {}).textContent || "";
+      // Serializa el cuerpo como XHTML bien formado (necesario dentro de <svg>).
+      const bodyXml = new XMLSerializer().serializeToString(doc.body).replace(/^<body[^>]*>/i, "").replace(/<\/body>$/i, "");
+      const makeSvgUrl = (t) => {
+        const inner = `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;height:${H}px;overflow:hidden">`
+          + `<style>${baseCss}\n${mcFreezeCss(t)}</style>${bodyXml}</div>`;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">`
+          + `<foreignObject x="0" y="0" width="${W}" height="${H}">${inner}</foreignObject></svg>`;
+        return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+      };
+      // Pre-renderiza todos los cuadros a imágenes (evita tirones al grabar).
+      const total = Math.max(1, Math.round(dur / 1000 * fps));
+      const frames = [];
+      for (let i = 0; i <= total; i++) {
+        const img = new Image(W, H);
+        img.src = makeSvgUrl(i / fps * 1000);
+        try { if (img.decode) await img.decode(); else await new Promise((r) => { img.onload = r; img.onerror = r; }); }
+        catch (_) { await new Promise((r) => { img.onload = r; img.onerror = r; setTimeout(r, 400); }); }
+        frames.push(img);
+        setLbl(`Preparando… ${Math.round(i / total * 100)}%`);
+      }
+      const canvas = el("canvas", { width: String(W), height: String(H) });
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(frames[0], 0, 0, W, H);
+      // Comprueba si el canvas quedó "contaminado" (Firefox lo hace con
+      // foreignObject): si es así, grabar fallaría → caemos a HTML.
+      try { ctx.getImageData(0, 0, 1, 1); } catch (_) {
+        toast("Tu navegador bloquea la grabación; se descarga en HTML.");
+        downloadPreviewHtml(); return;
+      }
+      const { mime, ext } = mcPickVideoMime();
+      const stream = canvas.captureStream(fps);
+      let rec;
+      try { rec = mime ? new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6_000_000 }) : new MediaRecorder(stream); }
+      catch (_) { rec = new MediaRecorder(stream); }
+      const chunks = [];
+      rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      const done = new Promise((res) => { rec.onstop = res; });
+      setLbl("Grabando…");
+      rec.start(100);
+      const t0 = performance.now();
+      await new Promise((resolve) => {
+        const tick = (now) => {
+          const t = now - t0;
+          const idx = Math.min(frames.length - 1, Math.floor(t / 1000 * fps));
+          ctx.clearRect(0, 0, W, H);
+          ctx.drawImage(frames[idx], 0, 0, W, H);
+          if (t >= dur) return resolve();
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      rec.stop();
+      await done;
+      stream.getTracks().forEach((tr) => tr.stop());
+      const blob = new Blob(chunks, { type: (rec.mimeType || mime || "video/webm").split(";")[0] });
+      if (!blob.size) { toast("No se pudo grabar; se descarga en HTML."); downloadPreviewHtml(); return; }
+      mcSaveBlob(blob, `aura-${target}-animacion.${ext}`);
+      toast(`Animación descargada (${ext.toUpperCase()}).`);
+    } catch (err) {
+      toast("Error al grabar; se descarga en HTML.");
+      try { downloadPreviewHtml(); } catch (_) {}
+    } finally {
+      mcBusy = false;
+      if (triggerBtn) { triggerBtn.disabled = false; triggerBtn.textContent = label0 || "⬇ Descargar animación"; }
+    }
   }
 
   // ---- Helpers de campo ----
@@ -11291,10 +11438,10 @@ async function viewMatchCelebrate(root) {
       frame,
       el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;justify-content:center" }, [
         btn("↻ Reproducir de nuevo", "ghost sm", () => renderPreview()),
-        btn("⬇ Descargar animación", "primary sm", () => downloadPreview()),
+        (() => { const b = btn("⬇ Descargar animación", "primary sm", () => downloadPreview(b)); return b; })(),
       ]),
       el("p", { class: "muted", style: "font-size:11px;max-width:300px;text-align:center" },
-        "La animación se reproduce al cambiar la selección. «Descargar animación» guarda un HTML que reproduce esta pantalla al abrirlo. Los cambios se guardan solos y los usuarios los ven al recargar la app."),
+        "La animación se reproduce al cambiar la selección. «Descargar animación» genera un vídeo MP4 (o WebM si el navegador no soporta MP4) grabado en tu navegador. Los cambios se guardan solos y los usuarios los ven al recargar la app."),
     ]),
   ]);
   const grid = el("div", { style: "display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap" }, [
