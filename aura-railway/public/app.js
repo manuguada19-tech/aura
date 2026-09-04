@@ -8173,13 +8173,11 @@ function buildBoostAction() {
     activateBoostFlow().then(() => setTimeout(refreshBoostAction, 400));
   }, "Boost");
   // actionBtn con label devuelve un .action-item (columna botón+leyenda).
+  // El icono del botón YA es un rayo, así que el estado activo se marca solo
+  // con el relleno degradado (clase .on) y la cuenta atrás en la leyenda; no
+  // añadimos un segundo rayo para no duplicar el icono.
   const btn = item.querySelector(".action-btn");
   const cap = item.querySelector(".action-cap");
-  if (btn) {
-    // Punto/badge ⚡ que solo se ve cuando el Boost está activo.
-    const dot = el("span", { class: "boost-live-dot", "aria-hidden": "true", html: `<svg viewBox="0 0 24 24" width="10" height="10" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` });
-    btn.appendChild(dot);
-  }
   item._boostCap = cap;
   item._boostBtn = btn;
   let secs = 0, timer = null;
