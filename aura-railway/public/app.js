@@ -8811,24 +8811,8 @@ async function openNearbyMap() {
   ]));
 
   // ---- Barra de filtros (chips) ----
-  // V908 · El segmento de género ahora es COHERENTE con la zona: en Hetero
-  // muestra Todos/Mujeres/Hombres; en Zona LGTB+ añade las identidades
-  // (No binario, Trans, Género fluido…), igual que el filtro de Explorar/Buscar.
-  const _mapZone = state.zone === "lgtb" ? "lgtb" : "hetero";
-  const genderSeg = el("div", { class: "map-seg" });
-  const genderOpts = (GENDER_FILTER_OPTS[_mapZone] || GENDER_FILTER_OPTS.hetero)
-    .map(o => ({ v: o.value, label: o.label }));
-  const genderBtns = genderOpts.map(o => {
-    const b = el("button", { class: "map-seg-btn" + (mapFilters.gender === o.v ? " active" : ""), type: "button" }, o.label);
-    b.addEventListener("click", () => {
-      mapFilters.gender = o.v;
-      genderBtns.forEach(x => x.classList.toggle("active", x === b));
-      repaint();
-    });
-    return b;
-  });
-  genderBtns.forEach(b => genderSeg.appendChild(b));
-
+  // V910 · El género se ha movido a la hoja "Filtros" (ver openMapFilters), como
+  // en Explorar/Buscar. Aquí solo quedan los accesos rápidos.
   const onlineChip = el("button", { class: "map-chip" + (mapFilters.onlyOnline ? " active" : ""), type: "button" }, [
     el("span", { class: "map-chip-dot" }), "En línea",
   ]);
@@ -8885,11 +8869,13 @@ async function openNearbyMap() {
   });
 
   // V843 · Sin chips de km: la distancia ya no restringe (ver SEARCH_RADIUS_KM).
-  // V845 · El segmento de género y el chip "En línea" van en UNA sola fila (antes
-  // en dos) para que la barra de filtros ocupe menos alto y se vea más mapa.
-  // V851 · Añadido el chip "Filtros" al final de la fila (con scroll horizontal).
+  // V910 · El GÉNERO ya NO es un segmento en la barra: se ha movido DENTRO de la
+  // hoja "Filtros" (junto a orientación, edad, etc.), igual que en Explorar y
+  // Buscar. Así no hay scroll horizontal ni opciones cortadas en móviles
+  // estrechos cuando la Zona LGTB+ añade varias identidades. La barra superior
+  // conserva solo los accesos rápidos (En línea, Buscan ahora, Nuevos, Filtros).
   const filterbar = el("div", { class: "map-filterbar" }, [
-    el("div", { class: "map-filterbar-row" }, [ genderSeg, onlineChip, nowChip, newChip, filtersChip ]),
+    el("div", { class: "map-filterbar-row" }, [ onlineChip, nowChip, newChip, filtersChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -9221,10 +9207,12 @@ async function openNearbyMap() {
   }
 
   // V851 · Nº de filtros AVANZADOS activos (los de la hoja), para la insignia del
-  // botón "Filtros". El género y "en línea" tienen sus propios chips aparte.
+  // botón "Filtros". "En línea"/"Buscan ahora"/"Nuevos" tienen sus propios chips.
+  // V910 · El género vive ahora en la hoja, así que también cuenta aquí.
   function activeMapFilterCount() {
     const f = mapFilters;
     let n = 0;
+    if (f.gender && f.gender !== "todos") n++;
     if (f.orientation && f.orientation !== "todas") n++;
     if (f.ageMin !== 18 || f.ageMax !== 99) n++;
     if (f.heightMin || f.heightMax) n++;
@@ -12764,10 +12752,36 @@ function openMapFilters(mf, onApply) {
       html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
   ]));
 
+  const _mfZone = state.zone === "lgtb" ? "lgtb" : "hetero";
+
+  // V910 · Género/identidad (selección única tipo radio) DENTRO de la hoja, como
+  // en Explorar/Buscar. Antes era un segmento en la barra del mapa que, en Zona
+  // LGTB+ (varias identidades), se salía y hacía scroll horizontal en móviles
+  // estrechos. Opciones coherentes con la zona. "Todos" = sin filtro.
+  const genderOpts = GENDER_FILTER_OPTS[_mfZone] || GENDER_FILTER_OPTS.hetero;
+  const genderRef = { value: mf.gender || "todos" };
+  const genderChips = [];
+  const genderRow = el("div", { class: "chip-row" });
+  genderOpts.forEach(opt => {
+    const active = opt.value === genderRef.value;
+    const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
+    c.addEventListener("click", () => {
+      genderRef.value = opt.value;
+      genderChips.forEach(x => x.classList.toggle("active", x === c));
+    });
+    genderChips.push(c);
+    genderRow.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, _mfZone === "lgtb" ? "Género e identidad" : "Género"),
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
+      _mfZone === "lgtb" ? "Elige una identidad o «Todos» para verlas todas." : "«Todos» muestra mujeres y hombres."),
+    genderRow,
+  ]));
+
   // V908 · Orientación (selección única) en el mapa, con paridad con
   // Explorar/Buscar. Opciones según la zona: Hetero → solo "Heterosexual";
   // LGTB → lista completa. "Todas" = sin filtro.
-  const _mfZone = state.zone === "lgtb" ? "lgtb" : "hetero";
   const orientOpts = orientationOptionsForZone(_mfZone, mf.orientation);
   const orientRef = { value: orientOpts.includes(mf.orientation) ? mf.orientation : "todas" };
   const orientChips = [];
@@ -12883,6 +12897,7 @@ function openMapFilters(mf, onApply) {
       let wMin = weightCtl.getLoCanon(), wMax = weightCtl.getHiCanon();
       const wFull = (wMin <= weightCtl.canonMin() && wMax >= weightCtl.canonMax());
       mf.weightMin = wFull ? 0 : wMin; mf.weightMax = wFull ? 0 : wMax;
+      mf.gender = genderRef.value || "todos"; // V910
       mf.orientation = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas"; // V908
       mf.looking_for = lookingRef.id;
       mf.relationship = relRef.id;
@@ -12904,6 +12919,7 @@ function openMapFilters(mf, onApply) {
     } }, "Aplicar filtros"),
     el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
       mf.ageMin = 18; mf.ageMax = 99;
+      mf.gender = "todos"; // V910
       mf.orientation = "todas"; // V908
       mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
       mf.looking_for = "any"; mf.relationship = "any";
