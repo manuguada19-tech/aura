@@ -3560,6 +3560,20 @@ const GENDER_OPTIONS = [
   "Mujer", "Hombre", "No binario", "Binario", "Género fluido",
   "Agénero", "Intersexual", "Transgénero", "Prefiero no decirlo",
 ];
+// V903 · Géneros según la zona. En Zona Hetero solo tiene sentido Hombre/Mujer
+// (+ "Prefiero no decirlo" como opción neutra de privacidad); las identidades no
+// binarias/trans/etc. corresponden a la Zona LGTB+, donde se ofrece la lista
+// completa. Antes (V741) se mostraban TODAS en ambas zonas, lo que era incoherente
+// en Hetero. Si el género ya guardado no está en la lista de su zona, se añade al
+// final para no perder el valor existente ni deseleccionarlo sin querer.
+function genderOptionsForZone(zone, currentValue) {
+  const base = (zone === "lgtb")
+    ? GENDER_OPTIONS.slice()
+    : ["Mujer", "Hombre", "Prefiero no decirlo"];
+  const cur = currentValue ? String(currentValue) : "";
+  if (cur && !base.includes(cur)) base.push(cur);
+  return base;
+}
 // V757 · Etnias seleccionables (mismo listado que en el registro). El usuario
 // puede fijarla en su perfil y así aparece como faceta del filtro de etnia.
 const ETHNICITY_OPTIONS = [
@@ -7264,10 +7278,11 @@ function screenRegisterProfile(root) {
   ]));
   const fName = el("input", { type: "text", required: true, placeholder: "Tu nombre", value: state.registration.name });
   const fBirth = el("input", { type: "date", required: true, value: state.registration.birthDate });
-  // V741 · Lista completa de géneros para todas las zonas (antes hetero solo
-  // ofrecía Mujer/Hombre). Se muestran etiquetas en español.
+  // V903 · Géneros según la zona seleccionada: Hetero → Hombre/Mujer (+privado);
+  // LGTB → lista completa de identidades. (V741 mostraba todas en ambas zonas.)
   const fGender = el("select", { required: true },
-    GENDER_OPTIONS.map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
+    genderOptionsForZone(state.zone, state.registration.gender)
+      .map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
   const fOrient = el("select", { required: true },
     (state.zone === "lgtb"
       ? ["Lesbiana","Gay","Bisexual","Pansexual","Asexual","Demisexual","Queer","Prefiero no decirlo"]
@@ -10217,6 +10232,21 @@ async function syncUserPlan() {
     const plan = String(s.plan).toLowerCase();
     const prevPlan = String((state.user.plan || state.user.plan_key) || "free").toLowerCase();
     state.user.plan = plan;
+    // V903 · Sincroniza la ZONA con la BD (fuente de verdad). El cliente solo la
+    // fijaba al hacer login y no la persistía, así que al recargar/reabrir la PWA
+    // caía a "hetero" aunque la cuenta fuera "lgtb". Ahora la traemos del servidor
+    // en cada arranque y la guardamos en la sesión para que el chip y el mazo de
+    // Explorar (que dependen de state.zone) reflejen la zona real.
+    if (s.zone === "hetero" || s.zone === "lgtb") {
+      const zoneChanged = state.zone !== s.zone;
+      state.zone = s.zone;
+      state.user.zone = s.zone;
+      if (zoneChanged) {
+        // Repinta la pantalla activa para que el chip de zona y el mazo de
+        // Explorar (perfiles de la zona correcta) se actualicen sin recargar.
+        try { _rerender(); } catch {}
+      }
+    }
     try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
     try { updateMeTierBadge(); } catch {}
     // V811 · Al detectar que el usuario ha vuelto al plan gratuito desde uno de
@@ -14734,11 +14764,14 @@ function screenEditProfile(root) {
   const weightLabel = el("label", {}, `Peso (${peWeight.u}) · opcional`);
   weightField.appendChild(weightLabel); weightField.appendChild(weightInp); form.appendChild(weightField);
 
-  // V741 · Género (etiquetas en español). El valor almacenado se normaliza para
-  // preseleccionar la opción correcta aunque estuviera guardado como male/female.
+  // V903 · Género (etiquetas en español) según la zona del usuario: Hetero →
+  // Hombre/Mujer (+privado); LGTB → lista completa. El valor almacenado se
+  // normaliza para preseleccionar la opción correcta aunque estuviera guardado
+  // como male/female, y si no está en la lista de su zona se conserva igualmente.
   const curGender = genderLabel(u.gender);
   const genderInp = el("select", {},
-    GENDER_OPTIONS.map(g => el("option", { value: g, selected: g === curGender || undefined }, g)));
+    genderOptionsForZone(state.zone, curGender)
+      .map(g => el("option", { value: g, selected: g === curGender || undefined }, g)));
   const genderField = el("div", { class: "field" });
   genderField.appendChild(el("label", {}, T("content.me.field_gender") || "Género"));
   genderField.appendChild(genderInp); form.appendChild(genderField);

@@ -13925,7 +13925,11 @@ async function ensureReadCreditsRow(uid) {
 
 async function getReadStatus(uid) {
   await ensureReadCreditsRow(uid);
-  const [[user]] = await pool.query("SELECT plan FROM users WHERE id=?", [uid]);
+  // V903 · Devolvemos también la zona (hetero/lgtb) para que el cliente la
+  // sincronice con la BD en cada arranque. Antes el cliente solo fijaba la zona
+  // al hacer login y NO la persistía, así que al recargar/reabrir la PWA caía al
+  // valor por defecto "hetero" aunque en la BD (y en el panel) fuera "lgtb".
+  const [[user]] = await pool.query("SELECT plan, zone FROM users WHERE id=?", [uid]);
   const plan = (user && user.plan) || "free";
   const premiumUnlimited = isTrue("chat.reads.premium_unlimited", true);
   const unlimited = premiumUnlimited && plan && plan !== "free";
@@ -13936,6 +13940,7 @@ async function getReadStatus(uid) {
   const free_remaining = Math.max(0, freeMonthly - used_free);
   return {
     plan,
+    zone: (user && user.zone) || "hetero", // V903 · zona autoritativa de la BD
     unlimited: !!unlimited,
     free_monthly: freeMonthly,
     free_used: used_free,
