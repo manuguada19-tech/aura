@@ -3109,6 +3109,24 @@ async function openUserDrawer(id, onChange) {
     el("div", { class: "input", style: "background:rgba(255,255,255,.03);opacity:.85;cursor:not-allowed" }, _llText)
   ));
 
+  // V889 · Avisos de moderación (fotos retiradas). Se muestra solo si tiene >0.
+  // Al 2.º aviso o al reincidir con una foto ya rechazada, el sistema suspende
+  // 24 h automáticamente. La suspensión se levanta con el botón "Reactivar".
+  const _warns = Number(u.mod_warnings || 0);
+  if (_warns > 0) {
+    const wcls = _warns >= 2 ? "bad" : "warn";
+    form.appendChild(el("div", {
+      class: "tag " + wcls,
+      style: "display:block;padding:10px;margin:8px 0;border-radius:8px;font-size:13px",
+    }, [
+      el("strong", {}, "⚠ Avisos de moderación: " + _warns),
+      el("div", { style: "font-size:11px;margin-top:4px;opacity:.85" },
+        _warns >= 2
+          ? "Ha alcanzado el umbral de suspensión automática (24 h). Usa «Reactivar» para levantarla."
+          : "Un aviso más (o reincidir con una foto ya retirada) suspende la cuenta 24 h."),
+    ]));
+  }
+
   // Badge de duplicado: si duplicate_score > 0 mostramos alerta con enlace al panel.
   if (u.duplicate_score && u.duplicate_score > 0) {
     const cls = u.duplicate_score >= 70 ? "bad" : u.duplicate_score >= 40 ? "warn" : "muted";

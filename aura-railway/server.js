@@ -1461,6 +1461,27 @@ async function migrate() {
   try { await pool.execute("ALTER TABLE photos ADD COLUMN ai_label VARCHAR(60) NULL"); } catch (e) { /* ya existe */ }
   try { await pool.execute("ALTER TABLE photos ADD COLUMN ai_checked_at TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
 
+  // V889 · Moderación con avisos y reincidencia. Se guarda un contador de avisos
+  // por usuario (mod_warnings) y, en una tabla aparte, SOLO el hash SHA-256 de
+  // cada foto rechazada (NUNCA la imagen: se borra por privacidad). Sirve para
+  // detectar si el usuario reintenta subir exactamente la misma foto ya
+  // rechazada. Al 2º aviso, o al reincidir con una foto ya rechazada, la cuenta
+  // se suspende 24 h automáticamente.
+  try { await pool.execute("ALTER TABLE users ADD COLUMN mod_warnings INT NOT NULL DEFAULT 0"); } catch (e) { /* ya existe */ }
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS photo_rejections (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      content_hash VARCHAR(64) NOT NULL,
+      reason VARCHAR(200) NULL,
+      created_by VARCHAR(80) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id),
+      INDEX idx_hash (content_hash),
+      INDEX idx_user_hash (user_id, content_hash)
+    )`);
+  } catch (e) { /* ya existe */ }
+
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
   // completa se conserva en `url` (así la cuadrícula la muestra entera).
@@ -2396,6 +2417,11 @@ app.post("/api/users/:id/action", wrap(async (req, res) => {
           [createdBy, id]
         );
       } catch {}
+      // V889 · Reactivar es "borrón y cuenta nueva": reinicia el contador de
+      // avisos de moderación para que un rechazo posterior no re-suspenda al
+      // instante. El historial de hashes (photo_rejections) SÍ se conserva para
+      // seguir bloqueando exactamente la misma foto ya retirada.
+      try { await pool.execute("UPDATE users SET mod_warnings=0 WHERE id=?", [id]); } catch {}
     },
     verify: () => pool.execute("UPDATE users SET verified=1 WHERE id=?", [id]),
     reset_password: () => Promise.resolve(),
@@ -3685,6 +3711,126 @@ async function moderatePhotoWithAI(photoUrl) {
   if (provider === "openai") return { provider, ...(await aiModerateOpenAI(input, apiKey)) };
   return { ok: false, error: "provider_unavailable", provider };
 }
+
+/* ============================================================
+   V889 · Avisos de moderación, hash de fotos rechazadas y suspensión 24 h
+   ------------------------------------------------------------
+   Al rechazar una foto: (1) se guarda SOLO el hash SHA-256 del contenido
+   (la imagen se borra, nunca se conserva ni se adjunta a correos), (2) se
+   suma un aviso al usuario y se le avisa por email, (3) si es su 2.º aviso
+   (o reincide subiendo una foto con un hash ya rechazado) se suspende 24 h
+   automáticamente. La copia al administrador la gestiona enqueueEmail vía el
+   flag cc_admin de la plantilla (SIN la foto).
+============================================================ */
+// Hash estable del contenido de la foto (soporta data URL y http). Para data
+// URL se hashea el binario decodificado; para http, la propia URL normalizada.
+function photoContentHash(url) {
+  try {
+    const s = String(url || "");
+    const m = /^data:image\/[a-z+]+;base64,(.+)$/i.exec(s);
+    const material = m ? Buffer.from(m[1], "base64") : Buffer.from(s.trim().toLowerCase(), "utf8");
+    return crypto.createHash("sha256").update(material).digest("hex");
+  } catch { return null; }
+}
+
+// Suspende una cuenta 24 h (por defecto) reutilizando la tabla user_restrictions
+// y el mismo circuito que usa el panel de administración. No envía correo aquí:
+// lo hace el llamador según el motivo.
+async function suspendUser24h(userId, reason, actor, hours) {
+  const h = Number(hours) > 0 ? Number(hours) : 24;
+  const expiresAt = new Date(Date.now() + h * 3600 * 1000);
+  const by = String(actor || "sistema").slice(0, 80);
+  try {
+    await pool.execute("UPDATE users SET status='suspended' WHERE id=?", [userId]);
+    // Levanta restricciones de cuenta previas para no duplicar filas activas.
+    await pool.execute(
+      `UPDATE user_restrictions SET lifted_at=NOW(), lifted_by=?
+         WHERE user_id=? AND feature IN ('all','account_suspend','account_ban')
+           AND lifted_at IS NULL`,
+      [by, userId]
+    );
+    await pool.execute(
+      `INSERT INTO user_restrictions (user_id, feature, reason, created_by, expires_at)
+       VALUES (?, 'account_suspend', ?, ?, ?)`,
+      [userId, String(reason || "Reincidencia en contenido no permitido.").slice(0, 500), by, expiresAt]
+    );
+  } catch (e) { /* best-effort */ }
+  try { ssePushRestrictions(userId); } catch {}
+  return expiresAt;
+}
+
+// Procesa el rechazo de una foto: guarda el hash, suma aviso, decide suspensión
+// y encola los correos correspondientes (foto retirada y, en su caso, suspensión).
+// `contentHash` puede venir precalculado (si la foto aún existía) porque tras el
+// borrado ya no podríamos calcularlo. Devuelve un resumen para logs/UI.
+async function registerPhotoRejection({ userId, contentHash, reason, actor }) {
+  const by = String(actor || "sistema").slice(0, 80);
+  const motivo = String(reason || "Contenido no permitido").slice(0, 200);
+  let repeat = false;
+  // ¿El usuario ya tenía rechazada una foto con este mismo hash? => reincidencia.
+  if (contentHash) {
+    try {
+      const [[prev]] = await pool.query(
+        "SELECT COUNT(*) AS n FROM photo_rejections WHERE user_id=? AND content_hash=?",
+        [userId, contentHash]
+      );
+      repeat = !!(prev && prev.n > 0);
+      await pool.execute(
+        "INSERT INTO photo_rejections (user_id, content_hash, reason, created_by) VALUES (?,?,?,?)",
+        [userId, contentHash, motivo, by]
+      );
+    } catch {}
+  }
+  // Suma un aviso al usuario y lee el total.
+  let warnings = 1;
+  try {
+    await pool.execute("UPDATE users SET mod_warnings = mod_warnings + 1 WHERE id=?", [userId]);
+    const [[u]] = await pool.query("SELECT mod_warnings FROM users WHERE id=? LIMIT 1", [userId]);
+    warnings = (u && u.mod_warnings) || 1;
+  } catch {}
+  // Regla: 2.º aviso o reincidencia con foto ya rechazada => suspensión 24 h.
+  const suspend = repeat || warnings >= 2;
+  let expiresAt = null;
+  if (suspend) {
+    const susReason = repeat
+      ? "Reincidencia: se volvió a subir una foto ya retirada por incumplir las normas."
+      : "Acumulación de avisos por contenido que incumple las normas de la comunidad.";
+    expiresAt = await suspendUser24h(userId, susReason, by, 24);
+  }
+  const nowTxt = new Date().toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" });
+  // Correo al usuario: foto retirada (siempre). Copia al admin vía cc_admin.
+  try {
+    enqueueEmail("photo_removed", userId, {
+      reason: motivo,
+      when: nowTxt,
+      warnings: String(warnings),
+      warnings_left: String(Math.max(0, 2 - warnings)),
+      repeat: repeat ? "Sí" : "No",
+      suspended: suspend ? "Sí" : "No",
+    }).catch(() => {});
+  } catch {}
+  // Correo de suspensión (solo si se suspende).
+  if (suspend) {
+    const untilTxt = expiresAt
+      ? new Date(expiresAt).toLocaleString("es-ES", { dateStyle: "medium", timeStyle: "short" })
+      : "24 horas";
+    try {
+      enqueueEmail("moderation_suspended", userId, {
+        reason: repeat
+          ? "Reincidencia en contenido que incumple las normas de la comunidad."
+          : "Acumulación de avisos por incumplir las normas de la comunidad.",
+        duration: "24 horas",
+        until: untilTxt,
+      }).catch(() => {});
+    } catch {}
+  }
+  try {
+    await logActivity("moderation",
+      `Foto rechazada de usuario ${userId} (${motivo})${repeat ? " · REINCIDENCIA" : ""}` +
+      ` · avisos=${warnings}${suspend ? " · SUSPENDIDO 24h" : ""}`);
+  } catch {}
+  return { warnings, repeat, suspended: suspend, expires_at: expiresAt };
+}
 // Aplica el resultado de la IA a una foto ya insertada (pendiente). Guarda el
 // score/label y, si supera el umbral Y auto_reject está activo, la elimina
 // (rechazo automático). Si no, la deja pendiente para revisión humana. Devuelve
@@ -3700,11 +3846,29 @@ async function applyAiModeration(photoId, photoUrl) {
   const threshold = parseFloat(getSetting("moderation.ai.threshold", "0.85"));
   const autoReject = getSetting("moderation.ai.auto_reject", "false") === "true";
   if (autoReject && Number.isFinite(threshold) && score >= threshold) {
+    // V889 · Necesitamos el user_id (para avisos/suspensión) antes de borrar.
+    let uid = null;
+    try {
+      const [[ph]] = await pool.query("SELECT user_id FROM photos WHERE id=? AND is_now_photo=1 LIMIT 1", [photoId]);
+      uid = ph && ph.user_id;
+    } catch (e) {}
     try {
       await pool.execute("DELETE FROM photos WHERE id=? AND is_now_photo=1", [photoId]);
       await logActivity("ai-moderation", `Foto "busco ahora" #${photoId} RECHAZADA por IA (${label} ${score.toFixed(2)} ≥ ${threshold})`);
     } catch (e) {}
-    return { checked: true, score, label, auto_rejected: true };
+    // V889 · Registra el rechazo automático (hash + aviso + posible suspensión).
+    let mod = null;
+    if (uid) {
+      try {
+        mod = await registerPhotoRejection({
+          userId: uid,
+          contentHash: photoContentHash(photoUrl),
+          reason: `Contenido no permitido detectado por IA (${label} ${score.toFixed(2)})`,
+          actor: "IA",
+        });
+      } catch (e) {}
+    }
+    return { checked: true, score, label, auto_rejected: true, moderation: mod };
   }
   return { checked: true, score, label, auto_rejected: false };
 }
@@ -3786,11 +3950,17 @@ app.post("/api/admin/now-photos/:id/reject", wrap(async (req, res) => {
   const who = (req.admin && req.admin.email) || "admin";
   const reason = String(req.body?.reason || "").slice(0, 200) || "Contenido no permitido";
   // Rechazar = eliminar la foto (no se conserva contenido sensible rechazado).
-  const [[p]] = await pool.query("SELECT user_id FROM photos WHERE id=? AND is_now_photo=1 LIMIT 1", [id]);
+  // V889 · Antes de borrarla, calculamos el hash de su contenido para detectar
+  // reincidencias (subir la MISMA foto otra vez). Solo se guarda el hash.
+  const [[p]] = await pool.query("SELECT user_id, url FROM photos WHERE id=? AND is_now_photo=1 LIMIT 1", [id]);
   if (!p) return res.status(404).json({ ok: false, error: "not_found" });
+  const contentHash = photoContentHash(p.url);
   await pool.execute("DELETE FROM photos WHERE id=? AND is_now_photo=1", [id]);
   try { await logActivity("moderation", `Foto "busco ahora" #${id} (usuario ${p.user_id}) rechazada por ${who}: ${reason}`); } catch {}
-  res.json({ ok: true, reason });
+  // V889 · Registra el rechazo: hash + aviso + posible suspensión 24 h + correos.
+  let mod = null;
+  try { mod = await registerPhotoRejection({ userId: p.user_id, contentHash, reason, actor: who }); } catch {}
+  res.json({ ok: true, reason, moderation: mod });
 }));
 
 // V886 · Analizar una foto concreta con la IA a demanda (botón del panel).
@@ -8818,6 +8988,33 @@ app.post("/api/my/now-photo", wrap(async (req, res) => {
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const data = req.body?.data;
   if (!validPhotoData(data)) return res.status(400).json({ ok: false, error: "invalid_image" });
+  // V889 · Reincidencia: si el usuario reintenta subir EXACTAMENTE la misma foto
+  // que ya le fue rechazada (mismo hash), la bloqueamos en el acto, sumamos aviso
+  // y (por regla) suspendemos 24 h. No se encola a moderación humana de nuevo.
+  const upHash = photoContentHash(data);
+  if (upHash) {
+    try {
+      const [[prev]] = await pool.query(
+        "SELECT COUNT(*) AS n FROM photo_rejections WHERE user_id=? AND content_hash=?",
+        [me, upHash]
+      );
+      if (prev && prev.n > 0) {
+        let mod = null;
+        try {
+          mod = await registerPhotoRejection({
+            userId: me, contentHash: upHash,
+            reason: "Reintento de una foto ya retirada por incumplir las normas.",
+            actor: "sistema",
+          });
+        } catch {}
+        return res.status(409).json({
+          ok: false, error: "photo_rejected_before",
+          message: "Esta foto ya fue retirada por incumplir las normas y no puede volver a subirse.",
+          moderation: mod,
+        });
+      }
+    } catch {}
+  }
   // Solo una foto now por usuario: se borra la anterior y se inserta la nueva
   // como PENDIENTE (approved=0). Nunca es principal ni entra en la galería.
   await pool.execute("DELETE FROM photos WHERE user_id=? AND is_now_photo=1", [me]);
@@ -10486,6 +10683,8 @@ async function seedEmailTemplates() {
         "maintenance_notice",
         "maintenance_ended",
         "invite",
+        // V889 · Rediseño con contador de avisos + aviso de suspensión 24 h.
+        "photo_removed",
       ]);
       const forceRefresh = forceRefreshIds.has(t.id) && stored !== (t.html || "");
       const needsMigration =
