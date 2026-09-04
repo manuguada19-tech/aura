@@ -9757,7 +9757,7 @@ app.post("/api/my/checkout/boost", wrap(async (req, res) => {
   const [[u]] = await pool.query("SELECT email, stripe_customer_id FROM users WHERE id=? LIMIT 1", [me]);
   const base = publicBaseUrl(req);
   try {
-    const session = await stripeClient.createCheckoutSession({
+    const session = await createCheckoutResilient({
       mode: "payment",
       success_url: `${base}/?pago=ok&sid={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/?pago=cancelado`,
@@ -9773,11 +9773,11 @@ app.post("/api/my/checkout/boost", wrap(async (req, res) => {
         },
       }],
       metadata: { user_id: String(me), kind: "boost_pack", pack: pick.id, boosts: String(pick.boosts) },
-    });
+    }, { uid: me, email: u && u.email });
     res.json({ ok: true, url: session.url, id: session.id });
   } catch (e) {
     console.error("[stripe] boost checkout:", e.message);
-    res.status(502).json({ error: "stripe_error" });
+    res.status(502).json({ error: "stripe_error", reason: e.message || "No se pudo iniciar el pago" });
   }
 }));
 
@@ -14312,6 +14312,36 @@ function publicBaseUrl(req) {
   return `${proto}://${host}`;
 }
 
+// V893 · Robustez test→live. Al cambiar las claves de Stripe de test a live (o
+// al revés), los usuarios que ya habían pasado por caja conservan un
+// `stripe_customer_id` creado en el OTRO entorno. La API de Stripe rechaza ese
+// cliente con "No such customer" (code: resource_missing) y TODO el checkout
+// fallaba con 502 → el usuario solo veía "No se pudo iniciar el pago". Aquí, si
+// Stripe se queja del cliente, borramos el id caduco de la ficha del usuario y
+// reintentamos la sesión SIN `customer` (usando el email), para que la compra
+// pueda continuar sin intervención. Se usa en los tres checkouts (suscripción,
+// lecturas y boost), que compartían exactamente el mismo punto de fallo.
+async function createCheckoutResilient(params, { uid, email } = {}) {
+  try {
+    return await stripeClient.createCheckoutSession(params);
+  } catch (e) {
+    const code = e && e.stripe && e.stripe.code;
+    const param = e && e.stripe && e.stripe.param;
+    const missingCustomer =
+      code === "resource_missing" ||
+      param === "customer" ||
+      /no such customer/i.test((e && e.message) || "");
+    if (missingCustomer && params && params.customer) {
+      if (uid) { try { await pool.execute("UPDATE users SET stripe_customer_id=NULL WHERE id=?", [uid]); } catch {} }
+      const retry = Object.assign({}, params);
+      delete retry.customer;
+      if (email) retry.customer_email = email;
+      return await stripeClient.createCheckoutSession(retry);
+    }
+    throw e;
+  }
+}
+
 function genInvoiceNo() {
   const d = new Date();
   const ym = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -14393,7 +14423,7 @@ app.post("/api/my/checkout/subscription", wrap(async (req, res) => {
   const base = publicBaseUrl(req);
 
   try {
-    const session = await stripeClient.createCheckoutSession({
+    const session = await createCheckoutResilient({
       mode: "subscription",
       success_url: `${base}/?pago=ok&sid={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/?pago=cancelado`,
@@ -14412,11 +14442,11 @@ app.post("/api/my/checkout/subscription", wrap(async (req, res) => {
       }],
       metadata: { user_id: String(me), kind: "subscription", plan: planCode, period },
       subscription_data: { metadata: { user_id: String(me), plan: planCode, period } },
-    });
+    }, { uid: me, email: u && u.email });
     res.json({ ok: true, url: session.url, id: session.id });
   } catch (e) {
     console.error("[stripe] subscription checkout:", e.message);
-    res.status(502).json({ error: "stripe_error" });
+    res.status(502).json({ error: "stripe_error", reason: e.message || "No se pudo iniciar el pago" });
   }
 }));
 
@@ -14437,7 +14467,7 @@ app.post("/api/my/checkout/reads", wrap(async (req, res) => {
   const base = publicBaseUrl(req);
 
   try {
-    const session = await stripeClient.createCheckoutSession({
+    const session = await createCheckoutResilient({
       mode: "payment",
       success_url: `${base}/?pago=ok&sid={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/?pago=cancelado`,
@@ -14453,11 +14483,11 @@ app.post("/api/my/checkout/reads", wrap(async (req, res) => {
         },
       }],
       metadata: { user_id: String(me), kind: "reads_pack", pack: pick.id, credits: String(pick.credits) },
-    });
+    }, { uid: me, email: u && u.email });
     res.json({ ok: true, url: session.url, id: session.id });
   } catch (e) {
     console.error("[stripe] reads checkout:", e.message);
-    res.status(502).json({ error: "stripe_error" });
+    res.status(502).json({ error: "stripe_error", reason: e.message || "No se pudo iniciar el pago" });
   }
 }));
 

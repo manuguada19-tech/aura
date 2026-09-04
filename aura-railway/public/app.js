@@ -2336,7 +2336,7 @@ const datingApi = {
     try {
       const r = await fetch("/api/my/checkout/boost", { method: "POST", headers: this.headers(), body: JSON.stringify({ pack: String(pack) }) });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message };
+      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message, reason: data && data.reason };
       return data;
     } catch { return { error: "network" }; }
   },
@@ -11870,7 +11870,7 @@ async function openBoostPaywall(prefBoost, prefPacks) {
           if (publicConfig?.payments?.checkout_live) {
             const cs = await datingApi.checkoutBoost(p.id);
             if (cs && cs.url) { window.location.href = cs.url; return; }
-            toast((cs && cs.message) || "No se pudo iniciar el pago");
+            toast((cs && (cs.reason || cs.message)) || "No se pudo iniciar el pago");
             restore();
             return;
           }
