@@ -1596,49 +1596,207 @@
     // Estas fotos se suben con approved=0 y NO se muestran a nadie hasta que se
     // aprueban aquí. Aprobar = visible; Rechazar = se elimina la foto. La parte
     // automática con IA se conectará en Fase 4 (pre-filtro previo a esta cola).
+    // V884 · Galería de moderación profesional (tarjetas grandes) con:
+    //  · Banner de estado de la IA (activa / manual) según moderation.ai.*
+    //  · Aprobar / Rechazar-con-motivo / Sancionar al usuario (aviso, suspender,
+    //    banear) sin salir del panel.
+    //  · Filtro pendientes / aprobadas / todas y KPIs de la cola.
+    // La clave de IA se guarda en settings bajo "moderation.ai.*" (NUNCA bajo
+    // "content.*"), por lo que jamás se expone en el endpoint público de contenido.
+    const MODQ_REJECT_REASONS = [
+      "Contenido no permitido",
+      "Desnudez o contenido sexual",
+      "Rostro no visible / no v\u00e1lida",
+      "Foto de otra persona",
+      "Datos de contacto / spam",
+      "Violencia u odio",
+      "Otro",
+    ];
+
     async function view_moderation_ai(container) {
       const tok = readTok();
       const auth = tok ? `?adminToken=${encodeURIComponent(tok)}` : "";
-      DataView(container, {
-        title: "Fotos \u201cAhora mismo\u201d", subtitle: "Cola de aprobaci\u00f3n de fotos privadas del estado \u201cbusco ahora\u201d. No se muestran a nadie hasta aprobarlas.", icon: "\u26a1",
-        fetch: async () => (await api("/api/admin/now-photos/queue?status=pending")).data?.items || [],
-        rowId: (r) => r.id,
-        kpis: (rows) => [
-          { label: "Pendientes", value: rows.length, accent: "amber" },
-        ],
-        columns: [
-          { key: "id", label: "ID", sortable: true },
-          { key: "foto", label: "Foto", render: (r) => {
-              const img = document.createElement("img");
-              img.src = r.image_url + auth; img.alt = "";
-              img.style.cssText = "width:60px;height:80px;object-fit:cover;border-radius:8px;cursor:pointer;background:#111";
-              img.onclick = () => { window.open(r.image_url + auth, "_blank"); };
-              return img;
-            } },
-          { key: "user", label: "Usuario", render: (r) => {
-              const d = document.createElement("div");
-              d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.name || "")}${r.age ? ", " + r.age : ""}</div><div class="fx-muted" style="font-size:11px">#${r.user_id} \u00b7 ${escapeHtml(r.email || "")}</div>`;
-              return d;
-            } },
-          { key: "now_status_text", label: "Frase", render: (r) => {
-              const d = document.createElement("div");
-              d.style.cssText = "max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
-              d.textContent = r.now_status_text || "\u2014"; d.title = r.now_status_text || "";
-              return d;
-            } },
-          { key: "city", label: "Ciudad", render: (r) => r.city || "\u2014" },
-          { key: "created_at", label: "Subida", sortable: true, render: (r) => fmtDate(r.created_at) },
-        ],
-        actions: [
-          { label: "Aprobar", variant: "ghost", onClick: async (r, reload) => {
+      const state = { status: "pending", items: [], ai: null };
+
+      container.innerHTML = "";
+      const root = document.createElement("div"); root.className = "fx-view";
+      container.appendChild(root);
+
+      // Cabecera
+      const head = document.createElement("div"); head.className = "fx-view-head";
+      head.innerHTML = `
+        <div class="fx-view-title">
+          <div class="fx-view-emoji">\ud83d\udee1\ufe0f</div>
+          <div>
+            <h1>Moderaci\u00f3n de fotos</h1>
+            <p class="fx-muted">Fotos privadas del estado \u201cbusco ahora\u201d. No se muestran a nadie hasta que las apruebas aqu\u00ed.</p>
+          </div>
+        </div>
+        <div class="fx-view-actions"></div>`;
+      const headActions = head.querySelector(".fx-view-actions");
+      headActions.appendChild(btn("Configurar IA", { variant: "ghost", icon: "\ud83e\udd16", onClick: openAiConfig }));
+      headActions.appendChild(btn("", { variant: "ghost", icon: "&#x21bb;", title: "Refrescar", onClick: reload }));
+      root.appendChild(head);
+
+      const banner = document.createElement("div");
+      root.appendChild(banner);
+
+      const kpiRow = document.createElement("div"); kpiRow.className = "fx-kpis";
+      root.appendChild(kpiRow);
+
+      const toolbar = document.createElement("div"); toolbar.className = "fx-toolbar";
+      toolbar.innerHTML = `
+        <div class="fx-toolbar-left">
+          <div class="fx-filter"><label>Ver</label>
+            <select class="fx-input fx-modq-filter">
+              <option value="pending">Pendientes</option>
+              <option value="approved">Aprobadas</option>
+              <option value="all">Todas</option>
+            </select>
+          </div>
+        </div>
+        <div class="fx-toolbar-right"><span class="fx-count fx-muted">0 fotos</span></div>`;
+      const filterSel = toolbar.querySelector(".fx-modq-filter");
+      filterSel.value = state.status;
+      filterSel.addEventListener("change", () => { state.status = filterSel.value; reload(); });
+      root.appendChild(toolbar);
+
+      const grid = document.createElement("div"); grid.className = "fx-modq-grid";
+      root.appendChild(grid);
+      const empty = document.createElement("div"); empty.className = "fx-empty hidden";
+      empty.innerHTML = `<div class="fx-empty-icon">\ud83d\udee1\ufe0f</div><h3>Nada por revisar</h3><p class="fx-muted">No hay fotos que coincidan con este filtro.</p>`;
+      root.appendChild(empty);
+
+      function renderBanner() {
+        const ai = state.ai || {};
+        const on = !!(ai.enabled && ai.has_key);
+        banner.className = "fx-modq-ai " + (on ? "on" : "off");
+        banner.innerHTML = `
+          <div class="fx-modq-ai-ico">${on ? "\ud83e\udd16" : "\ud83e\uddd1\u200d\u2696\ufe0f"}</div>
+          <div class="fx-modq-ai-txt">
+            <h4>${on ? "IA activa \u00b7 prefiltro autom\u00e1tico" : "Moderaci\u00f3n manual"}</h4>
+            <div class="fx-muted">${on
+              ? `Proveedor <b>${escapeHtml(ai.provider || "\u2014")}</b> \u00b7 umbral ${escapeHtml(ai.threshold || "")}${ai.auto_reject ? " \u00b7 rechazo autom\u00e1tico" : ""}. Las fotos dudosas siguen llegando a esta cola.`
+              : (ai.enabled ? "IA activada pero <b>sin clave API</b>. A\u00f1ade la clave para que empiece a prefiltrar." : "No hay IA configurada. Todas las fotos se revisan a mano en esta cola.")}</div>
+          </div>`;
+        banner.appendChild(btn(on ? "Ajustes" : "Configurar", { variant: on ? "ghost" : "primary", icon: "&#x2699;", onClick: openAiConfig }));
+      }
+
+      function renderKpis() {
+        kpiRow.innerHTML = "";
+        const pend = state.items.filter((i) => i.status === "pending").length;
+        const appr = state.items.filter((i) => i.status === "approved").length;
+        [
+          { label: "En cola", value: state.items.length, accent: "blue" },
+          { label: "Pendientes", value: pend, accent: "amber" },
+          { label: "Aprobadas", value: appr, accent: "green" },
+        ].forEach((k) => {
+          const c = document.createElement("div"); c.className = "fx-kpi " + k.accent;
+          c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`;
+          kpiRow.appendChild(c);
+        });
+      }
+
+      function makeCard(r) {
+        const pending = r.status === "pending";
+        const c = document.createElement("div"); c.className = "fx-modq-card";
+        c.innerHTML = `
+          <div class="fx-modq-photo">
+            <img src="${r.image_url + auth}" alt="" loading="lazy"/>
+            <span class="fx-modq-badge-float fx-badge ${pending ? "amber" : "ok"}">${pending ? "Pendiente" : "Aprobada"}</span>
+            <span class="fx-modq-zoom">\ud83d\udd0d Ampliar</span>
+          </div>
+          <div class="fx-modq-body">
+            <div class="fx-modq-name">${escapeHtml(r.name || "\u2014")}${r.age ? ", " + r.age : ""}</div>
+            <div class="fx-modq-sub">#${r.user_id}${r.email ? " \u00b7 " + escapeHtml(r.email) : ""}</div>
+            <div class="fx-modq-phrase">${r.now_status_text ? ("\u201c" + escapeHtml(r.now_status_text) + "\u201d") : "\u2014 sin frase \u2014"}</div>
+            <div class="fx-modq-meta"><span>\ud83d\udccd ${escapeHtml(r.city || "\u2014")}</span><span>\ud83d\udd52 ${fmtDate(r.created_at)}</span></div>
+          </div>`;
+        c.querySelector(".fx-modq-photo").addEventListener("click", () => window.open(r.image_url + auth, "_blank"));
+        const acts = document.createElement("div"); acts.className = "fx-modq-acts";
+        if (pending) {
+          acts.appendChild(btn("Aprobar", { variant: "primary", icon: "&#x2714;", onClick: async () => {
             await api(`/api/admin/now-photos/${r.id}/approve`, { method: "POST" }); toast("Foto aprobada", "ok"); reload();
-          } },
-          { label: "Rechazar", variant: "danger", onClick: async (r, reload) => {
-            const ok = await confirmDialog({ title: "Rechazar foto", message: `Se eliminar\u00e1 la foto de ${r.name || ("#" + r.user_id)}. Esta acci\u00f3n no se puede deshacer.`, danger: true, confirmLabel: "Rechazar" }); if (!ok) return;
-            await api(`/api/admin/now-photos/${r.id}/reject`, { method: "POST", body: { reason: "Contenido no permitido" } }); toast("Foto rechazada", "ok"); reload();
-          } },
-        ],
-      });
+          } }));
+          acts.appendChild(btn("Rechazar", { variant: "danger", icon: "&#x2715;", onClick: () => rejectFlow(r) }));
+        } else {
+          acts.appendChild(btn("Quitar foto", { variant: "danger-outline", icon: "&#x1f5d1;", onClick: () => rejectFlow(r) }));
+        }
+        acts.appendChild(btn("", { variant: "ghost", icon: "\u26a0\ufe0f", title: "Sancionar al usuario", onClick: () => sanctionFlow(r) }));
+        c.appendChild(acts);
+        return c;
+      }
+
+      async function rejectFlow(r) {
+        const out = await prompt2({ title: `\u2715 Rechazar foto \u00b7 ${r.name || ("#" + r.user_id)}`, submitLabel: "Rechazar y eliminar", fields: [
+          { name: "reason", label: "Motivo (se eliminar\u00e1 la foto)", type: "select", options: MODQ_REJECT_REASONS.map((x) => ({ value: x, label: x })), default: MODQ_REJECT_REASONS[0] },
+        ] });
+        if (!out) return;
+        try { await api(`/api/admin/now-photos/${r.id}/reject`, { method: "POST", body: { reason: out.reason } }); toast("Foto rechazada", "ok"); reload(); }
+        catch (e) { toast("Error rechazando", "err"); }
+      }
+
+      async function sanctionFlow(r) {
+        const out = await prompt2({ title: `\u26a0\ufe0f Sancionar \u00b7 ${r.name || ("#" + r.user_id)}`, submitLabel: "Aplicar sanci\u00f3n", fields: [
+          { name: "action", label: "Tipo de sanci\u00f3n", type: "select", options: [
+            { value: "warning", label: "Aviso (email de advertencia)" },
+            { value: "suspend", label: "Suspender temporalmente" },
+            { value: "ban", label: "Banear (indefinido)" },
+          ], default: "warning" },
+          { name: "hours", label: "Horas de suspensi\u00f3n (vac\u00edo = 24h)", type: "number", placeholder: "24" },
+          { name: "reason", label: "Motivo (se incluye en el email)", type: "textarea", default: "Foto inapropiada en el estado \u201cbusco ahora\u201d." },
+        ] });
+        if (!out) return;
+        const body = { action: out.action, reason: out.reason };
+        if (out.action === "suspend" && out.hours) body.duration_hours = parseInt(out.hours, 10) || 0;
+        if (out.action === "ban") body.indefinite = true;
+        try { await api(`/api/users/${r.user_id}/action`, { method: "POST", body }); toast("Sanci\u00f3n aplicada", "ok"); }
+        catch (e) { toast((e.data && e.data.message) || "Error aplicando sanci\u00f3n", "err"); }
+      }
+
+      // Los endpoints responden { ok, data:{…} } y api() envuelve otra vez, así
+      // que hay que desanidar. unwrap() tolera ambas formas ({x} o {ok,data:{x}}).
+      const unwrap = (resp) => { const d = (resp && resp.data) || {}; return d.data || d; };
+
+      async function openAiConfig() {
+        let ai = state.ai;
+        if (!ai) { try { ai = unwrap(await api("/api/admin/moderation/ai-config")); } catch { ai = {}; } }
+        const out = await prompt2({ title: "\ud83e\udd16 Moderaci\u00f3n con IA", submitLabel: "Guardar", fields: [
+          { name: "enabled", label: "Prefiltro autom\u00e1tico con IA", type: "select", options: [ { value: "1", label: "Activado" }, { value: "0", label: "Desactivado" } ], default: ai.enabled ? "1" : "0" },
+          { name: "provider", label: "Proveedor", type: "select", options: [ { value: "openai", label: "OpenAI (moderation)" }, { value: "sightengine", label: "Sightengine" }, { value: "aws", label: "AWS Rekognition" } ], default: ai.provider || "openai" },
+          { name: "api_key", label: ai.has_key ? `Clave API (guardada: ${ai.key_hint || "\u2022\u2022\u2022\u2022"}) \u2014 deja vac\u00edo para conservar` : "Clave API", type: "password", placeholder: ai.has_key ? "\u2022\u2022\u2022\u2022 conservar actual" : "sk-\u2026" },
+          { name: "threshold", label: "Umbral de confianza (0\u20131)", type: "number", default: ai.threshold || "0.85" },
+          { name: "auto_reject", label: "Rechazo autom\u00e1tico si supera el umbral", type: "select", options: [ { value: "0", label: "No (siempre revisi\u00f3n humana)" }, { value: "1", label: "S\u00ed" } ], default: ai.auto_reject ? "1" : "0" },
+        ] });
+        if (!out) return;
+        const body = { enabled: out.enabled === "1", provider: out.provider, threshold: out.threshold, auto_reject: out.auto_reject === "1" };
+        if (out.api_key && out.api_key.trim()) body.api_key = out.api_key.trim();
+        try { await api("/api/admin/moderation/ai-config", { method: "PUT", body }); toast("Configuraci\u00f3n de IA guardada", "ok"); reload(); }
+        catch (e) { toast("Error guardando", "err"); }
+      }
+
+      async function reload() {
+        grid.style.opacity = "0.5";
+        try {
+          const qP = api(`/api/admin/now-photos/queue?status=${encodeURIComponent(state.status)}`);
+          const aiP = api("/api/admin/moderation/ai-config");
+          const q = unwrap(await qP);
+          state.ai = unwrap(await aiP);
+          state.items = (q && q.items) || [];
+          renderBanner(); renderKpis();
+          grid.innerHTML = "";
+          state.items.forEach((r) => grid.appendChild(makeCard(r)));
+          empty.classList.toggle("hidden", state.items.length > 0);
+          grid.classList.toggle("hidden", state.items.length === 0);
+          toolbar.querySelector(".fx-count").textContent = `${state.items.length} foto${state.items.length === 1 ? "" : "s"}`;
+        } catch (e) {
+          console.error(e); toast("Error cargando la cola", "err");
+        } finally {
+          grid.style.opacity = "1";
+        }
+      }
+
+      reload();
     }
 
     // V870 · Gestión del estado "Busco ahora" por usuario.
@@ -1865,9 +2023,10 @@
         ],
         actions: [
           { label: "Ampliar", variant: "ghost", icon: "&#x23f1;", onClick: async (r) => {
-            const v = window.prompt(`Minutos a a\u00f1adir al estado de ${r.name || ("#" + r.user_id)}:`, "60");
-            if (v == null) return;
-            const minutes = parseInt(v, 10);
+            const out = await prompt2({ title: `\u23f1 Ampliar tiempo \u00b7 ${r.name || ("#" + r.user_id)}`,
+              fields: [{ name: "minutes", label: "Minutos a a\u00f1adir", type: "number", default: "60", placeholder: "60" }], submitLabel: "Ampliar" });
+            if (!out) return;
+            const minutes = parseInt(out.minutes, 10);
             if (!minutes || minutes < 1) { toast("Minutos no v\u00e1lidos", "err"); return; }
             try { await api(`/api/admin/now-status/${r.user_id}/extend`, { method: "POST", body: { minutes } }); toast("Tiempo ampliado", "ok"); view_now_status(container); }
             catch (e) { toast((e.data && e.data.message) || "Error ampliando", "err"); }
@@ -1880,11 +2039,11 @@
           } },
           // V880 · Dar o quitar minutos de la bolsa del usuario (sin cobrar).
           { label: "Minutos", variant: "ghost", icon: "&#x23f3;", onClick: async (r) => {
-            const v = window.prompt(
-              `Minutos a a\u00f1adir a ${r.name || ("#" + r.user_id)} (negativo para quitar).\n` +
-              `Ahora: ${Math.max(0, Number(r.free_per_day) - Number(r.free_used))} gratis + ${Number(r.extra_minutes) || 0} comprados.`, "60");
-            if (v == null) return;
-            const minutes = parseInt(v, 10);
+            const disponibles = `${Math.max(0, Number(r.free_per_day) - Number(r.free_used))} gratis + ${Number(r.extra_minutes) || 0} comprados`;
+            const out = await prompt2({ title: `\u23f3 Ajustar minutos \u00b7 ${r.name || ("#" + r.user_id)}`,
+              fields: [{ name: "minutes", label: `Minutos a a\u00f1adir (negativo para quitar) \u2014 ahora: ${disponibles}`, type: "number", default: "60", placeholder: "60" }], submitLabel: "Aplicar" });
+            if (!out) return;
+            const minutes = parseInt(out.minutes, 10);
             if (!Number.isFinite(minutes) || minutes === 0) { toast("Minutos no v\u00e1lidos", "err"); return; }
             try { await api(`/api/admin/now-status/${r.user_id}/minutes`, { method: "POST", body: { minutes } }); toast("Minutos actualizados", "ok"); view_now_status(container); }
             catch (e) { toast((e.data && e.data.message) || "Error", "err"); }
@@ -1922,7 +2081,7 @@
           { key: "source", label: "Origen", type: "select", options: [ { value: "user", label: "Usuario" }, { value: "admin", label: "Admin" } ] },
         ],
         headerActions: [
-          { label: "Estados activos", variant: "ghost", icon: "&#x26a1;", onClick: () => view_now_status(container) },
+          { label: "Volver a estados", variant: "primary", icon: "&#x2190;", onClick: () => view_now_status(container) },
         ],
         columns: [
           { key: "created_at", label: "Fecha", sortable: true, render: (r) => fmtDate(r.created_at) },
@@ -1947,9 +2106,10 @@
         ],
         actions: [
           { label: "Ampliar", variant: "ghost", icon: "&#x23f1;", title: "A\u00f1adir tiempo al estado actual de este usuario", onClick: async (r) => {
-            const v = window.prompt(`Minutos a a\u00f1adir al estado actual de ${r.name || ("#" + r.user_id)}:`, "60");
-            if (v == null) return;
-            const minutes = parseInt(v, 10);
+            const out = await prompt2({ title: `\u23f1 Ampliar tiempo \u00b7 ${r.name || ("#" + r.user_id)}`,
+              fields: [{ name: "minutes", label: "Minutos a a\u00f1adir al estado actual", type: "number", default: "60", placeholder: "60" }], submitLabel: "Ampliar" });
+            if (!out) return;
+            const minutes = parseInt(out.minutes, 10);
             if (!minutes || minutes < 1) { toast("Minutos no v\u00e1lidos", "err"); return; }
             try { await api(`/api/admin/now-status/${r.user_id}/extend`, { method: "POST", body: { minutes } }); toast("Tiempo ampliado", "ok"); view_now_status_log(container); }
             catch (e) { toast((e.data && e.data.message) || "Ese usuario no tiene estado activo", "err"); }
@@ -3236,6 +3396,31 @@
   .fx-checkbox-row input[type=checkbox] { width:18px; height:18px; accent-color:#ff3b6b; }
   .fx-checkbox-row .fx-checkbox-title { font-weight:600; font-size:13px; }
   .fx-checkbox-row .fx-checkbox-hint { font-size:11px; color:#96a0b8; }
+
+  /* V884 · Galería de moderación de fotos */
+  .fx-modq-ai { display:flex; align-items:center; gap:14px; padding:14px 16px; border-radius:14px; margin-bottom:16px; border:1px solid rgba(255,255,255,0.08); }
+  .fx-modq-ai.on { background: linear-gradient(90deg, rgba(34,197,94,0.14), rgba(59,130,246,0.10)); border-color: rgba(34,197,94,0.3); }
+  .fx-modq-ai.off { background: linear-gradient(90deg, rgba(245,158,11,0.12), rgba(120,86,255,0.08)); border-color: rgba(245,158,11,0.28); }
+  .fx-modq-ai-ico { font-size:26px; width:46px; height:46px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; border-radius:12px; background: rgba(255,255,255,0.06); }
+  .fx-modq-ai-txt { flex:1; min-width:0; }
+  .fx-modq-ai-txt h4 { margin:0 0 2px; font-size:14px; font-weight:700; }
+  .fx-modq-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap:16px; margin-bottom:16px; }
+  .fx-modq-card { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:16px; overflow:hidden; display:flex; flex-direction:column; transition: transform .15s ease, box-shadow .15s ease; }
+  .fx-modq-card:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0,0,0,0.35); border-color: rgba(255,255,255,0.14); }
+  .fx-modq-photo { position:relative; aspect-ratio: 3/4; background:#0c0f18; cursor:pointer; overflow:hidden; }
+  .fx-modq-photo img { width:100%; height:100%; object-fit:cover; display:block; transition: transform .2s ease; }
+  .fx-modq-card:hover .fx-modq-photo img { transform: scale(1.04); }
+  .fx-modq-badge-float { position:absolute; top:8px; left:8px; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+  .fx-modq-zoom { position:absolute; bottom:8px; right:8px; font-size:11px; font-weight:600; padding:4px 8px; border-radius:7px; background: rgba(6,10,20,0.7); color:#e8ebf5; opacity:0; transition: opacity .15s ease; }
+  .fx-modq-card:hover .fx-modq-zoom { opacity:1; }
+  .fx-modq-body { padding:12px 14px 6px; flex:1; }
+  .fx-modq-name { font-weight:700; font-size:14px; }
+  .fx-modq-sub { font-size:11px; color:#96a0b8; margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .fx-modq-phrase { font-size:12.5px; color:#c9d0e0; margin-top:8px; font-style:italic; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; min-height:34px; }
+  .fx-modq-meta { display:flex; justify-content:space-between; gap:8px; font-size:10.5px; color:#7c8394; margin-top:8px; }
+  .fx-modq-acts { display:flex; gap:6px; padding:10px 12px 12px; border-top:1px solid rgba(255,255,255,0.05); align-items:center; }
+  .fx-modq-acts .fx-btn { flex:1; justify-content:center; padding:8px 6px; }
+  .fx-modq-acts .fx-btn.ghost { flex:0 0 auto; }
 
   #fx-toast { position:fixed; top:16px; right:16px; z-index:20000; display:flex; flex-direction:column; gap:8px; }
   .fx-toast-line { background: #121729; color:#e8ebf5; padding:11px 16px; border-radius:10px; font-size:13.5px; box-shadow: 0 8px 24px rgba(0,0,0,0.4); border-left: 4px solid #7a5cff; transform: translateX(20px); opacity:0; transition: all .25s ease; }

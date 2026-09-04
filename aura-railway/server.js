@@ -3638,6 +3638,56 @@ app.post("/api/admin/now-photos/:id/reject", wrap(async (req, res) => {
 }));
 
 /* ============================================================
+   V884 · ADMIN: configuración de la moderación con IA
+   ------------------------------------------------------------
+   Deja lista la moderación automática para el día que haya una clave API. La
+   config se guarda en `settings` bajo el prefijo "moderation.ai.*" — NUNCA bajo
+   "content.*" — porque GET /api/content es público; así la clave jamás se filtra.
+   GET nunca devuelve la clave en claro: solo si existe (has_key) y una pista
+   (key_hint) con los últimos 4 caracteres. Sin clave => la cola es 100% manual.
+     GET /api/admin/moderation/ai-config  → estado (sin exponer la clave)
+     PUT /api/admin/moderation/ai-config  → guarda enabled/provider/threshold/…
+============================================================ */
+app.get("/api/admin/moderation/ai-config", requireAdmin, wrap(async (req, res) => {
+  const [rows] = await pool.query("SELECT k, v FROM settings WHERE k LIKE 'moderation.ai.%'");
+  const m = {}; rows.forEach(r => m[r.k] = r.v);
+  const key = m["moderation.ai.api_key"] || "";
+  res.json({
+    ok: true,
+    data: {
+      enabled: m["moderation.ai.enabled"] === "true",
+      provider: m["moderation.ai.provider"] || "openai",
+      threshold: m["moderation.ai.threshold"] || "0.85",
+      auto_reject: m["moderation.ai.auto_reject"] === "true",
+      has_key: !!key,
+      key_hint: key ? ("\u2022\u2022\u2022\u2022" + key.slice(-4)) : null,
+    },
+  });
+}));
+
+app.put("/api/admin/moderation/ai-config", requireAdmin, wrap(async (req, res) => {
+  const b = req.body || {};
+  const set = async (k, v) => pool.execute(
+    "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)", [k, String(v)]
+  );
+  if ("enabled" in b) await set("moderation.ai.enabled", b.enabled ? "true" : "false");
+  if ("provider" in b) await set("moderation.ai.provider", String(b.provider || "openai").slice(0, 40));
+  if ("threshold" in b) {
+    const t = Math.max(0, Math.min(1, parseFloat(b.threshold)));
+    await set("moderation.ai.threshold", Number.isFinite(t) ? String(t) : "0.85");
+  }
+  if ("auto_reject" in b) await set("moderation.ai.auto_reject", b.auto_reject ? "true" : "false");
+  // Solo se escribe la clave si viene una nueva no vacía (así "conservar" funciona).
+  if (typeof b.api_key === "string" && b.api_key.trim()) {
+    await set("moderation.ai.api_key", b.api_key.trim().slice(0, 300));
+  }
+  await loadRuntimeSettings();
+  const who = (req.admin && req.admin.email) || "admin";
+  try { await logActivity("admin", `Config de moderación IA actualizada por ${who}`); } catch {}
+  res.json({ ok: true });
+}));
+
+/* ============================================================
    V870 · ADMIN: gestión del estado "Busco ahora" por usuario
    ------------------------------------------------------------
    Permite al administrador VER la frase "Busco ahora" activa de cada usuario,
