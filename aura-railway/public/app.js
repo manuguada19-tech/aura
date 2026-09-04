@@ -10827,7 +10827,9 @@ function renderResults(grid, filter = "") {
     const isFav = state.favorites.has(u.id);
     // V744 · Distancia real o "GPS no permitido" por tarjeta (ubicación desactivada).
     const li = locDistanceInfo(u);
-    const meta = [u.city || "", (li.text || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
+    // V888 · Etiqueta breve: tribu o, en su defecto, tipo de cuerpo (si los declaró).
+    const tagTxt = lifestyleLabel(TRIBE_OPTIONS, u.tribe) || lifestyleLabel(BODY_TYPE_OPTIONS, u.body_type) || "";
+    const meta = [u.city || "", (li.text || (u.age != null ? `${u.age} años` : "")), tagTxt].filter(Boolean).join(" · ");
     // V866 · Estado "Ahora mismo": banda con rayo + frase sobre la tarjeta.
     const nowText = (u.now_status && u.now_status.text) ? String(u.now_status.text) : "";
     const nowBadge = nowText ? el("div", { class: "result-now", title: "Ahora mismo" }, [
@@ -12680,6 +12682,13 @@ function screenProfileDetail(root, u, opts = {}) {
   const heightTxt = (u.height != null && Number(u.height) > 0) ? `${u.height} cm` : "";
   const weightTxt = (u.weight != null && Number(u.weight) > 0) ? `${u.weight} kg` : "";
   const ethTxt = lifestyleLabel(ETHNICITY_OPTIONS, u.ethnicity);
+  // V888 · Etiquetas legibles de los campos nuevos del buscador (opcionales).
+  const tribeTxt = lifestyleLabel(TRIBE_OPTIONS, u.tribe);
+  const bodyTxt = lifestyleLabel(BODY_TYPE_OPTIONS, u.body_type);
+  const meetTxt = lifestyleLabel(MEET_AT_OPTIONS, u.meet_at);
+  const healthTxt = (Array.isArray(u.health_practices) ? u.health_practices : [])
+    .map((id) => lifestyleLabel(HEALTH_PRACTICES_OPTIONS, id)).filter(Boolean).join(" · ");
+  const nsfwTxt = u.nsfw_ok ? "Sí" : "";
   wrap.appendChild(el("h3", { class: "pd-section" }, "Detalles"));
   wrap.appendChild(el("div", { class: "pd-card pd-details" }, [
     el("div", { class: "pd-row" }, [ el("span", {}, "Género"), el("b", {}, gLabel) ]),
@@ -12687,12 +12696,17 @@ function screenProfileDetail(root, u, opts = {}) {
     pdDist ? el("div", { class: "pd-row" }, [ el("span", {}, "Distancia"), el("b", { class: pdLi.off ? "gps-off" : "" }, pdDist) ]) : null,
     heightTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Altura"), el("b", {}, heightTxt) ]) : null,
     weightTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Peso"), el("b", {}, weightTxt) ]) : null,
+    bodyTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Tipo de cuerpo"), el("b", {}, bodyTxt) ]) : null,
+    tribeTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Tribu"), el("b", {}, tribeTxt) ]) : null,
     ethTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Etnia"), el("b", {}, ethTxt) ]) : null,
     eduTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Estudios"), el("b", {}, eduTxt) ]) : null,
     petsTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Mascotas"), el("b", {}, petsTxt) ]) : null,
     exTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Ejercicio"), el("b", {}, exTxt) ]) : null,
     smokeTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Fuma"), el("b", {}, smokeTxt) ]) : null,
     drinkTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Bebe"), el("b", {}, drinkTxt) ]) : null,
+    meetTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Prefiere quedar en"), el("b", {}, meetTxt) ]) : null,
+    healthTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Prácticas de salud"), el("b", {}, healthTxt) ]) : null,
+    nsfwTxt ? el("div", { class: "pd-row" }, [ el("span", {}, "Acepta fotos NSFW"), el("b", {}, nsfwTxt) ]) : null,
     el("div", { class: "pd-row" }, [ el("span", {}, "Verificación"), el("b", {}, u.verified ? "Verificado ✓" : "Sin verificar") ]),
   ]));
 
