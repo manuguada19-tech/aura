@@ -4027,7 +4027,7 @@ const SECTION_MAP = {
   screenInvisibleMode: "profile", screenSecurity: "profile",
   screenBlockedUsers: "profile", screenDataExport: "profile",
   screenAbout: "profile", screenOffers: "profile", screenAccountStatus: "profile",
-  screenNotificationSettings: "profile",
+  screenNotificationSettings: "profile", screenBoost: "profile",
   // V437: Info screens usan sección propia para NO heredar el color de
   // texto del hero de bienvenida (que es blanco) sobre fondo claro. Sin
   // este mapeo, el contenido de Términos/Privacidad/Normas quedaba
@@ -13939,6 +13939,7 @@ function screenMe(root) {
       { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
       { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
       { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: (getUserPlan() === "free" ? "Plan Free · descubre Premium" : ("Plan " + planLabel(getUserPlan()))), onClick: () => render(screenSubscriptions) },
+      { icon: "🚀", title: "Boost / Impulso", id: "meBoostRow", sub: "Destaca tu perfil y consulta el tiempo restante", onClick: () => render(screenBoost) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
     ]},
@@ -14067,15 +14068,38 @@ function screenMe(root) {
   groups.forEach(g => {
     if (g.title) list.appendChild(el("div", { class: "settings-section" }, g.title));
     g.items.forEach(it => {
+      const subEl = it.sub ? el("small", {}, it.sub) : null;
       const row = el("div", { class: "settings-item" + (it.danger ? " danger" : ""), onclick: it.onClick }, [
         el("div", { class: "ico" }, it.icon),
-        el("div", {}, [ el("strong", {}, it.title), it.sub ? el("small", {}, it.sub) : null ]),
+        el("div", {}, [ el("strong", {}, it.title), subEl ]),
         el("span", { class: "chev", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>` }),
       ]);
+      if (it.id) row.id = it.id;
       list.appendChild(row);
     });
   });
   root.appendChild(list);
+  // V895 · Subtítulo dinámico del acceso a Boost: refleja el estado real de la
+  // bolsa (activo con minutos restantes, boosts disponibles, o ilimitado) sin
+  // que el usuario tenga que entrar. Es informativo; si falla, deja el texto fijo.
+  (async () => {
+    try {
+      const st = await datingApi.getBoost();
+      const b = st && st.boost;
+      const rowSub = document.querySelector("#meBoostRow small");
+      if (!b || !rowSub) return;
+      if (b.active && b.active_seconds_left > 0) {
+        rowSub.textContent = "⚡ Activo · quedan " + fmtBoostLeft(b.active_seconds_left);
+      } else if (b.unlimited) {
+        rowSub.textContent = "Impulsos ilimitados (Platinum) · pulsa para activar";
+      } else {
+        const avail = (b.free_remaining || 0) + (b.extra_boosts || 0);
+        rowSub.textContent = avail > 0
+          ? (avail + " Boost" + (avail === 1 ? "" : "s") + " disponible" + (avail === 1 ? "" : "s") + " · pulsa para destacar")
+          : "Sin Boosts · consigue más para destacar tu perfil";
+      }
+    } catch {}
+  })();
   // V751 · Restaura la posición de scroll guardada al volver de una
   // sub-sección del perfil. Doble rAF para asegurar que el layout ya midió la
   // altura real de la lista antes de aplicar el scrollTop.
@@ -14317,6 +14341,179 @@ function screenAccountStatus(root) {
       boxKyc.innerHTML = "<div class='muted' style='padding:8px;'>No se pudo cargar el estado.</div>";
     }
   })();
+}
+
+/* — Boost / Impulso —  V895
+   Panel del usuario para gestionar su Boost desde el perfil:
+     · Estado en vivo: si hay un impulso activo, cuenta atrás del tiempo restante.
+     · Bolsa: gratis del mes (según plan), comprados y total disponible.
+     · Acciones: activar un Boost, o conseguir más (abre la hoja de compra).
+   Se apoya en /api/my/boost (getBoostStatus) y en el flujo activateBoostFlow ya
+   existente. La cuenta atrás se refresca cada segundo con un temporizador que se
+   limpia al salir de la pantalla (se comprueba que el nodo siga en el DOM). */
+function fmtBoostLeft(secs) {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (m >= 60) { const h = Math.floor(m / 60); return h + " h " + (m % 60) + " min"; }
+  if (m > 0) return m + " min " + String(r).padStart(2, "0") + " s";
+  return r + " s";
+}
+function screenBoost(root) {
+  meSubHeader(root, "Boost / Impulso");
+  ensureBoostStyle();
+  const wrap = el("div", { class: "boost-wrap" });
+  root.appendChild(wrap);
+
+  // Tarjeta principal de estado (se rellena al cargar).
+  const hero = el("div", { class: "boost-hero" }, [
+    el("div", { class: "boost-hero-ic" }, "🚀"),
+    el("div", { class: "boost-hero-title", id: "boostHeroTitle" }, "Cargando…"),
+    el("div", { class: "boost-hero-sub", id: "boostHeroSub" }, ""),
+  ]);
+  wrap.appendChild(hero);
+
+  // Fila de datos de la bolsa.
+  const stats = el("div", { class: "boost-stats" }, [
+    el("div", { class: "boost-stat" }, [ el("div", { class: "bs-n", id: "boostFree" }, "–"), el("div", { class: "bs-l" }, "Gratis (mes)") ]),
+    el("div", { class: "boost-stat" }, [ el("div", { class: "bs-n", id: "boostExtra" }, "–"), el("div", { class: "bs-l" }, "Comprados") ]),
+    el("div", { class: "boost-stat" }, [ el("div", { class: "bs-n", id: "boostTotal" }, "–"), el("div", { class: "bs-l" }, "Disponibles") ]),
+  ]);
+  wrap.appendChild(stats);
+
+  // Botones de acción.
+  const actPrimary = el("button", { class: "btn btn-brand btn-block", id: "boostActBtn", type: "button", disabled: true }, "Cargando…");
+  const actSecondary = el("button", { class: "btn btn-outline btn-block", id: "boostBuyBtn", type: "button", style: "margin-top:10px;" }, "Conseguir más Boosts");
+  wrap.appendChild(el("div", { class: "boost-actions" }, [ actPrimary, actSecondary ]));
+
+  // Nota explicativa.
+  wrap.appendChild(el("p", { class: "boost-note" },
+    "Un Boost destaca tu perfil el primero en Descubrir y Cerca de ti durante un tiempo limitado. Mientras esté activo, tu tarjeta muestra la insignia ⚡ Impulsado."));
+
+  let ticker = null;
+  let current = null; // último estado conocido
+
+  function stopTicker() { if (ticker) { clearInterval(ticker); ticker = null; } }
+
+  function paint(b) {
+    current = b || null;
+    const title = document.getElementById("boostHeroTitle");
+    const sub = document.getElementById("boostHeroSub");
+    const fFree = document.getElementById("boostFree");
+    const fExtra = document.getElementById("boostExtra");
+    const fTotal = document.getElementById("boostTotal");
+    if (!b) {
+      if (title) title.textContent = "No se pudo cargar";
+      if (sub) sub.textContent = "Inténtalo de nuevo más tarde.";
+      return;
+    }
+    if (fFree) fFree.textContent = b.unlimited ? "∞" : String(b.free_remaining ?? 0) + "/" + String(b.free_per_month ?? 0);
+    if (fExtra) fExtra.textContent = String(b.extra_boosts ?? 0);
+    if (fTotal) fTotal.textContent = b.unlimited ? "∞" : String((b.free_remaining || 0) + (b.extra_boosts || 0));
+
+    const avail = b.unlimited ? Infinity : (b.free_remaining || 0) + (b.extra_boosts || 0);
+    hero.classList.toggle("is-active", !!(b.active && b.active_seconds_left > 0));
+
+    if (b.active && b.active_seconds_left > 0) {
+      if (title) title.innerHTML = "⚡ Boost activo";
+      if (sub) sub.textContent = "Quedan " + fmtBoostLeft(b.active_seconds_left);
+      actPrimary.disabled = true;
+      actPrimary.textContent = "Impulso en marcha…";
+    } else {
+      if (title) title.textContent = "Tu perfil no está impulsado";
+      if (sub) sub.textContent = b.unlimited
+        ? "Tienes impulsos ilimitados con Platinum."
+        : (avail > 0 ? "Tienes " + avail + " Boost" + (avail === 1 ? "" : "s") + " listo" + (avail === 1 ? "" : "s") + " para usar." : "No te quedan Boosts este mes.");
+      actPrimary.disabled = false;
+      actPrimary.textContent = (avail > 0 || b.unlimited) ? "🚀 Activar Boost (" + (b.duration_min || 30) + " min)" : "Conseguir Boosts para activar";
+    }
+    actSecondary.style.display = b.unlimited ? "none" : "";
+  }
+
+  // Cuenta atrás en vivo: descuenta 1 s del estado local y repinta; al llegar a
+  // 0 recarga el estado real. Se detiene si la pantalla ya no está montada.
+  function startTicker() {
+    stopTicker();
+    ticker = setInterval(() => {
+      if (!document.body.contains(root)) { stopTicker(); return; }
+      if (!current || !current.active || current.active_seconds_left <= 0) return;
+      current.active_seconds_left -= 1;
+      const sub = document.getElementById("boostHeroSub");
+      if (current.active_seconds_left <= 0) { load(); return; }
+      if (sub) sub.textContent = "Quedan " + fmtBoostLeft(current.active_seconds_left);
+    }, 1000);
+  }
+
+  async function load() {
+    try {
+      const st = await datingApi.getBoost();
+      paint(st && st.boost ? st.boost : null);
+      startTicker();
+    } catch { paint(null); }
+  }
+
+  actPrimary.addEventListener("click", async () => {
+    if (actPrimary.disabled) return;
+    const b = current;
+    // Sin boosts disponibles y sin plan ilimitado → abrir compra directamente.
+    if (b && !b.unlimited && (b.free_remaining || 0) + (b.extra_boosts || 0) <= 0) {
+      openBoostPaywall(b, null);
+      return;
+    }
+    actPrimary.disabled = true;
+    const prev = actPrimary.textContent;
+    actPrimary.textContent = "Activando…";
+    try {
+      const r = await datingApi.activateBoost();
+      if (r && r.ok && (r.activated || r.already_active)) {
+        toast(r.already_active ? "Tu Boost ya estaba activo" : "¡Boost activado! Destacas tu perfil");
+        await load();
+        return;
+      }
+      if (r && (r.error === "no_boosts" || r.status === 402)) {
+        openBoostPaywall(r.boost, r.packs);
+        actPrimary.disabled = false; actPrimary.textContent = prev;
+        return;
+      }
+      toast((r && (r.message || r.reason)) || "No se pudo activar el Boost");
+      actPrimary.disabled = false; actPrimary.textContent = prev;
+    } catch {
+      toast("Error activando el Boost");
+      actPrimary.disabled = false; actPrimary.textContent = prev;
+    }
+  });
+
+  actSecondary.addEventListener("click", () => { openBoostPaywall(current, null); });
+
+  load();
+}
+function ensureBoostStyle() {
+  if (document.getElementById("boostScreenStyle")) return;
+  const st = document.createElement("style");
+  st.id = "boostScreenStyle";
+  st.textContent = `
+    .boost-wrap{padding:16px 14px 28px;max-width:520px;margin:0 auto;}
+    .boost-hero{position:relative;overflow:hidden;border-radius:18px;padding:22px 18px;text-align:center;color:#fff;
+      background:linear-gradient(135deg,#ff3b6b,#ff8a3b);box-shadow:0 10px 26px rgba(255,59,107,.32);}
+    .boost-hero.is-active{background:linear-gradient(135deg,#22c55e,#16a34a);box-shadow:0 10px 26px rgba(34,197,94,.32);}
+    .boost-hero-ic{font-size:40px;line-height:1;margin-bottom:8px;}
+    .boost-hero-title{font-size:19px;font-weight:800;letter-spacing:.01em;}
+    .boost-hero-sub{font-size:14px;font-weight:600;opacity:.95;margin-top:4px;min-height:18px;}
+    .boost-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:16px 0;}
+    .boost-stat{background:var(--card,#fff);border:1px solid var(--border,rgba(0,0,0,.07));border-radius:14px;
+      padding:14px 8px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.05);}
+    .boost-stat .bs-n{font-size:22px;font-weight:800;color:var(--text,#111);line-height:1;}
+    .boost-stat .bs-l{font-size:11.5px;font-weight:600;color:var(--text-soft,#6b7280);margin-top:6px;}
+    .boost-actions{margin-top:6px;}
+    .boost-note{font-size:12.5px;line-height:1.5;color:var(--text-soft,#6b7280);margin:16px 4px 0;text-align:center;}
+    @media (prefers-color-scheme: dark){
+      .boost-stat{background:var(--card,#1a1d2b);border-color:var(--border,#2a2f45);}
+      .boost-stat .bs-n{color:var(--text,#e6e9f2);}
+    }
+    body.theme-dark .boost-stat,body.dark .boost-stat,html.dark .boost-stat{background:var(--card,#1a1d2b);border-color:var(--border,#2a2f45);}
+    body.theme-dark .boost-stat .bs-n,body.dark .boost-stat .bs-n,html.dark .boost-stat .bs-n{color:var(--text,#e6e9f2);}
+  `;
+  document.head.appendChild(st);
 }
 
 /* — Editar perfil — */
