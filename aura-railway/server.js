@@ -14332,6 +14332,17 @@ function publicBaseUrl(req) {
 // pueda continuar sin intervención. Se usa en los tres checkouts (suscripción,
 // lecturas y boost), que compartían exactamente el mismo punto de fallo.
 async function createCheckoutResilient(params, { uid, email } = {}) {
+  // V899 · Stripe devolvía "No valid payment method types for this Checkout
+  // Session" al comprar (boost / lecturas / suscripción). Ocurre en modo LIVE
+  // cuando la cuenta no tiene métodos de pago activados automáticamente para la
+  // divisa y la sesión no declara ninguno. El propio error de Stripe indica la
+  // solución: especificar `payment_method_types`. Lo fijamos a ["card"] si la
+  // sesión no trae ya métodos ni el modo automático. Apple Pay y Google Pay son
+  // carteras que Checkout ofrece SOBRE "card" automáticamente en dispositivos
+  // compatibles, así que siguen disponibles sin configuración adicional.
+  if (params && !params.payment_method_types && !params.automatic_payment_methods) {
+    params = Object.assign({}, params, { payment_method_types: ["card"] });
+  }
   try {
     return await stripeClient.createCheckoutSession(params);
   } catch (e) {
