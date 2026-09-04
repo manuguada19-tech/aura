@@ -2157,6 +2157,9 @@ function mapApiUser(row) {
     relationship: row.relationship || "",
     verified: !!row.verified,
     online: !!row.online,
+    // V894 · Boost activo: el backend marca boosted=true si el perfil tiene un
+    // impulso vigente. Sirve para pintar la insignia ⚡ "Impulsado" en la tarjeta.
+    boosted: !!row.boosted,
     // V761 · Actividad reciente: segundos desde la última conexión (last_login).
     // El backend lo calcula en SQL. null = desconocido (no se muestra nada).
     last_active_secs: (row.last_active_secs == null ? null : Number(row.last_active_secs)),
@@ -10288,6 +10291,15 @@ function buildSwipeCard(u, depth = 0) {
   card.appendChild(indicators);
   card.appendChild(el("div", { class: "stamp like" }, "LIKE"));
   card.appendChild(el("div", { class: "stamp nope" }, "NO"));
+  // V894 · Insignia de Boost: si el perfil tiene un impulso activo, lo señalamos
+  // con un distintivo ⚡ "Impulsado" en la esquina de la tarjeta. Refuerza para el
+  // usuario que ese perfil aparece destacado porque está usando Boost.
+  if (u.boosted) {
+    card.appendChild(el("div", { class: "swipe-boost", title: "Perfil impulsado con Boost" }, [
+      el("span", { class: "sb-bolt", html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+      el("span", { class: "sb-txt" }, "Impulsado"),
+    ]));
+  }
   // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
   // profesión; se omiten con elegancia en lugar de mostrar "null".
   // V744 · Ubicación: distancia real o aviso "GPS no permitido" (ubicación
@@ -10872,11 +10884,17 @@ function renderResults(grid, filter = "") {
       el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
       el("span", { class: "now-text" }, nowText),
     ]) : null;
+    // V894 · Insignia de Boost sobre la tarjeta de la lista/resultados.
+    const boostBadge = u.boosted ? el("div", { class: "result-boost", title: "Perfil impulsado con Boost" }, [
+      el("span", { class: "sb-bolt", html: `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+      el("span", {}, "Impulsado"),
+    ]) : null;
     const card = el("div", { class: "result-card" + (nowText ? " has-now" : ""), style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
       el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
         el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` })
       ]),
+      boostBadge,
       nowBadge,
       el("div", { class: "info" }, [
         el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
@@ -12799,6 +12817,13 @@ function screenProfileDetail(root, u, opts = {}) {
         out.push(el("span", { class: "pd-now-tag" }, [
           el("span", { class: "now-bolt", html: `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
           el("span", {}, "Busco ahora"),
+        ]));
+      }
+      // V894 · Distintivo de Boost en la línea de estado del detalle del perfil.
+      if (u.boosted) {
+        out.push(el("span", { class: "pd-boost-tag", title: "Perfil impulsado con Boost" }, [
+          el("span", { class: "sb-bolt", html: `<svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
+          el("span", {}, "Impulsado"),
         ]));
       }
       return out;

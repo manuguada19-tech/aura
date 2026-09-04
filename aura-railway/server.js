@@ -8120,6 +8120,7 @@ app.get("/api/discover", wrap(async (req, res) => {
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
+            (u.boost_until > NOW()) AS boosted,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -8149,6 +8150,10 @@ app.get("/api/discover", wrap(async (req, res) => {
     // V887 · health_practices se guarda como JSON string → array para la UI.
     try { r.health_practices = r.health_practices ? JSON.parse(r.health_practices) : []; } catch { r.health_practices = []; }
     r.nsfw_ok = !!r.nsfw_ok;
+    // V894 · boosted: true si el perfil tiene un Boost activo (boost_until > NOW).
+    // El feed ya los ordena primero; con esta marca la tarjeta puede mostrar la
+    // insignia ⚡ "Impulsado". El driver devuelve 1/0 → normalizamos a booleano.
+    r.boosted = !!r.boosted;
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
     r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
     delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
@@ -8303,6 +8308,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
+            (u.boost_until > NOW()) AS boosted,
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -8334,6 +8340,10 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     // V887 · health_practices se guarda como JSON string → array para la UI.
     try { r.health_practices = r.health_practices ? JSON.parse(r.health_practices) : []; } catch { r.health_practices = []; }
     r.nsfw_ok = !!r.nsfw_ok;
+    // V894 · boosted: true si el perfil tiene un Boost activo (boost_until > NOW).
+    // El feed ya los ordena primero; con esta marca la tarjeta puede mostrar la
+    // insignia ⚡ "Impulsado". El driver devuelve 1/0 → normalizamos a booleano.
+    r.boosted = !!r.boosted;
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
     r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
     delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
