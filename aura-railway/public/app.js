@@ -8719,6 +8719,7 @@ function makeTestMapUser(center, realProfile) {
     pets: p.pets || "", smoke: p.smoke || "", drink: p.drink || "",
     education: p.education || "", exercise: p.exercise || "",
     prompts: Array.isArray(p.prompts) ? p.prompts : [],
+    orientation: p.orientation || "", // V908 · para el filtro de orientación del mapa
     verified: (p.verified != null) ? !!p.verified : true,
     online: (p.online != null) ? !!p.online : false,
     gps_ok: true,
@@ -8733,9 +8734,13 @@ function makeTestMapUser(center, realProfile) {
 function mapGenderMatches(sel, g) {
   if (!sel || sel === "todos") return true;
   const v = String(g || "").toLowerCase();
-  if (sel === "Mujer") return v.startsWith("muj") || v === "f" || v === "female" || v.startsWith("chic");
-  if (sel === "Hombre") return v.startsWith("hom") || v === "m" || v === "male" || v.startsWith("chic") === false && (v.startsWith("hom") || v === "m");
-  return true;
+  if (sel === "Mujer") return v.startsWith("muj") || v.startsWith("chica") || v === "f" || v === "female";
+  if (sel === "Hombre") return v.startsWith("hom") || v.startsWith("chico") || v === "m" || v === "male";
+  // V908 · Identidades de la Zona LGTB+ (No binario, Trans, Género fluido…):
+  // coincidencia EXACTA (case-insensitive) con el género declarado. Antes el
+  // filtro devolvía true para cualquiera, así que seleccionar "No binario" no
+  // filtraba nada.
+  return v === String(sel).toLowerCase();
 }
 
 async function openNearbyMap() {
@@ -8769,7 +8774,7 @@ async function openNearbyMap() {
   // mapa y las tarjetas de la cuadrícula (mismos campos que el filtro de
   // "Buscar"). Rango completo / vacío = sin filtro.
   const mapFilters = {
-    gender: "todos", onlyOnline: false, onlyNew: false, onlyNow: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
+    gender: "todos", orientation: "todas", onlyOnline: false, onlyNew: false, onlyNow: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
     ageMin: 18, ageMax: 99,
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
     looking_for: "any", relationship: "any",
@@ -8806,12 +8811,13 @@ async function openNearbyMap() {
   ]));
 
   // ---- Barra de filtros (chips) ----
+  // V908 · El segmento de género ahora es COHERENTE con la zona: en Hetero
+  // muestra Todos/Mujeres/Hombres; en Zona LGTB+ añade las identidades
+  // (No binario, Trans, Género fluido…), igual que el filtro de Explorar/Buscar.
+  const _mapZone = state.zone === "lgtb" ? "lgtb" : "hetero";
   const genderSeg = el("div", { class: "map-seg" });
-  const genderOpts = [
-    { v: "todos", label: "Todos" },
-    { v: "Mujer", label: "Mujeres" },
-    { v: "Hombre", label: "Hombres" },
-  ];
+  const genderOpts = (GENDER_FILTER_OPTS[_mapZone] || GENDER_FILTER_OPTS.hetero)
+    .map(o => ({ v: o.value, label: o.label }));
   const genderBtns = genderOpts.map(o => {
     const b = el("button", { class: "map-seg-btn" + (mapFilters.gender === o.v ? " active" : ""), type: "button" }, o.label);
     b.addEventListener("click", () => {
@@ -9166,6 +9172,9 @@ async function openNearbyMap() {
   function matchesMapFilters(u) {
     const f = mapFilters;
     if (!mapGenderMatches(f.gender, u.gender)) return false;
+    // V908 · Orientación (selección única). "todas" = sin filtro. Coincidencia
+    // exacta con la orientación declarada del perfil.
+    if (f.orientation && f.orientation !== "todas" && u.orientation && u.orientation !== f.orientation) return false;
     if (f.onlyOnline && !u.online) return false;
     // V865 · "Buscan ahora": solo activas en los últimos ~15 min.
     if (f.onlyNow && !isSearchingNow(u)) return false;
@@ -9216,6 +9225,7 @@ async function openNearbyMap() {
   function activeMapFilterCount() {
     const f = mapFilters;
     let n = 0;
+    if (f.orientation && f.orientation !== "todas") n++;
     if (f.ageMin !== 18 || f.ageMax !== 99) n++;
     if (f.heightMin || f.heightMax) n++;
     if (f.weightMin || f.weightMax) n++;
@@ -12754,6 +12764,31 @@ function openMapFilters(mf, onApply) {
       html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
   ]));
 
+  // V908 · Orientación (selección única) en el mapa, con paridad con
+  // Explorar/Buscar. Opciones según la zona: Hetero → solo "Heterosexual";
+  // LGTB → lista completa. "Todas" = sin filtro.
+  const _mfZone = state.zone === "lgtb" ? "lgtb" : "hetero";
+  const orientOpts = orientationOptionsForZone(_mfZone, mf.orientation);
+  const orientRef = { value: orientOpts.includes(mf.orientation) ? mf.orientation : "todas" };
+  const orientChips = [];
+  const orientRow = el("div", { class: "chip-row" });
+  [{ label: "Todas", value: "todas" }, ...orientOpts.map(o => ({ label: o, value: o }))].forEach(opt => {
+    const active = opt.value === orientRef.value;
+    const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
+    c.addEventListener("click", () => {
+      orientRef.value = opt.value;
+      orientChips.forEach(x => x.classList.toggle("active", x === c));
+    });
+    orientChips.push(c);
+    orientRow.appendChild(c);
+  });
+  sheet.appendChild(el("div", { class: "filter-group" }, [
+    el("h5", {}, "Orientación"),
+    el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
+      _mfZone === "lgtb" ? "Elige una orientación o «Todas» para verlas todas." : "En esta zona los perfiles son heterosexuales."),
+    orientRow,
+  ]));
+
   // Edad (rango). Valores canónicos en años.
   const ageCtl = makeUnitRange({ metric: "age", loCanon: mf.ageMin, hiCanon: mf.ageMax });
   sheet.appendChild(el("div", { class: "filter-group" }, [ el("h5", {}, "Edad"), ageCtl.node ]));
@@ -12848,6 +12883,7 @@ function openMapFilters(mf, onApply) {
       let wMin = weightCtl.getLoCanon(), wMax = weightCtl.getHiCanon();
       const wFull = (wMin <= weightCtl.canonMin() && wMax >= weightCtl.canonMax());
       mf.weightMin = wFull ? 0 : wMin; mf.weightMax = wFull ? 0 : wMax;
+      mf.orientation = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas"; // V908
       mf.looking_for = lookingRef.id;
       mf.relationship = relRef.id;
       mf.interests = Array.from(selInterests);
@@ -12868,6 +12904,7 @@ function openMapFilters(mf, onApply) {
     } }, "Aplicar filtros"),
     el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
       mf.ageMin = 18; mf.ageMax = 99;
+      mf.orientation = "todas"; // V908
       mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
       mf.looking_for = "any"; mf.relationship = "any";
       mf.interests = []; mf.education = []; mf.pets = []; mf.exercise = []; mf.smoke = []; mf.drink = [];

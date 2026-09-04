@@ -8468,7 +8468,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
 
   const distExpr = "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(gps.lat, u.lat))) * COS(RADIANS(COALESCE(gps.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(gps.lat, u.lat))))), 1)";
   const sql =
-    `SELECT u.id, u.name, u.age, u.gender, u.city, u.photo_url, u.verified, u.online,
+    `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.photo_url, u.verified, u.online,
             u.privacy_hidden, u.bio, u.job, u.height, u.weight, u.ethnicity,
             u.looking_for, u.relationship, u.interests,
             u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
@@ -8510,6 +8510,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       name: r.name || "Alguien",
       age: (hidden.age ? null : (r.age != null ? r.age : null)),
       gender: r.gender || "",
+      orientation: r.orientation || "", // V908 · para el filtro de orientación del mapa
       city: (hidden.city ? null : (r.city || "")),
       photo: r.photo_url || null,
       verified: !!r.verified,
