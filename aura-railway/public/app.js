@@ -4223,23 +4223,27 @@ function showApp() {
         try { payPlan = JSON.parse(sessionStorage.getItem("aura_pay_plan") || "null"); } catch {}
         try { sessionStorage.removeItem("aura_pay_plan"); } catch {}
         setTimeout(() => {
-          // Celebración visual del plan si es una suscripción; si no, toast normal.
+          // Celebración visual del plan si es una suscripción; si no, aviso de
+          // compra con emoji (V902), más visible que el toast anterior.
           const paidKey = payPlan && payPlan.plan && String(payPlan.plan).toLowerCase();
           if (paidKey && ["premium", "gold", "platinum"].indexOf(paidKey) !== -1) {
             try { celebratePlan(paidKey, { period: payPlan.period }); } catch {}
           } else {
-            try { toast("¡Pago recibido! Tu compra se activará en unos segundos."); } catch {}
+            try { showPayNotice("ok"); } catch { try { toast("¡Pago recibido!"); } catch {} }
           }
           // Reintentos suaves para refrescar el estado cuando el webhook llegue.
+          // Incluye refresco del botón Boost de Explorar por si la compra fue de
+          // Boost (así aparece el estado activo sin recargar).
           let tries = 0;
           const iv = setInterval(async () => {
             tries++;
             try { await chatApi.ensure(); await syncUserPlan(); } catch {}
+            try { refreshBoostAction(); } catch {}
             if (tries >= 4) clearInterval(iv);
           }, 3000);
         }, 600);
       } else if (payRes === "cancel") {
-        setTimeout(() => { try { toast("Pago cancelado. No se ha realizado ningún cargo."); } catch {} }, 600);
+        setTimeout(() => { try { showPayNotice("cancel"); } catch { try { toast("Compra cancelada."); } catch {} } }, 600);
       }
     }
   } catch {}
@@ -10779,6 +10783,37 @@ function planCelebrateInfo(key) {
     perks: String(perksRaw).split("\n").map(s => s.trim()).filter(Boolean),
   };
 }
+/* V902 · Aviso de retorno de pago (banner central con emoji).
+   ---------------------------------------------------------------------------
+   Se usa al volver de Stripe para: (a) compras que NO son suscripción —Boost y
+   packs de lecturas—, y (b) pagos cancelados. Las suscripciones ya tienen su
+   propia celebración (celebratePlan). Antes solo salía un toast discreto; ahora
+   el usuario ve un aviso claro con emoji, igual de visible en éxito y cancelación.
+   `kind`: "ok" (verde) | "cancel" (ámbar). Se cierra solo o al tocar. */
+function showPayNotice(kind, opts = {}) {
+  const ok = kind === "ok";
+  const emoji = opts.emoji || (ok ? "✅" : "🛑");
+  const title = opts.title || (ok ? "¡Pago recibido!" : "Compra cancelada");
+  const sub = opts.sub || (ok
+    ? "Tu compra se activará en unos segundos."
+    : "No se ha realizado ningún cargo. Puedes intentarlo de nuevo cuando quieras.");
+  const dur = opts.duration || (ok ? 4200 : 3800);
+  try { document.querySelectorAll(".pay-notice").forEach(n => n.remove()); } catch {}
+  const card = el("div", { class: "pay-notice-card" }, [
+    el("div", { class: "pn-emoji" }, emoji),
+    el("h3", { class: "pn-title" }, title),
+    el("p", { class: "pn-sub" }, sub),
+    el("button", { class: "pn-close", type: "button" }, "Entendido"),
+  ]);
+  const overlay = el("div", { class: "pay-notice" + (ok ? " pn-ok" : " pn-cancel") }, [ card ]);
+  const close = () => { try { overlay.classList.add("pn-hide"); } catch {} setTimeout(() => { try { overlay.remove(); } catch {} }, 260); };
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  card.querySelector(".pn-close").addEventListener("click", close);
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => { try { overlay.classList.add("pn-show"); } catch {} });
+  if (dur > 0) setTimeout(close, dur);
+}
+
 function celebratePlan(planKey, opts = {}) {
   const key = String(planKey || "").toLowerCase();
   const info = planCelebrateInfo(key);
@@ -11866,43 +11901,19 @@ function openPremiumLockModal() {
    - Cupón y CTA Premium en la misma sección de acciones, no ocupan alto extra.
    - Cierre visible con "X" arriba a la derecha.
 --------------------------------------------------------------------------- */
-/* V901 · Abrir la pasarela de Stripe en el NAVEGADOR DEL SISTEMA cuando la app
-   corre como PWA instalada (display: standalone).
+/* V902 · Ir a la pasarela de Stripe DENTRO de la app (misma ventana).
    ---------------------------------------------------------------------------
-   Problema: al pagar dentro de la PWA con `location.href`, Stripe se abría en el
-   contenedor de la app (un WebView), que NO tiene la sesión de Google Pay del
-   sistema. Resultado: solo salía "tarjeta", nunca Google Pay, aunque el usuario
-   tuviera tarjetas en Google Wallet y Google Pay activado en Stripe. Google Pay
-   (y las carteras en general) requieren un Chrome "real".
-
-   Solución: si estamos en modo standalone, abrimos la URL de Checkout en una
-   pestaña del navegador del sistema. Como los navegadores BLOQUEAN window.open
-   si no ocurre dentro del gesto del clic, el patrón es:
-     1) al pulsar "Comprar", ANTES de esperar la red, abrimos una pestaña vacía
-        (openCheckoutTab) — eso conserva el gesto de usuario;
-     2) cuando llega la URL de Stripe, la volcamos en esa pestaña (fillCheckoutTab).
-   Fuera de standalone (navegador normal) seguimos con location.href de siempre. */
-function isStandalonePWA() {
-  try {
-    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
-           window.navigator.standalone === true;
-  } catch { return false; }
-}
-// Abre (síncrono, dentro del clic) la pestaña destino si procede. Devuelve la
-// referencia a la ventana o null si vamos a navegar en la misma.
-function openCheckoutTab() {
-  if (!isStandalonePWA()) return null;
-  try {
-    const w = window.open("", "_blank");
-    if (w) { try { w.opener = null; } catch {} return w; }
-  } catch {}
-  return null; // si el navegador lo bloquea, caeremos al fallback
-}
-// Vuelca la URL en la pestaña abierta; si no hay pestaña (o falló), navega en la
-// ventana actual como antes.
-function fillCheckoutTab(win, url) {
-  if (win && !win.closed) { try { win.location.href = url; return; } catch {} }
-  window.location.href = url;
+   Navegamos con location.href a la URL de Checkout. Así, tras pagar o cancelar,
+   Stripe redirige de vuelta a la propia app (success_url=/?pago=ok /
+   cancel_url=/?pago=cancelado) y el usuario NO tiene que buscar ni reabrir la
+   PWA: vuelve solo. boot() detecta ese parámetro y showApp() muestra el aviso
+   (compra completada o cancelada). El plan/créditos los concede el webhook, así
+   que se aplica igual en Boost, lecturas y suscripciones.
+   Nota: al ir dentro del contenedor de la PWA, Google Pay puede no ofrecerse
+   (necesita Chrome del sistema); se prioriza el retorno automático a la app. */
+function goToCheckout(url) {
+  try { window.location.assign(url); }
+  catch { window.location.href = url; }
 }
 
 // V890 · Boost: activar (gasta 1 de la bolsa) y, si no queda, abrir la hoja de
@@ -11992,12 +12003,13 @@ async function openBoostPaywall(prefBoost, prefPacks) {
         const restore = () => { card.disabled = false; goLabel.textContent = prev; };
         try {
           if (publicConfig?.payments?.checkout_live) {
-            // V901 · En PWA instalada, abre la pestaña del sistema DENTRO del clic
-            // (antes del await) para que no la bloquee el navegador.
-            const payTab = openCheckoutTab();
+            // V902 · Pago DENTRO de la app: navegamos en la misma ventana a la
+            // pasarela de Stripe. Así, al terminar o cancelar, Stripe vuelve a la
+            // propia app (success_url / cancel_url) y mostramos el aviso, sin que
+            // el usuario tenga que buscar y reabrir la PWA. (Contrapartida: Google
+            // Pay no aparece en el contenedor de la PWA; ver nota en boot()).
             const cs = await datingApi.checkoutBoost(p.id);
-            if (cs && cs.url) { fillCheckoutTab(payTab, cs.url); return; }
-            if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
+            if (cs && cs.url) { goToCheckout(cs.url); return; }
             toast((cs && (cs.reason || cs.message)) || "No se pudo iniciar el pago");
             restore();
             return;
@@ -12321,14 +12333,12 @@ async function openReadsPaywall(prefStatus) {
             //   sesión de Checkout y redirigimos a la página de pago de Stripe.
             //   El crédito se concede al volver, vía webhook verificado.
             if (publicConfig?.payments?.checkout_live) {
-              const payTab = openCheckoutTab(); // V901 · abrir en Chrome del sistema si es PWA
               const cs = await fetch("/api/my/checkout/reads", {
                 method: "POST", headers: chatApi.headers(),
                 body: JSON.stringify({ pack: p.id }),
               });
               const csj = await cs.json().catch(() => ({}));
-              if (cs.ok && csj.url) { fillCheckoutTab(payTab, csj.url); return; }
-              if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
+              if (cs.ok && csj.url) { goToCheckout(csj.url); return; } // V902 · pago dentro de la app
               toast(csj.reason || "No se pudo iniciar el pago");
               restore();
               return;
@@ -16739,7 +16749,6 @@ function screenSubscriptions(root) {
               if (publicConfig?.payments?.checkout_live) {
                 const prev = btn.textContent;
                 btn.disabled = true; btn.textContent = "Redirigiendo al pago…";
-                const payTab = openCheckoutTab(); // V901 · abrir en Chrome del sistema si es PWA
                 try {
                   // Recuerda el plan elegido para celebrarlo al volver del pago.
                   try { sessionStorage.setItem("aura_pay_plan", JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "annual" : "monthly" })); } catch {}
@@ -16748,13 +16757,9 @@ function screenSubscriptions(root) {
                     body: JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "yearly" : "monthly" }),
                   });
                   const csj = await cs.json().catch(() => ({}));
-                  if (cs.ok && csj.url) { fillCheckoutTab(payTab, csj.url); return; }
-                  if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
+                  if (cs.ok && csj.url) { goToCheckout(csj.url); return; } // V902 · pago dentro de la app
                   toast(csj.reason || "No se pudo iniciar el pago");
-                } catch {
-                  if (payTab && !payTab.closed) { try { payTab.close(); } catch {} }
-                  toast("Error iniciando el pago");
-                }
+                } catch { toast("Error iniciando el pago"); }
                 btn.disabled = false; btn.textContent = prev;
                 return;
               }

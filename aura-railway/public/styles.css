@@ -10438,3 +10438,40 @@ body.map-open { overflow: hidden; }
   background: linear-gradient(to top, rgba(0,0,0,.78), transparent);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+
+/* V902 · Aviso de retorno de pago (compra completada / cancelada). Banner
+   central sobre un velo, con emoji grande, título y subtítulo. Se muestra al
+   volver de la pasarela de Stripe dentro de la app. */
+.pay-notice {
+  position: fixed; inset: 0; z-index: 4000;
+  display: grid; place-items: center; padding: 24px;
+  background: rgba(0,0,0,.5); backdrop-filter: blur(3px);
+  opacity: 0; transition: opacity .22s ease;
+}
+.pay-notice.pn-show { opacity: 1; }
+.pay-notice.pn-hide { opacity: 0; }
+.pay-notice-card {
+  width: min(360px, 92vw); box-sizing: border-box;
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 26px 22px 20px; text-align: center;
+  box-shadow: var(--shadow-lg);
+  transform: translateY(12px) scale(.97); transition: transform .24s cubic-bezier(.2,.9,.3,1.2);
+}
+.pay-notice.pn-show .pay-notice-card { transform: translateY(0) scale(1); }
+.pn-emoji {
+  width: 68px; height: 68px; margin: 0 auto 12px;
+  display: grid; place-items: center; border-radius: 50%;
+  font-size: 34px; line-height: 1;
+}
+.pay-notice.pn-ok .pn-emoji { background: rgba(34,197,94,.14); }
+.pay-notice.pn-cancel .pn-emoji { background: rgba(245,158,11,.16); }
+.pn-title { margin: 0 0 6px; font-size: 20px; font-weight: 800; }
+.pn-sub { margin: 0 0 18px; font-size: 14px; color: var(--text-muted); line-height: 1.45; }
+.pn-close {
+  width: 100%; height: 46px; border: none; border-radius: 12px;
+  font-size: 15px; font-weight: 700; color: #fff; cursor: pointer;
+}
+.pay-notice.pn-ok .pn-close { background: linear-gradient(135deg, #22c55e, #16a34a); }
+.pay-notice.pn-cancel .pn-close { background: linear-gradient(135deg, #ff3b6b, #ff8a3b); }
+.pn-close:active { transform: scale(.98); }
