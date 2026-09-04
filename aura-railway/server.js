@@ -14704,7 +14704,7 @@ app.get("/api/demo", wrap(async (req, res) => {
     // prueba". Así el mapa muestra la MISMA cuenta de prueba que ves en Explorar
     // / Cerca de ti, sin depender del email exacto.
     const [rows] = await pool.query(
-      `SELECT id, name, age, gender, orientation, city, ethnicity, height, weight,
+      `SELECT id, name, age, gender, orientation, zone, city, ethnicity, height, weight,
               bio, job, looking_for, relationship, interests, photo_url, verified, online,
               pets, smoke, drink, education, exercise, prompts
          FROM users
@@ -14729,6 +14729,7 @@ app.get("/api/demo", wrap(async (req, res) => {
         age: (r.age != null ? Number(r.age) : null),
         gender: r.gender || "",
         orientation: r.orientation || "",
+        zone: r.zone || "hetero", // V905 · zona real de la cuenta de prueba (para no cruzar zonas en el mapa)
         city: r.city || "",
         ethnicity: r.ethnicity || "",
         height: r.height || null,

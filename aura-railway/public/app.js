@@ -8992,7 +8992,14 @@ async function openNearbyMap() {
   // V768 · Se rellena con el perfil REAL de la cuenta de prueba (prueba@aura.app)
   // que devuelve /api/demo, para que coincida con el de la app.
   const demoProfile = await fetchDemoProfile();
-  const testUser = makeTestMapUser(start, demoProfile);
+  // V905 · La cuenta de prueba SOLO puede aparecer en el mapa de SU zona. Antes
+  // se inyectaba en cualquier mapa, así que el pin de prueba (p. ej. LGTB) se
+  // colaba en la zona contraria (hetero) y parecía que las zonas no estaban
+  // separadas. El backend ya filtra los usuarios reales por u.zone; esto aplica
+  // el mismo criterio al pin ficticio del cliente.
+  const _demoZone = (demoProfile && demoProfile.zone === "lgtb") ? "lgtb" : "hetero";
+  const _myZone = state.zone === "lgtb" ? "lgtb" : "hetero";
+  const testUser = (_demoZone === _myZone) ? makeTestMapUser(start, demoProfile) : null;
 
   // V795 · Zoom inicial MUCHO más cercano al punto azul (17, nivel calle).
   // Antes 15 quedaba demasiado lejano. Esri Canvas solo tiene teselas nativas
@@ -11554,7 +11561,10 @@ function openFilters() {
     // etnia siguen siendo buscables y coherentes con el mapa/Explorar.
     try {
       const demo = await fetchDemoProfile();
-      if (demo) {
+      // V905 · Solo fusionamos la cuenta de prueba si está en la MISMA zona (sus
+      // facetas no deben aparecer en la zona contraria, igual que su pin).
+      const demoZone = (demo && demo.zone === "lgtb") ? "lgtb" : "hetero";
+      if (demo && demoZone === (state.zone === "lgtb" ? "lgtb" : "hetero")) {
         const dCity = String(demo.city || "").trim();
         const dEth = String(demo.ethnicity || "").trim();
         if (dCity && !facetCities.some(c => String(c.value).toLowerCase() === dCity.toLowerCase())) {
