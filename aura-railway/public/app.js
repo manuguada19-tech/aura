@@ -2304,6 +2304,42 @@ const datingApi = {
       return data;
     } catch { return { error: "network" }; }
   },
+  // V890 · Boost: estado de la bolsa, activación y compra de packs.
+  async getBoost() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/boost", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async activateBoost() {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const r = await fetch("/api/my/boost/activate", { method: "POST", headers: this.headers() });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message, status: r.status, boost: data && data.boost, packs: data && data.packs };
+      return data;
+    } catch { return { error: "network" }; }
+  },
+  async buyBoost(pack) {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const r = await fetch("/api/my/boost/buy", { method: "POST", headers: this.headers(), body: JSON.stringify({ pack: String(pack) }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message, checkout: data && data.checkout };
+      return data;
+    } catch { return { error: "network" }; }
+  },
+  async checkoutBoost(pack) {
+    if (!this._authed()) return { error: "unauthorized" };
+    try {
+      const r = await fetch("/api/my/checkout/boost", { method: "POST", headers: this.headers(), body: JSON.stringify({ pack: String(pack) }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { error: (data && data.error) || "error", message: data && data.message };
+      return data;
+    } catch { return { error: "network" }; }
+  },
   // V866 · Perfil propio (incluye now_status para el editor).
   async myProfile() {
     if (!this._authed()) return null;
@@ -8111,7 +8147,7 @@ function screenDiscover(root) {
       actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
       actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
       actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
-      actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => toast("¡Boost activado por 30 min!"), "Boost"),
+      actionBtn("boost sm", "M13 2L3 14h9l-1 8 10-12h-9z", () => activateBoostFlow(), "Boost"),
     ]),
   ]));
   // Ad slot (visible only to Free plan)
@@ -11747,13 +11783,142 @@ function openPremiumLockModal() {
    - Cupón y CTA Premium en la misma sección de acciones, no ocupan alto extra.
    - Cierre visible con "X" arriba a la derecha.
 --------------------------------------------------------------------------- */
-async function openReadsPaywall(prefStatus) {
-  // Estilos inline por si el CSS no incluye .reads-paywall-v2. Usamos
-  // variables de tema si existen; si no, colores por defecto.
-  const styleTag = document.getElementById("readsPaywallV2Style") || (() => {
-    const s = document.createElement("style");
-    s.id = "readsPaywallV2Style";
-    s.textContent = `
+// V890 · Boost: activar (gasta 1 de la bolsa) y, si no queda, abrir la hoja de
+// compra / mejora de plan. El botón de Descubrir llama a activateBoostFlow().
+async function activateBoostFlow() {
+  if (!(datingApi._authed && datingApi._authed())) { toast("Inicia sesión para usar Boost"); return; }
+  const r = await datingApi.activateBoost();
+  if (r && r.ok && r.already_active) {
+    const left = r.boost && r.boost.active_seconds_left ? Math.ceil(r.boost.active_seconds_left / 60) : null;
+    toast(left ? `Tu Boost ya está activo · quedan ${left} min` : "Tu Boost ya está activo");
+    return;
+  }
+  if (r && r.ok && r.activated) {
+    toast(`¡Boost activado! Destacas ${r.duration_min || 30} min`);
+    return;
+  }
+  if (r && (r.error === "no_boosts" || r.status === 402)) {
+    openBoostPaywall(r.boost, r.packs);
+    return;
+  }
+  toast((r && r.message) || "No se pudo activar el Boost");
+}
+
+// Hoja de compra de Boost + CTA de mejora de plan. Reutiliza los estilos de la
+// paywall de lecturas (.reads-paywall-v2 / .rp2-*).
+async function openBoostPaywall(prefBoost, prefPacks) {
+  ensureRp2Style(); // asegura que el estilo rp2 exista aunque no se haya abierto lecturas
+  const sheet = el("div", { class: "reads-paywall-v2" });
+  sheet.appendChild(el("button", { class: "rp2-close", type: "button", title: "Cerrar", "aria-label": "Cerrar", "data-close": true }, "×"));
+  sheet.appendChild(el("div", { class: "rp2-hero" }, [
+    el("div", { class: "rp2-hero-ic" }, "🚀"),
+    el("h3", {}, "Destaca con Boost"),
+    el("p", {}, "Aparece el primero en Descubrir y Cerca de ti durante 30 minutos. Consigue más Boosts o mejora tu plan."),
+    el("div", { class: "rp2-chips" }, [
+      el("span", { class: "rp2-chip" }, [ el("span", { class: "rp2-chip-ic" }, "🆓"), "Gratis: ", el("b", { id: "bpFree" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ el("span", { class: "rp2-chip-ic" }, "🎟️"), "Extra: ", el("b", { id: "bpExtra" }, "…") ]),
+      el("span", { class: "rp2-chip" }, [ el("span", { class: "rp2-chip-ic" }, "⭐"), "Plan: ", el("b", { id: "bpPlan" }, "…") ]),
+    ]),
+  ]));
+  const body = el("div", { class: "rp2-body" });
+  sheet.appendChild(body);
+  body.appendChild(el("div", { class: "rp2-packs-title" }, "Packs de Boost"));
+  const row = el("div", { class: "rp2-packs", id: "bpPacksRow" });
+  body.appendChild(row);
+  body.appendChild(el("div", { class: "rp2-actions" }, [
+    el("button", { class: "rp2-cta-premium", type: "button",
+      onclick: () => { modal.close(); render(screenSubscriptions); } }, "👑 Mejorar plan"),
+    el("button", { class: "rp2-cta-close", type: "button", "data-close": true }, "Cerrar"),
+  ]));
+
+  function fmtPrice(amount, cur) {
+    const n = Number(amount);
+    if (!Number.isFinite(n)) return "-";
+    const c = String(cur || "EUR").toUpperCase();
+    const sym = c === "EUR" ? "€" : c === "USD" ? "$" : c === "GBP" ? "£" : c === "JPY" ? "¥" : c;
+    return n.toFixed(2).replace(/\.00$/, "") + " " + sym;
+  }
+  const refreshStatus = (b) => {
+    const s = b || {};
+    const $f = document.getElementById("bpFree");
+    const $e = document.getElementById("bpExtra");
+    const $p = document.getElementById("bpPlan");
+    if ($f) $f.textContent = s.unlimited ? "Ilimitado" : ((s.free_remaining ?? 0) + " / " + (s.free_per_month ?? 0));
+    if ($e) $e.textContent = String(s.extra_boosts ?? 0);
+    if ($p) $p.textContent = s.unlimited ? "Platinum · Ilimitado" : (s.plan || "Free");
+  };
+
+  modal.open(sheet);
+
+  const paintPacks = (packs) => {
+    if (!row) return;
+    row.innerHTML = "";
+    const list = Array.isArray(packs) ? packs : [];
+    if (!list.length) {
+      row.appendChild(el("div", { style: "grid-column:1/-1;text-align:center;padding:12px;opacity:.6;font-size:12px;" }, "No hay packs disponibles."));
+      return;
+    }
+    list.forEach((p) => {
+      const goLabel = el("span", { class: "rp2-pack-go" }, "Comprar");
+      const card = el("button", { class: "rp2-pack", type: "button", onclick: async () => {
+        if (card.disabled) return;
+        card.disabled = true;
+        const prev = goLabel.textContent;
+        goLabel.textContent = "Procesando…";
+        const restore = () => { card.disabled = false; goLabel.textContent = prev; };
+        try {
+          if (publicConfig?.payments?.checkout_live) {
+            const cs = await datingApi.checkoutBoost(p.id);
+            if (cs && cs.url) { window.location.href = cs.url; return; }
+            toast((cs && cs.message) || "No se pudo iniciar el pago");
+            restore();
+            return;
+          }
+          const res = await datingApi.buyBoost(p.id);
+          if (res && res.ok) {
+            toast(`¡Compra completada! +${res.added || p.boosts} Boosts`);
+            refreshStatus(res.boost);
+            restore();
+          } else {
+            toast((res && res.message) || "No se pudo completar la compra");
+            restore();
+          }
+        } catch { toast("Error en la compra"); restore(); }
+      } }, [
+        el("div", { class: "rp2-pack-ic" }, [
+          el("span", { class: "rp2-pack-ic-n" }, String(p.boosts || 0)),
+          el("span", { class: "rp2-pack-ic-l" }, p.boosts === 1 ? "Boost" : "Boosts"),
+        ]),
+        el("div", { class: "rp2-pack-mid" }, [
+          el("div", { class: "rp2-pack-name" }, p.label || (`${p.boosts} Boosts`)),
+          el("div", { class: "rp2-pack-meta" }, [
+            el("span", { class: "rp2-pack-perread" }, "Destaca 30 min cada uno"),
+          ]),
+        ]),
+        el("div", { class: "rp2-pack-right" }, [
+          el("div", { class: "rp2-pack-price" }, fmtPrice(p.price, p.currency)),
+          goLabel,
+        ]),
+      ]);
+      row.appendChild(card);
+    });
+  };
+
+  if (prefBoost) refreshStatus(prefBoost);
+  if (prefPacks && prefPacks.length) paintPacks(prefPacks);
+  try {
+    const data = await datingApi.getBoost();
+    if (data) { refreshStatus(data.boost); paintPacks(data.packs); }
+  } catch {}
+}
+
+// Estilos compartidos de las hojas .reads-paywall-v2 / .rp2-* (lecturas y Boost).
+// Se inyectan una sola vez, la primera vez que se abre cualquiera de las hojas.
+function ensureRp2Style() {
+  if (document.getElementById("readsPaywallV2Style")) return;
+  const s = document.createElement("style");
+  s.id = "readsPaywallV2Style";
+  s.textContent = `
       .reads-paywall-v2 { position:relative; padding:0; overflow:hidden; border-radius:20px; max-width:560px; }
       .rp2-close { position:absolute; top:10px; right:10px; z-index:3; width:34px; height:34px; border-radius:50%; border:none; background:rgba(0,0,0,0.45); color:#fff; font-size:20px; cursor:pointer; display:grid; place-items:center; }
       .rp2-hero { padding:18px 20px 14px; background:linear-gradient(135deg,#ff3b6b 0%,#ff8a3b 100%); color:#fff; text-align:center; }
@@ -11812,10 +11977,12 @@ async function openReadsPaywall(prefStatus) {
         .rp2-pack-go { padding:6px 11px; font-size:11.5px; }
       }
     `;
-    document.head.appendChild(s);
-    return s;
-  })();
-  void styleTag;
+  document.head.appendChild(s);
+}
+
+async function openReadsPaywall(prefStatus) {
+  // Estilos inline por si el CSS no incluye .reads-paywall-v2.
+  ensureRp2Style();
 
   const sheet = el("div", { class: "reads-paywall-v2" });
 

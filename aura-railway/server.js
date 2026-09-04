@@ -1482,6 +1482,33 @@ async function migrate() {
     )`);
   } catch (e) { /* ya existe */ }
 
+  // V890 · Boost real. `boost_until` marca hasta cuándo el perfil está
+  // destacado (aparece primero en Descubrir / Cerca de ti). La economía de
+  // Boost reutiliza el patrón de "Busco ahora": una cuota mensual gratuita por
+  // plan (Gold 5/mes, Platinum ilimitado) + un saldo comprado que no caduca.
+  try { await pool.execute("ALTER TABLE users ADD COLUMN boost_until TIMESTAMP NULL"); } catch (e) { /* ya existe */ }
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS boost_credits (
+      user_id INT PRIMARY KEY,
+      used_month INT NOT NULL DEFAULT 0,
+      credits INT NOT NULL DEFAULT 0,
+      period_month CHAR(7) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`);
+  } catch (e) { /* ya existe */ }
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS boost_purchases (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      pack VARCHAR(30) NOT NULL,
+      boosts INT NOT NULL,
+      amount DECIMAL(10,2) NOT NULL DEFAULT 0,
+      currency VARCHAR(6) NOT NULL DEFAULT 'EUR',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user (user_id)
+    )`);
+  } catch (e) { /* ya existe */ }
+
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
   // completa se conserva en `url` (así la cuadrícula la muestra entera).
@@ -1973,6 +2000,12 @@ async function seed() {
     "chat.reads.pack_l_credits": "500",
     "chat.reads.pack_l_price": "14.99",
     "chat.reads.currency": "EUR",
+    // V890 · Economía de Boost. Duración de cada boost, cuota mensual gratis por
+    // plan (Gold 5/mes, Platinum ilimitado; Free y Premium 0) y packs de compra.
+    "boost.duration_min": "30",
+    "boost.free_per_month.gold": "5",
+    "boost.platinum_unlimited": "true",
+    "boost.currency": "EUR",
   };
   for (const [k, v] of Object.entries(settings))
     await pool.execute("INSERT INTO settings (k, v) VALUES (?,?)", [k, v]);
@@ -8100,7 +8133,7 @@ app.get("/api/discover", wrap(async (req, res) => {
     sql += " HAVING real_distance IS NULL OR real_distance <= ?";
     havingParam = distanceKm;
   }
-  sql += " ORDER BY u.online DESC, u.verified DESC, RAND() LIMIT ?";
+  sql += " ORDER BY (u.boost_until > NOW()) DESC, u.online DESC, u.verified DESC, RAND() LIMIT ?";
 
   const finalParams = [...selectParams, ...params];
   if (havingParam != null) finalParams.push(havingParam);
@@ -8284,9 +8317,9 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   // Cercanía primero: los que tienen distancia conocida y menor, arriba; los
   // sin coordenadas (NULL) al final; a igualdad, online y verificados primero.
   if (hasGeo) {
-    sql += " ORDER BY (distance IS NULL), distance ASC, u.online DESC, u.verified DESC LIMIT ?";
+    sql += " ORDER BY (u.boost_until > NOW()) DESC, (distance IS NULL), distance ASC, u.online DESC, u.verified DESC LIMIT ?";
   } else {
-    sql += " ORDER BY u.online DESC, u.verified DESC, RAND() LIMIT ?";
+    sql += " ORDER BY (u.boost_until > NOW()) DESC, u.online DESC, u.verified DESC, RAND() LIMIT ?";
   }
 
   const finalParams = [...selectParams, ...params];
@@ -9523,6 +9556,229 @@ app.post("/api/admin/now-status/:userId/reset-quota", wrap(async (req, res) => {
   await pool.execute("UPDATE now_status_credits SET used_today=0, period_day=CURDATE() WHERE user_id=?", [uid]);
   try { await logActivity("admin", `Cuota diaria "Busco ahora" reiniciada al usuario #${uid} por ${who}`); } catch {}
   res.json({ ok: true, minutes: await getNowMinutes(uid) });
+}));
+
+/* =========================================================
+   V890 · BOOST real (destacar el perfil temporalmente)
+   ---------------------------------------------------------
+   Economía calcada de "Busco ahora": cuota mensual gratis según el plan
+   (Gold 5/mes, Platinum ilimitado; Free y Premium 0) + saldo comprado que no
+   caduca. Activar un boost pone users.boost_until = ahora + duración, y el feed
+   de Descubrir / Cerca de ti muestra primero a quien lo tenga activo.
+   ========================================================= */
+const BOOST_DEFAULT_DURATION_MIN = 30;
+
+// Packs de compra de Boost (JSON editable en ajustes con fallback razonable).
+function boostPacks() {
+  const cur = getSetting("boost.currency", "EUR");
+  const raw = getSetting("boost.packs_json", "");
+  if (raw) {
+    try {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        return arr
+          .filter((p) => p && p.active !== false)
+          .map((p) => ({
+            id: String(p.id || "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 20) || "pack",
+            label: String(p.label || "").slice(0, 60) || ("Pack " + String(p.id || "").toUpperCase()),
+            boosts: parseInt(p.boosts, 10) || 0,
+            price: Number(p.price) || 0,
+            currency: cur,
+          }));
+      }
+    } catch {}
+  }
+  return [
+    { id: "b1", label: "1 Boost",   boosts: 1,  price: 1.99,  currency: cur },
+    { id: "b5", label: "5 Boosts",  boosts: 5,  price: 6.99,  currency: cur },
+    { id: "b10", label: "10 Boosts", boosts: 10, price: 11.99, currency: cur },
+  ];
+}
+
+// Crea la fila si falta y reinicia la cuota gratis cuando cambia el mes natural.
+async function ensureBoostCreditsRow(uid) {
+  await pool.execute(
+    "INSERT IGNORE INTO boost_credits (user_id, used_month, credits, period_month) VALUES (?,0,0, DATE_FORMAT(CURDATE(),'%Y-%m'))",
+    [uid]
+  );
+  await pool.execute(
+    "UPDATE boost_credits SET used_month=0, period_month=DATE_FORMAT(CURDATE(),'%Y-%m') WHERE user_id=? AND (period_month IS NULL OR period_month <> DATE_FORMAT(CURDATE(),'%Y-%m'))",
+    [uid]
+  );
+}
+
+// Cuota mensual gratis según el plan. Gold: boost.free_per_month.gold (5 por
+// defecto). Platinum: ilimitado si boost.platinum_unlimited. Free/Premium: 0.
+function boostFreePerMonth(plan) {
+  const p = String(plan || "free").toLowerCase();
+  if (p === "gold") return Math.max(0, parseInt(getSetting("boost.free_per_month.gold", "5"), 10) || 0);
+  return 0;
+}
+function boostUnlimited(plan) {
+  return String(plan || "").toLowerCase() === "platinum" && isTrue("boost.platinum_unlimited", true);
+}
+
+// Estado de la bolsa de Boost. No consume nada, solo informa.
+async function getBoostStatus(uid) {
+  await ensureBoostCreditsRow(uid);
+  const [[user]] = await pool.query(
+    "SELECT plan, TIMESTAMPDIFF(SECOND, NOW(), boost_until) AS active_left FROM users WHERE id=? LIMIT 1", [uid]
+  );
+  const plan = (user && user.plan) || "free";
+  const unlimited = boostUnlimited(plan);
+  const freeMonthly = boostFreePerMonth(plan);
+  const [[row]] = await pool.query("SELECT used_month, credits FROM boost_credits WHERE user_id=?", [uid]);
+  const used = row ? Number(row.used_month) : 0;
+  const bought = row ? Number(row.credits) : 0;
+  const freeRemaining = Math.max(0, freeMonthly - used);
+  const activeLeft = user && user.active_left != null && Number(user.active_left) > 0 ? Number(user.active_left) : 0;
+  return {
+    plan,
+    unlimited: !!unlimited,
+    free_per_month: freeMonthly,
+    free_used: used,
+    free_remaining: freeRemaining,
+    extra_boosts: bought,
+    available: unlimited ? null : freeRemaining + bought,
+    can_boost: unlimited || (freeRemaining + bought) > 0,
+    active: activeLeft > 0,
+    active_seconds_left: activeLeft,
+    duration_min: Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN),
+  };
+}
+
+// Descuenta 1 boost de la bolsa: primero la cuota gratis del mes, luego lo
+// comprado. Los ilimitados (Platinum) no descuentan nada.
+async function consumeBoost(uid) {
+  const st = await getBoostStatus(uid);
+  if (st.unlimited) return { ok: true, unlimited: true };
+  if (st.free_remaining > 0) {
+    await pool.execute("UPDATE boost_credits SET used_month = used_month + 1 WHERE user_id=?", [uid]);
+    return { ok: true, from: "free" };
+  }
+  if (st.extra_boosts > 0) {
+    await pool.execute("UPDATE boost_credits SET credits = GREATEST(0, credits - 1) WHERE user_id=?", [uid]);
+    return { ok: true, from: "extra" };
+  }
+  return { ok: false, reason: "no_boosts" };
+}
+
+// Concede boosts comprados por Stripe (idempotente por sesión). Espejo de
+// grantCreditsFromStripe.
+async function grantBoostFromStripe({ uid, packId, boosts, sessionId, paymentIntent, amount, currency }) {
+  await ensureBoostCreditsRow(uid);
+  const [[dup]] = await pool.query("SELECT id FROM payments WHERE stripe_session_id=? LIMIT 1", [sessionId]);
+  if (dup) return;
+  await pool.execute("UPDATE boost_credits SET credits = credits + ? WHERE user_id=?", [boosts, uid]);
+  await pool.execute(
+    "INSERT INTO boost_purchases (user_id, pack, boosts, amount, currency) VALUES (?,?,?,?,?)",
+    [uid, packId, boosts, amount, currency || "EUR"]
+  );
+  try {
+    await pool.execute(
+      `INSERT INTO payments (user_id, invoice_no, amount, currency, method, status, kind, stripe_session_id, stripe_payment_intent)
+       VALUES (?,?,?,?, 'stripe', 'completed', 'boost_pack', ?, ?)
+       ON DUPLICATE KEY UPDATE status='completed'`,
+      [uid, genInvoiceNo(), amount, currency || "EUR", sessionId || null, paymentIntent || null]
+    );
+  } catch {}
+  try { await logActivity("user", `Pack de Boost '${packId}' (+${boosts}) pagado vía Stripe · usuario ${uid}`); } catch {}
+}
+
+// GET /api/my/boost → estado de la bolsa + packs (para pintar el botón).
+app.get("/api/my/boost", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  res.json({
+    ok: true,
+    boost: await getBoostStatus(me),
+    packs: boostPacks(),
+    currency: getSetting("boost.currency", "EUR"),
+    stripe: stripeEnabled(),
+  });
+}));
+
+// POST /api/my/boost/activate → gasta 1 boost y destaca el perfil. Si no le
+// queda ninguno, 402 para que la app ofrezca comprar (o mejorar de plan).
+app.post("/api/my/boost/activate", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (await enforceRestriction(req, res, "discover")) return;
+  const st = await getBoostStatus(me);
+  if (st.active) {
+    // Ya tiene un boost en marcha: no se gasta otro, se informa del tiempo.
+    return res.json({ ok: true, already_active: true, boost: st });
+  }
+  if (!st.can_boost) {
+    return res.status(402).json({
+      ok: false, error: "no_boosts",
+      message: "Te has quedado sin Boost este mes. Consigue más o mejora tu plan para destacar tu perfil.",
+      boost: st, packs: boostPacks(),
+    });
+  }
+  const spent = await consumeBoost(me);
+  if (!spent.ok) {
+    return res.status(402).json({ ok: false, error: "no_boosts", message: "No te quedan Boosts.", boost: st, packs: boostPacks() });
+  }
+  const dur = Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN);
+  await pool.execute("UPDATE users SET boost_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id=?", [dur, me]);
+  try { await logActivity("user", `Boost activado (${dur} min) por usuario ${me}${spent.unlimited ? " [ilimitado]" : ` [${spent.from}]`}`); } catch {}
+  res.json({ ok: true, activated: true, duration_min: dur, boost: await getBoostStatus(me) });
+}));
+
+// POST /api/my/boost/buy  { pack } → compra simulada (si Stripe no está activo).
+app.post("/api/my/boost/buy", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (stripeEnabled()) return res.status(409).json({ error: "use_stripe_checkout", checkout: "/api/my/checkout/boost" });
+  const packId = String(req.body?.pack || "").toLowerCase();
+  const pick = boostPacks().find((p) => p.id === packId);
+  if (!pick) return res.status(400).json({ ok: false, error: "invalid_pack" });
+  await ensureBoostCreditsRow(me);
+  await pool.execute("UPDATE boost_credits SET credits = credits + ? WHERE user_id=?", [pick.boosts, me]);
+  await pool.execute(
+    "INSERT INTO boost_purchases (user_id, pack, boosts, amount, currency) VALUES (?,?,?,?,?)",
+    [me, pick.id, pick.boosts, pick.price, getSetting("boost.currency", "EUR")]
+  );
+  try { await logActivity("user", `Compra pack de Boost '${pick.id}' (+${pick.boosts}) por usuario ${me}`); } catch {}
+  res.json({ ok: true, added: pick.boosts, boost: await getBoostStatus(me) });
+}));
+
+// POST /api/my/checkout/boost  { pack } → sesión de pago único en Stripe.
+app.post("/api/my/checkout/boost", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  if (!stripeEnabled()) return res.status(503).json({ error: "payments_disabled", reason: "Stripe no está activado" });
+  const pick = boostPacks().find((p) => p.id === String(req.body?.pack || "").toLowerCase());
+  if (!pick) return res.status(400).json({ error: "invalid_pack" });
+  if (!(Number(pick.price) > 0)) return res.status(400).json({ error: "price_unavailable" });
+  const cents = Math.round(Number(pick.price) * 100);
+  const currency = normalizeCurrencyCode(getSetting("boost.currency", "EUR"));
+  const [[u]] = await pool.query("SELECT email, stripe_customer_id FROM users WHERE id=? LIMIT 1", [me]);
+  const base = publicBaseUrl(req);
+  try {
+    const session = await stripeClient.createCheckoutSession({
+      mode: "payment",
+      success_url: `${base}/?pago=ok&sid={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${base}/?pago=cancelado`,
+      client_reference_id: String(me),
+      customer_email: (!u || !u.stripe_customer_id) && u && u.email ? u.email : undefined,
+      customer: u && u.stripe_customer_id ? u.stripe_customer_id : undefined,
+      line_items: [{
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: cents,
+          product_data: { name: `Aura · ${pick.label}` },
+        },
+      }],
+      metadata: { user_id: String(me), kind: "boost_pack", pack: pick.id, boosts: String(pick.boosts) },
+    });
+    res.json({ ok: true, url: session.url, id: session.id });
+  } catch (e) {
+    console.error("[stripe] boost checkout:", e.message);
+    res.status(502).json({ error: "stripe_error" });
+  }
 }));
 
 /* ---- Conversation demo seed (idempotent) ---- */
@@ -13997,6 +14253,13 @@ app.post(
             const credits = parseInt(md.credits, 10) || 0;
             await grantCreditsFromStripe({
               uid, packId: md.pack, credits,
+              sessionId: s.id, paymentIntent: s.payment_intent || null,
+              amount, currency,
+            });
+          } else if (md.kind === "boost_pack") {
+            const boosts = parseInt(md.boosts, 10) || 0;
+            await grantBoostFromStripe({
+              uid, packId: md.pack, boosts,
               sessionId: s.id, paymentIntent: s.payment_intent || null,
               amount, currency,
             });
