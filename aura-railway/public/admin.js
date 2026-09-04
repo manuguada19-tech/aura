@@ -10969,7 +10969,7 @@ function mcBuildMatchDoc(cfg) {
     <p class="match-sub"${subStyle}>${mcEsc(g("content.match.sub"))}</p>
     <div class="match-cards">
       <div class="mc" style="background-image:url('${me}')"><div class="mc-name">${you}</div></div>
-      <div class="match-heart"${(mAccent || mHeartBg) ? ` style="${mAccent ? `color:${mcEsc(mAccent)};` : ""}${mHeartBg ? `background:${mcEsc(mHeartBg)};box-shadow:0 14px 34px rgba(0,0,0,.28), inset 0 0 0 3px rgba(255,255,255,.35);` : ""}"` : ""}>${heartFill}</div>
+      <div class="match-heart"${(mAccent || mHeartBg) ? ` style="${mAccent ? `color:${mcEsc(mAccent)};` : ""}${mHeartBg ? `background:${mcEsc(mHeartBg)};box-shadow:0 14px 34px rgba(0,0,0,.28), 0 0 0 1px rgba(0,0,0,.14), inset 0 0 0 2px rgba(0,0,0,.06);` : ""}"` : ""}>${heartFill}</div>
       <div class="mc" style="background-image:url('${him}')"><div class="mc-name">Hugo <span style="display:inline-flex">${verified}</span></div></div>
     </div>
     ${gon("content.match.quick") ? mcQuickHtml(gv("content.match.quick_replies"), mAccent) : ""}

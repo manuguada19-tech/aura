@@ -10541,8 +10541,12 @@ function triggerMatch(user, conversationId = null) {
     // que un blanco puro no "luciera" (quedaba teñido). Al definir un fondo,
     // sustituimos ese halo por una sombra NEUTRA y un borde interior tenue, para
     // que cualquier color (blanco incluido) se vea limpio e intencionado.
+    // V883 · Un blanco puro sobre el fondo claro del match se "perdía" (borde
+    // interior blanco = invisible). Añadimos un ARO EXTERIOR neutro (hairline
+    // gris) que delimita el disco, así el blanco puro se ve nítido y separado
+    // del fondo, sin teñir el color elegido.
     centerHeart.style.background = mHeartBg;
-    centerHeart.style.boxShadow = "0 14px 34px rgba(0,0,0,.28), inset 0 0 0 3px rgba(255,255,255,.35)";
+    centerHeart.style.boxShadow = "0 14px 34px rgba(0,0,0,.28), 0 0 0 1px rgba(0,0,0,.14), inset 0 0 0 2px rgba(0,0,0,.06)";
   }
   match.appendChild(el("div", { class: "match-cards" }, [ myCard, centerHeart, themCard ]));
   // Botones con colores propios (opcionales). Vacío = estilo por defecto.
