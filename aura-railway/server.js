@@ -6769,21 +6769,49 @@ app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
   res.json({ ok: true, testId, name: rows[0].name, cleared });
 }));
 
-// V913 · Restablecer CUALQUIER usuario por id: borra las reacciones (likes/super/
-// pass) y matches que lo afectan para que vuelva a aparecer en Explorar/Buscar.
-// Opcional: también favoritos y conversaciones/mensajes (?deep=1).
+// V913/V916 · Restablecer CUALQUIER usuario por id de forma SELECTIVA. El panel
+// envía body.parts = ["given_like","given_super","given_pass","received","matches",
+// "favorites","chats"] para elegir qué borrar y no restablecerlo todo.
+// Compatibilidad: sin parts se usa el comportamiento antiguo (likes+matches; y
+// además favoritos/chats si deep=1).
 app.post("/api/admin/users/:uid/reset-reactions", requireAdmin, wrap(async (req, res) => {
   const uid = parseInt(req.params.uid, 10);
   if (!uid) return res.status(400).json({ error: "invalid_uid" });
   const [u] = await pool.query("SELECT id, name FROM users WHERE id=? LIMIT 1", [uid]);
   if (!u.length) return res.status(404).json({ error: "user_not_found" });
-  const deep = req.query.deep === "1" || req.body?.deep === true;
+
+  const VALID = new Set(["given_like","given_super","given_pass","received","matches","favorites","chats"]);
+  let parts = Array.isArray(req.body?.parts) ? req.body.parts.filter(p => VALID.has(p)) : null;
+  if (!parts || !parts.length) {
+    // Retrocompatible: todo lo de antes.
+    const deep = req.query.deep === "1" || req.body?.deep === true;
+    parts = ["given_like","given_super","given_pass","received","matches"];
+    if (deep) parts.push("favorites", "chats");
+  }
+  const has = (p) => parts.includes(p);
 
   const cleared = {};
-  try { const [r] = await pool.execute("DELETE FROM likes WHERE from_user=? OR to_user=?", [uid, uid]); cleared.likes = r.affectedRows || 0; } catch { cleared.likes = 0; }
-  try { const [r] = await pool.execute("DELETE FROM matches WHERE user_a=? OR user_b=?", [uid, uid]); cleared.matches = r.affectedRows || 0; } catch { cleared.matches = 0; }
-  if (deep) {
+  // Reacciones DADAS por tipo (from_user = uid).
+  const givenTypes = [];
+  if (has("given_like"))  givenTypes.push("like");
+  if (has("given_super")) givenTypes.push("super");
+  if (has("given_pass"))  givenTypes.push("pass");
+  if (givenTypes.length) {
+    const ph = givenTypes.map(() => "?").join(",");
+    try { const [r] = await pool.execute(`DELETE FROM likes WHERE from_user=? AND type IN (${ph})`, [uid, ...givenTypes]); cleared.given = r.affectedRows || 0; } catch { cleared.given = 0; }
+  }
+  // Reacciones RECIBIDAS (to_user = uid), todas. Son las que ocultan al usuario
+  // en Explorar/Buscar de OTROS, pero aquí borramos las que apuntan a él.
+  if (has("received")) {
+    try { const [r] = await pool.execute("DELETE FROM likes WHERE to_user=?", [uid]); cleared.received = r.affectedRows || 0; } catch { cleared.received = 0; }
+  }
+  if (has("matches")) {
+    try { const [r] = await pool.execute("DELETE FROM matches WHERE user_a=? OR user_b=?", [uid, uid]); cleared.matches = r.affectedRows || 0; } catch { cleared.matches = 0; }
+  }
+  if (has("favorites")) {
     try { const [r] = await pool.execute("DELETE FROM favorites WHERE user_id=? OR target_id=?", [uid, uid]); cleared.favorites = r.affectedRows || 0; } catch { cleared.favorites = 0; }
+  }
+  if (has("chats")) {
     try {
       const [convs] = await pool.query("SELECT id FROM conversations WHERE user_a=? OR user_b=?", [uid, uid]);
       const ids = convs.map(c => c.id);
@@ -6794,8 +6822,8 @@ app.post("/api/admin/users/:uid/reset-reactions", requireAdmin, wrap(async (req,
       } else { cleared.conversations = 0; cleared.messages = 0; }
     } catch {}
   }
-  await logActivity("admin", `Reset reacciones usuario ${uid}${deep ? " (profundo)" : ""} — ${JSON.stringify(cleared)}`);
-  res.json({ ok: true, uid, name: u[0].name, deep, cleared });
+  await logActivity("admin", `Reset selectivo usuario ${uid} [${parts.join(",")}] — ${JSON.stringify(cleared)}`);
+  res.json({ ok: true, uid, name: u[0].name, parts, cleared });
 }));
 
 // V913 · Actividad completa de un usuario para el panel: reacciones dadas y

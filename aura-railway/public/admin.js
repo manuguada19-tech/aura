@@ -7374,14 +7374,45 @@ async function viewUserActivity(root){
     });
     results.appendChild(panel("Gasto y movimientos", [ exportBtn ], [ spendHead, el("div", { class: "table-scroll" }, [ pt ]) ]));
 
-    // Herramienta: restablecer reacciones para que vuelva a Explorar/Buscar.
-    const resetBtn = btn("Restablecer reacciones (volver a Explorar/Buscar)", "warn sm", async () => {
-      if (!confirm("Se borrarán los likes/superlikes/no-me-gusta y matches de este usuario para que reaparezca. ¿Continuar?")) return;
-      try { const r = await api.post("/api/admin/users/" + uid + "/reset-reactions", {}); const c = r.cleared || {}; toast(`Restablecido (likes: ${c.likes||0}, matches: ${c.matches||0}).`); load(uid); }
-      catch { toast("Error al restablecer"); }
+    // Herramienta: restablecer SELECTIVAMENTE lo que quieras de este usuario.
+    const RESET_PARTS = [
+      { id: "given_like",  label: "❤️ Me gusta dados",   def: true  },
+      { id: "given_super", label: "⭐ Superlikes dados",  def: true  },
+      { id: "given_pass",  label: "✖️ No me gusta dados", def: true  },
+      { id: "received",    label: "📥 Reacciones recibidas (de otros)", def: false },
+      { id: "matches",     label: "💞 Matches",           def: true  },
+      { id: "favorites",   label: "⭐ Favoritos",          def: false },
+      { id: "chats",       label: "💬 Chats y mensajes",   def: false },
+    ];
+    const partChecks = {};
+    const checksWrap = el("div", { style: "display:flex;flex-direction:column;gap:6px;margin:8px 0" });
+    RESET_PARTS.forEach(p => {
+      const cb = el("input", { type: "checkbox" });
+      cb.checked = p.def;
+      partChecks[p.id] = cb;
+      checksWrap.appendChild(el("label", { class: "check", style: "display:flex;align-items:center;gap:8px" }, [ cb, el("span", {}, p.label) ]));
     });
-    results.appendChild(panel("Herramientas", [], [
-      el("p", { class: "muted small" }, "Si el usuario no aparece en Explorar/Buscar por reacciones previas, restablécelas aquí."),
+    const resetBtn = btn("Restablecer lo seleccionado", "warn sm", async () => {
+      const parts = RESET_PARTS.map(p => p.id).filter(id => partChecks[id].checked);
+      if (!parts.length) { toast("Marca al menos una opción"); return; }
+      const labels = RESET_PARTS.filter(p => parts.includes(p.id)).map(p => p.label).join(", ");
+      if (!confirm(`Se borrará de este usuario: ${labels}. Esta acción no se puede deshacer. ¿Continuar?`)) return;
+      try {
+        const r = await api.post("/api/admin/users/" + uid + "/reset-reactions", { parts });
+        const c = r.cleared || {};
+        const parts2 = [];
+        if (c.given != null) parts2.push(`dadas: ${c.given}`);
+        if (c.received != null) parts2.push(`recibidas: ${c.received}`);
+        if (c.matches != null) parts2.push(`matches: ${c.matches}`);
+        if (c.favorites != null) parts2.push(`favoritos: ${c.favorites}`);
+        if (c.conversations != null) parts2.push(`chats: ${c.conversations}`);
+        toast("Restablecido — " + (parts2.join(", ") || "sin cambios"));
+        load(uid);
+      } catch { toast("Error al restablecer"); }
+    });
+    results.appendChild(panel("Herramientas · Restablecer", [], [
+      el("p", { class: "muted small" }, "Marca qué quieres borrar de este usuario. Para que ESTE usuario vuelva a aparecer en el Explorar/Buscar de OTROS (p. ej. tras darle superlike sin querer), borra sus «Reacciones recibidas». Para que a ESTE usuario le vuelvan a salir otros, borra sus «dados»."),
+      checksWrap,
       resetBtn,
     ]));
   }
