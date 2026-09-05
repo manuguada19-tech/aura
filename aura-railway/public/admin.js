@@ -12954,17 +12954,20 @@ async function viewBoostAdmin(root){
       desc: "Destaca perfiles temporalmente. Cuota mensual gratis por plan (Gold 5/mes, Platinum ilimitado) y packs de compra para el resto.",
       gradA: "#ff3b6b", gradB: "#ff8a3b",
       stats: [
+        { v: fmt.num(r.activations_total || 0), l: "Activaciones (exacto)" },
         { v: fmt.num(r.boosts_sold || 0), l: "Boosts vendidos" },
         { v: fmt.eur(r.revenue || 0), l: "Ingresos" },
         { v: fmt.num(r.active_now || 0), l: "Activos ahora" },
-        { v: (r.duration_min || 30) + " min", l: "Duración" },
       ],
     }));
     const avgTicket = (r.orders && r.orders > 0) ? (r.revenue || 0) / r.orders : 0;
     const sparkRev = Array.isArray(r.revenue_series) ? r.revenue_series : new Array(14).fill(0);
     const sparkCr  = Array.isArray(r.boosts_series) ? r.boosts_series : new Array(14).fill(0);
+    const sparkAct = Array.isArray(r.activations_series) ? r.activations_series : new Array(14).fill(0);
     const kpis = document.createElement("div");
     kpis.className = "pro-kpis";
+    kpis.appendChild(proKpi({ label: "Activaciones totales (exacto)", icon: "⚡", value: fmt.num(r.activations_total || 0),
+      sparkline: sparkAct, gradA: "#06b6d4", gradB: "#0891b2", sub: `${fmt.num(r.activations_today || 0)} hoy · ${fmt.num(r.activations_month || 0)} este mes` }));
     kpis.appendChild(proKpi({ label: "Boosts vendidos", icon: "🚀", value: fmt.num(r.boosts_sold || 0),
       sparkline: sparkCr, gradA: "#ff3b6b", gradB: "#e11d48", sub: "acumulado" }));
     kpis.appendChild(proKpi({ label: "Ingresos por packs", icon: "💰", value: fmt.eur(r.revenue || 0),
@@ -12987,7 +12990,7 @@ async function viewBoostAdmin(root){
     ["🆓", "Cuota mensual gratuita (según el plan)."],
     ["📦", "Pack de boosts que un usuario puede comprar."],
     ["💎", "Platinum tiene boosts ilimitados."],
-    ["⚡", "Boost activo ahora mismo (perfil destacado)."],
+    ["⚡", "Boost activo ahora mismo / total exacto de activaciones (desde que se activó el registro)."],
     ["🎁", "Conceder o retirar boosts manualmente."],
     ["📊", "Historial y estadísticas de consumo."],
   ]));

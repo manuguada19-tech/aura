@@ -10086,6 +10086,28 @@ app.get("/api/admin/boost/summary", wrap(async (req, res) => {
     revenue_series.push(hit ? Number(hit.rev) : 0);
     boosts_series.push(hit ? Number(hit.cr) : 0);
   }
+  // V914 · Activaciones EXACTAS (tabla boost_activations, desde V912). Total,
+  // hoy, este mes y serie de 14 días. Best-effort por si la tabla aún no existe.
+  let activations_total = 0, activations_today = 0, activations_month = 0;
+  const activations_series = new Array(14).fill(0);
+  try {
+    const [[at]] = await pool.query("SELECT COUNT(*) c FROM boost_activations");
+    activations_total = Number(at.c) || 0;
+    const [[ad]] = await pool.query("SELECT COUNT(*) c FROM boost_activations WHERE DATE(created_at)=CURDATE()");
+    activations_today = Number(ad.c) || 0;
+    const [[am]] = await pool.query("SELECT COUNT(*) c FROM boost_activations WHERE created_at >= DATE_FORMAT(CURDATE(),'%Y-%m-01')");
+    activations_month = Number(am.c) || 0;
+    const [adays] = await pool.query(
+      `SELECT DATE(created_at) d, COUNT(*) c FROM boost_activations
+        WHERE created_at >= (CURDATE() - INTERVAL 13 DAY) GROUP BY DATE(created_at)`
+    );
+    const aByDay = new Map();
+    for (const r of adays) aByDay.set(dayKey(r.d), Number(r.c) || 0);
+    for (let i = 13; i >= 0; i--) {
+      const dt = new Date(); dt.setDate(dt.getDate() - i);
+      activations_series[13 - i] = aByDay.get(dayKey(dt)) || 0;
+    }
+  } catch {}
   const packs = boostPacks();
   res.json({
     revenue: Number(tot.revenue) || 0,
@@ -10097,6 +10119,7 @@ app.get("/api/admin/boost/summary", wrap(async (req, res) => {
     duration_min: Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN),
     currency: getSetting("boost.currency", "EUR"),
     revenue_series, boosts_series,
+    activations_total, activations_today, activations_month, activations_series,
   });
 }));
 
