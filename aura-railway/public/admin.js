@@ -1354,6 +1354,7 @@ function route(view) {
     reports: viewReports, appeals: viewAppeals, tickets: viewTickets, chats: viewChatsAdmin, otp: viewOtpCodes,
     subscriptions: viewSubscriptions,
     payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, boost: viewBoostAdmin, stats: viewStats,
+    user_activity: viewUserActivity,
     notifications: viewNotifications, emails: viewEmails, settings: viewSettings, logs: viewLogs,
     content: viewContent, design: viewDesign, match_celebrate: viewMatchCelebrate, ads: viewAdsAdmin, backup: viewBackup,
     waitlist: viewWaitlist,
@@ -7238,6 +7239,149 @@ async function viewPayments(root){
   }
   render();
 }
+
+// V913 · Actividad por usuario: reacciones dadas/recibidas (like/super/pass) por
+// zona, uso de boost (compras + activaciones exactas) y resumen de gasto con
+// exportación y borrado de movimientos.
+async function viewUserActivity(root){
+  root.appendChild(viewTitle("Actividad por usuario",
+    "Reacciones (me gusta / superlike / no me gusta), uso de Boost y gasto de cada usuario."));
+
+  const results = el("div");
+  const picker = userPicker({
+    placeholder: "Busca al usuario por nombre o email…",
+    onSelect: (u) => { if (u && u.id) load(u.id); },
+  });
+  root.appendChild(panel("Elegir usuario", [], [ picker.wrap ]));
+  root.appendChild(results);
+
+  const REACT = { like: "❤️ Me gusta", super: "⭐ Superlike", pass: "✖️ No me gusta" };
+  const zoneLabel = (z) => z === "lgtb" ? "LGTB+" : z === "hetero" ? "Hetero" : (z || "—");
+
+  async function load(uid) {
+    results.innerHTML = "";
+    results.appendChild(el("div", { class: "loading" }, "Cargando actividad…"));
+    let data;
+    try { data = await api.get("/api/admin/users/" + uid + "/activity"); }
+    catch (e) { results.innerHTML = ""; results.appendChild(el("div", { class: "error" }, "No se pudo cargar la actividad.")); return; }
+    results.innerHTML = "";
+    render(uid, data);
+  }
+
+  function reactionBlock(title, side) {
+    const t = side.byType || { like: 0, super: 0, pass: 0 };
+    const head = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" }, [
+      el("span", { class: "pill" }, `${REACT.like}: ${t.like || 0}`),
+      el("span", { class: "pill" }, `${REACT.super}: ${t.super || 0}`),
+      el("span", { class: "pill" }, `${REACT.pass}: ${t.pass || 0}`),
+    ]);
+    // Desglose por zona del OTRO usuario.
+    const zt = el("table", { class: "data-table" });
+    zt.appendChild(el("thead", {}, [ el("tr", {}, [
+      el("th", {}, "Zona"), el("th", {}, "❤️"), el("th", {}, "⭐"), el("th", {}, "✖️"), el("th", {}, "Total"),
+    ])]));
+    const ztb = el("tbody");
+    const zones = side.byZone || {};
+    const zk = Object.keys(zones);
+    if (!zk.length) ztb.appendChild(el("tr", {}, [ el("td", { colspan: "5", style: "opacity:.6" }, "Sin reacciones") ]));
+    zk.forEach(z => { const r = zones[z]; ztb.appendChild(el("tr", {}, [
+      el("td", {}, zoneLabel(z)), el("td", {}, String(r.like||0)), el("td", {}, String(r.super||0)),
+      el("td", {}, String(r.pass||0)), el("td", {}, el("strong", {}, String(r.total||0))),
+    ])); });
+    zt.appendChild(ztb);
+    // Detalle (a quién).
+    const dt = el("table", { class: "data-table" });
+    dt.appendChild(el("thead", {}, [ el("tr", {}, [
+      el("th", {}, "Usuario"), el("th", {}, "Zona"), el("th", {}, "Reacción"), el("th", {}, "Fecha"),
+    ])]));
+    const dtb = el("tbody");
+    const list = side.list || [];
+    if (!list.length) dtb.appendChild(el("tr", {}, [ el("td", { colspan: "4", style: "opacity:.6" }, "Nada aún") ]));
+    list.slice(0, 200).forEach(r => dtb.appendChild(el("tr", {}, [
+      el("td", {}, `${r.other_name || "—"} (#${r.other_id})`),
+      el("td", {}, zoneLabel(r.other_zone)),
+      el("td", {}, REACT[r.type] || r.type),
+      el("td", {}, fmt.date(r.created_at)),
+    ])));
+    dt.appendChild(dtb);
+    return panel(title, [], [ head,
+      el("h5", { style: "margin:6px 0" }, "Por zona"), el("div", { class: "table-scroll" }, [ zt ]),
+      el("h5", { style: "margin:12px 0 6px" }, "Detalle"), el("div", { class: "table-scroll" }, [ dt ]),
+    ]);
+  }
+
+  function render(uid, data) {
+    const u = data.user || {};
+    results.appendChild(el("div", { class: "muted small", style: "margin:4px 0 12px" },
+      `Usuario #${u.id} · ${u.name || "—"} · ${zoneLabel(u.zone)} · plan ${u.plan || "free"}`));
+
+    // Boost
+    const b = data.boost || {};
+    results.appendChild(panel("Boost / Impulso", [], [
+      el("div", { style: "display:flex;gap:8px;flex-wrap:wrap" }, [
+        el("span", { class: "pill" }, `Activaciones (total exacto): ${b.activations_total || 0}`),
+        el("span", { class: "pill" }, `Usadas este mes: ${b.used_this_month || 0}`),
+        el("span", { class: "pill" }, `Boosts comprados: ${b.purchased_total || 0}`),
+        el("span", { class: "pill" }, `Gastado en packs: ${fmt.eur(b.spent_eur || 0)}`),
+      ]),
+      el("small", { class: "muted", style: "display:block;margin-top:6px" },
+        "El total exacto de activaciones cuenta desde que se activó el registro (no incluye activaciones anteriores)."),
+    ]));
+
+    // Reacciones
+    results.appendChild(reactionBlock("Reacciones DADAS (a otros)", data.reactions?.given || {}));
+    results.appendChild(reactionBlock("Reacciones RECIBIDAS (de otros)", data.reactions?.received || {}));
+
+    // Gasto
+    const s = data.spend || {};
+    const spendHead = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px" }, [
+      el("span", { class: "pill" }, `Pagado: ${fmt.eur(s.paid_eur || 0)}`),
+      el("span", { class: "pill" }, `Reembolsado: ${fmt.eur(s.refunded_eur || 0)}`),
+      el("span", { class: "pill" }, `Packs boost: ${fmt.eur(s.boost_packs_eur || 0)}`),
+      el("span", { class: "pill" }, `Packs lecturas: ${fmt.eur(s.read_packs_eur || 0)}`),
+    ]);
+    const pt = el("table", { class: "data-table" });
+    pt.appendChild(el("thead", {}, [ el("tr", {}, [
+      el("th", {}, "Factura/Tipo"), el("th", {}, "Importe"), el("th", {}, "Método"),
+      el("th", {}, "Estado"), el("th", {}, "Fecha"), el("th", { class: "ta-right" }, ""),
+    ])]));
+    const ptb = el("tbody");
+    const pays = s.payments || [];
+    if (!pays.length) ptb.appendChild(el("tr", {}, [ el("td", { colspan: "6", style: "opacity:.6" }, "Sin pagos") ]));
+    pays.forEach(p => ptb.appendChild(el("tr", {}, [
+      el("td", {}, p.invoice_no || p.kind || "—"),
+      el("td", {}, fmt.eur(p.amount)),
+      el("td", {}, p.method || "—"),
+      el("td", {}, typeof statusTag === "function" ? statusTag(p.status) : (p.status || "")),
+      el("td", {}, fmt.date(p.created_at)),
+      el("td", { class: "ta-right" }, [
+        btn("🗑", "danger xs", async () => {
+          if (!confirm("¿Borrar este movimiento del historial? No se puede deshacer.")) return;
+          try { await api.post("/api/admin/users/" + uid + "/movements/delete", { source: "payment", ids: [p.id] }); toast("Movimiento borrado"); load(uid); }
+          catch { toast("Error al borrar"); }
+        }),
+      ]),
+    ])));
+    pt.appendChild(ptb);
+    const exportBtn = btn("⬇ Exportar CSV", "ghost sm", () => {
+      const tok = localStorage.getItem("adminToken") || "";
+      window.open("/api/admin/users/" + uid + "/movements.csv?adminToken=" + encodeURIComponent(tok), "_blank");
+    });
+    results.appendChild(panel("Gasto y movimientos", [ exportBtn ], [ spendHead, el("div", { class: "table-scroll" }, [ pt ]) ]));
+
+    // Herramienta: restablecer reacciones para que vuelva a Explorar/Buscar.
+    const resetBtn = btn("Restablecer reacciones (volver a Explorar/Buscar)", "warn sm", async () => {
+      if (!confirm("Se borrarán los likes/superlikes/no-me-gusta y matches de este usuario para que reaparezca. ¿Continuar?")) return;
+      try { const r = await api.post("/api/admin/users/" + uid + "/reset-reactions", {}); const c = r.cleared || {}; toast(`Restablecido (likes: ${c.likes||0}, matches: ${c.matches||0}).`); load(uid); }
+      catch { toast("Error al restablecer"); }
+    });
+    results.appendChild(panel("Herramientas", [], [
+      el("p", { class: "muted small" }, "Si el usuario no aparece en Explorar/Buscar por reacciones previas, restablécelas aquí."),
+      resetBtn,
+    ]));
+  }
+}
+
 async function viewPromos(root){
   // V520 — Pro Hero (KPIs se calculan más abajo, este hero es introductorio)
   try {
@@ -8370,6 +8514,7 @@ async function viewSettings(root){
     "para que vuelva a aparecer en Explorar y en Buscar. No borra su cuenta."));
   const resetBtn = el("button", { type: "button", class: "btn" }, "Restablecer usuario de prueba");
   resetBtn.addEventListener("click", async () => {
+    if (!confirm("Se borrarán los likes/superlikes/no-me-gusta y matches del usuario de prueba para que reaparezca en Explorar y Buscar. ¿Continuar?")) return;
     resetBtn.disabled = true; resetBtn.textContent = "Restableciendo…";
     try {
       const r = await api.post("/api/admin/test-user/reset", {});
@@ -8381,6 +8526,8 @@ async function viewSettings(root){
     resetBtn.disabled = false; resetBtn.textContent = "Restablecer usuario de prueba";
   });
   ttBody.appendChild(resetBtn);
+  ttBody.appendChild(el("p", { class: "muted small", style: "margin-top:10px" },
+    "Para restablecer a cualquier otro usuario y ver sus reacciones/gasto, usa «Actividad por usuario» en el menú."));
   root.appendChild(tt);
 
   // Danger zone — outside the settings form so submit doesn't trigger it

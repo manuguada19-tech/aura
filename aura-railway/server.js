@@ -6769,6 +6769,155 @@ app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
   res.json({ ok: true, testId, name: rows[0].name, cleared });
 }));
 
+// V913 · Restablecer CUALQUIER usuario por id: borra las reacciones (likes/super/
+// pass) y matches que lo afectan para que vuelva a aparecer en Explorar/Buscar.
+// Opcional: también favoritos y conversaciones/mensajes (?deep=1).
+app.post("/api/admin/users/:uid/reset-reactions", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [u] = await pool.query("SELECT id, name FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u.length) return res.status(404).json({ error: "user_not_found" });
+  const deep = req.query.deep === "1" || req.body?.deep === true;
+
+  const cleared = {};
+  try { const [r] = await pool.execute("DELETE FROM likes WHERE from_user=? OR to_user=?", [uid, uid]); cleared.likes = r.affectedRows || 0; } catch { cleared.likes = 0; }
+  try { const [r] = await pool.execute("DELETE FROM matches WHERE user_a=? OR user_b=?", [uid, uid]); cleared.matches = r.affectedRows || 0; } catch { cleared.matches = 0; }
+  if (deep) {
+    try { const [r] = await pool.execute("DELETE FROM favorites WHERE user_id=? OR target_id=?", [uid, uid]); cleared.favorites = r.affectedRows || 0; } catch { cleared.favorites = 0; }
+    try {
+      const [convs] = await pool.query("SELECT id FROM conversations WHERE user_a=? OR user_b=?", [uid, uid]);
+      const ids = convs.map(c => c.id);
+      if (ids.length) {
+        const ph = ids.map(() => "?").join(",");
+        try { const [rm] = await pool.execute(`DELETE FROM messages WHERE conversation_id IN (${ph})`, ids); cleared.messages = rm.affectedRows || 0; } catch { cleared.messages = 0; }
+        try { const [rc] = await pool.execute(`DELETE FROM conversations WHERE id IN (${ph})`, ids); cleared.conversations = rc.affectedRows || 0; } catch { cleared.conversations = 0; }
+      } else { cleared.conversations = 0; cleared.messages = 0; }
+    } catch {}
+  }
+  await logActivity("admin", `Reset reacciones usuario ${uid}${deep ? " (profundo)" : ""} — ${JSON.stringify(cleared)}`);
+  res.json({ ok: true, uid, name: u[0].name, deep, cleared });
+}));
+
+// V913 · Actividad completa de un usuario para el panel: reacciones dadas y
+// recibidas (like/super/pass) con la zona del otro usuario, uso de boost
+// (compras + activaciones exactas desde V912) y resumen de gasto (pagos +
+// compras de packs, con reembolsos).
+app.get("/api/admin/users/:uid/activity", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [u] = await pool.query("SELECT id, name, email, zone, plan FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!u.length) return res.status(404).json({ error: "user_not_found" });
+
+  // Reacciones dadas (uid → otro) y recibidas (otro → uid), con datos del otro.
+  const [given] = await pool.query(
+    `SELECT l.to_user AS other_id, l.type, l.created_at,
+            o.name AS other_name, o.zone AS other_zone
+       FROM likes l LEFT JOIN users o ON o.id = l.to_user
+      WHERE l.from_user=? ORDER BY l.created_at DESC LIMIT 500`, [uid]);
+  const [received] = await pool.query(
+    `SELECT l.from_user AS other_id, l.type, l.created_at,
+            o.name AS other_name, o.zone AS other_zone
+       FROM likes l LEFT JOIN users o ON o.id = l.from_user
+      WHERE l.to_user=? ORDER BY l.created_at DESC LIMIT 500`, [uid]);
+
+  // Contadores por tipo y por zona (de las reacciones DADAS).
+  const tally = (list) => {
+    const byType = { like: 0, super: 0, pass: 0 };
+    const byZone = {};
+    list.forEach(r => {
+      if (byType[r.type] != null) byType[r.type]++;
+      const z = r.other_zone || "—";
+      byZone[z] = byZone[z] || { like: 0, super: 0, pass: 0, total: 0 };
+      if (byZone[z][r.type] != null) byZone[z][r.type]++;
+      byZone[z].total++;
+    });
+    return { byType, byZone };
+  };
+
+  // Boost: compras (histórico completo) + activaciones exactas (desde V912) +
+  // contador del mes actual.
+  const boost = { purchases: [], purchased_total: 0, spent_eur: 0, activations_total: 0, activations: [], used_this_month: 0 };
+  try {
+    const [bp] = await pool.query("SELECT id, pack, boosts, amount, currency, created_at FROM boost_purchases WHERE user_id=? ORDER BY created_at DESC", [uid]);
+    boost.purchases = bp;
+    boost.purchased_total = bp.reduce((s, r) => s + Number(r.boosts || 0), 0);
+    boost.spent_eur = bp.reduce((s, r) => s + Number(r.amount || 0), 0);
+  } catch {}
+  try {
+    const [[ac]] = await pool.query("SELECT COUNT(*) c FROM boost_activations WHERE user_id=?", [uid]);
+    boost.activations_total = Number(ac.c || 0);
+    const [al] = await pool.query("SELECT id, duration_min, source, created_at FROM boost_activations WHERE user_id=? ORDER BY created_at DESC LIMIT 200", [uid]);
+    boost.activations = al;
+  } catch {}
+  try {
+    const [[bc]] = await pool.query("SELECT used_month FROM boost_credits WHERE user_id=?", [uid]);
+    boost.used_this_month = bc ? Number(bc.used_month || 0) : 0;
+  } catch {}
+
+  // Gasto: pagos (ledger canónico, con reembolsos) + compras de packs.
+  let payments = [], readPurchases = [];
+  try { const [p] = await pool.query("SELECT id, invoice_no, amount, currency, method, status, kind, created_at FROM payments WHERE user_id=? ORDER BY created_at DESC", [uid]); payments = p; } catch {}
+  try { const [rp] = await pool.query("SELECT id, pack, credits, amount, currency, created_at FROM chat_read_purchases WHERE user_id=? ORDER BY created_at DESC", [uid]); readPurchases = rp; } catch {}
+  const spend = {
+    payments,
+    read_purchases: readPurchases,
+    paid_eur: payments.filter(p => p.status === "completed").reduce((s, p) => s + Number(p.amount || 0), 0),
+    refunded_eur: payments.filter(p => p.status === "refunded").reduce((s, p) => s + Number(p.amount || 0), 0),
+    payments_count: payments.length,
+    boost_packs_eur: boost.spent_eur,
+    read_packs_eur: readPurchases.reduce((s, r) => s + Number(r.amount || 0), 0),
+  };
+
+  res.json({
+    ok: true,
+    user: u[0],
+    reactions: {
+      given: { list: given, ...tally(given) },
+      received: { list: received, ...tally(received) },
+    },
+    boost,
+    spend,
+  });
+}));
+
+// V913 · Exportar los movimientos (pagos + packs) de un usuario en CSV.
+app.get("/api/admin/users/:uid/movements.csv", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const esc = (v) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+  const lines = ["tipo,id,concepto,importe,moneda,estado,fecha"];
+  try {
+    const [p] = await pool.query("SELECT id, invoice_no, amount, currency, method, status, kind, created_at FROM payments WHERE user_id=? ORDER BY created_at DESC", [uid]);
+    p.forEach(r => lines.push(["pago", r.id, r.invoice_no || r.kind || "", r.amount, r.currency, r.status, r.created_at].map(esc).join(",")));
+  } catch {}
+  try {
+    const [bp] = await pool.query("SELECT id, pack, boosts, amount, currency, created_at FROM boost_purchases WHERE user_id=? ORDER BY created_at DESC", [uid]);
+    bp.forEach(r => lines.push(["boost_pack", r.id, `${r.pack} (+${r.boosts})`, r.amount, r.currency, "completed", r.created_at].map(esc).join(",")));
+  } catch {}
+  try {
+    const [rp] = await pool.query("SELECT id, pack, credits, amount, currency, created_at FROM chat_read_purchases WHERE user_id=? ORDER BY created_at DESC", [uid]);
+    rp.forEach(r => lines.push(["lectura_pack", r.id, `${r.pack} (+${r.credits})`, r.amount, r.currency, "completed", r.created_at].map(esc).join(",")));
+  } catch {}
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="aura-movimientos-user-${uid}.csv"`);
+  res.send(lines.join("\n"));
+}));
+
+// V913 · Borrar movimientos concretos de un usuario. source: payment|boost|read.
+app.post("/api/admin/users/:uid/movements/delete", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const source = String(req.body?.source || "").toLowerCase();
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(n => parseInt(n, 10)).filter(Boolean) : [];
+  if (!ids.length) return res.status(400).json({ error: "no_ids" });
+  const table = source === "payment" ? "payments" : source === "boost" ? "boost_purchases" : source === "read" ? "chat_read_purchases" : null;
+  if (!table) return res.status(400).json({ error: "invalid_source" });
+  const ph = ids.map(() => "?").join(",");
+  const [r] = await pool.execute(`DELETE FROM ${table} WHERE user_id=? AND id IN (${ph})`, [uid, ...ids]);
+  await logActivity("admin", `Borrados ${r.affectedRows || 0} movimientos (${source}) del usuario ${uid}`);
+  res.json({ ok: true, deleted: r.affectedRows || 0 });
+}));
+
 /* =========================================================
    User restrictions (moderation)
    Features supported (server-enforced where relevant):
