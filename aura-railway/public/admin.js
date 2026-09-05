@@ -8359,6 +8359,30 @@ async function viewSettings(root){
 
   root.appendChild(form);
 
+  // V911 · Herramientas de prueba — restablecer el usuario de prueba. Si se le
+  // dio super-like (deslizar hacia arriba) desaparece de Explorar y Buscar porque
+  // /api/discover excluye a los usuarios ya reaccionados. Este botón borra esas
+  // reacciones/matches para que vuelva a aparecer.
+  const tt = panel("Herramientas de prueba", [], []);
+  const ttBody = tt.querySelector(".panel-body");
+  ttBody.appendChild(el("p", { class: "muted small" },
+    "Restablece el usuario de prueba: borra los likes y matches que lo afectan " +
+    "para que vuelva a aparecer en Explorar y en Buscar. No borra su cuenta."));
+  const resetBtn = el("button", { type: "button", class: "btn" }, "Restablecer usuario de prueba");
+  resetBtn.addEventListener("click", async () => {
+    resetBtn.disabled = true; resetBtn.textContent = "Restableciendo…";
+    try {
+      const r = await api.post("/api/admin/test-user/reset", {});
+      const c = r.cleared || {};
+      toast(`Usuario de prueba restablecido (likes: ${c.likes||0}, matches: ${c.matches||0}).`);
+    } catch (e) {
+      toast(e && e.status === 404 ? "No se encontró el usuario de prueba" : "Error al restablecer");
+    }
+    resetBtn.disabled = false; resetBtn.textContent = "Restablecer usuario de prueba";
+  });
+  ttBody.appendChild(resetBtn);
+  root.appendChild(tt);
+
   // Danger zone — outside the settings form so submit doesn't trigger it
   const dz = panel("Zona de peligro", [], []);
   const dzBody = dz.querySelector(".panel-body");

@@ -6729,6 +6729,32 @@ app.post("/api/admin/read-credits/:uid/reset-free", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// V911 · Restablecer el usuario de prueba. Al deslizar hacia arriba (super-like)
+// se crea una fila en `likes`; /api/discover excluye a los usuarios ya reaccionados
+// (u.id NOT IN (SELECT to_user FROM likes WHERE from_user=?)), así que el usuario
+// de prueba desaparecía de Explorar y Buscar (en el mapa seguía porque nearby-map
+// no filtra likes). Este endpoint borra las reacciones/matches que lo ocultaban y
+// reafirma su zona/orientación para que vuelva a aparecer limpio.
+app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id, name, email FROM users
+       WHERE email='prueba@aura.app'
+          OR LOWER(name) LIKE '%usuario de prueba%'
+          OR LOWER(name) LIKE '%usuario prueba%'
+       ORDER BY id ASC LIMIT 1`
+  );
+  if (!rows.length) return res.status(404).json({ error: "test_user_not_found" });
+  const testId = rows[0].id;
+
+  const cleared = {};
+  try { const [r] = await pool.execute("DELETE FROM likes WHERE from_user=? OR to_user=?", [testId, testId]); cleared.likes = r.affectedRows || 0; } catch { cleared.likes = 0; }
+  try { const [r] = await pool.execute("DELETE FROM matches WHERE user_a=? OR user_b=?", [testId, testId]); cleared.matches = r.affectedRows || 0; } catch { cleared.matches = 0; }
+  try { await pool.execute("UPDATE users SET zone='lgtb' WHERE id=?", [testId]); } catch {}
+
+  await logActivity("admin", `Restablecido usuario de prueba (id ${testId}) — likes:${cleared.likes} matches:${cleared.matches}`);
+  res.json({ ok: true, testId, name: rows[0].name, cleared });
+}));
+
 /* =========================================================
    User restrictions (moderation)
    Features supported (server-enforced where relevant):
