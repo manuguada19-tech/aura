@@ -7252,7 +7252,12 @@ async function viewUserActivity(root){
     placeholder: "Busca al usuario por nombre o email…",
     onSelect: (u) => { if (u && u.id) load(u.id); },
   });
-  root.appendChild(panel("Elegir usuario", [], [ picker.wrap ]));
+  // Nota: NO usar panel() aquí; .panel tiene overflow:hidden y recorta el
+  // desplegable de resultados del buscador (position:absolute). Contenedor propio.
+  root.appendChild(el("div", { style: "background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;overflow:visible" }, [
+    el("h3", { style: "margin:0 0 10px;font-size:15px" }, "Elegir usuario"),
+    picker.wrap,
+  ]));
   root.appendChild(results);
 
   const REACT = { like: "❤️ Me gusta", super: "⭐ Superlike", pass: "✖️ No me gusta" };
