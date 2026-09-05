@@ -1508,6 +1508,20 @@ async function migrate() {
       INDEX idx_user (user_id)
     )`);
   } catch (e) { /* ya existe */ }
+  // V912 · Registro exacto de CADA activación de Boost. Antes solo existía el
+  // contador mensual (boost_credits.used_month, se reinicia cada mes) y una
+  // línea de texto en el log, así que no se podía contar el histórico real de
+  // activaciones por usuario. A partir de aquí cada activate inserta una fila.
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS boost_activations (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      duration_min INT NOT NULL DEFAULT 0,
+      source ENUM('free','extra','unlimited') NOT NULL DEFAULT 'free',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_user_time (user_id, created_at)
+    )`);
+  } catch (e) { /* ya existe */ }
 
   // V725: recorte 3:4 para la foto principal. `crop_url` guarda la versión
   // recortada que el usuario elige como foto de perfil; la foto original
@@ -9794,6 +9808,11 @@ app.post("/api/my/boost/activate", wrap(async (req, res) => {
   }
   const dur = Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN);
   await pool.execute("UPDATE users SET boost_until = DATE_ADD(NOW(), INTERVAL ? MINUTE) WHERE id=?", [dur, me]);
+  // V912 · Registro exacto de la activación (histórico real por usuario).
+  try {
+    const src = spent.unlimited ? "unlimited" : (spent.from === "extra" ? "extra" : "free");
+    await pool.execute("INSERT INTO boost_activations (user_id, duration_min, source) VALUES (?,?,?)", [me, dur, src]);
+  } catch {}
   try { await logActivity("user", `Boost activado (${dur} min) por usuario ${me}${spent.unlimited ? " [ilimitado]" : ` [${spent.from}]`}`); } catch {}
   res.json({ ok: true, activated: true, duration_min: dur, boost: await getBoostStatus(me) });
 }));
