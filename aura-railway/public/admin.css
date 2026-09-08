@@ -3070,6 +3070,23 @@ textarea.input { resize: vertical; min-height: 60px; }
 .inv-head-acts { display: flex; gap: 6px; flex-wrap: wrap; }
 .inv-head-acts .btn.sm { padding: 6px 12px; font-size: 12.5px; height: auto; }
 
+/* V917 · Códigos por tiempo: cuenta atrás en vivo, atajos de duración y aviso
+   de cuándo caducará exactamente. El contador reutiliza el lenguaje visual del
+   temporizador de códigos OTP (verde / ámbar / rojo con pulso) para que un
+   "queda poco" se lea igual en todo el panel. */
+.inv-timer {
+  display: inline-block; padding: 3px 8px; border-radius: 6px;
+  background: rgba(34,197,94,.15); color: #22c55e;
+  font-family: ui-monospace, Menlo, monospace; font-size: 12px; font-weight: 700;
+  white-space: nowrap;
+}
+.inv-timer.warn   { background: rgba(245,158,11,.18); color: #f5c542; }
+.inv-timer.danger { background: rgba(220,38,38,.18); color: #f87171; animation: otp-pulse 1s ease-in-out infinite; }
+
+.inv-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 6px; }
+.inv-quick .btn.sm { padding: 5px 11px; font-size: 12px; height: auto; }
+.inv-dur-hint { font-size: 12.5px; margin: 2px 0 10px; }
+
 /* Timeline horizontal */
 .inv-timeline {
   display: grid;

@@ -11975,10 +11975,78 @@ function genInviteCode() {
   return out.slice(0, 4) + "-" + out.slice(4, 8) + "-" + out.slice(8, 12);
 }
 
+/* ------------------------------------------------------------------
+   V917 · Invitaciones por TIEMPO — minutos, horas, días o fecha/hora
+   exacta. Antes solo existía `days_valid` (días enteros), así que no
+   había forma de crear un código de "30 minutos" ni "hasta hoy a las
+   20:00": cualquier valor menor de un día se convertía en 0, es decir
+   en un código sin caducidad, justo lo contrario de lo que se pedía.
+
+   Todo se reduce a SEGUNDOS, y la caducidad la calcula SIEMPRE la base
+   de datos con DATE_ADD(NOW(), INTERVAL ? SECOND), nunca `new Date()`
+   de Node. El motivo no es estético: quien decide si un código sigue
+   valiendo es NOW() de MySQL. Si el reloj o la zona horaria de Node y
+   los de MySQL no coinciden, con 30 días de plazo el desfase es
+   invisible, pero con 30 minutos el código puede nacer ya caducado.
+   Calculando el instante con el mismo reloj que después lo juzga, el
+   desfase deja de importar.
+
+   Acepta, por orden de prioridad:
+     { expires_at: "2026-09-04T20:00:00.000Z" }   fecha/hora exacta (ISO)
+     { minutes: 90 } { hours: 6 } { days_valid: 30 }  duración relativa
+   Las duraciones relativas se SUMAN, así "1 h y 30 min" también vale.
+   Todo a 0 o vacío = sin caducidad (null), igual que antes.
+------------------------------------------------------------------ */
+const INVITE_MAX_SECONDS = 366 * 86400; // tope de un año: evita fechas absurdas
+
+function resolveInviteSeconds(body) {
+  const b = body || {};
+  if (b.expires_at) {
+    // Llega como instante ISO desde el navegador (con zona), y lo pasamos a
+    // "segundos desde ahora" para que el cálculo final lo haga la BD igual
+    // que en el caso relativo: un solo camino de código, sin ambigüedad.
+    const t = new Date(b.expires_at);
+    if (isNaN(+t)) return { error: "invalid_date" };
+    const secs = Math.round((t.getTime() - Date.now()) / 1000);
+    if (secs <= 0) return { error: "date_in_past" };
+    if (secs > INVITE_MAX_SECONDS) return { error: "too_far" };
+    return { seconds: secs, mode: "date" };
+  }
+  const mins  = Number.parseInt(b.minutes, 10);
+  const hours = Number.parseInt(b.hours, 10);
+  const days  = Number.parseInt(b.days_valid != null ? b.days_valid : b.days, 10);
+  let secs = 0;
+  if (Number.isFinite(mins)  && mins  > 0) secs += mins  * 60;
+  if (Number.isFinite(hours) && hours > 0) secs += hours * 3600;
+  if (Number.isFinite(days)  && days  > 0) secs += days  * 86400;
+  if (secs <= 0) return { seconds: null, mode: "never" };
+  if (secs > INVITE_MAX_SECONDS) return { error: "too_far" };
+  return { seconds: secs, mode: "duration" };
+}
+
+/* Texto legible de una caducidad, para logs, toasts y emails. Con minutos ya
+   no basta la fecha: "caduca el 04/09" es inútil si caduca a las 20:00. */
+function fmtInviteExpiry(when) {
+  if (!when) return "sin caducidad";
+  try {
+    return new Date(when).toLocaleString("es-ES", {
+      day: "2-digit", month: "2-digit", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+      timeZone: getSetting("app.timezone", "Europe/Madrid"),
+    });
+  } catch { return String(when).slice(0, 16).replace("T", " "); }
+}
+
 app.get("/api/admin/invites", wrap(async (req, res) => {
   const status = String(req.query.status || "all");
   const q = String(req.query.q || "").trim();
-  let sql = "SELECT i.*, u.name AS used_by_name, u.email AS used_by_email FROM invites i LEFT JOIN users u ON u.id = i.last_used_by WHERE 1=1";
+  // V917 · `secs_left` lo calcula la BD con su propio NOW(), que es el reloj
+  // que decide si el código vale. Así la cuenta atrás del panel no puede
+  // discrepar de la validez real por culpa del reloj del navegador.
+  let sql = `SELECT i.*, u.name AS used_by_name, u.email AS used_by_email,
+      CASE WHEN i.expires_at IS NULL THEN NULL
+           ELSE GREATEST(0, TIMESTAMPDIFF(SECOND, NOW(), i.expires_at)) END AS secs_left
+    FROM invites i LEFT JOIN users u ON u.id = i.last_used_by WHERE 1=1`;
   const args = [];
   if (status === "active")   sql += " AND i.revoked=0 AND i.used_count < i.max_uses AND (i.expires_at IS NULL OR i.expires_at > NOW())";
   if (status === "used")     sql += " AND i.used_count >= i.max_uses";
@@ -11999,8 +12067,13 @@ app.post("/api/admin/invites", wrap(async (req, res) => {
   const note = req.body?.note ? String(req.body.note).slice(0, 255) : null;
   const role = req.body?.role === "user" ? "user" : "tester";
   const maxUses = Math.max(1, Math.min(1000, parseInt(req.body?.max_uses, 10) || 1));
-  const daysValid = parseInt(req.body?.days_valid, 10);
-  const expiresAt = Number.isFinite(daysValid) && daysValid > 0 ? new Date(Date.now() + daysValid * 86400000) : null;
+  // V917 · Duración flexible: minutos, horas, días o fecha/hora exacta.
+  // La caducidad la calcula la BD (ver resolveInviteSeconds) para que el
+  // instante lo fije el mismo reloj que luego decide si el código vale.
+  const dur = resolveInviteSeconds(req.body);
+  if (dur.error) return res.status(400).json({ error: dur.error });
+  const expiresSql = dur.seconds ? "DATE_ADD(NOW(), INTERVAL ? SECOND)" : "?";
+  const expiresArg = dur.seconds ? dur.seconds : null;
   const count = Math.max(1, Math.min(100, parseInt(req.body?.count, 10) || 1));
   const createdBy = req.admin?.email || "admin";
   const campaign = req.body?.campaign ? String(req.body.campaign).slice(0, 80) : null;
@@ -12013,8 +12086,9 @@ app.post("/api/admin/invites", wrap(async (req, res) => {
     for (let tries = 0; tries < 3; tries++) {
       try {
         const [r] = await pool.execute(
-          "INSERT INTO invites (code, email, note, created_by, role, max_uses, expires_at, track_token, campaign) VALUES (?,?,?,?,?,?,?,?,?)",
-          [code, count === 1 ? email : null, note, createdBy, role, maxUses, expiresAt, token, campaign]
+          `INSERT INTO invites (code, email, note, created_by, role, max_uses, expires_at, track_token, campaign)
+           VALUES (?,?,?,?,?,?,${expiresSql},?,?)`,
+          [code, count === 1 ? email : null, note, createdBy, role, maxUses, expiresArg, token, campaign]
         );
         created.push(code);
         if (count === 1) {
@@ -12031,8 +12105,18 @@ app.post("/api/admin/invites", wrap(async (req, res) => {
   if (doSend && createdInvite) {
     try { await sendInviteEmail(createdInvite); } catch (e) { console.error("invite email err", e); }
   }
-  await logActivity("admin", `Invitacion creada (${created.length}) por ${createdBy}${doSend ? " · enviada por email" : ""}`);
-  res.json({ ok: true, codes: created });
+  // V917 · La caducidad real la puso la BD, así que la leemos de vuelta en vez
+  // de recalcularla aquí: es el dato que de verdad se va a aplicar.
+  let expiresAt = createdInvite ? createdInvite.expires_at || null : null;
+  if (!createdInvite && dur.seconds) {
+    try {
+      const [[row]] = await pool.query("SELECT DATE_ADD(NOW(), INTERVAL ? SECOND) AS e", [dur.seconds]);
+      expiresAt = row ? row.e : null;
+    } catch { /* informativo, no crítico */ }
+  }
+  await logActivity("admin",
+    `Invitacion creada (${created.length}) por ${createdBy} · ${fmtInviteExpiry(expiresAt)}${doSend ? " · enviada por email" : ""}`);
+  res.json({ ok: true, codes: created, expires_at: expiresAt, expires_label: fmtInviteExpiry(expiresAt) });
 }));
 
 /* Envío del email de invitación (usa enqueueEmail si existe, si no registra el
@@ -12086,10 +12170,10 @@ async function sendInviteExtendedEmail(inv, expiresAt) {
   if (!inv.track_token) {
     try { await pool.execute("UPDATE invites SET track_token=? WHERE id=?", [token, inv.id]); } catch {}
   }
-  let newExpiry;
-  try {
-    newExpiry = new Date(expiresAt).toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
-  } catch { newExpiry = String(expiresAt).slice(0, 10); }
+  // V917 · Con caducidades de minutos u horas, dar solo la fecha engaña: un
+  // código que muere hoy a las 20:00 aparecía como "válido hasta 04/09", y el
+  // invitado lo abría por la noche ya caducado. Se incluye la hora.
+  const newExpiry = fmtInviteExpiry(expiresAt);
   const vars = {
     user_email: inv.email,
     code: inv.code,
@@ -12206,15 +12290,26 @@ app.post("/api/admin/invites/:id/restore", wrap(async (req, res) => {
 //   body: { days_valid }  → días desde HOY (0 o vacío = sin caducidad).
 //   La nueva fecha se calcula desde ahora, no desde la caducidad anterior,
 //   así "ampliar" siempre da un plazo útil aunque ya estuviera caducada.
+// V917 · Ahora acepta además { minutes }, { hours } y { expires_at } (fecha y
+//   hora exacta), con la misma resolución que al crear. Igual que antes, el
+//   plazo cuenta desde AHORA, no desde la caducidad anterior.
 app.post("/api/admin/invites/:id/extend", wrap(async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: "invalid_id" });
-  const days = parseInt(req.body?.days_valid, 10);
-  const expiresAt = Number.isFinite(days) && days > 0
-    ? new Date(Date.now() + days * 86400000) : null;
-  await pool.execute("UPDATE invites SET expires_at=? WHERE id=?", [expiresAt, id]);
+  const dur = resolveInviteSeconds(req.body);
+  if (dur.error) return res.status(400).json({ error: dur.error });
+  if (dur.seconds) {
+    await pool.execute(
+      "UPDATE invites SET expires_at=DATE_ADD(NOW(), INTERVAL ? SECOND) WHERE id=?", [dur.seconds, id]);
+  } else {
+    await pool.execute("UPDATE invites SET expires_at=NULL WHERE id=?", [id]);
+  }
+  // Releemos la caducidad que ha quedado grabada: es la que se va a aplicar y
+  // la que hay que mostrar y mandar por email.
+  const [[fresh]] = await pool.query("SELECT expires_at FROM invites WHERE id=? LIMIT 1", [id]);
+  const expiresAt = fresh ? fresh.expires_at || null : null;
   await logActivity("admin",
-    `Invitacion #${id} validez ${expiresAt ? "hasta " + expiresAt.toISOString().slice(0, 10) : "sin caducidad"}`);
+    `Invitacion #${id} validez ${expiresAt ? "hasta " + fmtInviteExpiry(expiresAt) : "sin caducidad"}`);
   // V797 · Avisar al invitado por email (atractivo) de que su código sigue
   //   activo con la nueva fecha. Solo si el admin lo pide (notify != false),
   //   el código tiene email y se ha fijado una caducidad. Best-effort: no
@@ -12229,7 +12324,7 @@ app.post("/api/admin/invites/:id/extend", wrap(async (req, res) => {
       }
     } catch (e) { /* best-effort */ }
   }
-  res.json({ ok: true, expires_at: expiresAt, emailed });
+  res.json({ ok: true, expires_at: expiresAt, expires_label: fmtInviteExpiry(expiresAt), emailed });
 }));
 
 // V805 · Vista previa del email de invitación (normal o de "validez ampliada"),
@@ -12249,11 +12344,8 @@ app.post("/api/admin/invites/:id/preview", wrap(async (req, res) => {
   const tpl = tplRows[0];
   const baseUrl = process.env.PUBLIC_BASE_URL || "https://citasaura.es";
   const token = inv.track_token || "PREVIEW";
-  let newExpiry = "";
-  try {
-    const d = inv.expires_at ? new Date(inv.expires_at) : new Date(Date.now() + 30 * 86400000);
-    newExpiry = d.toLocaleDateString("es-ES", { day: "2-digit", month: "2-digit", year: "numeric" });
-  } catch { newExpiry = ""; }
+  // V917 · Igual que en el envío real: con hora, no solo fecha.
+  const newExpiry = fmtInviteExpiry(inv.expires_at || new Date(Date.now() + 30 * 86400000));
   const vars = {
     user_email: inv.email || "invitado@ejemplo.com",
     code: inv.code,

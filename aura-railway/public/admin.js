@@ -2165,7 +2165,7 @@ async function viewDashboard(root){
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M3 5h18v14H3zm2 2v10h14V7H5zm3 2h4v2H8V9zm0 4h8v2H8v-2z"/></svg>` },
     { id: "duplicates", title: "🚨 Posibles duplicados", desc: "Pares de cuentas sospechosas de ser la misma persona con puntuación.", cls: "red",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M16 4c-1.6 0-3.1.8-4 2.1C11.1 4.8 9.6 4 8 4c-2.8 0-5 2.2-5 5 0 5 5 8 9 12 4-4 9-7 9-12 0-2.8-2.2-5-5-5z"/></svg>` },
-    { id: "invites", title: "Invitaciones (testers)", desc: "Códigos de acceso beta cuando registros cerrados.", cls: "violet",
+    { id: "invites", title: "Invitaciones (testers)", desc: "Códigos de acceso beta, con caducidad por minutos, horas, días o fecha exacta.", cls: "violet",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 4H4a2 2 0 00-2 2v12a2 2 0 002 2h16a2 2 0 002-2V6a2 2 0 00-2-2zM4 6h16v.5l-8 5-8-5V6z"/></svg>` },
     { id: "settings", title: "Ajustes", desc: "Ajustes generales del sistema.", cls: "slate",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="12" cy="12" r="3"/><path d="M12 8a4 4 0 100 8 4 4 0 000-8zm9 4l-2-1v-2l-2-3h-2l-2-2h-2l-2 2H7L5 9v2l-2 1v2l2 1v2l2 3h2l2 2h2l2-2h2l2-3v-2l2-1v-2z" fill-opacity=".3"/></svg>` },
@@ -15485,7 +15485,7 @@ async function viewInvites(root) {
   };
   const wrap = E("div", "screen invites-screen");
   wrap.appendChild(viewTitle("Invitaciones (beta privada)",
-    "Genera y gestiona códigos de invitación con seguimiento de envío, aperturas y canje.", []));
+    "Genera y gestiona códigos de invitación —por minutos, horas, días o hasta una fecha y hora exactas— con seguimiento de envío, aperturas y canje.", []));
 
   wrap.appendChild(sectionLegend("¿Qué significa cada icono en Invitaciones?", [
     ["📨", "Invitación enviada"],
@@ -15495,7 +15495,10 @@ async function viewInvites(root) {
     ["👁", "Invitación abierta / vista"],
     ["🖱", "Enlace clicado"],
     ["✅", "Canjeada — el invitado creó su cuenta"],
-    ["⏱ / 💤", "Aún sin abrir"],
+    ["💤", "Aún sin abrir"],
+    ["⏱", "Tiempo que le queda al código (cuenta atrás en vivo)"],
+    ["⏳", "Cuándo caduca"],
+    ["♾", "Sin caducidad"],
     ["♻ / 🔁", "Reintentar / regenerar código"],
     ["⚠️", "Aviso o error"],
     ["⛔ / 🚫", "Invitación revocada"],
@@ -15540,21 +15543,98 @@ async function viewInvites(root) {
   const inpNote  = E("input", "input"); inpNote.placeholder  = "Ej: influencer, alfa cerrada…";
   const inpCount = E("input", "input"); inpCount.type = "number"; inpCount.min = 1; inpCount.value = 1;
   const inpMax   = E("input", "input"); inpMax.type   = "number"; inpMax.min = 1; inpMax.value = 1;
-  const inpDays  = E("input", "input"); inpDays.type  = "number"; inpDays.min = 0; inpDays.value = 30;
   const inpCamp  = E("input", "input"); inpCamp.placeholder = "beta-lanzamiento";
+
+  /* V917 · Validez por TIEMPO: minutos, horas, días o fecha y hora exacta.
+     Antes solo había una casilla de "días", así que un código de 30 minutos
+     era imposible: cualquier cosa menor que un día se quedaba en 0, o sea
+     "sin caducidad". Ahora se elige la unidad, o una fecha concreta.        */
+  const selUnit = E("select", "input");
+  [["minutes","Minutos"],["hours","Horas"],["days","Días"],["date","Fecha y hora exacta"],["never","Sin caducidad"]]
+    .forEach(([v, lbl]) => { const o = E("option"); o.value = v; o.textContent = lbl; selUnit.appendChild(o); });
+  selUnit.value = "days";
+  const inpAmount = E("input", "input"); inpAmount.type = "number"; inpAmount.min = 1; inpAmount.value = 30;
+  const inpWhen   = E("input", "input"); inpWhen.type = "datetime-local";
+  // Atajos: lo que de verdad se usa a diario (un pase de 30 min, una tarde,
+  // un día). Rellenan unidad + cantidad de un clic.
+  const quickRow = E("div", "inv-quick");
+  const quickDefs = [
+    ["⚡ 15 min", "minutes", 15], ["⏱ 30 min", "minutes", 30],
+    ["🕐 1 h", "hours", 1], ["🌆 6 h", "hours", 6],
+    ["📅 1 día", "days", 1], ["🗓 7 días", "days", 7], ["♾ Sin caducidad", "never", 0],
+  ];
+  function syncDurFields() {
+    const u = selUnit.value;
+    inpAmount.parentNode.style.display = (u === "date" || u === "never") ? "none" : "";
+    inpWhen.parentNode.style.display   = (u === "date") ? "" : "none";
+    if (u === "minutes" && Number(inpAmount.value) > 1440) inpAmount.value = 60;
+    durHint.textContent = durHintText();
+  }
+  function durHintText() {
+    const u = selUnit.value;
+    if (u === "never") return "El código no caducará nunca.";
+    if (u === "date") {
+      if (!inpWhen.value) return "Elige el día y la hora exactos en que dejará de valer.";
+      const d = new Date(inpWhen.value);
+      if (isNaN(+d)) return "Fecha no válida.";
+      if (d <= new Date()) return "⚠️ Esa fecha ya ha pasado.";
+      return "Dejará de valer el " + d.toLocaleString() + ".";
+    }
+    const n = Math.max(1, parseInt(inpAmount.value, 10) || 1);
+    const ms = u === "minutes" ? n * 60000 : u === "hours" ? n * 3600000 : n * 86400000;
+    return "Dejará de valer el " + new Date(Date.now() + ms).toLocaleString() + ".";
+  }
+  const durHint = E("div", "muted inv-dur-hint");
+
+  /* Traduce la unidad elegida al cuerpo que espera la API. Devuelve `__err`
+     si el admin ha elegido "fecha exacta" y la fecha no sirve, para no crear
+     en silencio un código sin caducidad cuando pedía lo contrario.          */
+  function durationBody() {
+    const u = selUnit.value;
+    if (u === "never") return { days_valid: 0 };
+    if (u === "date") {
+      if (!inpWhen.value) return { __err: "Elige la fecha y hora de caducidad" };
+      const d = new Date(inpWhen.value); // interpretado en la zona del navegador
+      if (isNaN(+d)) return { __err: "Fecha no válida" };
+      if (d <= new Date()) return { __err: "Esa fecha ya ha pasado" };
+      return { expires_at: d.toISOString() };
+    }
+    const n = Math.max(1, parseInt(inpAmount.value, 10) || 1);
+    if (u === "minutes") return { minutes: n };
+    if (u === "hours")   return { hours: n };
+    return { days_valid: n };
+  }
   const selRole  = E("select", "input");
   ["tester","beta","user"].forEach(r => { const o = E("option"); o.value = r; o.textContent = r; selRole.appendChild(o); });
   const chkSend = E("input"); chkSend.type = "checkbox"; chkSend.checked = true;
   const chkLbl = E("label", "inv-check");
   chkLbl.appendChild(chkSend); chkLbl.appendChild(document.createTextNode(" Enviar email al crear (requiere email)"));
 
-  [["Email (opcional)",inpEmail],["Nota interna",inpNote],["Cantidad",inpCount],["Usos máximos",inpMax],["Días válidos (0 = sin caducidad)",inpDays],["Rol",selRole],["Campaña",inpCamp]].forEach(([lbl,node]) => {
+  [["Email (opcional)",inpEmail],["Nota interna",inpNote],["Cantidad",inpCount],["Usos máximos",inpMax],
+   ["Validez",selUnit],["Cuánto",inpAmount],["Caduca el",inpWhen],
+   ["Rol",selRole],["Campaña",inpCamp]].forEach(([lbl,node]) => {
     const g = E("div","form-field");
     g.appendChild(E("label",null,lbl));
     g.appendChild(node);
     grid.appendChild(g);
   });
   form.appendChild(grid);
+
+  // V917 · Atajos de duración + aviso de cuándo caducará exactamente.
+  quickDefs.forEach(([lbl, unit, n]) => {
+    quickRow.appendChild(btn(lbl, "ghost sm", () => {
+      selUnit.value = unit;
+      if (n) inpAmount.value = n;
+      syncDurFields();
+    }));
+  });
+  form.appendChild(quickRow);
+  form.appendChild(durHint);
+  selUnit.addEventListener("change", syncDurFields);
+  inpAmount.addEventListener("input", () => { durHint.textContent = durHintText(); });
+  inpWhen.addEventListener("input", () => { durHint.textContent = durHintText(); });
+  syncDurFields();
+
   form.appendChild(chkLbl);
 
   const btnCreate = btn("🚀 Generar códigos", "primary lg", async () => {
@@ -15565,13 +15645,20 @@ async function viewInvites(root) {
         note:  inpNote.value.trim()  || null,
         count: Math.max(1, parseInt(inpCount.value,10) || 1),
         max_uses: Math.max(1, parseInt(inpMax.value,10) || 1),
-        days_valid: Math.max(0, parseInt(inpDays.value,10) || 0),
         role: selRole.value,
         campaign: inpCamp.value.trim() || null,
         send_email: chkSend.checked,
       };
+      // V917 · Añade la validez según la unidad elegida. El campo
+      // datetime-local da una hora LOCAL sin zona ("2026-09-04T20:00"), así
+      // que la convertimos a ISO con zona: si mandáramos el texto tal cual,
+      // el servidor lo leería como UTC y el código caducaría con horas de
+      // desfase respecto a lo que el admin ha escrito.
+      Object.assign(body, durationBody());
+      if (body.__err) { toast(body.__err, "err"); return; }
       const r = await api.post("/api/admin/invites", body);
-      toast("Creadas " + ((r.codes || []).length) + " invitaciones");
+      toast("Creadas " + ((r.codes || []).length) + " invitaciones"
+        + (r.expires_label ? " · " + r.expires_label : ""));
       inpEmail.value = ""; inpNote.value = "";
       await Promise.all([loadStats(), load()]);
     } catch (e) {
@@ -15687,10 +15774,29 @@ async function viewInvites(root) {
     }
   }
 
+  /* V917 · "2 h 5 min", "14 min", "45 s" — con caducidades cortas hay que ver
+     los segundos; con las largas, los segundos son ruido.                    */
+  function fmtLeft(s) {
+    s = Math.max(0, Math.floor(Number(s) || 0));
+    if (s <= 0) return "caducado";
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60), sec = s % 60;
+    if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`;
+    if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`;
+    if (m > 0) return `${m} min`;
+    return `${sec} s`;
+  }
+
   function stateOf(iv) {
     const uses = iv.used_count != null ? iv.used_count : 0;
     if (iv.revoked) return { key:"revoked", label:"Revocada", color:"#ef4444" };
-    if (iv.expires_at && new Date(iv.expires_at) < new Date()) return { key:"expired", label:"Caducada", color:"#94a3b8" };
+    // V917 · Se prefiere `secs_left` (calculado por la BD) al reloj del
+    // navegador: si el PC del admin va adelantado, un código de 10 minutos
+    // se vería "caducado" cuando el servidor aún lo acepta, o al revés.
+    const expired = iv.secs_left != null
+      ? Number(iv.secs_left) <= 0
+      : !!(iv.expires_at && new Date(iv.expires_at) < new Date());
+    if (expired) return { key:"expired", label:"Caducada", color:"#94a3b8" };
     if (uses >= iv.max_uses) return { key:"redeemed", label:"Canjeada", color:"#22c55e" };
     return { key:"active", label:"Activa", color:"#3b82f6" };
   }
@@ -15712,10 +15818,18 @@ async function viewInvites(root) {
       card.style.borderLeft = `4px solid ${st.color}`;
       // Header con código y acciones rápidas
       const head = E("div", "inv-card-head");
+      // V917 · Cuenta atrás en vivo cuando el código está activo y caduca.
+      // `secs_left` viene del reloj de la BD (el que decide la validez), así
+      // que el contador no puede discrepar de la realidad por el reloj local.
+      const secsLeft = iv.secs_left != null ? Number(iv.secs_left) : null;
+      const showTimer = st.key === "active" && secsLeft != null;
       head.innerHTML = `
         <div class="inv-code-block">
           <code class="inv-code">${iv.code}</code>
           <span class="tag t-${st.key}" style="background:${st.color}22;color:${st.color};border:1px solid ${st.color}44">● ${st.label}</span>
+          ${showTimer ? `<span class="inv-timer${secsLeft < 300 ? " danger" : secsLeft < 3600 ? " warn" : ""}"
+             data-left="${secsLeft}" data-at="${Date.now()}"
+             title="Tiempo que le queda a este código">⏱ ${fmtLeft(secsLeft)}</span>` : ""}
           ${iv.campaign ? `<span class="inv-camp">🏷️ ${iv.campaign}</span>` : ""}
         </div>`;
       const headActs = E("div","inv-head-acts");
@@ -15758,7 +15872,9 @@ async function viewInvites(root) {
         { ic:"📧", val: iv.email || "sin email" },
         { ic:"👤", val: (iv.role || "user") },
         { ic:"🔁", val: `${uses}/${iv.max_uses} usos` },
-        { ic:"⏳", val: iv.expires_at ? "Caduca " + new Date(iv.expires_at).toLocaleDateString() : "Sin caducidad" },
+        // V917 · Con caducidades de minutos, la fecha sola no dice nada útil:
+        // se muestra fecha + hora y, si queda poco, la cuenta atrás en vivo.
+        { ic:"⏳", val: iv.expires_at ? "Caduca " + new Date(iv.expires_at).toLocaleString() : "Sin caducidad" },
         { ic:"👀", val: `${iv.opened_count || 0} aperturas · ${iv.clicked_count || 0} clics` },
       ];
       metaBits.forEach(m => {
@@ -15806,34 +15922,9 @@ async function viewInvites(root) {
           catch (e) { toast("Error: " + e.message, "err"); }
         }));
       }
-      acts.appendChild(btn("📅 Ampliar validez", "ghost sm", async () => {
-        const ans = prompt(
-          "Ampliar validez del código " + iv.code + ".\n" +
-          "Escribe el nº de DÍAS de validez desde hoy (por ejemplo 30).\n" +
-          "Escribe 0 para que no caduque nunca.",
-          "30"
-        );
-        if (ans === null) return;
-        const days = parseInt(ans, 10);
-        if (!Number.isFinite(days) || days < 0) { toast("Número no válido", "err"); return; }
-        // Si el código tiene email y se fija una caducidad, ofrecemos avisar al
-        // invitado con un email atractivo de "tu código sigue activo".
-        let notify = false;
-        if (iv.email && days > 0) {
-          notify = confirm(
-            "¿Avisar a " + iv.email + " por email de que su código sigue activo\n" +
-            "con la nueva validez (" + days + " días)?\n\n" +
-            "Aceptar = enviar email · Cancelar = solo ampliar sin email"
-          );
-        }
-        try {
-          const r = await api.post("/api/admin/invites/" + iv.id + "/extend", { days_valid: days, notify });
-          toast(r.expires_at
-            ? (r.emailed ? "Validez ampliada · email enviado 📧" : "Validez ampliada")
-            : "Sin caducidad");
-          load(); loadStats();
-        } catch (e) { toast("Error: " + (e.data?.error || e.message), "err"); }
-      }));
+      // V917 · Ampliar validez por tiempo (minutos, horas, días o fecha y hora
+      //   exacta), no solo por días enteros como hasta ahora.
+      acts.appendChild(btn("📅 Cambiar validez", "ghost sm", () => showExtendDialog(iv)));
       // V805 · Vista previa del email de "validez ampliada" (el que hasta ahora
       //   no se podía visualizar). Renderiza la plantilla real con los datos del
       //   código y la muestra en un iframe, sin enviar nada.
@@ -15869,10 +15960,13 @@ async function viewInvites(root) {
     // Exportar CSV
     const exportBar = E("div","inv-export");
     const btnExp = btn("⬇️ Exportar CSV filtrado", "ghost sm", () => {
-      const rows = [["code","email","role","status","sent_at","opened_at","clicked_at","redeemed_at","uses","max_uses","campaign","note","created_at"]];
+      // V917 · Se incluye la caducidad y el tiempo restante: con códigos de
+      // minutos, un export sin esa columna no dice si el código sirve.
+      const rows = [["code","email","role","status","expires_at","time_left","sent_at","opened_at","clicked_at","redeemed_at","uses","max_uses","campaign","note","created_at"]];
       items.forEach(iv => {
         const st = stateOf(iv);
         rows.push([iv.code, iv.email||"", iv.role||"", st.key,
+          iv.expires_at||"", iv.secs_left != null ? fmtLeft(iv.secs_left) : "sin caducidad",
           iv.sent_at||"", iv.opened_at||"", iv.clicked_at||"", iv.last_used_at||"",
           iv.used_count||0, iv.max_uses||1, iv.campaign||"", (iv.note||"").replace(/"/g,'""'),
           iv.created_at||""]);
@@ -15886,6 +15980,121 @@ async function viewInvites(root) {
     });
     exportBar.appendChild(btnExp);
     listBox.appendChild(exportBar);
+  }
+
+  /* V917 · Diálogo para fijar la validez de un código ya creado. Sustituye al
+     prompt() de solo días: ahora se elige unidad (minutos, horas, días), una
+     fecha y hora exacta, o "sin caducidad". El plazo cuenta desde AHORA, no
+     desde la caducidad anterior, igual que hacía la versión de días.        */
+  function showExtendDialog(iv) {
+    const modal = E("div", "inv-modal-bg");
+    const box = E("div", "inv-modal-box");
+    box.style.maxWidth = "520px";
+    box.style.width = "min(520px, 94vw)";
+    const head = E("div", "inv-modal-head");
+    head.appendChild(el("div", {}, [
+      el("h3", { style: "margin:0" }, "📅 Validez del código"),
+      el("div", { class: "muted", style: "font-size:12px" }, iv.code),
+    ]));
+    box.appendChild(head);
+    box.appendChild(el("div", { class: "muted", style: "margin:6px 0 12px;font-size:13px" },
+      iv.expires_at
+        ? "Ahora caduca el " + new Date(iv.expires_at).toLocaleString() + ". El nuevo plazo cuenta desde este momento."
+        : "Ahora no caduca. El nuevo plazo cuenta desde este momento."));
+
+    const uSel = E("select", "input");
+    [["minutes","Minutos"],["hours","Horas"],["days","Días"],["date","Fecha y hora exacta"],["never","Sin caducidad"]]
+      .forEach(([v, lbl]) => { const o = E("option"); o.value = v; o.textContent = lbl; uSel.appendChild(o); });
+    uSel.value = "days";
+    const aInp = E("input", "input"); aInp.type = "number"; aInp.min = 1; aInp.value = 30;
+    const wInp = E("input", "input"); wInp.type = "datetime-local";
+    const hint = E("div", "muted", "");
+
+    const fRow = E("div", "form-grid");
+    [["Validez", uSel], ["Cuánto", aInp], ["Caduca el", wInp]].forEach(([lbl, node]) => {
+      const g = E("div", "form-field");
+      g.appendChild(E("label", null, lbl));
+      g.appendChild(node);
+      fRow.appendChild(g);
+    });
+    box.appendChild(fRow);
+
+    // Atajos rápidos, los mismos que al crear.
+    const qRow = E("div", "inv-quick");
+    [["⚡ 15 min","minutes",15],["⏱ 30 min","minutes",30],["🕐 1 h","hours",1],
+     ["🌆 6 h","hours",6],["📅 1 día","days",1],["🗓 7 días","days",7],["♾ Sin caducidad","never",0]]
+      .forEach(([lbl, unit, n]) => {
+        qRow.appendChild(btn(lbl, "ghost sm", () => { uSel.value = unit; if (n) aInp.value = n; sync(); }));
+      });
+    box.appendChild(qRow);
+    box.appendChild(hint);
+
+    function body() {
+      const u = uSel.value;
+      if (u === "never") return { days_valid: 0 };
+      if (u === "date") {
+        if (!wInp.value) return { __err: "Elige la fecha y hora de caducidad" };
+        const d = new Date(wInp.value);
+        if (isNaN(+d)) return { __err: "Fecha no válida" };
+        if (d <= new Date()) return { __err: "Esa fecha ya ha pasado" };
+        return { expires_at: d.toISOString() };
+      }
+      const n = Math.max(1, parseInt(aInp.value, 10) || 1);
+      if (u === "minutes") return { minutes: n };
+      if (u === "hours")   return { hours: n };
+      return { days_valid: n };
+    }
+    function sync() {
+      const u = uSel.value;
+      aInp.parentNode.style.display = (u === "date" || u === "never") ? "none" : "";
+      wInp.parentNode.style.display = (u === "date") ? "" : "none";
+      const b = body();
+      if (b.__err) { hint.textContent = "⚠️ " + b.__err; return; }
+      if (u === "never") { hint.textContent = "El código no caducará nunca."; return; }
+      const ms = b.expires_at ? (new Date(b.expires_at) - Date.now())
+        : (b.minutes ? b.minutes * 60000 : b.hours ? b.hours * 3600000 : b.days_valid * 86400000);
+      hint.textContent = "Dejará de valer el " + new Date(Date.now() + ms).toLocaleString() + ".";
+    }
+    uSel.addEventListener("change", sync);
+    aInp.addEventListener("input", sync);
+    wInp.addEventListener("input", sync);
+    sync();
+
+    // Aviso por email: solo tiene sentido si el código tiene email y se fija
+    // una caducidad (un "sin caducidad" no necesita avisar de ningún plazo).
+    const notifyChk = E("input"); notifyChk.type = "checkbox"; notifyChk.checked = false;
+    if (iv.email) {
+      const nl = E("label", "inv-check");
+      nl.appendChild(notifyChk);
+      nl.appendChild(document.createTextNode(" Avisar a " + iv.email + " por email de la nueva validez"));
+      box.appendChild(nl);
+    }
+
+    const acts2 = E("div", "inv-modal-acts");
+    acts2.appendChild(btn("Cancelar", "ghost", () => modal.remove()));
+    const okBtn = btn("Guardar validez", "primary", async () => {
+      const b = body();
+      if (b.__err) { toast(b.__err, "err"); return; }
+      okBtn.disabled = true;
+      try {
+        b.notify = !!(iv.email && notifyChk.checked);
+        const r = await api.post("/api/admin/invites/" + iv.id + "/extend", b);
+        toast(r.expires_at
+          ? (r.emailed ? "Validez: " + (r.expires_label || "actualizada") + " · email enviado 📧"
+                       : "Validez: " + (r.expires_label || "actualizada"))
+          : "Sin caducidad");
+        modal.remove();
+        load(); loadStats();
+      } catch (e) {
+        toast("Error: " + (e.data?.error || e.message), "err");
+        okBtn.disabled = false;
+      }
+    });
+    acts2.appendChild(okBtn);
+    box.appendChild(acts2);
+    modal.appendChild(box);
+    modal.addEventListener("click", (e) => { if (e.target === modal) modal.remove(); });
+    document.body.appendChild(modal);
   }
 
   // V805 · Vista previa del email (asunto + cuerpo HTML) en un modal con iframe.
@@ -15939,6 +16148,40 @@ async function viewInvites(root) {
   searchInp.addEventListener("keydown", (e) => { if (e.key === "Enter") load(); });
   root.appendChild(wrap);
   await Promise.all([loadStats(), load()]);
+
+  /* V917 · Cuenta atrás en vivo. Cada contador guarda los segundos que dijo
+     el servidor (`data-left`) y el momento en que se pintaron (`data-at`), y
+     descuenta el tiempo transcurrido en local. Así el valor de referencia
+     sigue siendo el del reloj de la BD: el navegador solo mide el intervalo,
+     que es lo único que puede medir sin equivocarse de zona horaria.
+     Al llegar a 0 se recarga la lista para que el estado pase a "Caducada"
+     de verdad, no solo en el texto del contador.                            */
+  let _tickTimer = null;
+  function startTick() {
+    if (_tickTimer) clearInterval(_tickTimer);
+    _tickTimer = setInterval(() => {
+      let hitZero = false;
+      wrap.querySelectorAll(".inv-timer[data-left]").forEach(node => {
+        const base = Number(node.dataset.left) || 0;
+        const at = Number(node.dataset.at) || Date.now();
+        const left = Math.max(0, base - Math.floor((Date.now() - at) / 1000));
+        node.textContent = "⏱ " + fmtLeft(left);
+        node.classList.toggle("danger", left < 300);
+        node.classList.toggle("warn", left >= 300 && left < 3600);
+        if (left <= 0 && !node.dataset.done) { node.dataset.done = "1"; hitZero = true; }
+      });
+      if (hitZero) { load(); loadStats(); }
+    }, 1000);
+  }
+  startTick();
+  const _tickCleanup = setInterval(() => {
+    // El panel cambia de vista vaciando el contenedor: cuando este bloque ya
+    // no está en el documento, los temporizadores deben morir con él.
+    if (!document.body.contains(wrap)) {
+      clearInterval(_tickCleanup);
+      if (_tickTimer) { clearInterval(_tickTimer); _tickTimer = null; }
+    }
+  }, 2000);
 }
 
 /* ============================================================
