@@ -1,10 +1,50 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-Fecha de este resumen: 6 agosto 2026
+**Fecha de este resumen: 8 septiembre 2026 · última versión desplegada: V917**
+
+## CÓMO RETOMAR EL PROYECTO EN UN CHAT NUEVO
+
+Si una sesión se cuelga, se queda en "Reiniciar" o simplemente quieres empezar
+de cero, **no hay que recuperar nada**: todo el trabajo está en GitHub y en
+producción, no en el chat. Abre una sesión nueva y di:
+
+> Continúo el proyecto Aura. Repo `manuguada19-tech/aura`, carpeta
+> `aura-railway/`. Lee `aura-railway/ESTADO-AURA.md` y dime en qué versión
+> estamos antes de tocar nada.
+
+Eso es suficiente. El chat no guarda el proyecto; lo guarda el repo.
+
+### Antes de dar por perdido nada, comprobar esto
+- `git log --oneline -5` en el repo → dice la última versión real.
+- `/api/version` en producción → dice qué build está sirviendo.
+- Si ambos coinciden, **no se ha perdido trabajo** aunque el chat esté roto.
 
 ---
 
-## 1) Lo que funciona ya al 100%
+## 0) SEGURIDAD — PENDIENTE, LEER PRIMERO
+
+Este repositorio **ha estado accesible en público** con credenciales escritas en
+este mismo archivo (claves de EmailJS). Comprobado el 8/09/2026 descargando el
+archivo sin autenticación: respondía 200.
+
+Pendiente de hacer, por orden:
+
+1. **Cambiar la clave privada de EmailJS** en su panel. Esto primero: mientras no
+   se cambie, la clave filtrada sigue funcionando aunque se borre del archivo.
+   Riesgo real: con esa clave se pueden enviar correos que salgan como Aura,
+   incluidos códigos OTP falsos a los usuarios.
+2. **Poner el repositorio en privado** (GitHub → Settings → Change repository
+   visibility).
+3. **Revocar el token personal de GitHub** que se usó para los push.
+4. Revisar si conviene rotar también las claves de Didit y las de Stripe.
+
+**Importante:** borrar los valores de este archivo (hecho en V917) **no borra el
+pasado**. Siguen en el historial de commits. Solo cambiar las claves en cada
+proveedor las desactiva de verdad.
+
+---
+
+## 1) Lo que funciona ya al 100% *(base montada en agosto; sigue vigente)*
 
 - Aura desplegada en Railway (`content-education-production-3b4b.up.railway.app`)
 - MySQL Railway operativa
@@ -21,37 +61,119 @@ Fecha de este resumen: 6 agosto 2026
 
 ## 2) Variables clave configuradas en Railway
 
+> ⚠️ **AQUÍ NO SE ESCRIBEN VALORES.** Este repositorio ha estado en público, así
+> que cualquier clave escrita en este archivo es una clave filtrada: queda además
+> en el historial de commits, donde sigue siendo legible aunque se borre de aquí.
+> Este documento solo lista **qué variables hacen falta**. Los valores se
+> consultan y se cambian en el panel de Railway (Variables) y en el panel de cada
+> proveedor. Si necesitas ver un valor, míralo allí, no aquí.
+
 ```
-DATABASE_URL             = (referencia a MySQL Railway)
-ADMIN_EMAIL              = manuguada19@gmail.com
-ADMIN_PASSWORD           = (definida)
+DATABASE_URL             (referencia al MySQL de Railway)
+ADMIN_EMAIL
+ADMIN_PASSWORD
 APP_URL                  = https://content-education-production-3b4b.up.railway.app
 APP_PUBLIC_URL           = ídem
 PUBLIC_BASE_URL          = ídem
 
-DIDIT_API_KEY / WORKFLOW_ID / WEBHOOK_SECRET / BASE_URL   = OK
+DIDIT_API_KEY / DIDIT_WORKFLOW_ID / DIDIT_WEBHOOK_SECRET / DIDIT_BASE_URL
 KYC_PROVIDER             = didit
 Webhook Didit URL        = /api/verify/id/didit-webhook  (¡no /api/didit/webhook!)
 
 SMTP_HOST                = smtp.serviciodecorreo.es
 SMTP_PORT                = 587
-SMTP_PASS_<5 buzones>    = OK (aunque Arsys bloquea saliente → EmailJS suple)
+SMTP_PASS_<5 buzones>    (Arsys bloquea saliente desde Railway → EmailJS suple)
 
-EMAILJS_SERVICE_ID       = OK
-EMAILJS_TEMPLATE_ID      = OK
-EMAILJS_PUBLIC_KEY       = oLbKY2Dk9DbVkwrM-
-EMAILJS_PRIVATE_KEY      = S-VCesV_TpnhdMIy66qsQ
+EMAILJS_SERVICE_ID / EMAILJS_TEMPLATE_ID / EMAILJS_PUBLIC_KEY / EMAILJS_PRIVATE_KEY
+
+STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET   (V893+, checkout real)
 ```
 
 ---
 
-## 3) Cambios de código pendientes de push a GitHub
+## 2.b) QUÉ SE HA HECHO DESDE AGOSTO (V856 → V917)
 
-Los archivos modificados están en `output/aura-cambios/`:
-- `server.js` (raíz repo `aura-railway/`)
-- `admin.js` (repo `aura-railway/public/`)
-- `app.js` (repo `aura-railway/public/`)
-- `app-v2.js` (repo `aura-railway/public/`)
+Todo esto está **ya subido y desplegado**. No hay nada pendiente de commit.
+El historial de git de este clon empieza en V856; para lo anterior, ver las
+secciones 3 a 5 de este documento.
+
+**Ubicación y mapa (V860–V878)** — El punto azul salía lejos. Causa real: el
+umbral de precisión estaba en 3000 m, y el PC (que localiza por IP, con miles de
+metros de error) pisaba la ubicación buena del móvil. Bajado a **300 m** en una
+sola constante compartida, `GPS_GOOD_ACCURACY_M` (`server.js:43`) — antes el
+número estaba copiado a mano en cada endpoint, y por eso en V877 se quedaron dos
+sin cambiar. Los fixes imprecisos se descartan también en descubrir y cercanos.
+
+**"Busco ahora" (V865–V870, V880)** — Estado declarado tipo Grindr con insignia
+sobre la foto, filtro de "buscan ahora", foto propia con moderación manual, y
+panel de admin propio (ver/asignar/ampliar/borrar + historial).
+En **V880** se monetizó: **60 minutos gratis al día** que se reparten en trozos,
+no una hora de golpe. Tablas `now_status_credits` y `now_status_purchases`;
+minutos comprados que no caducan; ilimitado para planes de pago.
+Detalle que importa: al **apagar** el estado antes de tiempo se **devuelven** los
+minutos no usados, y se devuelven **primero a la cuota gratis** y solo el resto a
+los comprados. Al revés sería un agujero: activar 60 gratis y apagar en el acto
+convertiría minutos que caducan esa noche en minutos comprados que no caducan,
+repetible cada día.
+
+**Pantalla de match y celebraciones (V856–V858, V871, V873–V874, V881–V885)** —
+Color de las letras y del disco del corazón editables, respuestas rápidas, y
+descarga de la animación como **vídeo MP4/WebM**. Arreglado el recorte de los
+botones en móviles con pantalla baja.
+
+**Moderación (V884, V886, V889)** — Panel de fotos rediseñado con IA de
+moderación real y avisos.
+
+**Stripe y monetización (V890–V902, V912)** — Boost real (destacar perfil) con
+insignia "Impulsado", panel de admin de Boost, checkout que funciona en live,
+pago dentro de la app con retorno automático, y registro exacto de activaciones
+(`boost_activations`).
+
+**Filtros y perfil (V887–V888, V903–V910)** — Filtros de búsqueda estilo Grindr,
+orientación visible y editable, zona sincronizada con la base de datos y géneros
+por zona (el usuario de prueba ya no cruza zonas).
+
+**Admin (V911, V913–V916)** — Restablecer el usuario de prueba, vista de
+actividad por usuario (reacciones por zona), y reset selectivo (elegir qué
+borrar: me gusta / super / pass dados, recibidas, matches, favoritos, chats).
+
+**V917 — Códigos de invitación por tiempo.** Antes la validez solo se podía
+expresar en días enteros, así que un código de 30 minutos era imposible:
+cualquier valor menor que un día se convertía en 0, es decir en un código **sin**
+caducidad, lo contrario de lo que se pedía. Ahora se elige minutos, horas, días o
+fecha y hora exactas, con atajos (15 min, 30 min, 1 h, 6 h, 1 día, 7 días) y
+cuenta atrás en vivo por código.
+Decisión de diseño que hay que respetar si se toca esto: **la caducidad la
+calcula siempre la base de datos** con `DATE_ADD(NOW(), INTERVAL ? SECOND)`,
+nunca `new Date()` de Node. Quien decide si un código vale es el `NOW()` de
+MySQL; con 30 días de plazo un desfase de reloj es invisible, pero con 30 minutos
+el código puede **nacer ya caducado**. Por lo mismo, la cuenta atrás del panel se
+fía de `secs_left` (calculado por la base de datos) y no del reloj del navegador.
+
+### Dos trampas del proyecto que cuestan una tarde si no se saben
+
+1. **`/admin.css` y `/admin.js` devuelven HTTP 401 sin token** (12 bytes,
+   "Unauthorized"). Si intentas comprobar un despliegue del admin con `curl` y
+   buscas texto dentro, no encuentras nada y parece que el deploy ha fallado.
+   No ha fallado: estás leyendo la página de error. Para verificar, usa
+   `/admin_features.js`, que **sí** se sirve sin token.
+2. **`BUILD_ID` es un hash de los ficheros servidos.** Desde V886 incluye
+   `admin.js` y `admin_features.js` (antes solo la app de usuario, así que un
+   cambio solo en el admin no movía el build y se podía esperar eternamente a un
+   cambio que nunca iba a llegar). Se puede recalcular en local con sha1 de
+   `app.js + styles.css + index.html + admin.js + admin_features.js` y comparar
+   con `/api/version`: si coincide, lo desplegado es byte a byte lo tuyo.
+
+Señal fiable de despliegue terminado: el campo **`ready`** de `/api/health`
+(pasa de `false` a `true` cuando acaban las migraciones).
+
+---
+
+## 3) Historial detallado de agosto (V450–V510) — YA DESPLEGADO
+
+> Esta sección era una lista de "cambios pendientes de subir". **Ya no hay nada
+> pendiente**: todo está en `origin/main` y en producción. Se conserva porque el
+> detalle de endpoints y tablas sigue siendo útil como referencia.
 
 ### V450+ (última tanda 06/08/2026) — Staff, Notificaciones, Popups y Newsletter
 
@@ -138,7 +260,18 @@ Backend (`server.js`):
 
 ## 4) Pendientes
 
-### 4.a) GPS real desde móvil no se guarda
+> **Estado a 8/09/2026:** el punto 4.a **ya está resuelto** (V860–V878: la causa
+> era el umbral de precisión de 3000 m y que el PC pisaba la ubicación del móvil;
+> ahora son 300 m en la constante compartida `GPS_GOOD_ACCURACY_M`). Los puntos
+> 4.b y 4.c **siguen pendientes**. Se conserva el texto original de 4.a como
+> registro de la investigación.
+>
+> Queda además un detalle **sin arreglar** encontrado al revisar V880:
+> en `server.js` (~línea 6723) el geoip solo escribe la ubicación
+> `WHERE ... (lat IS NULL OR lng IS NULL)`, así que si `users.lat/lng` tiene un
+> valor malo, no se corrige nunca. No se ha tocado porque no se pidió.
+
+### 4.a) GPS real desde móvil no se guarda — ✅ RESUELTO en V877/V878
 - El modal de GPS aparece y se acepta, pero `user_gps.lat/lng` sigue NULL.
 - El navegador acepta el permiso pero `watchPosition` no reenvía coordenadas al backend.
 - Datos actuales en BD para user_id=27 (Manu):
@@ -214,9 +347,37 @@ node -e "const m=require('mysql2/promise');(async()=>{const p=await m.createPool
 
 ---
 
-## 6) Si el chat se reinicia
+## 6) Si el chat se reinicia o se queda colgado
 
-Dime al nuevo chat literalmente: **"lee output/ESTADO-AURA.md"** y sigo desde donde estemos.
+En un chat nuevo, di:
+
+> Continúo el proyecto Aura. Repo `manuguada19-tech/aura`, carpeta
+> `aura-railway/`. Lee `aura-railway/ESTADO-AURA.md` y dime en qué versión
+> estamos antes de tocar nada.
+
+(La ruta correcta es `aura-railway/ESTADO-AURA.md`, dentro del repo. La antigua
+indicación de "output/ESTADO-AURA.md" era una carpeta temporal que ya no existe.)
+
+### Si una sesión se queda en "Algo salió mal · Reiniciar"
+
+Visto el 8/09/2026 en la sesión "Proyecto Aura V587" (abierta desde el 10 de
+agosto, ~67.000 eventos acumulados):
+
+- El **reinicio funciona** — la sesión se reanuda y el botón desaparece. Eso
+  hace pensar que se ha arreglado, pero no es así: lo que falla es el **mensaje**.
+- Cada mensaje enviado falla ~3 min 10 s después con `API Error: 500 · Internal
+  service error`. Tres de tres, siempre en el mismo punto.
+- **Reintentar no ayuda**: cada intento añade eventos al historial, así que la
+  causa probable (el tamaño acumulado de la sesión) crece en vez de reducirse.
+- Comprobación útil: si otra sesión de la misma cuenta funciona en ese momento,
+  no es una caída del proveedor, es esa sesión concreta.
+
+**Qué hacer:** no insistir. Abrir un chat nuevo con la frase de arriba. No se
+pierde trabajo — lo que estaba pendiente en esa sesión (V587, notificaciones) se
+desplegó hace tiempo, y desde entonces se han subido hasta V917.
+
+**Cómo evitarlo:** mantener este documento al día y no dejar cosas a medias solo
+en el chat. El chat es desechable; el repo no.
 
 ---
 
