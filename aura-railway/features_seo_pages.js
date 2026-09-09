@@ -29,9 +29,11 @@ const TODAY = "2026-09-02";
    cargaba con una marca puesta a mano (`ads: true`) en cinco tipos de página,
    y dos de ellas no son contenido de editor:
 
-     /guias          1603 caracteres, y es un ÍNDICE: casi todo son enlaces.
-     /como-funciona  1619 caracteres, promocional y flojo.
-     /inicio         2525 caracteres, pero es la portada: su función es que te
+   (cifras de prosaDeEditor, la misma función que decide más abajo)
+
+     /guias          1629 de prosa, y es un ÍNDICE: casi todo son enlaces.
+     /como-funciona  1497 de prosa, promocional y flojo.
+     /inicio         1822 de prosa, pero es la portada: su función es que te
                      registres ("Crear cuenta gratis", "Abrir Aura"), no informar.
 
    Como ADSENSE_SLOT_CONTENT viene vacío, además, no había ninguna unidad fija:
@@ -50,11 +52,16 @@ const ADSENSE_CLIENT = "ca-pub-9759358849227466";
 const ADSENSE_SLOT_CONTENT = process.env.ADSENSE_SLOT_CONTENT || "";
 
 // Mínimo de prosa (sin contar el texto de los enlaces) para que una página pueda
-// llevar anuncios. Medido con esta misma función sobre las páginas reales:
-//   con anuncios:  guía más corta 2061 · FAQ 2954 · guía más larga 2954
-//   sin anuncios:  /ayuda 79 · /contacto 329 · /guias 1110 · /como-funciona 1379
-//                  /inicio 1644
-// 1800 deja fuera todo lo flojo y da 261 de margen a la guía más corta.
+// llevar anuncios. Medido con esta misma función sobre las páginas reales
+// (V925, tras reescribir las seis guías; antes medían de 2061 a 2954):
+//   con anuncios:  /faq 3177 · guía más corta 6462 · guía más larga 10246
+//   sin anuncios:  /ayuda 79 · /contacto 329 · /como-funciona 1497 ·
+//                  /guias 1629 (índice de enlaces) · /inicio 1822
+// 1800 deja fuera todo lo flojo y da 1377 de margen a la página con anuncios más
+// corta. Las legales (2315-7659) miden de sobra y tampoco llevan anuncios, y la
+// portada, tras corregir su texto en V925, ya mide 1822 — por encima del mínimo — y
+// tampoco los lleva: MEDIR NO BASTA, hay que declararse contenido. Ésa es
+// exactamente la razón de que la puerta exija las dos condiciones.
 const PROSA_MINIMA = 1800;
 
 // Texto de editor del cuerpo: se quitan scripts, estilos y el texto de los
@@ -278,7 +285,11 @@ const FAQ = [
   { cat: "Cuenta", q: "¿Puedo cambiar mi correo electrónico?", a: "Sí. Ve a Ajustes → Cuenta → Cambiar correo. Se te pedirá verificar el correo nuevo antes de activarlo." },
   { cat: "Cuenta", q: "¿Cómo elimino mi cuenta?", a: "Desde Ajustes → Cuenta → Eliminar cuenta. Tus datos se borran de forma permanente en un plazo máximo de 30 días." },
   { cat: "Matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan «like» mutuamente. A partir de ese momento podéis chatear libremente." },
-  { cat: "Matches", q: "¿Cómo mejora Aura mis matches?", a: "Nuestro algoritmo analiza tus preferencias, intereses y actividad para mostrarte perfiles más afines. Cuanto más interactúas, mejor aprende." },
+  // V925 · Esta respuesta decía que el algoritmo "aprende" de tu actividad. No es
+  // cierto: el feed son filtros + un orden fijo (boost, conectado, verificado,
+  // azar). Corregida aquí y en app.js (screenInfoFaq), y explicada al detalle en
+  // /guias/como-funciona-el-algoritmo-de-matches.
+  { cat: "Matches", q: "¿Cómo mejora Aura mis matches?", a: "Tus filtros deciden quién puede aparecer (edad, ciudad, intereses, estilo de vida…) y el orden es siempre el mismo: primero quien tiene un Boost activo, después quien está conectado, después los perfiles verificados y el resto al azar. No hay un sistema que aprenda de tus likes: para salir en más búsquedas, completa los campos de tu perfil y verifica la cuenta." },
   { cat: "Matches", q: "¿Puedo deshacer un «no me gusta»?", a: "Sí, con la suscripción Premium puedes deshacer la última acción y volver a valorar ese perfil." },
   { cat: "Matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con Premium los likes son ilimitados." },
   { cat: "Chats", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. Todas pasan un filtro automático y respetamos la privacidad de ambos lados." },
@@ -381,252 +392,590 @@ const KYC = [
 const GUIDES = [
   {
     slug: "como-hacer-un-buen-perfil-de-citas",
-    title: "Cómo hacer un buen perfil de citas: guía completa 2026",
+    title: "Cómo hacer un buen perfil de citas: guía campo por campo",
     date: "2026-08-05",
-    excerpt: "Las fotos, la bio y los pequeños detalles que multiplican tus matches. Una guía práctica, sin humo, para destacar siendo tú mismo.",
-    minutes: 7,
+    updated: "2026-09-09",
+    excerpt: "Las 6 fotos, los 300 caracteres de bio, los cinco desplegables que deciden si apareces en las búsquedas de otras personas y las 10 preguntas de perfil. Con ejemplos reescritos y el detalle técnico de qué campo te excluye si lo dejas vacío.",
+    minutes: 9,
     body: `
-<p>Tu perfil es tu primera conversación. Antes de escribir una sola palabra, la otra persona ya se ha hecho una idea de quién eres a partir de tus fotos y tu biografía. La buena noticia es que mejorar un perfil no depende de tener un físico de portada, sino de transmitir con claridad y honestidad quién eres. Esta guía recoge lo que de verdad funciona.</p>
+<p>La mayoría de las guías de perfiles repiten los mismos cuatro consejos: buena luz, sonríe, sé tú mismo. Están bien, pero se olvidan de la mitad del problema. Un perfil hace dos trabajos distintos: <strong>pasar los filtros</strong> de las búsquedas de otras personas (un asunto mecánico, donde un desplegable vacío te borra del mapa) y <strong>dar ganas de escribirte</strong> (un asunto de escritura). Esta guía trata los dos, campo por campo, con lo que de verdad hay en el editor de Aura.</p>
 
-<h2>1. Las fotos: calidad, variedad y luz natural</h2>
-<p>La foto principal es la más importante: decide si alguien sigue mirando o pasa de largo. Elige una imagen reciente, con buena luz —preferiblemente natural— y en la que se te vea la cara con claridad. Evita gafas de sol, filtros exagerados y fotos de grupo donde no se sepa quién eres tú.</p>
-<p>A partir de ahí, la variedad cuenta una historia. Un buen conjunto suele incluir:</p>
+<h2>Lo que tienes para trabajar</h2>
+<p>Antes de nada, el inventario exacto. En Aura tu perfil admite:</p>
 <ul>
-  <li><strong>Un primer plano nítido</strong> donde se te vea sonriendo de forma natural.</li>
-  <li><strong>Una foto de cuerpo entero</strong>, porque genera confianza y evita malentendidos.</li>
-  <li><strong>Una foto haciendo algo que te gusta</strong>: cocinando, en la montaña, con tu instrumento. Da tema de conversación.</li>
-  <li><strong>Una foto social</strong> que muestre que tienes vida y gente alrededor (pero que tú seas el protagonista).</li>
-</ul>
-<p>Sube al menos tres o cuatro. Los perfiles con una sola foto reciben muchísima menos interacción y, además, generan desconfianza.</p>
-
-<h2>2. La biografía: específica, positiva y con un gancho</h2>
-<p>La bio no es un currículum. Nadie conecta con "me gusta viajar, la música y reírme". Son cosas que le gustan a todo el mundo. Lo que engancha es lo concreto: "Busco a alguien con quien discutir si la tortilla lleva cebolla (spoiler: sí)". El detalle específico da pie a que te escriban.</p>
-<p>Tres reglas sencillas:</p>
-<ul>
-  <li><strong>Muestra, no cuentes.</strong> En vez de "soy divertido", escribe algo divertido.</li>
-  <li><strong>Deja una puerta abierta.</strong> Una pregunta o un reto invita a responder.</li>
-  <li><strong>Sé honesto con lo que buscas.</strong> Si quieres algo serio, dilo. Si quieres conocer gente sin prisa, también. Filtrar pronto ahorra tiempo a todos.</li>
+  <li><strong>Hasta 6 fotos</strong>, una de ellas principal.</li>
+  <li><strong>Una descripción de 300 caracteres</strong> como máximo. No es un espacio infinito: cada palabra cuenta.</li>
+  <li><strong>16 intereses</strong> para elegir.</li>
+  <li><strong>Trabajo</strong> (60 caracteres) y cinco desplegables opcionales: <strong>estudios, mascotas, ejercicio, si fumas y si bebes</strong>.</li>
+  <li><strong>Hasta 6 preguntas de perfil</strong> (rompehielos), con respuestas de hasta 280 caracteres.</li>
+  <li>Datos de coincidencia: edad, género, ciudad, altura, peso, etnia, qué buscas, tipo de relación y orientación.</li>
+  <li>La <strong>verificación de identidad</strong>, que da el distintivo azul.</li>
+  <li>El estado <strong>"Ahora mismo"</strong>, un mensaje temporal que caduca en 60 minutos.</li>
 </ul>
 
-<h2>3. Completa el perfil y verifícalo</h2>
-<p>Rellenar los campos de intereses, altura, zona o qué buscas ayuda al algoritmo a mostrarte a personas más afines. En Aura, además, <a href="/verificacion">verificar tu cuenta</a> te da el distintivo azul: los perfiles verificados generan más confianza y reciben más likes, porque la otra persona sabe que eres real.</p>
+<h2>1. Las fotos</h2>
+<p>La principal decide si alguien sigue mirando. Elige una imagen reciente, con luz natural, donde se te vea la cara sin obstáculos: sin gafas de sol, sin filtros que deformen y sin fotos de grupo en las que haya que adivinar quién eres. Un encuadre de cabeza y hombros funciona mejor que un plano lejano, porque en el feed la foto se ve en pequeño.</p>
+<p>Con las seis plazas disponibles, un conjunto que funciona suele ser así:</p>
+<ol>
+  <li><strong>Primer plano nítido</strong>, mirando a la cámara, expresión relajada.</li>
+  <li><strong>Cuerpo entero.</strong> Evita malentendidos y transmite seguridad.</li>
+  <li><strong>Haciendo algo tuyo</strong>: cocinando, escalando, con el instrumento, en el taller. Es la foto que genera preguntas.</li>
+  <li><strong>Una foto social</strong> donde se vea que tienes gente alrededor, siendo tú el protagonista.</li>
+  <li><strong>Un plano con contexto</strong>: un viaje, tu ciudad, un sitio que te representa.</li>
+  <li><strong>Una foto con humor</strong> o una un poco espontánea, para bajar el tono formal.</li>
+</ol>
+<p>Tres o cuatro es el mínimo razonable. Un perfil con una sola foto se lee como una cuenta a medio hacer y recibe muchísima menos atención.</p>
+<p><strong>Dato técnico que conviene conocer:</strong> las fotos del perfil se publican al instante, sin revisión previa, así que la responsabilidad de lo que subes es tuya. Las <a href="/normas">normas de la comunidad</a> prohíben expresamente subir fotos de otras personas sin su consentimiento, desnudos explícitos en el perfil público e imágenes de menores. La foto del estado "Ahora mismo" es distinta: pasa un prefiltro automático y una revisión humana, y <strong>permanece oculta a los demás hasta que se aprueba</strong>.</p>
 
-<h2>4. Errores que restan matches</h2>
+<h2>2. La descripción: qué hacer con 300 caracteres</h2>
+<p>El error universal es gastar el espacio en categorías que comparte media España: "me gusta viajar, la música y reírme". No es falso, es que no distingue. Lo que provoca un mensaje es un detalle concreto, con el que se pueda estar de acuerdo o en desacuerdo.</p>
+<p>Tres reescrituras reales, con el recuento de caracteres:</p>
+<h3>Ejemplo 1</h3>
+<p><strong>Antes (63):</strong> "Me gusta viajar, el deporte, la música y pasarlo bien. Pregunta."<br>
+<strong>Después (191):</strong> "Ingeniero de día, panadero malo de fin de semana: llevo 14 masas madre muertas. Corro por el río los martes. Busco algo con recorrido, sin prisa. Dime cuál es tu bar de barrio favorito."</p>
+<p>El segundo dice a qué te dedicas, qué haces con tu tiempo, qué buscas y termina con una pregunta fácil de contestar. Cuatro anzuelos en menos de 200 caracteres.</p>
+<h3>Ejemplo 2</h3>
+<p><strong>Antes (48):</strong> "No busco jueguecitos ni gente falsa. Si te interesa, escribe."<br>
+<strong>Después (169):</strong> "Me río fácil y hablo demasiado de cine coreano. Plan ideal: mercado por la mañana y cocinar sin receta. Busco algo tranquilo y honesto. ¿Última peli que te dejó tocado?"</p>
+<p>Cambia una lista de rechazos por una lista de propuestas. Lo que buscas se puede decir sin que suene a advertencia.</p>
+<h3>Ejemplo 3</h3>
+<p><strong>Antes (21):</strong> "Aquí para conocer gente."<br>
+<strong>Después (155):</strong> "Enfermera de urgencias, así que mi horario es un caos y mi tolerancia al drama, cero. Nadadora, lectora de novela negra, dos gatos. Busco a alguien con paciencia."</p>
+<p>Reglas que aplican los tres ejemplos:</p>
 <ul>
-  <li>Fotos borrosas, oscuras o de hace cinco años.</li>
-  <li>Bio vacía o con un simple "pregúntame".</li>
-  <li>Negatividad ("no busco jueguecitos", "odio a la gente falsa"): transmite mala energía.</li>
-  <li>Solo selfies desde el mismo ángulo.</li>
+  <li><strong>Muestra, no anuncies.</strong> En vez de "soy divertido", escribe algo divertido.</li>
+  <li><strong>Un detalle específico y raro</strong> vale más que cinco aficiones genéricas.</li>
+  <li><strong>Deja una puerta abierta:</strong> una pregunta concreta multiplica las respuestas.</li>
+  <li><strong>Di qué buscas, sin lista de exclusiones.</strong> Filtrar pronto ahorra tiempo a todos; hacerlo en tono hostil espanta también a quien encajaba.</li>
+  <li><strong>Cero negatividad.</strong> "Odio a la gente falsa" no informa de ti, informa de tu último desengaño.</li>
 </ul>
 
-<h2>En resumen</h2>
-<p>Un buen perfil es honesto, visual y concreto. No se trata de fingir ser otra persona, sino de mostrar tu mejor versión real. Dedícale quince minutos hoy: cambia la foto principal, reescribe la bio con un detalle específico y verifica tu cuenta. La diferencia en tus matches se nota en cuestión de días.</p>
-<p>¿Listo para probarlo? <a href="/">Abre Aura</a> y actualiza tu perfil.</p>`,
+<h2>3. Los cinco desplegables: el campo donde más gente se deja matches</h2>
+<p>Aquí está la parte mecánica, y es la que casi nadie te cuenta. En Aura, cuando alguien busca filtrando por <strong>mascotas, si fumas, si bebes, estudios, ejercicio</strong> o <strong>intereses</strong>, los perfiles que tienen ese campo vacío <strong>quedan fuera del resultado</strong>. No aparecen al final de la lista: no aparecen.</p>
+<p>Es lógico si lo piensas: no se puede afirmar que coincides en algo que no has declarado. Pero tiene una consecuencia práctica enorme, porque son campos opcionales que la mayoría se salta. Rellenar cinco desplegables lleva menos de un minuto y es lo más rentable que puedes hacer con tu perfil.</p>
+<p>Y el contraste, para que no te preocupes por lo que no quieras rellenar: los campos de rango —<strong>edad, altura y peso</strong>— funcionan al revés. Si no los declaras, <strong>sigues apareciendo</strong> para quien filtre por ellos. Lo explicamos en detalle, con el orden completo del feed, en la guía sobre <a href="/guias/como-funciona-el-algoritmo-de-matches">cómo funciona el algoritmo de Aura</a>.</p>
+
+<h2>4. Los intereses: elige los que sostienen una conversación</h2>
+<p>Las 16 opciones son: música, foodie, surf, fotografía, arte, escalada, café, perros, vino, viajar, cine, lectura, yoga, ciclismo, gaming y plantas. Para que un perfil aparezca en una búsqueda por intereses basta con <strong>compartir uno</strong> de los seleccionados por la otra persona, así que marcar los que de verdad te definen no reduce tu alcance tanto como temes.</p>
+<p>El criterio útil: marca sólo aquellos sobre los que podrías hablar diez minutos sin esfuerzo. Un interés marcado por adorno se convierte en una conversación incómoda en cuanto alguien pregunta.</p>
+
+<h2>5. Las preguntas de perfil (rompehielos)</h2>
+<p>Puedes responder hasta seis de estas diez frases, con 280 caracteres cada una:</p>
+<ul>
+  <li>Un plan perfecto para mí es…</li>
+  <li>Nunca podría vivir sin…</li>
+  <li>Mi mayor manía es…</li>
+  <li>Me haces reír si…</li>
+  <li>El mejor viaje de mi vida fue…</li>
+  <li>Mi debilidad es…</li>
+  <li>Sabré que hay conexión cuando…</li>
+  <li>Dos verdades y una mentira:</li>
+  <li>Mi canción del momento es…</li>
+  <li>Domingo ideal:</li>
+</ul>
+<p>Son el mejor sitio del perfil para dar material de conversación, porque quien te escriba tendrá algo concreto a lo que agarrarse. Compara:</p>
+<ul>
+  <li><em>Mi mayor manía es…</em> "la impuntualidad" (correcto y olvidable) frente a "que dejen la puerta del microondas abierta; me levanto a cerrarla desde la otra habitación".</li>
+  <li><em>Domingo ideal:</em> "descansar" frente a "vermut a mediodía, siesta ilegal de dos horas y llamada a mi madre a las ocho, en ese orden exacto".</li>
+  <li><em>Dos verdades y una mentira:</em> funciona sola, porque casi todo el mundo responde intentando adivinar. Es el rompehielos con mejor tasa de respuesta.</li>
+</ul>
+
+<h2>6. Verifica la cuenta</h2>
+<p>La <a href="/verificacion">verificación de identidad</a> tiene tres pasos: documento oficial, selfie en tiempo real y un vídeo corto de 3 a 5 segundos. A cambio obtienes el distintivo azul y, además, un efecto medible: <strong>a igualdad de todo lo demás, los perfiles verificados se muestran antes en el feed</strong>. Es el único factor de posicionamiento permanente que depende sólo de ti.</p>
+<p>Sobre tus datos: las imágenes biométricas se conservan un máximo de 30 días y luego se borran de forma automática e irreversible. No se usan para publicidad ni para entrenar modelos. Si la comprobación automática falla, tienes derecho a hasta dos revisiones manuales.</p>
+
+<h2>7. "Ahora mismo": el campo con fecha de caducidad</h2>
+<p>Es un estado temporal ("me apetece cine", "estoy en el mercado y no sé qué comprar") que <strong>caduca a los 60 minutos</strong> y puede acompañarse de una foto. Funciona muy bien porque convierte tu perfil en una propuesta concreta y con urgencia, en lugar de una descripción permanente. Si lo usas, hazlo cuando de verdad estés disponible.</p>
+
+<h2>Errores que restan</h2>
+<ul>
+  <li>Fotos borrosas, oscuras o de hace cinco años. La expectativa que rompes en la primera cita empieza aquí.</li>
+  <li>Sólo selfies, todos del mismo ángulo y con la misma cara.</li>
+  <li>Bio vacía o un "pregúntame": traslada todo el trabajo a la otra persona.</li>
+  <li>Los cinco desplegables sin tocar (te borra de las búsquedas filtradas).</li>
+  <li>Frases de aviso y quejas sobre citas anteriores.</li>
+  <li>Contradicciones entre lo que dices buscar y lo que escribes en el chat. La coherencia es la mitad de la confianza.</li>
+</ul>
+
+<h2>Los 15 minutos que más rinden</h2>
+<ol>
+  <li>Cambia la foto principal por un primer plano reciente y con luz natural (3 min).</li>
+  <li>Sube dos fotos que no sean selfies hasta llegar a cuatro (4 min).</li>
+  <li>Reescribe la descripción con un detalle concreto y una pregunta final (4 min).</li>
+  <li>Rellena los cinco desplegables opcionales (1 min).</li>
+  <li>Responde tres preguntas de perfil, una de ellas "Dos verdades y una mentira" (3 min).</li>
+</ol>
+<p>Y cuando esté terminado, verifica la cuenta. Impulsar con un Boost un perfil a medio hacer es pagar por que más gente vea algo que no está listo.</p>
+<p>¿Lo hacemos ahora? <a href="/">Abre Aura</a> y empieza por la foto principal.</p>`,
   },
   {
     slug: "seguridad-en-citas-online",
-    title: "Seguridad en citas online: cómo protegerte antes y durante la primera cita",
+    title: "Seguridad en citas online: guía práctica, protocolos y a quién acudir en España",
     date: "2026-08-08",
-    excerpt: "Señales de alerta, consejos para la primera cita y qué hacer ante una estafa romántica. Tu seguridad es lo primero.",
-    minutes: 8,
+    updated: "2026-09-09",
+    excerpt: "Las cuatro fases de una estafa romántica, el protocolo si te chantajean con imágenes, qué hacer antes y durante la primera cita, y los teléfonos y organismos oficiales a los que acudir. Incluye qué hace Aura exactamente cuando denuncias a alguien.",
+    minutes: 9,
     body: `
-<p>Conocer gente por internet es hoy tan normal como hacerlo en un bar o a través de amigos. Pero, igual que en la vida offline, conviene tomar unas precauciones básicas. Esta guía reúne consejos prácticos para que disfrutes de las citas online con tranquilidad.</p>
+<p>Conocer gente por internet es hoy tan normal como hacerlo por amigos. La inmensa mayoría de las citas online son experiencias corrientes y agradables. Pero hay un puñado de situaciones —fraude económico, chantaje con imágenes, una primera cita que se pone incómoda— en las que saber exactamente qué hacer cambia el resultado. Esta guía es un manual de esas situaciones: protocolos concretos, no consejos vagos.</p>
 
-<h2>Antes de quedar: construye confianza sin exponerte</h2>
+<h2>Antes de quedar: construir confianza sin exponerte</h2>
 <ul>
-  <li><strong>Habla dentro de la app un tiempo.</strong> No hay prisa. Chatear unos días te da pistas sobre si la persona es coherente y respetuosa.</li>
-  <li><strong>Cuidado con quien tiene prisa por sacarte de la app.</strong> Insistir en pasar a WhatsApp o Telegram enseguida es una señal frecuente en perfiles fraudulentos.</li>
-  <li><strong>No compartas datos sensibles.</strong> Tu dirección exacta, tu lugar de trabajo, datos bancarios o documentos no se comparten con un desconocido.</li>
-  <li><strong>Haz una videollamada corta antes de quedar.</strong> Confirma que la persona es quien dice ser y coincide con sus fotos.</li>
+  <li><strong>Habla dentro de la app unos días.</strong> El chat de Aura no expone tu número de teléfono, y eso es una ventaja: cortar el contacto no requiere cambiar de número ni bloquear en tres aplicaciones distintas.</li>
+  <li><strong>Sospecha de quien tiene prisa por sacarte de la app.</strong> Insistir en pasar a WhatsApp o Telegram en los primeros mensajes es la señal más frecuente en perfiles fraudulentos, porque fuera de aquí no hay moderación, no hay denuncia y no hay rastro.</li>
+  <li><strong>Retén los datos que identifican tu vida diaria:</strong> tu dirección, el nombre de tu empresa, el colegio de tus hijos, tu horario fijo de gimnasio. No son datos secretos, pero juntos permiten encontrarte.</li>
+  <li><strong>Nunca compartas documentos, datos bancarios ni códigos de verificación.</strong> Ningún trabajador de Aura te pedirá jamás tu contraseña ni un código de seis dígitos. Quien lo haga, miente.</li>
+  <li><strong>Habla por vídeo antes de veros.</strong> Aura incluye videollamada dentro del chat (es una función de los planes de pago); si no quieres usarla, cualquier videollamada breve por otro medio sirve. Una llamada de dos minutos elimina de golpe la mayor parte de los perfiles falsos.</li>
+  <li><strong>Comprueba sus fotos.</strong> Guarda una imagen del perfil y búscala por imagen en un buscador. Si aparece en un catálogo de modelos, en una cuenta con otro nombre o en un artículo antiguo, tienes la respuesta.</li>
 </ul>
 
-<h2>Señales de alerta (red flags)</h2>
-<p>Presta atención si la otra persona:</p>
+<h2>Señales de alerta, ordenadas por gravedad</h2>
+<h3>Motivos para estar atento</h3>
 <ul>
-  <li>Se declara enamorada muy rápido o es excesivamente aduladora.</li>
-  <li>Evita las videollamadas con excusas constantes.</li>
-  <li>Cuenta una historia dramática que termina en una petición de dinero.</li>
-  <li>Dice estar en el extranjero, en una plataforma petrolífera o en una misión militar (clásicos del fraude romántico).</li>
-  <li>Su perfil tiene fotos demasiado perfectas o de modelo y muy poca información real.</li>
+  <li>Fotos demasiado profesionales y muy poca información concreta.</li>
+  <li>Respuestas que no encajan con la hora que dice ser en su ciudad.</li>
+  <li>Halagos desproporcionados desde el primer día ("nunca había sentido esto").</li>
+  <li>Vaguedad sistemática sobre su trabajo, su barrio o su apellido.</li>
 </ul>
-<p><strong>Regla de oro: nunca envíes dinero, criptomonedas ni tarjetas regalo a alguien que has conocido online.</strong> No importa lo convincente que sea la historia.</p>
-
-<h2>La primera cita: elige bien el terreno</h2>
+<h3>Motivos para cortar</h3>
 <ul>
-  <li><strong>Quedad en un lugar público</strong> y concurrido: una cafetería, un parque de día, un bar céntrico.</li>
-  <li><strong>Ve y vuelve por tus medios.</strong> No dejes que te recojan en casa la primera vez.</li>
-  <li><strong>Avisa a alguien de confianza:</strong> dónde vas, con quién y a qué hora esperas volver. Comparte tu ubicación en tiempo real con esa persona.</li>
-  <li><strong>Controla tu bebida</strong> y no la pierdas de vista.</li>
-  <li><strong>Confía en tu instinto.</strong> Si algo no te encaja, no tienes que quedarte. Puedes irte en cualquier momento sin dar explicaciones.</li>
+  <li>Evita la videollamada una y otra vez con excusas nuevas.</li>
+  <li>Aparece una historia dramática con un problema de dinero de fondo.</li>
+  <li>Presiona para obtener fotos íntimas, o las envía sin que las pidas.</li>
+  <li>Se enfada, culpabiliza o insiste cuando dices que no.</li>
+  <li>Dice estar destinado en el extranjero, en una plataforma petrolífera o en una misión militar. Es el guion clásico del fraude romántico y sirve para justificar por qué nunca puede veros.</li>
+</ul>
+<p><strong>Regla que no admite excepción: nunca envíes dinero, criptomonedas, transferencias ni tarjetas regalo a alguien que has conocido en internet y no has visto en persona.</strong> Da igual lo convincente que sea la historia, lo urgente que parezca o cuánto tiempo llevéis hablando.</p>
+
+<h2>Anatomía de una estafa romántica</h2>
+<p>Estas estafas no son improvisadas: siguen un guion con cuatro fases. Reconocer la fase en la que estás es la mejor defensa.</p>
+<ol>
+  <li><strong>Contacto y encaje perfecto (días 1 a 7).</strong> La persona coincide contigo en todo. Ha leído tu perfil con atención y devuelve tus propias palabras. Nunca hay fricción.</li>
+  <li><strong>Intensidad acelerada (semanas 1 a 3).</strong> Mensajes de buenos días y buenas noches, planes de futuro, declaraciones. La velocidad tiene una función: crear un vínculo antes de que aparezca la primera petición. En paralelo, no hay ni una videollamada.</li>
+  <li><strong>La crisis (semanas 3 a 8).</strong> Un accidente, una aduana que retiene un paquete, una operación de un familiar, una cuenta bloqueada. La cantidad pedida es pequeña la primera vez: es una prueba de disposición, no el objetivo.</li>
+  <li><strong>La extracción.</strong> Si pagas una vez, las peticiones se multiplican. Una variante muy extendida sustituye la crisis por una "oportunidad": te enseña una plataforma de inversión en criptomonedas donde su dinero crece, te ayuda a registrarte y ves beneficios en pantalla. Puedes retirar cantidades pequeñas al principio. Cuando ingresas una cantidad grande, la plataforma desaparece.</li>
+</ol>
+<p>Dos detalles que delatan la fase 4: el dinero se pide siempre por vías sin retorno (criptomonedas, transferencias a terceros, tarjetas regalo, plataformas de pago entre particulares) y siempre hay una razón por la que "esta vez" hay prisa.</p>
+
+<h2>Si te chantajean con imágenes íntimas (sextorsión)</h2>
+<p>Es una situación más frecuente de lo que parece y hay un protocolo claro. En orden:</p>
+<ol>
+  <li><strong>No pagues.</strong> Pagar no cierra el chantaje: lo confirma como negocio y las peticiones siguen.</li>
+  <li><strong>No borres nada todavía.</strong> Haz capturas de la conversación, del perfil, de los nombres de usuario y de cualquier cuenta o dirección donde te pidan el dinero. Eso es la prueba.</li>
+  <li><strong>Denuncia el perfil en la app</strong> y escríbenos a seguridad@citasaura.es.</li>
+  <li><strong>Bloquea después de denunciar</strong>, no antes.</li>
+  <li><strong>Llama al 017</strong>, la línea de ayuda en ciberseguridad del INCIBE: es gratuita, confidencial y te orientan sobre los pasos legales.</li>
+  <li><strong>Denuncia ante la policía.</strong> Es un delito. Lleva las capturas y los datos económicos.</li>
+  <li>Si las imágenes ya se han publicado, la <strong>Agencia Española de Protección de Datos</strong> tiene un <em>canal prioritario</em> para solicitar la retirada urgente de contenido sexual o violento difundido sin consentimiento.</li>
+</ol>
+<p>Y algo que conviene decir con claridad: si te ha pasado, no has hecho nada malo. La responsabilidad es de quien extorsiona.</p>
+
+<h2>La primera cita: protocolo</h2>
+<ul>
+  <li><strong>Lugar público y concurrido</strong>, y elígelo tú o elegidlo juntos. Nunca la primera vez en un domicilio ni en un sitio aislado.</li>
+  <li><strong>Ve y vuelve por tus medios.</strong> Que no te recojan en casa.</li>
+  <li><strong>Deja el plan por escrito a alguien de confianza:</strong> con quién, dónde, a qué hora y cuándo esperas volver. Comparte tu ubicación en tiempo real con esa persona durante la cita.</li>
+  <li><strong>Acordad una palabra clave.</strong> Un mensaje inocuo pactado ("¿le has dado de comer al gato?") que signifique "llámame con una excusa" o "ven a buscarme".</li>
+  <li><strong>Fija tú la duración.</strong> Un plan corto y con final claro —un café, un paseo, una exposición— evita tener que aguantar tres horas si no hay química.</li>
+  <li><strong>Tu bebida no se queda sola.</strong> Si te ausentas, pide otra al volver. Si notas un efecto desproporcionado a lo que has bebido, pide ayuda al personal del local de inmediato.</li>
+  <li><strong>Dinero:</strong> cada uno paga lo suyo salvo acuerdo previo. Evita deudas emocionales el primer día.</li>
+  <li><strong>Puedes irte cuando quieras</strong>, sin dar explicaciones y sin ser amable a costa de tu tranquilidad. "Me tengo que ir, gracias por el rato" es una frase completa.</li>
+</ul>
+<p>Ideas concretas de planes que cumplen estas condiciones, en nuestra guía de <a href="/guias/ideas-para-una-primera-cita">planes para una primera cita</a>.</p>
+
+<h2>Qué hace Aura exactamente cuando denuncias a alguien</h2>
+<p>Conviene que sepas qué ocurre al pulsar el botón, porque cambia el orden en el que te conviene actuar:</p>
+<ul>
+  <li><strong>Denunciar</strong> (desde el perfil o el chat) envía a nuestro equipo el perfil señalado, el motivo y el detalle que escribas. Revisamos cada denuncia <strong>en menos de 24 horas</strong> y podemos revisar la conversación denunciada para valorar el caso.</li>
+  <li><strong>Bloquear</strong> corta el contacto en los dos sentidos: esa persona desaparece de tu descubrimiento y tú del suyo, y no puede volver a escribirte.</li>
+  <li><strong>El orden importa.</strong> Denuncia primero y bloquea después. Si deshacéis el match, la conversación desaparece, así que haz antes las capturas que quieras conservar.</li>
+  <li><strong>Para escribir en un chat hay que haber pasado la verificación de edad</strong>, y una cuenta con restricción activa por incumplir las normas no puede enviar mensajes.</li>
 </ul>
 
-<h2>Herramientas de Aura para tu seguridad</h2>
-<p>En Aura trabajamos para que la comunidad sea un espacio seguro: <a href="/verificacion">verificación de identidad</a> con documento y selfie, filtros automáticos de contenido, y la posibilidad de <strong>reportar o bloquear</strong> a cualquier persona desde su perfil o el chat. Revisamos cada reporte en menos de 24 horas y nuestro equipo antifraude elimina cuentas sospechosas de forma proactiva.</p>
+<h3>Las consecuencias que aplicamos</h3>
+<p>No son un secreto: están en las <a href="/normas">normas de la comunidad</a> y son cinco escalones, según gravedad y reincidencia.</p>
+<ol>
+  <li><strong>Aviso</strong> por correo con la conducta detectada y 48 horas para corregirla.</li>
+  <li><strong>Restricción parcial:</strong> limitación de funciones concretas como el chat, la subida de fotos o el descubrimiento.</li>
+  <li><strong>Suspensión temporal</strong> de la cuenta.</li>
+  <li><strong>Baneo permanente</strong> en casos graves o por reincidencia.</li>
+  <li><strong>Bloqueo por IP y huella de dispositivo</strong>, para dificultar que se cree otra cuenta eludiendo la sanción.</li>
+</ol>
+<p>Si alguna vez una decisión automática te afecta a ti y crees que es un error, tienes derecho a <strong>revisión humana</strong>, a dar tu versión y a impugnarla (art. 22 del RGPD): escribe a seguridad@citasaura.es.</p>
 
-<h2>¿Qué hago si detecto un fraude?</h2>
-<p>Repórtalo de inmediato desde la app y, si ha habido un delito (estafa, amenazas, difusión de imágenes), denúncialo a la policía. En España puedes contactar con el Grupo de Delitos Telemáticos de la Guardia Civil o la Policía Nacional. Escríbenos también a <a href="/contacto">seguridad@citasaura.es</a> para que actuemos sobre la cuenta.</p>
+<h3>La barrera de entrada</h3>
+<p>Para completar el registro hay que superar tres pasos de <a href="/verificacion">verificación</a>: documento oficial, selfie en tiempo real y un vídeo corto. Si el documento pertenece a una persona menor de 18 años, se rechaza automáticamente, los datos se borran en un máximo de 24 horas y el dispositivo queda bloqueado. Si la comprobación automática falla contigo sin que sea culpa tuya (mala luz, un documento gastado), tienes derecho a <strong>hasta dos revisiones manuales</strong>; agotadas ésas, la cuenta se rechaza. Las imágenes biométricas se conservan como máximo 30 días y después se eliminan de forma irreversible. Las fotos del estado "Ahora mismo" pasan un prefiltro automático y una revisión humana antes de ser visibles para nadie.</p>
 
-<p>La inmensa mayoría de las citas online son experiencias positivas. Con estas precauciones, reduces al mínimo los riesgos y te quedas con lo bueno: conocer a alguien que merezca la pena.</p>`,
+<h2>A quién acudir en España</h2>
+<ul>
+  <li><strong>112</strong> — emergencias, si hay peligro inmediato.</li>
+  <li><strong>091</strong> (Policía Nacional) y <strong>062</strong> (Guardia Civil) para denunciar delitos.</li>
+  <li><strong>017</strong> — línea de ayuda en ciberseguridad del INCIBE. Gratuita y confidencial: fraude online, sextorsión, suplantación.</li>
+  <li><strong>Grupo de Delitos Telemáticos</strong> de la Guardia Civil y <strong>Unidad de Investigación Tecnológica</strong> de la Policía Nacional, especializados en delitos cometidos por internet.</li>
+  <li><strong>Canal prioritario de la AEPD</strong> para la retirada urgente de imágenes sexuales o violentas publicadas sin consentimiento.</li>
+  <li><strong>016</strong> — atención a víctimas de violencia de género, gratuito, 24 horas y no deja rastro en la factura telefónica.</li>
+  <li><strong>seguridad@citasaura.es</strong> para que actuemos sobre una cuenta de Aura.</li>
+</ul>
+<p>Si has perdido dinero, avisa a tu banco cuanto antes: en algunos casos una transferencia reciente puede retenerse. Guarda todos los justificantes, direcciones de monedero y capturas: son lo que permite investigar.</p>
+
+<h2>Lo que no hay que perder de vista</h2>
+<p>Nada de esto pretende darte miedo. La gran mayoría de la gente que hay al otro lado es exactamente quien dice ser y busca lo mismo que tú. Estas precauciones tienen el mismo papel que mirar antes de cruzar: cuestan poco, se convierten en costumbre y te dejan disfrutar de la parte buena, que es conocer a alguien que merezca la pena.</p>
+<p>Y si algo en la app te hace sentir incómodo, dínoslo. Preferimos revisar una denuncia de más que enterarnos tarde.</p>`,
   },
   {
     slug: "primer-mensaje-que-funciona",
-    title: "El primer mensaje que sí funciona: ideas para romper el hielo",
+    title: "El primer mensaje que sí funciona: 14 ejemplos y de dónde sacar el gancho",
     date: "2026-08-10",
-    excerpt: "Olvídate del «hola, ¿qué tal?». Aprende a escribir primeros mensajes que consiguen respuesta, con ejemplos reales.",
-    minutes: 6,
+    updated: "2026-09-09",
+    excerpt: "Catorce primeros mensajes escritos a partir de lo que hay en un perfil real: una foto, un interés, una respuesta de rompehielo o el estado «Ahora mismo». Con qué hacer si no contestan y cuándo proponer la cita.",
+    minutes: 7,
     body: `
-<p>Tienes un match. Y ahora, ¿qué escribes? El primer mensaje marca la diferencia entre una conversación que fluye y un chat que muere antes de empezar. La clave no es ser el más ingenioso del mundo, sino demostrar que te has fijado en la persona concreta que tienes delante.</p>
+<p>Empecemos por una buena noticia que casi nadie tiene en cuenta: en Aura el chat sólo se abre cuando <strong>los dos os habéis dado like</strong>. Tu primer mensaje no llega a un desconocido que no ha decidido nada sobre ti; llega a alguien que ya ha dicho que sí. La barrera es mucho más baja de lo que parece. Y precisamente por eso duele tanto desperdiciarla con un "hola".</p>
 
-<h2>Por qué el «hola» no funciona</h2>
-<p>Un "hola" o un "¿qué tal?" pone toda la carga de la conversación en la otra persona. No aporta nada a lo que responder y transmite poco interés. La mayoría de estos mensajes se quedan sin contestación, no porque no gustes, sino porque no das motivo para seguir.</p>
+<h2>Por qué el "hola" no funciona</h2>
+<p>Un "hola" o un "¿qué tal?" traslada el 100% del trabajo a la otra persona: tiene que inventar el tema, el tono y el motivo para seguir. Cuando alguien tiene varias conversaciones abiertas, el mensaje que exige esfuerzo es el que se queda sin contestar. No es que no gustes: es que no has dado por dónde agarrar.</p>
+<p>La solución no es ser ingenioso. Es ser <strong>específico</strong>.</p>
 
-<h2>La fórmula: detalle + pregunta abierta</h2>
-<p>El mejor primer mensaje combina dos cosas: <strong>algo específico del perfil</strong> de la otra persona y <strong>una pregunta abierta</strong> que invite a explayarse. Ejemplos:</p>
+<h2>La fórmula: un detalle concreto + una pregunta fácil</h2>
+<p>Un primer mensaje que funciona hace dos cosas en dos líneas: demuestra que has mirado el perfil (detalle) y ofrece una respuesta cómoda (pregunta). Nada más. Ni presentación, ni currículum, ni declaración de intenciones.</p>
+
+<h2>De dónde sacar el detalle en un perfil de Aura</h2>
+<p>Un perfil completo tiene seis yacimientos, y cada uno da un tipo distinto de mensaje:</p>
 <ul>
-  <li>"Veo que estuviste en Japón. Estoy planeando ir el año que viene, ¿qué me recomiendas sin falta?"</li>
-  <li>"Tu perro sale en tres de las cuatro fotos, así que la pregunta importante es: ¿cómo se llama y manda él en casa?"</li>
-  <li>"Otro fan del ramen, por fin. ¿Cuál es tu sitio favorito de la ciudad? Necesito ampliar la lista."</li>
-</ul>
-<p>Fíjate en que todos hacen lo mismo: demuestran que has mirado el perfil y dan un tema concreto sobre el que responder.</p>
-
-<h2>El humor, con cabeza</h2>
-<p>Una broma ligera funciona muy bien si encaja con el tono del perfil. Evita el humor sarcástico o subido de tono al principio: sin contexto, es fácil que se malinterprete. La regla es sencilla: si dudas de si algo puede ofender, no lo mandes.</p>
-
-<h2>Errores frecuentes</h2>
-<ul>
-  <li><strong>El copia-pega.</strong> Se nota a kilómetros. Personaliza siempre.</li>
-  <li><strong>El cumplido puramente físico.</strong> "Qué guapa" es lo que recibe todo el mundo; aporta poco y a veces incomoda.</li>
-  <li><strong>El interrogatorio.</strong> Cinco preguntas seguidas agobian. Una buena basta.</li>
-  <li><strong>La novela.</strong> Un párrafo enorme abruma. Sé breve y deja espacio para la respuesta.</li>
+  <li>Las <strong>fotos</strong> (hasta seis): un lugar, una actividad, un animal, un objeto de fondo.</li>
+  <li>La <strong>descripción</strong>: 300 caracteres donde casi siempre hay un detalle raro aprovechable.</li>
+  <li>Los <strong>intereses</strong>: 16 posibles, y los compartidos son terreno seguro.</li>
+  <li>Los <strong>desplegables de estilo de vida</strong>: mascotas, ejercicio, estudios, si fuma, si bebe. Parecen burocracia, pero dan mensajes muy naturales.</li>
+  <li>Las <strong>preguntas de perfil</strong>: hasta seis respuestas escritas por la propia persona. Es el mejor material del perfil, porque ha elegido contarlo.</li>
+  <li>El estado <strong>"Ahora mismo"</strong>: un mensaje temporal que caduca en 60 minutos. Es el gancho más potente que existe, porque es de este momento.</li>
 </ul>
 
-<h2>Y después del primer mensaje</h2>
-<p>Cuando la conversación arranca, mantén el equilibrio: comparte cosas de ti, no solo preguntes. Y si notas buena sintonía, no alargues el chat eternamente: proponer una videollamada o una cita a tiempo evita que la conexión se enfríe.</p>
+<h2>14 ejemplos, por tipo de gancho</h2>
+<h3>A partir de una foto</h3>
+<ul>
+  <li>"Esa foto es del Camino, ¿no? Voy en septiembre y estoy en la fase de agobio con la mochila. ¿Qué llevaste que no usaste?"</li>
+  <li>"Tu perro sale en tres de las cuatro fotos, así que la pregunta obligatoria es: ¿cómo se llama y quién manda en casa?"</li>
+  <li>"Reconozco esa cocina de fondo: eso es un horno de leña o me he emocionado. ¿Qué sale de ahí?"</li>
+</ul>
+<h3>A partir de un interés compartido</h3>
+<ul>
+  <li>"Foodie y vino en el mismo perfil: necesito tu top 3 de sitios de la ciudad, sin piedad."</li>
+  <li>"Veo escalada. ¿Roca o plástico? Llevo un año en el rocódromo y todavía no me atrevo a salir fuera."</li>
+  <li>"Otro de plantas. Confiesa: ¿cuántas has matado este año? Yo voy por cuatro."</li>
+</ul>
+<h3>A partir de una respuesta de rompehielo</h3>
+<ul>
+  <li>Si respondió a "Dos verdades y una mentira": "La del maratón es mentira. La de tocar el acordeón me la creo demasiado. ¿Voy bien?" — es el rompehielos con mejor tasa de respuesta, porque contestar es casi automático.</li>
+  <li>Si respondió a "Mi mayor manía es…": "Comparto la manía de la puerta del microondas y creía que era el único. ¿Tienes más o esa es la principal?"</li>
+  <li>Si respondió a "Domingo ideal": "Tu domingo ideal y el mío se parecen hasta la siesta ilegal. ¿Vermut de barrio o terraza?"</li>
+</ul>
+<h3>A partir de un desplegable</h3>
+<ul>
+  <li>"Pone que corres. ¿Eres de los de las cinco de la mañana o de los que salen cuando ya no hay sol? Necesito saber a qué me enfrento."</li>
+  <li>"Dos gatos. Dime que tienen nombres ridículos, por favor."</li>
+</ul>
+<h3>A partir del estado "Ahora mismo"</h3>
+<ul>
+  <li>"Te he pillado en el mercado. Compra los tomates feos, siempre son los buenos. ¿Qué estás cocinando?"</li>
+  <li>"Dices que te apetece cine. Yo tengo dos entradas mentales y ninguna decisión: ¿qué te apetece ver?"</li>
+</ul>
+<h3>Cuando el perfil da poco</h3>
+<ul>
+  <li>"Tu perfil es breve, así que voy a improvisar: si mañana tuvieras el día libre y sin planes, ¿qué harías?" — reconocer que hay poco material, sin reprochárselo, funciona mejor que forzar un cumplido.</li>
+</ul>
+<p>Fíjate en el patrón: ninguno es ingenioso por sí mismo. Todos son <strong>imposibles de copiar y pegar</strong> a otra persona, y eso es lo único que hace falta.</p>
 
-<p>En Aura verás <strong>sugerencias de primer mensaje</strong> basadas en el perfil de tu match para ayudarte a arrancar. Úsalas como punto de partida y añádeles tu toque personal. <a href="/">Abre la app</a> y prueba con tu próximo match.</p>`,
+<h2>El panel de rompehielos de la app: qué es y qué no</h2>
+<p>En el chat hay un botón de copo de nieve (❄️) con una lista de <strong>preguntas rompehielo preparadas</strong> por categorías: viajes, música, humor, planes, series. Es una función de los planes de pago y funciona bien para arrancar cuando te has quedado en blanco.</p>
+<p>Pero conviene ser claro con lo que es: son frases <strong>genéricas</strong>, iguales para todos los chats. No están generadas a partir del perfil de tu match. Úsalas como esqueleto y añade el detalle concreto tú: "Un plan de domingo ideal, descríbelo" mejora muchísimo si le pegas delante "Después de ver tu foto en el mercado, tengo curiosidad:". Y si tienes cuenta gratuita, no te pierdes nada esencial: las respuestas de las preguntas de perfil de la otra persona son mejor material que cualquier frase prefabricada.</p>
+
+<h2>Longitud, ritmo y otras cosas prácticas</h2>
+<ul>
+  <li><strong>Dos o tres líneas.</strong> El límite técnico de un mensaje son 4.000 caracteres, pero un primer mensaje largo se lee como un examen.</li>
+  <li><strong>Un solo mensaje.</strong> No mandes tres seguidos antes de que contesten.</li>
+  <li><strong>Una sola pregunta.</strong> Cinco es un interrogatorio.</li>
+  <li><strong>Escribe como hablas.</strong> Si en persona no dirías "buenas tardes, señorita", no lo escribas.</li>
+  <li><strong>El humor, ligero.</strong> Una broma suave funciona muy bien; el sarcasmo sin contexto se malinterpreta y el humor subido de tono, el primer día, cierra conversaciones.</li>
+</ul>
+
+<h2>Errores que matan el chat antes de empezar</h2>
+<ul>
+  <li><strong>El copia-pega.</strong> Se nota a kilómetros, sobre todo cuando el mensaje podría ir dirigido a cualquiera.</li>
+  <li><strong>El cumplido puramente físico.</strong> "Qué guapa" es lo que ya recibe todo el mundo; aporta poco y a veces incomoda.</li>
+  <li><strong>La novela.</strong> Un párrafo enorme obliga a responder con otro y casi nadie tiene ganas.</li>
+  <li><strong>El reproche.</strong> "Vaya, no contestas" convierte el silencio en un problema tuyo. Nunca funciona.</li>
+  <li><strong>Pedir el teléfono en el primer mensaje.</strong> Dentro de la app se puede hablar perfectamente, y salir de ella a los dos minutos es justo lo que hacen los perfiles fraudulentos (lo explicamos en la guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a>).</li>
+</ul>
+
+<h2>Si no contesta</h2>
+<p>Pasa, y no siempre significa desinterés: hay gente que abre la app una vez a la semana. La forma sana de gestionarlo:</p>
+<ul>
+  <li><strong>Un solo recordatorio</strong>, tres o cuatro días después, y que aporte algo nuevo: "Por si se te perdió el mensaje: he probado el sitio de ramen que decías y me has arruinado el resto de la ciudad."</li>
+  <li><strong>Si tampoco hay respuesta, se deja.</strong> Nada de insistir, ni de mensaje de despedida dramático. No es un rechazo personal.</li>
+  <li><strong>No cuentes matches, cuenta conversaciones.</strong> Tres chats de verdad valen más que treinta abiertos.</li>
+</ul>
+
+<h2>Cuándo dar el salto</h2>
+<p>Cuando ya habéis intercambiado mensajes con sustancia (no dos frases), no alargues el chat semanas: la conversación se enfría y la cita nunca llega. Propón algo concreto, corto y en un sitio público —hay veinte ideas en la guía de <a href="/guias/ideas-para-una-primera-cita">planes para una primera cita</a>— o una videollamada breve si prefieres verle la cara antes.</p>
+<p>Una propuesta cerrada funciona mejor que una abierta: "¿Te apetece un café el jueves por la tarde por el centro?" recibe más síes que "a ver si quedamos algún día".</p>
+
+<p>Elige un match, busca el detalle y escribe dos líneas. <a href="/">Abre Aura</a> y prueba con el siguiente.</p>`,
   },
   {
     slug: "como-funciona-el-algoritmo-de-matches",
-    title: "Cómo funciona el algoritmo de matches de Aura",
+    title: "Cómo funciona el algoritmo de Aura: el orden exacto del feed, explicado",
     date: "2026-08-12",
-    excerpt: "Qué factores influyen en los perfiles que ves, cómo mejorar tus recomendaciones y por qué la actividad importa.",
-    minutes: 5,
+    updated: "2026-09-09",
+    excerpt: "Publicamos los criterios reales: qué filtros deciden quién entra en tu feed, en qué orden se muestran los perfiles y qué NO hace nuestro sistema (no aprende de tus likes).",
+    minutes: 8,
     body: `
-<p>Mucha gente se pregunta cómo decide una app de citas qué perfiles mostrar. En Aura no hay magia ni sorteos: hay un sistema de recomendación que intenta ponerte delante a las personas con las que tienes más probabilidades de encajar. Te explicamos, sin tecnicismos, qué influye.</p>
+<p>Casi todas las apps de citas describen su algoritmo con la misma frase: "analizamos tus preferencias y tu actividad para mostrarte perfiles más afines". Es una frase que no dice nada y que, en muchos casos, tapa un sistema de puntuación que el usuario no puede ver ni discutir. Nosotros preferimos hacer lo contrario: contarte los criterios exactos con los que se construye tu feed, en el orden en que se aplican, e incluir la parte que no favorece al marketing —lo que el sistema <strong>no</strong> hace—.</p>
 
-<h2>Qué tiene en cuenta el sistema</h2>
+<p>Esta guía describe el comportamiento del feed de descubrimiento de Aura a fecha de septiembre de 2026. Si cambiamos algo relevante, cambiaremos este texto.</p>
+
+<h2>El feed se construye en dos pasos</h2>
+<p>Conviene separar dos preguntas que la gente suele mezclar:</p>
+<ol>
+  <li><strong>¿Quién puede aparecer?</strong> Lo deciden filtros de sí o no. Un perfil que no pasa un filtro no aparece "más abajo": no aparece.</li>
+  <li><strong>¿En qué orden aparecen los que pasan?</strong> Lo deciden cuatro criterios, siempre los mismos, que te contamos más abajo.</li>
+</ol>
+<p>No hay un tercer paso. No existe una puntuación global de afinidad ni de atractivo que reordene el resultado.</p>
+
+<h2>Paso 1: quién entra en tu feed</h2>
+<p>Nunca aparecerá alguien que:</p>
 <ul>
-  <li><strong>Tus preferencias explícitas:</strong> el rango de edad, la distancia, el género y qué tipo de relación buscas. Es lo primero y lo más importante.</li>
-  <li><strong>Tus intereses y los datos del perfil:</strong> aficiones, estilo de vida y lo que compartís en común.</li>
-  <li><strong>Tu actividad:</strong> a qué perfiles das like, con quién chateas y qué conversaciones prosperan. El sistema aprende de tu comportamiento real, no solo de lo que dices.</li>
-  <li><strong>La proximidad:</strong> las personas cercanas tienen prioridad, porque una cita es más probable cuando no hay 400 km de por medio.</li>
-  <li><strong>La reciprocidad probable:</strong> intentamos mostrarte perfiles a los que también es probable que tú les gustes, para que los matches sean mutuos y no un muro de likes sin respuesta.</li>
+  <li>Esté en <strong>la otra zona</strong>. Aura tiene dos espacios independientes (Hetero y LGTB+) y el feed sólo mira el tuyo.</li>
+  <li>No tenga la cuenta <strong>activa</strong> (baja, suspendida o pendiente de verificación).</li>
+  <li>Ya hayas <strong>valorado</strong>: si le has dado like, súper like o pasado, sale de tu feed. Esto es importante y volvemos a ello al final.</li>
+  <li>Tenga un <strong>bloqueo</strong> contigo, en cualquiera de los dos sentidos. Si tú bloqueas a alguien, desaparece de tu feed; si alguien te bloquea, tú desapareces del suyo <em>y</em> él del tuyo.</li>
+</ul>
+<p>Además, si tu cuenta tiene una restricción activa por incumplir las <a href="/normas">normas de la comunidad</a>, el descubrimiento puede estar limitado mientras dure.</p>
+
+<h2>Paso 2: tus filtros (y el detalle que casi nadie te cuenta)</h2>
+<p>Todo lo que configuras en el buscador se traduce en condiciones exactas. Lo relevante es que <strong>no todos los campos se comportan igual cuando faltan datos</strong>, y eso decide si apareces o no para otra persona:</p>
+
+<h3>Campos donde "no lo he rellenado" NO te excluye</h3>
+<p>Edad, altura y peso funcionan por rango, y quien no ha declarado el dato <strong>sigue pasando</strong> el filtro. Si alguien busca entre 30 y 40 años y tú no has puesto la edad, apareces igualmente.</p>
+
+<h3>Campos donde "no lo he rellenado" SÍ te excluye</h3>
+<p>Intereses, mascotas, si fumas, si bebes, estudios, ejercicio, tribu, complexión, dónde te gusta quedar y prácticas de salud funcionan por coincidencia: si la otra persona filtra por ese campo y tú lo tienes vacío, <strong>desapareces de su búsqueda</strong>. No es un castigo, es aritmética: no se puede afirmar que coincides en algo que no has dicho.</p>
+<p>Ésta es, con diferencia, la razón más común por la que un perfil recibe pocas visitas. Rellenar seis desplegables opcionales tiene más efecto real que cualquier truco de "hackear el algoritmo".</p>
+
+<h3>Campos de coincidencia exacta</h3>
+<p>Género, ciudad, etnia, qué buscas, tipo de relación y orientación (esta última sólo tiene efecto en la Zona LGTB+) se comparan de forma exacta. Los intereses son más flexibles: basta con compartir <strong>uno</strong> de los que la otra persona haya seleccionado.</p>
+
+<h3>El filtro "no ha chateado hoy"</h3>
+<p>Es opcional y, si lo activas, excluye a las personas con las que ya tienes una conversación cuyo último mensaje es de hoy. Sirve para dejar de dar vueltas sobre los mismos chats abiertos.</p>
+
+<h2>La distancia: cómo se calcula y cuándo excluye</h2>
+<p>Aquí hay una distinción que afecta a tu privacidad y merece ser explícita, porque distinguimos dos tipos de ubicación:</p>
+<ul>
+  <li><strong>GPS con tu consentimiento.</strong> Es la única que se usa para <em>filtrar</em> por radio, y sólo si la precisión del posicionamiento es de 300 metros o mejor. Un fix impreciso (por ejemplo, el wifi de un ordenador con un margen de dos kilómetros) se descarta para filtrar.</li>
+  <li><strong>Ubicación aproximada por IP.</strong> Sólo se usa para <em>mostrar</em> una distancia orientativa. <strong>Nunca excluye a nadie.</strong></li>
+</ul>
+<p>La consecuencia práctica es que quien no tiene el GPS activado no se cae de tu feed cuando pones un radio de 10 km: pasa el filtro siempre. Si filtrásemos por IP, el feed quedaría casi vacío, porque la IP coloca a todo el mundo en el mismo punto del centro de su ciudad. La distancia se calcula sobre la esfera terrestre (fórmula del semiverseno, radio 6.371 km) y se redondea a un decimal.</p>
+
+<h2>Paso 3: el orden exacto</h2>
+<p>De los perfiles que han pasado todos los filtros, el feed los ordena por estos cuatro criterios, en esta secuencia:</p>
+<ol>
+  <li><strong>Boost activo.</strong> Quien tenga un impulso en marcha va primero. Un Boost dura un número concreto de minutos y aparece marcado con el rayo "Impulsado", para que sepas por qué lo estás viendo.</li>
+  <li><strong>Conectado ahora.</strong> Después, quien está en línea. En términos técnicos: la cuenta se marca como desconectada cuando pasan más de 90 segundos sin actividad, así que "online" significa literalmente que la persona está usando la app en este momento.</li>
+  <li><strong>Verificado.</strong> A igualdad de lo anterior, los perfiles con <a href="/verificacion">verificación de identidad</a> se muestran antes. Es el único "premio" que da el sistema por confianza.</li>
+  <li><strong>Aleatorio.</strong> El resto del orden es azar, y se vuelve a sortear en cada carga. Por eso el mismo conjunto de personas te aparece en distinto orden si recargas.</li>
+</ol>
+<p>La pantalla "Cerca de ti" es la excepción: cuando dispone de coordenadas, ordena de más cerca a más lejos (después del Boost) en lugar de al azar.</p>
+
+<h2>Lo que el sistema NO hace</h2>
+<p>Esta sección es la que suele faltar en las explicaciones de otras apps:</p>
+<ul>
+  <li><strong>No aprende de tus likes.</strong> No hay ningún modelo que observe a quién das like para inferir un "tipo" y mostrarte más gente parecida. Tus likes sólo tienen un efecto: quitar de tu feed a quien ya has valorado, y crear un match si es mutuo.</li>
+  <li><strong>No existe una puntuación de atractivo ni un ELO.</strong> Nadie está clasificado en ligas, ni se emparejan perfiles "del mismo nivel".</li>
+  <li><strong>No predecimos la reciprocidad.</strong> No calculamos la probabilidad de que tú le gustes a alguien para decidir si te lo mostramos.</li>
+  <li><strong>No te penaliza dar muchos likes</strong> ni deja de mostrarte por ser poco selectivo. Sí existe un límite diario de likes en las cuentas gratuitas, pero es un límite, no un castigo al posicionamiento.</li>
+  <li><strong>No hay "shadowban" silencioso.</strong> Cuando limitamos una cuenta es por una infracción concreta de las <a href="/normas">normas</a>, y se comunica.</li>
+  <li><strong>No se venden tus datos</strong> ni se usan para publicidad ajena al servicio: el detalle está en la <a href="/privacidad">Política de privacidad</a>.</li>
+</ul>
+<p>¿Por qué renunciar a un sistema de aprendizaje? Porque un orden simple es un orden que puedes entender, predecir y discutir. Preferimos que sepas exactamente por qué ves lo que ves. Cuando cambiemos el sistema, esta página lo dirá.</p>
+
+<h2>Qué puedes hacer con esta información</h2>
+<ul>
+  <li><strong>Rellena los campos que actúan como coincidencia.</strong> Intereses y los cinco desplegables de estilo de vida son los que deciden si sales en las búsquedas filtradas de otras personas.</li>
+  <li><strong>Verifica tu cuenta.</strong> Es el único factor de orden que depende sólo de ti y es permanente.</li>
+  <li><strong>Coincide en el tiempo.</strong> Como "conectado" pesa más que "verificado", entrar cuando tu público está despierto (tardes y noches, sobre todo domingo) te pone por delante más que cualquier otra cosa gratuita.</li>
+  <li><strong>Usa el Boost cuando ya tengas el perfil terminado.</strong> Impulsar un perfil con una sola foto y sin bio es gastar minutos de escaparate en algo que no está listo.</li>
+  <li><strong>Revisa tus propios filtros si el feed se te queda corto.</strong> Un radio pequeño combinado con tres filtros de estilo de vida puede reducir a casi nada el conjunto de personas elegibles. Ampliar un solo filtro suele devolver decenas de perfiles.</li>
 </ul>
 
-<h2>Cómo mejorar tus recomendaciones</h2>
-<ul>
-  <li><strong>Completa el perfil al máximo.</strong> Cuanta más información das, mejor puede afinar el sistema.</li>
-  <li><strong>Sé activo, pero con criterio.</strong> Dar like a todo no ayuda: el sistema aprende mejor cuando eres selectivo.</li>
-  <li><strong>Verifica tu cuenta.</strong> Los perfiles verificados ganan visibilidad y confianza.</li>
-  <li><strong>Mantén tus fotos y tu bio actualizadas.</strong> Un perfil fresco recibe más interacción.</li>
-</ul>
+<h2>La consecuencia menos intuitiva</h2>
+<p>Como todo perfil que valoras sale de tu feed <strong>para siempre</strong>, hacer swipe a gran velocidad no "entrena" nada: sencillamente agota tu propio conjunto de personas disponibles. Si un día te dice que no hay más perfiles, no es un fallo ni un castigo. Es que has valorado a todo el mundo que cumplía tus filtros. La solución es ampliar filtros o esperar a que haya registros nuevos en tu zona, no seguir insistiendo.</p>
 
-<h2>Lo que NO hacemos</h2>
-<p>No vendemos tus datos ni usamos tu información personal para fines publicitarios ajenos al servicio. El objetivo del algoritmo es uno solo: que encuentres conexiones con sentido. Puedes leer el detalle en nuestra <a href="/privacidad">Política de privacidad</a>.</p>
+<h2>Decisiones automatizadas y derecho a revisión</h2>
+<p>El orden del feed no es una decisión sobre ti que afecte a tus derechos. Otras cosas sí lo son: la verificación biométrica del KYC y la moderación automática de contenido pueden restringir una cuenta. En esos casos tienes derecho a solicitar <strong>revisión humana</strong>, expresar tu punto de vista e impugnar la decisión (art. 22 del RGPD) escribiendo a seguridad@citasaura.es. En el proceso de verificación, además, dispones automáticamente de hasta dos revisiones manuales.</p>
 
-<h2>La actividad importa, la obsesión no</h2>
-<p>Usar la app con regularidad ayuda a que tus recomendaciones estén al día, pero no hace falta vivir enganchado. Unas sesiones de calidad por semana, con likes pensados y conversaciones reales, funcionan mucho mejor que horas de swipe automático.</p>
-
-<p>¿Quieres ver a quién te recomienda hoy? <a href="/">Entra en Aura</a>.</p>`,
+<p>¿Quieres verlo funcionando? <a href="/">Entra en Aura</a>, completa los campos de estilo de vida y compara tu feed antes y después.</p>`,
   },
   {
     slug: "ideas-para-una-primera-cita",
-    title: "20 ideas para una primera cita que no sea un café aburrido",
+    title: "20 ideas para una primera cita, con coste, duración y para quién funciona",
     date: "2026-08-20",
-    excerpt: "Planes originales, económicos y seguros para romper el hielo en persona. Ideas para cada estación y tipo de persona.",
+    updated: "2026-09-09",
+    excerpt: "Veinte planes con lo que cuestan, cuánto duran y qué riesgo tiene cada uno. Más cómo proponerlos, cómo alargarlos si va bien y cómo terminar con elegancia si no.",
     minutes: 7,
     body: `
-<p>Habéis conectado en el chat, hay buena sintonía y toca dar el salto al mundo real. Pero "¿un café?" se ha convertido en el plan por defecto de tanta gente que ya sabe a poco. La primera cita no tiene por qué ser una entrevista de trabajo con cafeína: el plan adecuado relaja el ambiente, da tema de conversación y os enseña cómo sois de verdad cuando salís de la pantalla.</p>
+<p>Habéis conectado en el chat, hay buena sintonía y toca dar el salto al mundo real. El problema del "¿un café?" no es que sea aburrido: es que se parece demasiado a una entrevista de trabajo. Dos personas sentadas frente a frente, sin nada que hacer con las manos, obligadas a producir conversación durante una hora. Si hay química de sobra, funciona. Si hay nervios, es el peor formato posible.</p>
+<p>Un buen plan de primera cita hace tres cosas por vosotros: da algo que mirar y comentar, permite silencios sin que resulten incómodos y tiene un final natural.</p>
 
-<h2>Qué hace que un plan de primera cita funcione</h2>
-<p>Antes de la lista, tres principios que convierten cualquier idea en un buen plan:</p>
+<h2>Los cinco criterios de un buen primer plan</h2>
 <ul>
-  <li><strong>Que permita hablar.</strong> Un concierto a todo volumen mata la conversación. Busca algo con pausas.</li>
-  <li><strong>Que tenga una "vía de escape" natural.</strong> Un plan con final claro (un paseo, una exposición) evita el compromiso de una cena de tres horas si no hay química.</li>
-  <li><strong>Que sea en un lugar público y accesible</strong> para ambos, sin que nadie tenga que cruzar media ciudad.</li>
+  <li><strong>Que permita hablar.</strong> Un concierto a todo volumen o un cine son planes de tercera cita: en una primera, os impiden conoceros.</li>
+  <li><strong>Que tenga una salida natural.</strong> Un plan con final claro —un paseo, una exposición, una caña— evita el compromiso de una cena de tres horas cuando ya sabéis, a los veinte minutos, que no hay nada.</li>
+  <li><strong>Que dé algo que hacer.</strong> Tener las manos ocupadas (caminar, mirar, jugar, catar) baja la tensión a la mitad.</li>
+  <li><strong>Que sea público y accesible para los dos.</strong> Ni el barrio de uno solo, ni un sitio aislado. Y comprobad la accesibilidad si alguno la necesita: preguntarlo antes evita un momento incómodo.</li>
+  <li><strong>Que sea proporcionado.</strong> Un plan carísimo el primer día crea una deuda emocional que nadie ha pedido.</li>
 </ul>
 
 <h2>Planes de día</h2>
-<ul>
-  <li><strong>Un mercado gastronómico:</strong> picáis de aquí y de allá, hay movimiento y siempre surge conversación sobre qué probar.</li>
-  <li><strong>Una exposición o museo pequeño:</strong> el arte da pie a opiniones y os movéis mientras habláis, sin la tensión del cara a cara fijo.</li>
-  <li><strong>Un paseo con café para llevar:</strong> el clásico café, pero andando. Menos rígido y podéis alargarlo o cortarlo con naturalidad.</li>
-  <li><strong>Un rastro o mercadillo:</strong> curiosear objetos raros es un generador infinito de anécdotas.</li>
-  <li><strong>Alquilar bicis</strong> y recorrer un parque grande o el paseo marítimo.</li>
-</ul>
+<ol>
+  <li><strong>Mercado gastronómico.</strong> 10-20 € · 1-2 h. Picáis de varios sitios, hay movimiento y el ruido de fondo tapa los silencios. Ideal si os gusta comer.</li>
+  <li><strong>Paseo con café para llevar.</strong> 3-6 € · 45-90 min. El plan más infalible y más barato: caminar elimina el cara a cara fijo, y se alarga o se corta sin drama.</li>
+  <li><strong>Exposición o museo pequeño.</strong> 0-12 € · 1 h. Elegid uno pequeño: los grandes agotan y obligan a "terminarlos". Las opiniones sobre lo que se ve son un tema gratis.</li>
+  <li><strong>Rastro o mercadillo.</strong> 0 € · 1 h. Curiosear objetos raros es una máquina de anécdotas. Reto opcional: cada uno elige el regalo más absurdo para el otro por menos de 3 €.</li>
+  <li><strong>Bicis por el parque o el paseo marítimo.</strong> 5-15 € · 1-2 h. Comprobad antes que ambos vais cómodos en bici; si no, se convierte en un plan incómodo.</li>
+  <li><strong>Vivero o jardín botánico.</strong> 0-8 € · 1 h. Tranquilo, bonito, con sombra y con conversación fácil. Muy buen plan si alguno es introvertido.</li>
+  <li><strong>Refugio de animales.</strong> 0 € · 1 h. Pasear perros que necesitan salir. Con perfiles que tienen mascota es casi trampa: funciona siempre.</li>
+</ol>
 
-<h2>Planes de tarde-noche</h2>
-<ul>
-  <li><strong>Una cata:</strong> vino, cerveza artesana o quesos. Hay una actividad guiada que rompe el hielo por vosotros.</li>
-  <li><strong>Juegos de mesa en un bar temático:</strong> competir un poco desata risas y quita presión.</li>
-  <li><strong>Tapas de ruta:</strong> un bar por plato en vez de una cena larga. Si va bien, seguís; si no, tenéis salida.</li>
-  <li><strong>Un espectáculo de monólogos:</strong> reír juntos crea complicidad casi al instante.</li>
-  <li><strong>Mirar las estrellas</strong> en un mirador con una manta y algo de picar (con buena cobertura y sitio conocido).</li>
-</ul>
+<h2>Planes de tarde y noche</h2>
+<ol start="8">
+  <li><strong>Cata guiada</strong> de vino, cerveza artesana o quesos. 15-30 € · 1,5 h. Hay alguien que dirige la conversación por vosotros; perfecto si os pone nerviosos el silencio.</li>
+  <li><strong>Ruta de tapas, un bar por plato.</strong> 15-25 € · 1-3 h. Modular: si va bien, seguís al siguiente bar; si no, se acaba en el primero con toda naturalidad.</li>
+  <li><strong>Juegos de mesa en un bar de juegos.</strong> 5-15 € · 1,5 h. El punto competitivo relaja y revela mucho de cada uno. Evitad juegos de tres horas de reglas.</li>
+  <li><strong>Monólogos o micro abierto.</strong> 8-15 € · 1,5 h. Reír juntos crea complicidad muy rápido, y en los descansos hay tema.</li>
+  <li><strong>Mirador al atardecer</strong> con algo de picar. 5 € · 1 h. Barato y bonito, con dos condiciones: sitio conocido, con gente y con cobertura.</li>
+  <li><strong>Concierto pequeño de jazz o acústico.</strong> 10-20 € · 1,5 h. La excepción a la regla del ruido: el volumen permite hablar entre canciones.</li>
+  <li><strong>Cena, pero corta y en barra.</strong> 20-35 € · 1 h. Si os apetece cenar, la barra es mejor que la mesa: más informal y más fácil de terminar a tiempo.</li>
+</ol>
 
 <h2>Planes originales y económicos</h2>
+<ol start="15">
+  <li><strong>Una clase suelta</strong> de cerámica, cocina, cóctel o baile. 20-40 € · 2 h. Aprender algo torpemente juntos rompe el hielo mejor que cualquier conversación.</li>
+  <li><strong>Minigolf o bolos.</strong> 8-15 € · 1 h. La torpeza compartida es un igualador social imbatible.</li>
+  <li><strong>Patinaje sobre hielo.</strong> 10-15 € · 1 h. Mismo efecto, con la excusa natural de darse la mano.</li>
+  <li><strong>Librería y café después.</strong> 5 € · 1,5 h. Cada uno elige un libro para el otro y lo defiende. Dice más de una persona que veinte preguntas.</li>
+  <li><strong>Picnic con lista de música compartida.</strong> 10 € · 1,5 h. Preparad la lista entre los dos en el chat antes de veros: la cita empieza antes de la cita.</li>
+  <li><strong>Karaoke privado.</strong> 10-20 € · 1 h. Sólo si a los dos os apetece hacer el ridículo; forzado, es un castigo.</li>
+</ol>
+
+<h2>Cómo proponerlo (con frases)</h2>
+<p>Una propuesta cerrada recibe muchos más síes que una abierta. Compara "a ver si quedamos algún día" con estas tres:</p>
 <ul>
-  <li>Una clase suelta de algo: cerámica, cocina, baile. Aprender juntos une.</li>
-  <li>Un karaoke privado, si os va la marcha.</li>
-  <li>Una tarde de librería y luego comentar lo que cada uno ha "fichado".</li>
-  <li>Patinaje sobre hielo o minigolf: el punto competitivo y torpe rebaja la tensión.</li>
-  <li>Un picnic en un parque con lista de música compartida.</li>
+  <li>"Hay un mercado de segunda mano el sábado por la mañana en el centro. ¿Te apetece ir a ver qué desastres encontramos?"</li>
+  <li>"El jueves acabo a las siete. ¿Un paseo con café por el río y si va bien alargamos a una caña?"</li>
+  <li>"Cata de quesos el viernes, 18 €, dura hora y media. Si no te va el queso, dime y busco otra cosa."</li>
 </ul>
+<p>Tres cosas hacen que funcionen: <strong>día concreto</strong>, <strong>duración implícita</strong> y <strong>salida fácil</strong> para decir no sin quedar mal.</p>
 
-<h2>Seguridad primero</h2>
-<p>Elijas el plan que elijas, recuerda lo básico: <strong>lugar público, transporte propio y avisar a alguien de confianza</strong> de dónde vas. Lo desarrollamos en nuestra guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a>. Confía en tu instinto: si algo no te encaja, no pasa nada por acortar la cita.</p>
+<h2>Seguridad, en una línea</h2>
+<p>Elijas el plan que elijas: <strong>lugar público, vas y vuelves por tus medios, y alguien de confianza sabe dónde estás y a qué hora vuelves.</strong> Compartir la ubicación en tiempo real con esa persona cuesta diez segundos. Está desarrollado, con protocolo y teléfonos oficiales, en la guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a>. Y si algo no te encaja, puedes irte en cualquier momento sin dar explicaciones.</p>
 
-<h2>Y si no hay química, ¿qué?</h2>
-<p>No todas las primeras citas terminan en segunda, y está bien. Un plan corto y ligero hace que, incluso sin chispa, la experiencia sea agradable y sin incomodidad. Sé honesto y amable: un mensaje sincero después vale más que desaparecer.</p>
+<h2>Cómo alargarlo si va bien</h2>
+<p>El mejor formato es <strong>un plan corto con una segunda parte opcional</strong> preparada mentalmente: el paseo que puede acabar en caña, el mercado que puede seguir en terraza. Así no hay que decidir nada por adelantado y el "¿te apetece seguir?" surge solo. Regla práctica: la primera cita ideal se termina cuando todavía apetece más.</p>
 
-<p>¿Ya tienes con quién quedar? <a href="/">Abre Aura</a> y propón el plan. Y si aún no, empieza a conocer gente afín a ti hoy.</p>`,
+<h2>Y si no hay química</h2>
+<p>No todas las primeras citas llevan a una segunda, y no es un fracaso: es información, conseguida en una hora. Dos cosas que conviene hacer bien:</p>
+<ul>
+  <li><strong>Terminar con educación.</strong> "Lo he pasado bien, gracias por el rato" y cada uno a su casa. No hace falta prometer una segunda cita que no va a existir.</li>
+  <li><strong>Decirlo después, si te lo preguntan o si hubo suficiente confianza.</strong> Un mensaje breve y amable —"me caes bien, pero no he sentido esa chispa; espero que encuentres a alguien genial"— vale mil veces más que desaparecer sin decir nada. Cuesta treinta segundos y evita que la otra persona pase una semana revisando el móvil.</li>
+</ul>
+<p>Si sí hubo química, la parte difícil no es la segunda cita: es distinguir el subidón inicial de una conexión con recorrido. De eso hablamos en la guía sobre <a href="/guias/senales-de-que-hay-conexion-real">señales de que hay conexión real</a>.</p>
+
+<p>¿Ya tienes con quién quedar? <a href="/">Abre Aura</a>, elige un plan de esta lista y propónlo con día y hora.</p>`,
   },
   {
     slug: "senales-de-que-hay-conexion-real",
     title: "Señales de que hay conexión real (y no solo entusiasmo del principio)",
     date: "2026-08-28",
-    excerpt: "Cómo distinguir una atracción pasajera de una conexión con futuro. Señales verdes, dudas frecuentes y qué observar en las primeras semanas.",
-    minutes: 6,
+    updated: "2026-09-09",
+    excerpt: "Ocho señales que se comprueban mirando conductas, no sensaciones; cómo distinguir ilusión de ansiedad; las cuatro conversaciones que ahorran meses; y qué se puede ver a las dos semanas, a las seis y a los tres meses.",
+    minutes: 7,
     body: `
-<p>Las primeras semanas conociendo a alguien son una montaña rusa de mensajes, mariposas y sobreanálisis. Pero, ¿cómo saber si lo que sientes es una conexión real o solo el subidón de la novedad? No hay una fórmula mágica, pero sí señales que, con el tiempo, distinguen una atracción pasajera de algo con recorrido.</p>
+<p>Las primeras semanas conociendo a alguien tienen un problema de método: intentas evaluar algo desde dentro, con el juicio alterado justo por lo que quieres medir. De ahí que casi todos hayamos jurado alguna vez que aquello era distinto, y a las seis semanas no quedara nada.</p>
+<p>Este texto propone una forma más fiable de mirarlo: <strong>fijarse en conductas observables, no en sensaciones</strong>. Las sensaciones de la semana dos no distinguen entre una gran conexión y una buena racha de mensajes. Las conductas, sí.</p>
 
-<h2>Señales verdes de conexión real</h2>
+<h2>Por qué las primeras semanas engañan</h2>
 <ul>
-  <li><strong>Las conversaciones fluyen sin esfuerzo.</strong> No tienes que "preparar" temas: surgen solos, os vais por las ramas y perdéis la noción del tiempo.</li>
-  <li><strong>Hay curiosidad genuina.</strong> La otra persona pregunta por tu día, recuerda detalles que le contaste y vuelve sobre ellos.</li>
-  <li><strong>Te sientes tú mismo.</strong> No actúas ni mides cada palabra por miedo a decepcionar. La comodidad es una gran señal.</li>
-  <li><strong>Los planes se concretan.</strong> Hay ganas reales de veros, no solo un "a ver si quedamos" eterno que nunca cristaliza.</li>
-  <li><strong>Respeta tus tiempos y tus "no".</strong> Una conexión sana no presiona; entiende tu ritmo.</li>
+  <li><strong>La novedad amplifica todo.</strong> Cualquier detalle nuevo sobre alguien produce un pequeño golpe de interés; con el tiempo, esa fuente se agota, y lo que queda es lo que había realmente.</li>
+  <li><strong>Los mensajes funcionan con premio intermitente.</strong> No saber cuándo llegará la respuesta hace que revisar el móvil se convierta en un hábito. Eso se siente como enamoramiento, pero es en gran parte el mecanismo del móvil, no la persona.</li>
+  <li><strong>Rellenas los huecos.</strong> Con poca información, tu cabeza completa el resto con la mejor versión posible. Al principio no estás conociendo a alguien: estás conociendo a alguien más tu imaginación.</li>
+</ul>
+<p>Nada de esto es malo: es la puerta de entrada. Sólo hay que saber que la información fiable llega después.</p>
+
+<h2>Ocho señales verdes, con su prueba</h2>
+<p>Cada señal viene con una comprobación concreta, para no depender de la intuición:</p>
+<ol>
+  <li><strong>La conversación se sostiene sola.</strong><br><em>Prueba:</em> ¿has tenido que "preparar" temas antes de veros? Si os vais por las ramas y perdéis la noción del tiempo, es real.</li>
+  <li><strong>Hay curiosidad concreta por ti.</strong><br><em>Prueba:</em> ¿recuerda cosas que contaste y vuelve sobre ellas sin que las repitas? Preguntar por el resultado de una entrevista que mencionaste hace diez días vale más que cien mensajes de buenos días.</li>
+  <li><strong>Los planes se convierten en fechas.</strong><br><em>Prueba:</em> ¿en las dos últimas semanas ha habido al menos una propuesta con día y hora? La diferencia entre interés e ilusión es el calendario.</li>
+  <li><strong>La reciprocidad está repartida.</strong><br><em>Prueba:</em> mira quién ha iniciado las tres últimas conversaciones y quién ha propuesto los dos últimos planes. Si en las dos listas sale siempre tu nombre, tienes un dato.</li>
+  <li><strong>Puedes ser tú mismo.</strong><br><em>Prueba:</em> ¿has dicho ya alguna opinión impopular tuya, o has mostrado un día malo? Si todo va bien porque estás editando tu versión, no sabes aún si encajáis.</li>
+  <li><strong>Tus "no" se aceptan sin coste.</strong><br><em>Prueba:</em> la última vez que dijiste que no podías o no te apetecía, ¿hubo enfado, silencio castigador o insistencia? La respuesta a un no es la información más honesta que da una persona.</li>
+  <li><strong>Se comporta igual contigo delante de otros.</strong><br><em>Prueba:</em> cómo trata al camarero, y si su trato hacia ti cambia cuando hay público.</li>
+  <li><strong>Después de veros te quedas tranquilo, no en alerta.</strong><br><em>Prueba:</em> la sensación al volver a casa. La calma es una señal muy infravalorada; la ansiedad no es intensidad, es incertidumbre.</li>
+</ol>
+
+<h2>Seis señales de que quizá es sólo novedad</h2>
+<ul>
+  <li><strong>Intensidad altísima que se apaga</strong> en cuanto hay que sostener algo estable o aparece la primera dificultad menor.</li>
+  <li><strong>Conectáis en un solo plano</strong> —lo físico, o el chiste constante— y las conversaciones con algo de fondo nunca arrancan.</li>
+  <li><strong>Ambigüedad sostenida</strong>: esquiva hablar de qué busca, cada vez que sale el tema aparece una broma.</li>
+  <li><strong>Sólo existe a ciertas horas.</strong> Alguien que aparece de madrugada y desaparece de día está gestionando un hueco, no una relación.</li>
+  <li><strong>Habla mucho y pregunta poco.</strong> Cuenta cuántas preguntas te ha hecho esta semana.</li>
+  <li><strong>Sientes más angustia que ganas.</strong> Si revisar el móvil te encoge el estómago, el problema no es la incertidumbre: ya te está costando salud.</li>
 </ul>
 
-<h2>Señales de que quizá es solo entusiasmo pasajero</h2>
+<h2>Ilusión frente a ansiedad: cómo distinguirlas</h2>
+<p>Se parecen por dentro y son cosas distintas. Cuatro preguntas que las separan:</p>
 <ul>
-  <li>La intensidad es altísima al principio y se apaga en cuanto hay que mantener algo estable.</li>
-  <li>Solo conectáis en un plano (por ejemplo, físico) y las conversaciones "de verdad" no arrancan.</li>
-  <li>Sientes ansiedad más que ilusión: revisas el móvil con angustia, interpretas cada silencio.</li>
-  <li>La otra persona evita hablar de qué busca o mantiene todo en la ambigüedad.</li>
+  <li>¿Puedes pasar un día sin contacto y estar bien?</li>
+  <li>¿Sigues yendo a tus planes, tu deporte y tus cenas con amigos?</li>
+  <li>¿Cuando responde tarde, tu primera hipótesis es "está ocupado" o "he hecho algo mal"?</li>
+  <li>¿Te ilusiona la persona o te ilusiona que te elija?</li>
 </ul>
+<p>Si tres de las cuatro respuestas apuntan a la segunda opción, lo que hay que atender no es la conexión: es la incertidumbre. Y eso se arregla hablando, no esperando.</p>
 
-<h2>El factor tiempo</h2>
-<p>El enamoramiento inicial —esa fase de euforia— tiene una explicación química y, por diseño, no dura para siempre. Eso no es malo: es la puerta de entrada. La conexión real se demuestra cuando esa intensidad baja y aun así sigues queriendo ver a la persona, hablar con ella y construir algo. Dale semanas, no días, antes de sacar conclusiones.</p>
+<h2>Las cuatro conversaciones que ahorran meses</h2>
+<p>La mayor fuente de sufrimiento de las primeras semanas es intentar leer la mente del otro analizando emojis. Estas cuatro conversaciones no asustan a quien encaja contigo; sólo asustan a quien quería ambigüedad:</p>
+<ol>
+  <li><strong>Qué buscáis.</strong> "Yo estoy conociendo gente sin prisa, pero buscando algo que vaya a alguna parte. ¿Tú cómo lo llevas?" — dicho pronto, con naturalidad, cuando ya hay algo de confianza.</li>
+  <li><strong>El ritmo.</strong> Hay gente que necesita verse tres veces por semana y gente que una. Ninguno de los dos ritmos está mal; incompatibles sí pueden ser.</li>
+  <li><strong>La exclusividad.</strong> No hay que pedirla el primer día, pero conviene saber si estáis viendo a otras personas antes de que un supuesto no dicho se rompa.</li>
+  <li><strong>Cómo se dice que algo no va.</strong> Acordar pronto que os lo diréis en lugar de desaparecer parece raro, y luego resulta ser el mayor acto de respeto de la relación.</li>
+</ol>
 
-<h2>Habla las cosas, no las adivines</h2>
-<p>La mayor fuente de sufrimiento en las primeras semanas es intentar leer la mente del otro. En lugar de analizar cada emoji, pregunta. Una conversación honesta sobre qué buscáis cada uno ahorra semanas de dudas. Si te da miedo "asustar" a la otra persona con esa charla, ten en cuenta que quien encaja contigo agradecerá la claridad.</p>
+<h2>Qué se puede ver, y cuándo</h2>
+<ul>
+  <li><strong>Semana 2:</strong> si hay conversación, curiosidad y ganas de verse. Casi nada más. Aquí es demasiado pronto para conclusiones.</li>
+  <li><strong>Semana 6:</strong> ya ha bajado la novedad. Se empieza a ver si hay tema más allá del cortejo, cómo se gestiona el primer desacuerdo y si los planes se mantienen sin el impulso inicial.</li>
+  <li><strong>Mes 3:</strong> aparece lo importante: cómo trata tus límites, cómo encaja con tu vida (amigos, familia, trabajo) y si en un día malo suma o resta. Es a partir de aquí cuando se puede hablar de conexión real con algún fundamento.</li>
+</ul>
+<p>Dale semanas, no días. Y no confundas velocidad con profundidad: alguien que a los cinco días te describe vuestro futuro no te conoce todavía, está enamorado de una idea.</p>
+
+<h2>Lo que no es una señal de alarma</h2>
+<p>Hay conductas inocuas que la gente interpreta como desinterés y que provocan mucho sufrimiento inútil:</p>
+<ul>
+  <li>Escribir poco, sin más. Hay gente a la que el chat le resulta ajeno y en persona está entregada.</li>
+  <li>No usar emojis, o escribir con puntos y comas.</li>
+  <li>Tardar unas horas en responder, si luego hay conversación de verdad.</li>
+  <li>Necesitar tiempo a solas o no querer ver a tus amigos la segunda semana.</li>
+</ul>
+<p>El criterio útil no es la velocidad ni la forma: es si hay coherencia entre lo que dice y lo que hace.</p>
+
+<h2>Lo que sí requiere actuar</h2>
+<p>Hay una diferencia entre "esto no encaja" y "esto no es sano". Si aparece control (qué te pones, con quién hablas), celos presentados como amor, presión para enviar imágenes, culpabilización cuando pones un límite, aislamiento de tus amigos o cualquier petición de dinero, no estamos hablando de compatibilidad. La guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a> explica cómo reconocerlo y qué hacer, incluidos los teléfonos oficiales a los que llamar.</p>
 
 <h2>Cuídate en el proceso</h2>
-<p>Ilusionarte está bien, pero no pongas tu bienestar entero en manos de alguien a quien acabas de conocer. Mantén tu vida, tus amigos y tus rutinas. Una conexión sana suma a tu vida; no debería vaciarla. Y si detectas señales de alarma o manipulación, nuestra guía de <a href="/guias/seguridad-en-citas-online">seguridad en citas online</a> te ayuda a reconocerlas.</p>
+<p>Ilusionarse está bien; poner todo tu bienestar en manos de alguien a quien acabas de conocer, no. Mantén tus rutinas, tus amigos y tus planes: además de protegerte, hace que sigas siendo la persona interesante de la que se enamoró alguien. Una conexión sana <strong>suma</strong> a tu vida; si la está vaciando, eso ya es información.</p>
 
-<p>La buena noticia: cuando la conexión es real, no necesitas forzar nada ni convencer a nadie. Simplemente encaja. <a href="/">Abre Aura</a> y date la oportunidad de encontrarla.</p>`,
+<p>Y la buena noticia de todo esto: cuando la conexión es real, no hay que forzarla ni convencer a nadie. Se nota en que las cosas son fáciles. <a href="/">Abre Aura</a> y dale la oportunidad de aparecer.</p>`,
   },
 ];
 
@@ -636,9 +985,18 @@ const GUIDES = [
 function pageHub() {
   const feats = [
     { ic: "✅", h: "Perfiles verificados", p: "Verificación con documento y selfie. Los perfiles reales llevan distintivo azul, para que sepas con quién hablas." },
-    { ic: "🔒", h: "Chat privado y seguro", p: "Conversaciones protegidas y filtros automáticos de contenido. Tu privacidad es lo primero." },
+    // V925 · Decía "filtros automáticos de contenido". No es cierto para el chat:
+    // la moderación con IA (moderatePhotoWithAI, server.js) sólo se invoca desde la
+    // subida de fotos "Ahora mismo" y desde el botón del panel; POST /api/my/messages
+    // inserta el mensaje sin analizarlo. Se cuenta lo que sí hay: match mutuo,
+    // puerta de verificación de edad (enforceKycGate) y denuncia/bloqueo.
+    { ic: "🔒", h: "Chat sólo si hay match", p: "El chat se abre cuando el interés es mutuo, y para escribir hay que haber verificado la edad. Puedes reportar o bloquear a cualquiera en cualquier momento." },
     { ic: "🌈", h: "Zona Hetero y LGTB", p: "Un espacio para todo el mundo. Cambia de zona cuando quieras desde los ajustes." },
-    { ic: "💫", h: "Matches con sentido", p: "Un sistema de recomendación que prioriza afinidad real y reciprocidad, no el volumen." },
+    // V925 · Decía "un sistema de recomendación que prioriza afinidad real y
+    // reciprocidad". Ese sistema no existe: el feed es filtros duros + un orden fijo
+    // (GET /api/discover). Se describe el orden de verdad, que además es un argumento
+    // mejor y comprobable. Explicado al detalle en la guía del algoritmo.
+    { ic: "💫", h: "Mandan tus filtros", p: "No hay puntuación de afinidad ni perfilado: quién aparece lo deciden tus filtros y el orden es siempre el mismo (Boost, conectados, verificados y el resto al azar)." },
     { ic: "🛡️", h: "Comunidad moderada", p: "Equipo antifraude, reportes revisados en menos de 24 h y normas claras para todos." },
     { ic: "🇪🇸", h: "Hecho en España", p: "Cumplimos el RGPD y la normativa española. Datos alojados en la Unión Europea." },
   ];
@@ -652,7 +1010,7 @@ function pageHub() {
   ).join("");
 
   const body = `
-    <p style="font-size:18px;color:var(--soft);max-width:640px">Aura es la app de citas donde importa quién eres de verdad. Nos centramos en conexiones auténticas: perfiles verificados, conversaciones seguras y un sistema que prioriza la afinidad real por encima del número de likes.</p>
+    <p style="font-size:18px;color:var(--soft);max-width:640px">Aura es la app de citas donde importa quién eres de verdad. Nos centramos en conexiones auténticas: perfiles verificados con documento, chat sólo cuando el interés es mutuo y un feed que decides tú con tus filtros, sin ningún algoritmo que te perfile. <a href="/guias/como-funciona-el-algoritmo-de-matches">Te contamos exactamente cómo se ordena</a>.</p>
     <p><a class="btn" href="/">Crear cuenta gratis</a></p>
 
     <h2>Por qué Aura</h2>
@@ -865,8 +1223,13 @@ function pageContact() {
 function pageComoFunciona() {
   const steps = [
     { n: "1", h: "Regístrate y verifica", p: "Crea tu cuenta con el correo, valida el código de 6 dígitos y supera la verificación de identidad. Así garantizamos que todos los perfiles son personas reales mayores de edad." },
-    { n: "2", h: "Completa tu perfil", p: "Sube al menos 3 o 4 fotos con buena luz, escribe una bio honesta y específica, e indica tus intereses y qué buscas. Cuanto más completo, mejores recomendaciones." },
-    { n: "3", h: "Explora y da like", p: "Descubre perfiles afines a ti. Da like a quien te interese; si no encaja, pasa al siguiente. El sistema aprende de tu actividad para afinar." },
+    // V925 · Decía "cuanto más completo, mejores recomendaciones" y "el sistema
+    // aprende de tu actividad para afinar". Lo segundo es falso (no hay aprendizaje
+    // en /api/discover) y lo primero estaba mal explicado: completar el perfil no
+    // mejora ninguna recomendación, evita que te DESCARTEN los filtros de los demás
+    // (intereses, mascotas, fumar, beber, estudios, ejercicio… excluyen el NULL).
+    { n: "2", h: "Completa tu perfil", p: "Sube al menos 3 o 4 fotos con buena luz, escribe una bio honesta y específica, e indica tus intereses y qué buscas. Cada campo que dejas vacío te deja fuera de las búsquedas de quien filtre por él." },
+    { n: "3", h: "Explora y da like", p: "Tus filtros deciden quién puede aparecer y el orden es siempre el mismo: Boost, conectados, verificados y el resto al azar. Nada aprende de tus likes." },
     { n: "4", h: "Haz match y chatea", p: "Cuando el interés es mutuo, se abre el chat. Rompe el hielo con un buen primer mensaje y, si hay sintonía, proponed una cita." },
   ];
   const body = `
@@ -875,7 +1238,7 @@ function pageComoFunciona() {
     <h2>Gratis vs. Premium</h2>
     <div class="card"><p>Puedes usar Aura gratis: crear tu perfil, explorar, hacer matches y chatear. La suscripción <b>Premium</b> añade extras como likes ilimitados, deshacer la última valoración y más visibilidad. Los precios exactos aparecen en la app y puedes cancelar cuando quieras. Consulta las <a href="/faq#pagos">preguntas sobre pagos</a>.</p></div>
     <h2>Seguridad desde el primer minuto</h2>
-    <div class="card"><p>Todos los perfiles pasan por <a href="/verificacion">verificación de identidad</a>, aplicamos filtros automáticos de contenido y puedes reportar o bloquear a cualquiera. Revisamos los reportes en menos de 24 horas. Lee también nuestros <a href="/guias/seguridad-en-citas-online">consejos de seguridad en citas online</a>.</p></div>
+    <div class="card"><p>Todos los perfiles pasan por <a href="/verificacion">verificación de identidad</a>, las fotos del estado «Ahora mismo» pasan un prefiltro automático y una revisión humana antes de que las vea nadie, y puedes reportar o bloquear a cualquiera. Revisamos los reportes en menos de 24 horas. Lee también nuestros <a href="/guias/seguridad-en-citas-online">consejos de seguridad en citas online</a>.</p></div>
     <div class="cta"><h2>¿Listo para empezar?</h2><p>Menos de dos minutos para crear tu perfil.</p><a class="btn" href="/">Crear cuenta</a></div>`;
   return layout({
     title: "Cómo funciona Aura",
@@ -885,7 +1248,7 @@ function pageComoFunciona() {
     h1: "Cómo funciona Aura",
     sub: "De crear tu perfil a tu primera cita, explicado paso a paso.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Cómo funciona", path: "/como-funciona" }],
-    // V924 · Sin anuncios: 1619 caracteres y promocional. Si algún día se
+    // V924 · Sin anuncios: 1497 de prosa y promocional. Si algún día se
     // convierte en una explicación de verdad, se le pone `ads: true` y la
     // medida de PROSA_MINIMA decidirá sola.
     bodyHtml: body,
@@ -933,7 +1296,7 @@ function pageGuide(slug) {
     : "";
   const body = `
     <article class="post">
-      <p class="meta">${esc(fmtDate(g.date))} · ${g.minutes} min de lectura</p>
+      <p class="meta">${esc(fmtDate(g.date))}${g.updated && g.updated !== g.date ? " · actualizado el " + esc(fmtDate(g.updated)) : ""} · ${g.minutes} min de lectura</p>
       ${g.body}
     </article>
     ${adUnit()}
@@ -955,7 +1318,9 @@ function pageGuide(slug) {
       headline: g.title,
       description: g.excerpt,
       datePublished: g.date,
-      dateModified: g.date,
+      // V925 · `updated` es la fecha de la última reescritura del cuerpo. Si no
+      // existe, dateModified vuelve a ser la de publicación (retrocompatible).
+      dateModified: g.updated || g.date,
       inLanguage: "es",
       mainEntityOfPage: BASE + "/guias/" + g.slug,
       author: { "@type": "Organization", name: SITE },
@@ -977,7 +1342,7 @@ function sitemapXml() {
     { loc: "/terminos", pri: "0.4", freq: "yearly" },
     { loc: "/privacidad", pri: "0.4", freq: "yearly" },
   ];
-  GUIDES.forEach((g) => urls.push({ loc: "/guias/" + g.slug, pri: "0.7", freq: "monthly", lastmod: g.date }));
+  GUIDES.forEach((g) => urls.push({ loc: "/guias/" + g.slug, pri: "0.7", freq: "monthly", lastmod: g.updated || g.date }));
   const body = urls
     .map((u) => `  <url><loc>${BASE}${u.loc}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : `<lastmod>${TODAY}</lastmod>`}<changefreq>${u.freq}</changefreq><priority>${u.pri}</priority></url>`)
     .join("\n");

@@ -17142,7 +17142,11 @@ function screenInfoFaq(root) {
     { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Cómo uso los filtros de descubrimiento?", a: "En Perfil → Filtros de descubrimiento ajustas edad, distancia, altura, peso y más. Cada filtro numérico tiene un deslizador cómodo y, si prefieres, también puedes escribir el valor exacto a mano." },
     { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Puedo cambiar las unidades (km/millas, cm/pies, kg/libras)?", a: "Sí. En cada filtro de altura, peso o distancia puedes alternar las unidades. Aura convierte el valor automáticamente para que compares con las unidades del país donde estás buscando." },
     { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "Ajusté un filtro pero no lo quiero, ¿cómo lo quito?", a: "Deja el deslizador en su rango completo (mínimo–máximo) o borra el valor manual: ese filtro dejará de aplicarse y volverás a ver todos los perfiles." },
-    { cat: "descubrir", sub: "💡 Recomendaciones", q: "¿Cómo mejora Aura los perfiles que me muestra?", a: "El algoritmo analiza tus preferencias, tus filtros y tu actividad para priorizar perfiles más afines. Cuanto más interactúas, mejor aprende qué te interesa." },
+    // V925 · Esta respuesta afirmaba que el algoritmo "aprende" de tu actividad.
+    // El feed real (GET /api/discover) es filtros duros + un orden fijo:
+    // boost activo → conectado → verificado → RAND(). No hay aprendizaje ni
+    // puntuación de afinidad. Corregida también en features_seo_pages.js (FAQ web).
+    { cat: "descubrir", sub: "💡 Recomendaciones", q: "¿Cómo mejora Aura los perfiles que me muestra?", a: "Tus filtros deciden quién puede aparecer (edad, ciudad, intereses, estilo de vida…) y el orden es siempre el mismo: primero quien tiene un Boost activo, después quien está conectado, después los perfiles verificados y el resto al azar. No hay ningún sistema que aprenda de tus likes. Para aparecer en más búsquedas, completa los campos de tu perfil y verifica la cuenta." },
 
     // ----- Matches y likes -----
     { cat: "matches", sub: "💫 Matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan «like» mutuamente. A partir de ese momento podéis chatear libremente." },
@@ -17701,10 +17705,19 @@ const TICKET_KB = [
   // matches
   { cat: "matches", q: "Ya no veo nuevos perfiles",                     a: "Puede que hayas alcanzado tu límite diario de likes o que los filtros sean muy estrictos. Amplía tu rango de edad y distancia en Yo → Filtros. Con Premium los likes son ilimitados." },
   { cat: "matches", q: "Deshacer un descarte por accidente",            a: "Con un plan de pago activo, pulsa el botón \"Volver\" (la flecha ↩ a la izquierda de la fila de acciones) para revertir tu último like o descarte y volver a ver ese perfil. Solo se puede deshacer la última acción; si ya teníais match y os habíais escrito, no se puede deshacer." },
-  { cat: "matches", q: "Cómo funciona el algoritmo",                    a: "Nuestro sistema prioriza afinidad, cercanía y actividad reciente. Cuanto más interactúas y más completo está tu perfil, mejores recomendaciones recibes." },
+  // V925 · Decía "prioriza afinidad, cercanía y actividad reciente" y que cuanto
+  // más interactúas mejores recomendaciones. Ninguna de las tres cosas es así: el
+  // feed (GET /api/discover) ordena por Boost → conectado → verificado → RAND(), la
+  // distancia sólo filtra (no ordena) y no hay aprendizaje. Misma corrección que en
+  // el otro FAQ de esta pantalla y en features_seo_pages.js.
+  { cat: "matches", q: "Cómo funciona el algoritmo",                    a: "Tus filtros deciden quién puede aparecer y el orden es siempre el mismo: primero quien tiene un Boost activo, después quien está conectado, después los perfiles verificados y el resto al azar. En Explorar la distancia sólo filtra: no adelanta a nadie (la excepción es \"Cerca de ti\", que sí ordena por proximidad cuando hay coordenadas). Y nada aprende de tus likes. Completar el perfil y verificar la cuenta es lo que te hace aparecer en más búsquedas." },
   // chats
   { cat: "chats",   q: "No me llegan notificaciones de mensajes",       a: "Revisa que las notificaciones estén activas en Yo → Notificaciones y también en los ajustes del sistema para Aura. En modo No molestar sólo llegan resúmenes." },
-  { cat: "chats",   q: "Enviar imágenes o audios",                      a: "Los usuarios verificados pueden enviar imágenes y audios cortos. Toca el icono \"+\" dentro del chat. Las imágenes pasan un filtro automático de seguridad." },
+  // V925 · Decía que las imágenes del chat "pasan un filtro automático de
+  // seguridad". No es cierto: moderatePhotoWithAI sólo se invoca al subir una foto
+  // del estado "Ahora mismo" y desde el panel; POST /api/my/messages guarda el
+  // media_url sin analizarlo. Se dice lo que sí ocurre: denuncia y revisión humana.
+  { cat: "chats",   q: "Enviar imágenes o audios",                      a: "Los usuarios verificados pueden enviar imágenes y audios cortos. Toca el icono \"+\" dentro del chat. Las imágenes del chat no pasan ningún filtro automático: si recibes algo inapropiado, denuncia la conversación y la revisa una persona en menos de 24 horas." },
   { cat: "chats",   q: "Un chat ha desaparecido",                       a: "Si el chat se ha perdido, es posible que la otra persona te haya desmatcheado, o que su cuenta esté suspendida. Los chats también se pueden archivar accidentalmente." },
   // billing
   { cat: "billing", q: "Cancelar mi suscripción Premium",               a: "Ve a Yo → Suscripción → Cancelar. Podrás usar Premium hasta el final del periodo pagado. Si compraste desde App Store o Google Play, cancela también desde la tienda." },
