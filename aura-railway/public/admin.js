@@ -700,6 +700,24 @@ async function openAdminProfile() {
   if (esDueno) {
     node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Cargo / rol"), roleInput ]));
     node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Email de acceso"), emailInput ]));
+    /* V927 · Este campo cerraba el panel para siempre con una errata: se guardaba
+       tal cual y el login deja de aceptar cualquier otro correo. El servidor ya
+       lo valida y pide la contraseña, pero conviene decirlo aquí, ANTES de
+       escribir, y no con un error después. */
+    node.appendChild(el("small", { class: "help", style: "display:block;margin:-6px 0 12px" },
+      "Es el correo con el que se entra a ESTE panel (no el de la app). Al cambiarlo se te pedirá "
+      + "tu contraseña actual: a partir de ese momento el correo anterior deja de servir."));
+    if (me.rescue_password_active) {
+      node.appendChild(el("div", { style: "background:rgba(220,38,38,.10);border:1px solid rgba(220,38,38,.35);border-radius:12px;padding:12px;margin:0 0 14px" }, [
+        el("strong", {}, "Hay una contraseña de rescate activa"),
+        el("p", { style: "margin:6px 0 0" },
+          "La variable ADMIN_RESCUE_PASSWORD del servidor abre este panel con permisos de "
+          + "superadministrador, aunque haya contraseña puesta. Pon ahora una contraseña nueva aquí "
+          + "abajo y, cuando compruebes que entras con ella, borra esa variable en el servidor."),
+        me.env_email ? el("p", { class: "muted", style: "margin:6px 0 0" },
+          "Correo de emergencia (variable ADMIN_EMAIL): " + me.env_email) : null,
+      ].filter(Boolean)));
+    }
   } else {
     /* Al equipo se le muestra su correo y su rango, pero como TEXTO, no como
        campos: son datos que necesita ver y que no puede cambiar. Un campo
@@ -775,7 +793,13 @@ async function openAdminProfile() {
       drawer.close();
     } catch (err) {
       const msg = err && err.data && err.data.error;
-      if (msg === "wrong_current_password") toast("Contraseña actual incorrecta");
+      /* V927 · Cuando el servidor manda un texto, se muestra ESE y no uno mío:
+         los dos casos nuevos (correo inválido y cambiar el correo sin la
+         contraseña) necesitan explicar qué hacer, y "Error al guardar" mandaba
+         al dueño a adivinar. */
+      const texto = err && err.data && err.data.message;
+      if (msg === "bad_email" || (msg === "wrong_current_password" && texto)) toast(texto || "No se ha podido guardar");
+      else if (msg === "wrong_current_password") toast("Contraseña actual incorrecta");
       else if (msg === "password_too_short") toast(`La nueva contraseña necesita ${minimo} caracteres o más`);
       else if (msg === "same_password") toast("La contraseña nueva tiene que ser distinta de la temporal");
       else if (msg === "staff_not_found") toast("Tu cuenta ya no está en el equipo. Habla con el administrador principal.");
@@ -815,6 +839,25 @@ function applyAdminUserUi(u) {
        el panel chocándose con errores sería una pequeña crueldad. */
     if (me && me.must_change_password) {
       setTimeout(() => { try { openAdminProfile(); } catch (e) {} }, 600);
+    }
+    /* V927 · Mientras exista la contraseña de rescate hay una llave maestra en
+       las variables de entorno del servidor. Se avisa arriba y en todas las
+       pantallas, no solo dentro de "Mi perfil": si el aviso estuviera únicamente
+       ahí, la variable se quedaría puesta para siempre sin que nadie lo note,
+       que es exactamente el problema que tiene una puerta de emergencia. */
+    if (me && me.rescue_password_active) {
+      const barra = document.createElement("div");
+      barra.id = "avisoRescate";
+      barra.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#7f1d1d;color:#fff;"
+        + "padding:10px 14px;font-size:13px;display:flex;gap:10px;align-items:center;justify-content:center;flex-wrap:wrap";
+      const txt = document.createElement("span");
+      txt.textContent = "Contraseña de rescate activa (ADMIN_RESCUE_PASSWORD): cualquiera que la tenga entra como superadministrador.";
+      const b = document.createElement("button");
+      b.textContent = "Poner una contraseña nueva";
+      b.style.cssText = "background:#fff;color:#7f1d1d;border:0;border-radius:8px;padding:6px 10px;font-weight:700;cursor:pointer";
+      b.addEventListener("click", () => { try { openAdminProfile(); } catch (e) {} });
+      barra.appendChild(txt); barra.appendChild(b);
+      document.body.appendChild(barra);
     }
   } catch {}
 })();

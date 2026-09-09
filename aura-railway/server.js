@@ -217,6 +217,43 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "manuguada19@gmail.com").toLower
 // sin conocerlo) → el login admin queda deshabilitado en vez de usar una
 // contraseña conocida. La contraseña conocida antigua queda revocada.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(24).toString("hex");
+
+/* ============================================================
+   V927 · CONTRASEÑA DE RESCATE DEL PANEL
+   ------------------------------------------------------------
+   Por qué existe: el panel se podía cerrar para siempre y no había manera de
+   volver a entrar. Dos formas de conseguirlo, las dos sin querer:
+
+     · "Mi perfil de administrador → Email de acceso" escribía `admin.email`
+       TAL CUAL, sin validar y sin pedir la contraseña (ver PUT /api/admin/me).
+       Una errata de una letra, o poner ahí el correo de la app en vez del del
+       panel, y desde ese momento el login solo acepta ese valor: el correo de
+       verdad deja de servir y no hay pantalla donde arreglarlo, porque para
+       llegar a ella hay que haber entrado.
+     · La contraseña que no se recuerda. `ADMIN_PASSWORD` de las variables de
+       entorno solo vale mientras la base de datos no tenga ninguna guardada
+       (ver comprobarPasswordAdmin), así que en cuanto se puso una desde el
+       panel esa salida de emergencia se cerró.
+
+   Cómo se rescata: se define ADMIN_RESCUE_PASSWORD en las variables de entorno
+   del servidor y con ella se entra SIEMPRE, incluso habiendo contraseña puesta,
+   y valiendo también el correo de ADMIN_EMAIL por si `admin.email` quedó
+   apuntando a un valor equivocado.
+
+   Por qué esto no es un agujero: quien puede escribir las variables de entorno
+   del servidor ya puede leer la base de datos, cambiar el código y desplegar.
+   No se le da ningún poder que no tuviera; se le da una puerta que no obliga a
+   tocar la base de datos a mano. Lo que sí se hace es que NO PASE
+   DESAPERCIBIDA: cada entrada por aquí queda anotada en el registro de
+   seguridad, y mientras la variable exista el panel lo avisa en pantalla para
+   que se ponga una contraseña nueva y se borre.
+
+   El mínimo de 8 caracteres es para que un valor de relleno ("1234", "x") no
+   se convierta en una contraseña de superadmin que funciona siempre.
+   ============================================================ */
+const ADMIN_RESCUE_PASSWORD = String(process.env.ADMIN_RESCUE_PASSWORD || "");
+function rescateActivo() { return ADMIN_RESCUE_PASSWORD.length >= 8; }
+
 const ADMIN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8h · valor por defecto
 /* V919 · El panel tenía un campo "Token (min)" con un 60 dentro que no hacía
    nada: nadie leía security.token_minutes, y la sesión duraba 8 horas fijas.
@@ -313,6 +350,17 @@ async function comprobarPasswordAdmin(intento) {
 
   // Último recurso: la variable de entorno. Nunca se guarda en la BD.
   if (!hash && !claro && igualSeguro(intento, ADMIN_PASSWORD)) return { ok: true, migrada: false };
+
+  /* V927 · Rescate. A diferencia del de arriba, este NO lleva la condición
+     `!hash && !claro`: vale aunque haya contraseña puesta, porque el caso que
+     tiene que resolver es exactamente ese (hay una y no se recuerda). Se
+     devuelve `rescate: true` para que quien llame pueda distinguirlo: el login
+     lo anota en el registro de seguridad, y el cambio de contraseña de "Mi
+     perfil" lo acepta como contraseña actual — si no, se entraría al panel sin
+     poder ponerse una nueva, que es quedarse a medio camino. */
+  if (rescateActivo() && igualSeguro(intento, ADMIN_RESCUE_PASSWORD)) {
+    return { ok: true, migrada: false, rescate: true };
+  }
   return { ok: false, migrada: false };
 }
 
@@ -760,7 +808,12 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
             } else if (data && (data.error === "locked" || data.error === "too_many_attempts")) {
               err.textContent = data.message || "Demasiados intentos. Espera unos minutos y vuelve a probar.";
             } else {
-              err.textContent = "Correo o contraseña incorrectos. Si te acaban de dar acceso, comprueba que quien te lo ha dado te haya puesto una contraseña.";
+              /* V927 · El texto solo hablaba del equipo ("comprueba que quien te
+                 lo ha dado te haya puesto una contraseña"), y al dueño le hacía
+                 mirar donde no era. El correo del panel es el de "Mi perfil de
+                 administrador", que NO es el mismo ajuste que el correo de
+                 acceso a la app. */
+              err.textContent = "Correo o contraseña incorrectos. Ojo: el correo del panel es el de tu perfil de administrador, que puede no ser el mismo con el que entras a la app. Si te acaban de dar acceso, puede que aún no te hayan puesto contraseña.";
             }
             btn.disabled = false; btn.textContent = "Entrar"; return;
           }
@@ -12413,18 +12466,35 @@ app.post("/api/admin/login", wrap(async (req, res) => {
   // datos todavía guarda la versión en claro, la cifra en este mismo inicio de
   // sesión y borra el claro. Los caminos antiguos siguen funcionando, así que
   // este cambio no puede dejar a nadie fuera.
-  const emailOk = emailNorm === activeEmail;
+  /* V927 · El correo de ADMIN_EMAIL también se acepta MIENTRAS haya contraseña
+     de rescate puesta. Esto es lo que salva el caso de `admin.email` mal
+     escrito: si el valor guardado ya no es un correo al que nadie tiene acceso,
+     por ahí no se entra jamás. Fuera de ese caso `porEnvDeRescate` es false y
+     el camino del dueño es exactamente el de antes. */
+  const porEnvDeRescate = rescateActivo() && emailNorm !== activeEmail && emailNorm === ADMIN_EMAIL;
+  const emailOk = emailNorm === activeEmail || porEnvDeRescate;
   if (emailOk) {
-    const passOk = (await comprobarPasswordAdmin(String(password))).ok;
-    if (!passOk) {
+    const pass = await comprobarPasswordAdmin(String(password));
+    /* Con el correo de la variable de entorno solo se entra con la contraseña de
+       RESCATE, no con la normal: si valiera la normal, cambiar `admin.email`
+       no habría cambiado nada y el correo antiguo seguiría abriendo el panel. */
+    if (!pass.ok || (porEnvDeRescate && !pass.rescate)) {
       recordLoginFail(emailNorm);
       return res.status(401).json({ error: "invalid_credentials" });
     }
     clearLoginFails(emailNorm);
     const token = await issueAdminToken(activeEmail, "superadmin", false);
-    await logActivity("admin", `Inicio de sesión de administrador (${activeEmail})`);
+    if (pass.rescate) {
+      await logActivity("security",
+        `ACCESO DE RESCATE al panel con ADMIN_RESCUE_PASSWORD (se escribió ${emailNorm}; ` +
+        `el correo de acceso guardado es ${activeEmail}; IP ${ip}). ` +
+        `Pon una contraseña nueva en Mi perfil y borra después la variable de entorno.`);
+    } else {
+      await logActivity("admin", `Inicio de sesión de administrador (${activeEmail})`);
+    }
     return res.json({ ok: true, token, email: activeEmail, role: "superadmin",
-                      must_change_password: false, expiresIn: ADMIN_TOKEN_TTL_MS });
+                      must_change_password: false, rescue: !!pass.rescate,
+                      expiresIn: ADMIN_TOKEN_TTL_MS });
   }
 
   /* ---- Equipo (tabla `staff`) ----
@@ -12527,6 +12597,12 @@ app.get("/api/admin/me", wrap(async (req, res) => {
     is_owner: true,
     must_change_password: false,
     override_email: getSetting("admin.email", "") || "",
+    /* V927 · Para que el panel avise mientras exista la contraseña de rescate.
+       Se manda solo al dueño y solo dice SÍ/NO: el valor no sale de aquí. */
+    rescue_password_active: rescateActivo(),
+    /* El correo con el que se entraría si `admin.email` quedara mal escrito.
+       Verlo en pantalla es lo que permite darse cuenta del error. */
+    env_email: ADMIN_EMAIL,
   });
 }));
 // Update admin profile (display name, role, avatar data-URL, override email/pass).
@@ -12594,18 +12670,54 @@ app.put("/api/admin/me", wrap(async (req, res) => {
       [k, String(v == null ? "" : v)]
     );
   };
-  // Password change requires the current one to be right
+  /* V927 · La contraseña actual se comprueba UNA sola vez y en un solo sitio.
+     Antes se comprobaba dentro del bloque de la contraseña; ahora hace falta
+     también para cambiar el correo de acceso, y llamar dos veces daría un fallo
+     tonto pero grave: el primer bloque reescribe el hash, así que la segunda
+     comprobación diría "contraseña actual incorrecta" con la contraseña buena
+     delante, y el guardado quedaría hecho a medias. */
+  let actualOk = null;
+  const actualValida = async () => {
+    if (actualOk === null) actualOk = (await comprobarPasswordAdmin(String(current_password || ""))).ok;
+    return actualOk;
+  };
+
+  /* ---- Validaciones ANTES de escribir nada ----
+     Que todo se valide primero es lo que evita el guardado a medias: sin esto,
+     un correo inválido detrás de una contraseña buena dejaba la contraseña ya
+     cambiada y devolvía un error, y el dueño se quedaba con una contraseña que
+     no sabía que tenía. */
+  const emailNuevo = email === undefined ? null : String(email || "").toLowerCase().trim();
+  const emailActual = (getSetting("admin.email", "") || "").toLowerCase();
+  const cambiaEmail = emailNuevo !== null && emailNuevo !== emailActual;
+
+  /* V927 · ESTO ERA UNA TRAMPA DE BLOQUEO, y es la causa más probable de un
+     panel que de pronto no deja entrar a nadie: `admin.email` se guardaba tal
+     cual llegara, sin comprobar que fuera un correo y sin pedir la contraseña.
+     Un dedo torpe en ese campo (o poner ahí el correo con el que se entra a la
+     APP, que es otro ajuste distinto) cerraba el panel para siempre, porque el
+     login solo acepta ese valor y la pantalla para corregirlo está dentro.
+     Ahora: tiene que parecer un correo, y hay que probar que eres tú. */
+  if (cambiaEmail && emailNuevo && !/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(emailNuevo)) {
+    return res.status(400).json({ error: "bad_email",
+      message: "Eso no parece un correo. Si se guardara, nadie podría entrar al panel." });
+  }
+  if (password && String(password).length < 6) {
+    return res.status(400).json({ error: "password_too_short" });
+  }
+  if ((password || cambiaEmail) && !(await actualValida())) {
+    return res.status(400).json({ error: "wrong_current_password",
+      message: cambiaEmail && !password
+        ? "Para cambiar el email de acceso hace falta tu contraseña actual: es la cerradura del panel."
+        : "Contraseña actual incorrecta." });
+  }
+
+  // ---- Escrituras ----
   if (password) {
     // V919 · Se valida la actual por el mismo camino que el login (hash, claro
     // heredado o variable de entorno) y la nueva se guarda YA CIFRADA. Se borra
     // además la fila en claro, que es la que dejaba la contraseña a la vista de
     // cualquiera que leyera la base de datos o una copia de los datos.
-    if (!(await comprobarPasswordAdmin(String(current_password || ""))).ok) {
-      return res.status(400).json({ error: "wrong_current_password" });
-    }
-    if (String(password).length < 6) {
-      return res.status(400).json({ error: "password_too_short" });
-    }
     await upsert("admin.password_hash", hashPassword(String(password)));
     await pool.execute("DELETE FROM settings WHERE k='admin.password_override'");
     await logActivity("security", `Contraseña del panel cambiada (${entry.email}). Se guarda cifrada con scrypt.`);
@@ -12613,7 +12725,15 @@ app.put("/api/admin/me", wrap(async (req, res) => {
   await upsert("admin.display_name", name);
   await upsert("admin.role", role);
   if (avatar !== undefined) await upsert("admin.avatar", avatar);
-  if (email !== undefined) await upsert("admin.email", String(email || "").toLowerCase());
+  if (cambiaEmail) {
+    await upsert("admin.email", emailNuevo);
+    /* Se anota en seguridad, no en "admin": cambiar esto es cambiar quién puede
+       entrar. Si algún día vuelve a pasar, en el registro estará el antes y el
+       después, que es lo que hoy no hay manera de saber. */
+    await logActivity("security",
+      `Email de acceso al panel cambiado: ${emailActual || "(ninguno; se usaba el de la variable de entorno)"} → ` +
+      `${emailNuevo || "(ninguno; vuelve a valer el de la variable de entorno)"}. Desde ahora solo se entra con ese.`);
+  }
   // Invalidate settings cache so getSetting picks up the new values immediately.
   runtimeSettingsLoadedAt = 0;
   await loadRuntimeSettings();
