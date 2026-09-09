@@ -128,10 +128,33 @@ function adUnit() {
 
    En los dos modos manda antes llevaAnuncios(): si la página no lleva
    anuncios no se emite nada — ni script, ni banner, ni cookies, ni el enlace
-   del pie. Las páginas legales y la portada quedan igual que hasta ahora. */
+   del pie. Las páginas legales y la portada quedan igual que hasta ahora.
+
+   V928 · Encender el interruptor no es sólo cambiar quién pregunta: cambia lo
+   que es VERDAD, y había dos cosas que se quedaban mintiendo.
+
+     1. La política de cookies (punto 11) decía "el código de Google no se carga
+        hasta que lo aceptas". Con la CMP de Google eso es falso: la etiqueta se
+        carga con la página porque el mensaje viaja dentro de ella. Lo que el
+        consentimiento decide entonces no es si se descarga el script, sino si
+        puede haber cookies de publicidad personalizada. Por eso el punto 11 se
+        redacta según el modo (ver textoCookiesHtml).
+     2. El enlace «Cookies» del pie desaparecía en modo Google, y con él la
+        única forma de RETIRAR el permiso. El RGPD exige que retirar cueste lo
+        mismo que dar, así que en ese modo el enlace sigue estando y llama a
+        googlefc.showRevocationMessage(), que es la puerta que Google documenta
+        para volver a abrir su mensaje. Si googlefc no aparece (extensión que lo
+        bloquea, o visita desde fuera del EEE, donde Google no muestra mensaje
+        y no hay nada que retirar) se enseña un aviso propio explicándolo, en
+        vez de un enlace que no hace nada. */
 const ADSENSE_CMP = String(process.env.ADSENSE_CMP || "").trim().toLowerCase();
+// Un solo sitio decide el modo: lo consultan layout() y el texto del punto 11.
+// Si cada uno lo calculase por su cuenta, el HTML y la política podrían acabar
+// diciendo cosas distintas, que es exactamente el fallo que arregla V928.
+const cmpDeGoogle = ADSENSE_CMP === "google";
 const CONSENT_KEY = "aura_ads_consent";
 const CONSENT_ID = "auraCookies";
+const CONSENT_ID_GOOGLE = "auraCookiesGoogle";
 
 // Estilos del banner. Se emiten sólo con el banner, para no tocar el CSS común
 // de todas las páginas. Los dos botones miden lo mismo a propósito: el RGPD no
@@ -205,6 +228,56 @@ function consentScriptHtml() {
 })();<\/script>`;
 }
 
+/* Modo CMP de Google. Aquí no hay puerta que abrir ni cerrar: la etiqueta ya
+   está y el mensaje lo pinta Google. Lo único que falta es la RETIRADA, y esta
+   caja es el plan B para cuando googlefc no está (bloqueado, o visitante de
+   fuera del EEE, donde Google no enseña mensaje). Nace oculta. */
+function consentGoogleAvisoHtml() {
+  return `<div class="ck" id="${CONSENT_ID_GOOGLE}" hidden role="dialog" aria-label="Cookies publicitarias">
+    <div class="ck-in">
+      <p><strong>No se ha podido abrir el panel de cookies de Google.</strong> Suele pasar por dos motivos: una extensión del navegador lo bloquea, o estás fuera del Espacio Económico Europeo y del Reino Unido, donde Google no muestra ese aviso y no hay consentimiento que retirar. Puedes bloquear las cookies de terceros en tu navegador o escribirnos a <a href="mailto:seguridad@citasaura.es">seguridad@citasaura.es</a>. Detalle en la <a href="/privacidad">política de privacidad</a>.</p>
+      <div class="ck-btns">
+        <button type="button" class="ck-no" data-consent="cerrar">Cerrar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// El enlace «Cookies» del pie en modo Google. showRevocationMessage() es la
+// función que documenta Funding Choices para reabrir el mensaje; si aún no está
+// lista se espera en su cola de callbacks, y si no llega se enseña el aviso de
+// arriba. Nunca un enlace muerto.
+function consentGoogleScriptHtml() {
+  return `<script>(function(){
+  var caja=document.getElementById(${JSON.stringify(CONSENT_ID_GOOGLE)});
+  function ver(v){if(caja)caja.hidden=!v;}
+  function abrirDeGoogle(){
+    var g=window.googlefc;
+    if(g&&typeof g.showRevocationMessage==="function"){
+      try{g.showRevocationMessage();return true;}catch(e){}
+    }
+    return false;
+  }
+  document.addEventListener("click",function(e){
+    var t=e.target&&e.target.closest?e.target.closest("[data-consent]"):null;
+    if(!t)return;
+    var quiere=t.getAttribute("data-consent");
+    if(quiere==="cerrar"){e.preventDefault();ver(false);return;}
+    if(quiere!=="abrir"&&quiere!=="google")return;
+    e.preventDefault();
+    if(abrirDeGoogle())return;
+    var g=window.googlefc;
+    if(g&&g.callbackQueue&&typeof g.callbackQueue.push==="function"){
+      var atendido=false;
+      try{g.callbackQueue.push({CONSENT_DATA_READY:function(){atendido=abrirDeGoogle();}});}catch(e2){}
+      setTimeout(function(){if(!atendido)ver(true);},1500);
+      return;
+    }
+    ver(true);
+  });
+})();<\/script>`;
+}
+
 /* --------------------------------------------------------------------
    Utilidades de escape / render
    -------------------------------------------------------------------- */
@@ -269,13 +342,18 @@ function layout(opts) {
   // sólo con permiso (ver el bloque de consentimiento). En el modo por defecto
   // el <head> NO lleva el script: lo inyecta el banner si se acepta.
   const conAnuncios = llevaAnuncios(o);
-  const cmpDeGoogle = ADSENSE_CMP === "google";
   const adsHead = conAnuncios && cmpDeGoogle ? adsenseLoaderHtml() : "";
-  const consentUi = conAnuncios && !cmpDeGoogle
-    ? consentCssHtml() + consentBannerHtml() + consentScriptHtml() : "";
-  // El enlace del pie sólo tiene sentido donde hay algo que consentir.
-  const consentPie = conAnuncios && !cmpDeGoogle
-    ? ` · <a href="#" data-consent="abrir">Cookies</a>` : "";
+  // V928 · Los dos modos emiten interfaz de consentimiento, no sólo el propio.
+  // El de Google no pregunta desde aquí (lo hace su mensaje certificado), pero
+  // sí tiene que dejar RETIRAR: si no, el permiso sería de ida y no de vuelta.
+  const consentUi = !conAnuncios ? ""
+    : cmpDeGoogle
+      ? consentCssHtml() + consentGoogleAvisoHtml() + consentGoogleScriptHtml()
+      : consentCssHtml() + consentBannerHtml() + consentScriptHtml();
+  // El enlace del pie sólo tiene sentido donde hay algo que consentir, y en los
+  // dos modos hay algo: reabrir mi aviso, o reabrir el de Google.
+  const consentPie = !conAnuncios ? ""
+    : ` · <a href="#" data-consent="${cmpDeGoogle ? "google" : "abrir"}">Cookies</a>`;
 
   return `<!doctype html>
 <html lang="es">
@@ -453,6 +531,31 @@ const TERMS = [
   { h: "18. Contacto legal y notificaciones", p: "Cualquier comunicación relativa a estos Términos se dirigirá a <b>seguridad@citasaura.es</b>. Aura te notificará mediante email a la dirección asociada a tu cuenta y, cuando proceda, mediante avisos dentro de la aplicación." },
 ];
 
+/* V928 · El punto 11 de la política se REDACTA SEGÚN EL MODO, porque los dos
+   modos hacen cosas distintas y una política no puede describir el que no está
+   funcionando. Lo que cambia es la frase clave:
+
+     · banner propio → el script de Google no llega al navegador hasta que se
+       acepta. Se puede prometer que sin permiso no hay NINGUNA cookie de
+       publicidad, porque no hay nada de Google cargado.
+     · CMP de Google → el script se carga con la página (el mensaje viaja
+       dentro). Lo que el consentimiento decide es si puede haber cookies de
+       publicidad y si los anuncios se personalizan. Prometer aquí que "no se
+       descarga nada" sería mentir, y una política de privacidad falsa es un
+       problema mayor que el que vino a resolver.
+
+   Se comparte el principio y el final para que no se desalineen: sólo cambia el
+   párrafo del medio. Lo lee /privacidad, que no lleva anuncios, así que el
+   texto explica el pie de LAS PÁGINAS QUE SÍ los llevan. */
+function textoCookiesHtml() {
+  const inicio = "Dentro de la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios — las <a href='/guias'>guías</a> y las <a href='/faq'>preguntas frecuentes</a> — muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. ";
+  const medio = cmpDeGoogle
+    ? "El consentimiento en esas páginas lo recoge el <b>gestor de consentimiento certificado de Google</b> (Funding Choices, TCF v2.2), que aparece al entrar: el código de Google se carga con la página porque ese aviso viaja dentro de él, y es tu respuesta la que decide si puede haber cookies de publicidad y si los anuncios se personalizan. Si rechazas, verás anuncios sin personalizar y no se usarán cookies publicitarias basadas en tu actividad. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas, que vuelve a abrir el aviso de Google. "
+    : "El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. ";
+  const fin = "El resto del sitio (portada, páginas legales, ayuda y contacto) no carga publicidad. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste.";
+  return inicio + medio + fin;
+}
+
 // Privacidad, portada 1:1 desde screenInfoPrivacy()
 const PRIVACY = [
   { h: "1. Responsable del tratamiento", p: "El responsable del tratamiento de tus datos personales es <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Bulevar Clara Campoamor 9</b>, España. Correo de contacto: <b>seguridad@citasaura.es</b>. Datos del Delegado de Protección de Datos (DPO), si aplica: <b>dpo@citasaura.es</b>." },
@@ -471,7 +574,9 @@ const PRIVACY = [
   // no se carga sin permiso y cómo se retira. La versión de la app (app.js,
   // screenInfoPrivacy) dice lo mismo y ya no remite a una pantalla «Yo →
   // Privacidad → Cookies» que nunca se construyó.
-  { h: "11. Cookies y tecnologías similares", p: "Dentro de la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios — las <a href='/guias'>guías</a> y las <a href='/faq'>preguntas frecuentes</a> — muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. El resto del sitio (portada, páginas legales, ayuda y contacto) no carga publicidad. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
+  // V928 · El texto lo escribe textoCookiesHtml() según ADSENSE_CMP: con la CMP
+  // de Google la etiqueta sí se carga antes de responder y hay que decirlo.
+  { h: "11. Cookies y tecnologías similares", p: textoCookiesHtml() },
   { h: "12. Medidas de seguridad", p: "Aplicamos medidas técnicas y organizativas adecuadas al riesgo: transporte cifrado TLS 1.2+, cifrado en reposo de datos sensibles, control de acceso por roles, seudonimización, hashing de identificadores biométricos, registro de accesos y auditorías periódicas conforme al art. 32 RGPD." },
   { h: "13. Actualizaciones de esta política", p: "Podremos modificar esta Política. Los cambios sustanciales se anunciarán con al menos 30 días de antelación por email y aviso en la aplicación." },
 ];

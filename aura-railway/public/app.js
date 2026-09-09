@@ -17505,8 +17505,17 @@ function screenInfoPrivacy(root) {
     // anuncios de la app, esta frase pasa a ser falsa y además haría falta una
     // puerta de consentimiento aquí dentro, que no existe. El panel lo avisa
     // junto al interruptor (admin.js, viewAds).
+    // V928 · Este texto decía "el código de Google no se carga hasta que lo
+    // aceptas". Eso sólo es verdad con el banner propio: con la CMP certificada
+    // de Google la etiqueta se carga con la página, porque el mensaje viaja
+    // dentro de ella. La web escribe su punto 11 según el modo
+    // (features_seo_pages.js, textoCookiesHtml), pero AQUÍ no se puede: app.js
+    // corre en el navegador y no ve ADSENSE_CMP. Así que se afirma sólo lo que
+    // es cierto en los dos modos — se pide consentimiento y sin él no hay
+    // publicidad personalizada — y el detalle exacto se remite a la política
+    // publicada en la web, que sí sabe en qué modo está.
     { h: "11. Cookies y tecnologías similares",
-      p: "En la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): dentro de la app no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios (las guías y las preguntas frecuentes) muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar en esas páginas; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria, y puedes cambiar tu decisión desde el enlace «Cookies» del pie. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
+      p: "En la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): dentro de la app no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios (las guías y las preguntas frecuentes) muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. En esas páginas <b>se te pide consentimiento al entrar</b> y sin él no se usan cookies de publicidad ni se personalizan los anuncios; puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. El detalle de quién recoge ese consentimiento y qué implica rechazarlo está en el punto 11 de la política publicada en <b>citasaura.es/privacidad</b>. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
     { h: "12. Medidas de seguridad",
       p: "Aplicamos medidas técnicas y organizativas adecuadas al riesgo del tratamiento: transporte cifrado TLS 1.2+, cifrado en reposo de datos sensibles, control de acceso por roles, seudonimización, hashing de identificadores biométricos, registro de accesos y auditorías periódicas conforme al art. 32 RGPD y al Esquema Nacional de Seguridad cuando aplique." },
     { h: "13. Actualizaciones de esta política",
