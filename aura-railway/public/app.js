@@ -124,7 +124,11 @@ const contentFallback = {
   "content.welcome.title": "Aura",
   "content.welcome.brand_tagline": "Encuentra tu match",
   "content.welcome.desktop_eyebrow": "✨ CONECTA TU ESENCIA",
-  "content.welcome.desktop_lead": "Aura es la app de citas donde importa quién eres de verdad. Perfiles verificados, chat cifrado y matches con sentido.",
+  // V926 · "chat cifrado" era falso: los mensajes se guardan en claro
+  // (`messages.body` es un TEXT; sólo se cifran notas de voz y llamadas, ver
+  // features_phase6_vault). Corregido en los seis idiomas, en el pie y la
+  // portada web (features_seo_pages.js) y en el <noscript> de index.html.
+  "content.welcome.desktop_lead": "Aura es la app de citas donde importa quién eres de verdad. Perfiles verificados con documento, chat sólo si hay match y un feed que decides tú con tus filtros.",
   "content.welcome.desktop_start": "Empieza en menos de dos minutos.",
   "content.welcome.subtitle": "Conexiones reales, momentos únicos.",
   "content.welcome.cta_register": "Crear cuenta",
@@ -188,14 +192,19 @@ const contentFallback = {
   "content.welcome.step1_h": "Crea tu perfil",
   "content.welcome.step1_p": "Añade fotos y una bio corta. Menos de 2 minutos.",
   "content.welcome.step2_h": "Descubre personas",
-  "content.welcome.step2_p": "Nuestro algoritmo encuentra personas afines a ti y a tus gustos, y elige tus fotos.",
+  // V926 · Decía "nuestro algoritmo encuentra personas afines a ti y a tus
+  // gustos, y elige tus fotos". Dos cosas falsas en una frase: no hay ninguna
+  // medida de afinidad (el feed son filtros duros + orden fijo, GET
+  // /api/discover) y no existe nada que elija fotos — no hay una sola función
+  // en todo el repositorio que ordene o puntúe las fotos del perfil.
+  "content.welcome.step2_p": "Tus filtros deciden quién aparece: edad, ciudad, intereses, estilo de vida. Sin puntuaciones de afinidad.",
   "content.welcome.step3_h": "Habla y quedad",
   "content.welcome.step3_p": "Chat privado seguro y sin anuncios que te distraigan.",
   "content.welcome.quote_txt": "Aura me devolvió las ganas de conocer gente. En dos semanas ya había hecho match con alguien real y cercano. Sin ruido, sin postureo.",
   "content.welcome.quote_name": "Lucía, 29",
   "content.welcome.quote_role": "Barcelona · usuaria desde hace 3 meses",
   "content.welcome.trust1": "Verificación de identidad",
-  "content.welcome.trust2": "Chat cifrado",
+  "content.welcome.trust2": "Chat sólo con match",
   "content.welcome.trust3": "Cumple RGPD",
   "content.welcome.trust4": "Sin bots",
   "content.welcome.foot_help": "Ayuda",
@@ -511,7 +520,7 @@ const translations = {
   en: {
     "content.welcome.brand_tagline": "Find your match",
     "content.welcome.desktop_eyebrow": "✨ CONNECT YOUR ESSENCE",
-    "content.welcome.desktop_lead": "Aura is the dating app where who you really are matters. Verified profiles, encrypted chat and matches that make sense.",
+    "content.welcome.desktop_lead": "Aura is the dating app where who you really are matters. Document-verified profiles, chat only when the interest is mutual, and a feed you decide with your filters.",
     "content.welcome.desktop_start": "Get started in under two minutes.",
     "content.welcome.subtitle": "Real connections, unique moments.",
     "content.welcome.cta_register": "Create account",
@@ -521,9 +530,9 @@ const translations = {
     "content.welcome.step1_h": "Sign up in seconds",
     "content.welcome.step1_p": "Verify your email and complete your profile with photos.",
     "content.welcome.step2_h": "Match & chat",
-    "content.welcome.step2_p": "Our algorithm finds people compatible with you and your taste, and picks your best photos.",
+    "content.welcome.step2_p": "Your filters decide who shows up: age, city, interests, lifestyle. No affinity scores.",
     "content.welcome.trust1": "Identity verification",
-    "content.welcome.trust2": "Encrypted chat",
+    "content.welcome.trust2": "Chat only with a match",
     "content.welcome.trust3": "GDPR compliant",
     "content.welcome.trust4": "No bots",
     "content.welcome.foot_help": "Help",
@@ -679,7 +688,7 @@ const translations = {
   fr: {
     "content.welcome.brand_tagline": "Trouve ton match",
     "content.welcome.desktop_eyebrow": "✨ CONNECTE TON ESSENCE",
-    "content.welcome.desktop_lead": "Aura est l'app de rencontres où ce que tu es vraiment compte. Profils vérifiés, chat chiffré et matchs qui ont du sens.",
+    "content.welcome.desktop_lead": "Aura est l'app de rencontres où ce que tu es vraiment compte. Profils vérifiés par pièce d'identité, chat seulement si l'intérêt est réciproque, et un fil que tu décides avec tes filtres.",
     "content.welcome.desktop_start": "Commence en moins de deux minutes.",
     "content.welcome.subtitle": "Des connexions réelles, des moments uniques.",
     "content.welcome.cta_register": "Créer un compte",
@@ -689,9 +698,9 @@ const translations = {
     "content.welcome.step1_h": "Inscription en quelques secondes",
     "content.welcome.step1_p": "Vérifiez votre e-mail et complétez votre profil avec des photos.",
     "content.welcome.step2_h": "Match & discussion",
-    "content.welcome.step2_p": "Notre algorithme trouve des personnes compatibles et choisit vos meilleures photos.",
+    "content.welcome.step2_p": "Tes filtres décident qui apparaît : âge, ville, centres d'intérêt, mode de vie. Aucun score d'affinité.",
     "content.welcome.trust1": "Vérification d'identité",
-    "content.welcome.trust2": "Chat chiffré",
+    "content.welcome.trust2": "Chat seulement avec un match",
     "content.welcome.trust3": "Conforme RGPD",
     "content.welcome.trust4": "Sans bots",
     "content.welcome.foot_help": "Aide",
@@ -843,7 +852,7 @@ const translations = {
   de: {
     "content.welcome.brand_tagline": "Finde dein Match",
     "content.welcome.desktop_eyebrow": "✨ VERBINDE DEINE ESSENZ",
-    "content.welcome.desktop_lead": "Aura ist die Dating-App, bei der zählt, wer du wirklich bist. Verifizierte Profile, verschlüsselter Chat und sinnvolle Matches.",
+    "content.welcome.desktop_lead": "Aura ist die Dating-App, bei der zählt, wer du wirklich bist. Mit Ausweis verifizierte Profile, Chat nur bei gegenseitigem Interesse und ein Feed, den du mit deinen Filtern bestimmst.",
     "content.welcome.desktop_start": "Starte in weniger als zwei Minuten.",
     "content.welcome.subtitle": "Echte Verbindungen, einzigartige Momente.",
     "content.welcome.cta_register": "Konto erstellen",
@@ -853,9 +862,9 @@ const translations = {
     "content.welcome.step1_h": "In Sekunden anmelden",
     "content.welcome.step1_p": "E-Mail bestätigen und Profil mit Fotos vervollständigen.",
     "content.welcome.step2_h": "Match & Chat",
-    "content.welcome.step2_p": "Unser Algorithmus findet passende Personen und wählt deine besten Fotos aus.",
+    "content.welcome.step2_p": "Deine Filter entscheiden, wer erscheint: Alter, Stadt, Interessen, Lebensstil. Keine Affinitäts-Scores.",
     "content.welcome.trust1": "Identitätsprüfung",
-    "content.welcome.trust2": "Verschlüsselter Chat",
+    "content.welcome.trust2": "Chat nur bei Match",
     "content.welcome.trust3": "DSGVO-konform",
     "content.welcome.trust4": "Keine Bots",
     "content.welcome.foot_help": "Hilfe",
@@ -1000,7 +1009,7 @@ const translations = {
   it: {
     "content.welcome.brand_tagline": "Trova il tuo match",
     "content.welcome.desktop_eyebrow": "✨ CONNETTI LA TUA ESSENZA",
-    "content.welcome.desktop_lead": "Aura è l'app di incontri dove conta chi sei davvero. Profili verificati, chat cifrata e match che hanno senso.",
+    "content.welcome.desktop_lead": "Aura è l'app di incontri dove conta chi sei davvero. Profili verificati con documento, chat solo se l'interesse è reciproco e un feed che decidi tu con i tuoi filtri.",
     "content.welcome.desktop_start": "Inizia in meno di due minuti.",
     "content.welcome.subtitle": "Connessioni reali, momenti unici.",
     "content.welcome.cta_register": "Crea un account",
@@ -1010,7 +1019,7 @@ const translations = {
     "content.welcome.step1_h": "Registrati in pochi secondi",
     "content.welcome.step2_h": "Match e chat",
     "content.welcome.trust1": "Verifica identità",
-    "content.welcome.trust2": "Chat cifrata",
+    "content.welcome.trust2": "Chat solo con match",
     "content.welcome.trust3": "Conforme al GDPR",
     "content.welcome.trust4": "Niente bot",
     "content.welcome.foot_help": "Aiuto",
@@ -1154,7 +1163,7 @@ const translations = {
   pt: {
     "content.welcome.brand_tagline": "Encontra o teu match",
     "content.welcome.desktop_eyebrow": "✨ CONECTA A TUA ESSÊNCIA",
-    "content.welcome.desktop_lead": "Aura é a app de encontros onde importa quem és de verdade. Perfis verificados, chat cifrado e matches com sentido.",
+    "content.welcome.desktop_lead": "Aura é a app de encontros onde importa quem és de verdade. Perfis verificados com documento, chat só se o interesse for mútuo e um feed que decides tu com os teus filtros.",
     "content.welcome.desktop_start": "Começa em menos de dois minutos.",
     "content.welcome.subtitle": "Conexões reais, momentos únicos.",
     "content.welcome.cta_register": "Criar conta",
@@ -1164,7 +1173,7 @@ const translations = {
     "content.welcome.step1_h": "Registe-se em segundos",
     "content.welcome.step2_h": "Match e conversa",
     "content.welcome.trust1": "Verificação de identidade",
-    "content.welcome.trust2": "Chat cifrado",
+    "content.welcome.trust2": "Chat só com match",
     "content.welcome.trust3": "Cumpre RGPD",
     "content.welcome.trust4": "Sem bots",
     "content.welcome.foot_help": "Ajuda",
@@ -6118,7 +6127,7 @@ function showNotRegisteredScreen(opts) {
   const points = [
     { ic: "📝", h: "Registro rápido", p: "Solo necesitamos tu email, un código de verificación y tus datos básicos." },
     { ic: "🛡️", h: "Verificación de identidad", p: "Un paso corto con tu DNI y un selfie para que la comunidad sea segura." },
-    { ic: "💖", h: "Empieza a conocer gente", p: "Configura tu perfil y descubre personas afines cerca de ti." },
+    { ic: "💖", h: "Empieza a conocer gente", p: "Configura tu perfil y descubre gente nueva cerca de ti." },
   ];
   points.forEach(pt => {
     const row = el("div", { class: "beta-point" });
@@ -17155,7 +17164,7 @@ function screenInfoFaq(root) {
     { cat: "matches", sub: "⭐ Super like", q: "¿Qué es un super like?", a: "Un super like avisa a la otra persona de que te ha gustado especialmente, destacando tu perfil. Recibe un aviso inmediato en la campanita y, si lo tiene activado, también por push o correo." },
 
     // ----- Chat y llamadas -----
-    { cat: "chat", sub: "💬 Mensajes", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. Todas pasan un filtro automático y respetamos la privacidad de ambas partes." },
+    { cat: "chat", sub: "💬 Mensajes", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. No pasan ningún filtro automático: si te llega algo inapropiado, denuncia la conversación y la revisa una persona en menos de 24 horas." },
     { cat: "chat", sub: "💬 Mensajes", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona deshacéis el match, la conversación desaparece." },
     { cat: "chat", sub: "❄️ Rompehielos y stickers", q: "¿Qué son los rompehielos y los stickers?", a: "Los rompehielos son preguntas sugeridas para empezar la conversación (plan Premium o superior) y los stickers son pegatinas divertidas (plan Oro o superior) para animar el chat." },
     { cat: "chat", sub: "🌐 Traducción", q: "¿Puedo traducir los mensajes que recibo?", a: "Sí. En el chat puedes traducir un mensaje al vuelo para hablar con personas en otro idioma sin salir de la conversación." },
@@ -17485,8 +17494,14 @@ function screenInfoPrivacy(root) {
       p: "Si consideras que tratamos tus datos incorrectamente, puedes presentar una reclamación ante la <b>Agencia Española de Protección de Datos</b> (AEPD): C/ Jorge Juan, 6, 28001 Madrid · <a href='https://www.aepd.es' target='_blank' rel='noopener'>www.aepd.es</a>. En cualquier caso, te agradeceremos que nos contactes primero para intentar resolver la incidencia directamente." },
     { h: "10. Menores de edad",
       p: "El Servicio está prohibido para menores de 18 años. La verificación KYC lo impide técnicamente. Si detectamos una cuenta creada por un menor, la eliminaremos de inmediato y borraremos todos sus datos. Cualquier persona puede notificar la existencia de un menor escribiendo a <b>seguridad@citasaura.es</b>." },
+    // V926 · Decía "únicamente cookies estrictamente necesarias" y remitía a
+    // «Yo → Privacidad → Cookies», una pantalla que no existe en ningún sitio.
+    // Lo primero dejó de ser verdad cuando las guías y el FAQ de citasaura.es
+    // empezaron a llevar AdSense; lo segundo no lo fue nunca. Dentro de la app
+    // sigue sin haber publicidad (index.html no carga ningún script de
+    // anuncios), y así se dice. Mismo texto en features_seo_pages.js.
     { h: "11. Cookies y tecnologías similares",
-      p: "Usamos únicamente cookies estrictamente necesarias para el funcionamiento del Servicio (sesión, seguridad, idioma). No usamos cookies publicitarias de terceros sin tu consentimiento previo. Puedes consultar el detalle en «Yo → Privacidad → Cookies» dentro de la app." },
+      p: "En la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): dentro de la app no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios (las guías y las preguntas frecuentes) muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar en esas páginas; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria, y puedes cambiar tu decisión desde el enlace «Cookies» del pie. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
     { h: "12. Medidas de seguridad",
       p: "Aplicamos medidas técnicas y organizativas adecuadas al riesgo del tratamiento: transporte cifrado TLS 1.2+, cifrado en reposo de datos sensibles, control de acceso por roles, seudonimización, hashing de identificadores biométricos, registro de accesos y auditorías periódicas conforme al art. 32 RGPD y al Esquema Nacional de Seguridad cuando aplique." },
     { h: "13. Actualizaciones de esta política",

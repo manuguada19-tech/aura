@@ -33,7 +33,7 @@ const TODAY = "2026-09-02";
 
      /guias          1629 de prosa, y es un ÍNDICE: casi todo son enlaces.
      /como-funciona  1497 de prosa, promocional y flojo.
-     /inicio         1822 de prosa, pero es la portada: su función es que te
+     /inicio         1884 de prosa, pero es la portada: su función es que te
                      registres ("Crear cuenta gratis", "Abrir Aura"), no informar.
 
    Como ADSENSE_SLOT_CONTENT viene vacío, además, no había ninguna unidad fija:
@@ -53,15 +53,15 @@ const ADSENSE_SLOT_CONTENT = process.env.ADSENSE_SLOT_CONTENT || "";
 
 // Mínimo de prosa (sin contar el texto de los enlaces) para que una página pueda
 // llevar anuncios. Medido con esta misma función sobre las páginas reales
-// (V925, tras reescribir las seis guías; antes medían de 2061 a 2954):
-//   con anuncios:  /faq 3177 · guía más corta 6462 · guía más larga 10246
+// (V926, vueltas a medir tras corregir el texto de la portada y del FAQ):
+//   con anuncios:  /faq 3236 · guía más corta 6462 · guía más larga 10246
 //   sin anuncios:  /ayuda 79 · /contacto 329 · /como-funciona 1497 ·
-//                  /guias 1629 (índice de enlaces) · /inicio 1822
-// 1800 deja fuera todo lo flojo y da 1377 de margen a la página con anuncios más
+//                  /guias 1629 (índice de enlaces) · /inicio 1884
+// 1800 deja fuera todo lo flojo y da 1436 de margen a la página con anuncios más
 // corta. Las legales (2315-7659) miden de sobra y tampoco llevan anuncios, y la
-// portada, tras corregir su texto en V925, ya mide 1822 — por encima del mínimo — y
-// tampoco los lleva: MEDIR NO BASTA, hay que declararse contenido. Ésa es
-// exactamente la razón de que la puerta exija las dos condiciones.
+// portada ya mide 1884 — por encima del mínimo — y tampoco los lleva: MEDIR NO
+// BASTA, hay que declararse contenido. Ésa es exactamente la razón de que la
+// puerta exija las dos condiciones.
 const PROSA_MINIMA = 1800;
 
 // Texto de editor del cuerpo: se quitan scripts, estilos y el texto de los
@@ -100,6 +100,112 @@ function adUnit() {
 }
 
 /* --------------------------------------------------------------------
+   Consentimiento de cookies publicitarias
+   --------------------------------------------------------------------
+   V926. AdSense pone cookies de medición y personalización. Dos normas
+   distintas nos obligan aquí y conviene no confundirlas:
+
+     · El RGPD/LSSI exige consentimiento PREVIO: nada de cookies publicitarias
+       antes de que el visitante diga sí, y rechazar tiene que costar lo mismo
+       que aceptar.
+     · La política de consentimiento de usuarios de la UE de Google exige
+       además que, para el tráfico del EEE y Reino Unido, ese consentimiento se
+       recoja con una CMP CERTIFICADA (TCF v2.2). Un banner propio cumple lo
+       primero pero NO es una CMP certificada.
+
+   De ahí el interruptor. No es indecisión: son dos estados legítimos y el
+   segundo depende de una cuenta de Google que se activa fuera de este código.
+
+     ADSENSE_CMP vacío (por defecto) → manda el banner de aquí. El script de
+       AdSense NO se emite en el HTML; lo inyecta el navegador sólo si se pulsa
+       "Aceptar". Sin respuesta o con "Rechazar" no se carga nada de Google, así
+       que no hay cookie publicitaria posible.
+     ADSENSE_CMP = "google" → el script se emite normal y el mensaje lo pone
+       Google (Funding Choices, certificada). El banner de aquí se calla: el
+       mensaje de Google VIAJA DENTRO de la etiqueta de anuncios, o sea que
+       bloquear la etiqueta con un banner propio impediría que apareciese, y
+       dejarlos a los dos saldrían dos avisos seguidos.
+
+   En los dos modos manda antes llevaAnuncios(): si la página no lleva
+   anuncios no se emite nada — ni script, ni banner, ni cookies, ni el enlace
+   del pie. Las páginas legales y la portada quedan igual que hasta ahora. */
+const ADSENSE_CMP = String(process.env.ADSENSE_CMP || "").trim().toLowerCase();
+const CONSENT_KEY = "aura_ads_consent";
+const CONSENT_ID = "auraCookies";
+
+// Estilos del banner. Se emiten sólo con el banner, para no tocar el CSS común
+// de todas las páginas. Los dos botones miden lo mismo a propósito: el RGPD no
+// admite un "Rechazar" escondido o en gris pequeñito frente a un "Aceptar"
+// grande. Sólo cambia el color.
+function consentCssHtml() {
+  return `<style>
+    .ck{position:fixed;left:0;right:0;bottom:0;z-index:9999;background:#15161d;border-top:1px solid #262833;box-shadow:0 -12px 30px rgba(0,0,0,.45)}
+    .ck[hidden]{display:none}
+    .ck-in{max-width:900px;margin:0 auto;padding:16px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+    .ck p{margin:0;flex:1 1 320px;font-size:14px;color:#a7abb7;line-height:1.55}
+    .ck p strong{color:#f4f5f7}
+    .ck-btns{display:flex;gap:10px;flex:0 0 auto}
+    .ck-btns button{font:inherit;font-size:14px;font-weight:700;padding:11px 22px;border-radius:11px;cursor:pointer;border:1px solid #262833;min-width:118px}
+    .ck-no{background:#1b1d26;color:#f4f5f7}
+    .ck-si{background:linear-gradient(90deg,#ff3b6b,#ff8a3b);color:#fff;border-color:transparent}
+    .ck-btns button:hover{filter:brightness(1.08)}
+    @media (max-width:560px){.ck-in{padding:14px 16px;gap:12px}.ck-btns{width:100%}.ck-btns button{flex:1;min-width:0}}
+  </style>`;
+}
+
+// El banner nace oculto (`hidden`) y sólo lo enseña el script si no hay
+// respuesta guardada: así no parpadea al cargar y quien navega sin JavaScript
+// no ve un aviso con botones que no harían nada (sin JS tampoco se carga el
+// script de anuncios, o sea que no hay nada que consentir).
+function consentBannerHtml() {
+  return `<div class="ck" id="${CONSENT_ID}" hidden role="dialog" aria-label="Cookies publicitarias">
+    <div class="ck-in">
+      <p><strong>Cookies publicitarias.</strong> Esta página se sostiene con anuncios de Google, que pueden guardar cookies para medirlos y personalizarlos. No cargamos nada de eso sin tu permiso, y puedes cambiar de idea desde «Cookies», en el pie. Detalle en la <a href="/privacidad">política de privacidad</a>.</p>
+      <div class="ck-btns">
+        <button type="button" class="ck-no" data-consent="no">Rechazar</button>
+        <button type="button" class="ck-si" data-consent="si">Aceptar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// La puerta de verdad: el script de AdSense no existe en el HTML y sólo se crea
+// tras un "Aceptar". Retirar el permiso recarga la página, porque una vez
+// cargada la etiqueta ya no se puede desandar sin recargar.
+function consentScriptHtml() {
+  return `<script>(function(){
+  var K=${JSON.stringify(CONSENT_KEY)},C=${JSON.stringify(ADSENSE_CLIENT)};
+  var caja=document.getElementById(${JSON.stringify(CONSENT_ID)});
+  function leer(){try{return localStorage.getItem(K);}catch(e){return null;}}
+  function guardar(v){try{localStorage.setItem(K,v);}catch(e){}}
+  function cargar(){
+    if(document.getElementById("auraAds"))return;
+    var s=document.createElement("script");
+    s.id="auraAds";s.async=true;s.setAttribute("crossorigin","anonymous");
+    s.src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client="+encodeURIComponent(C);
+    (document.head||document.documentElement).appendChild(s);
+  }
+  function ver(v){if(caja)caja.hidden=!v;}
+  var previo=leer();
+  if(previo==="si")cargar();
+  else if(previo!=="no")ver(true);
+  document.addEventListener("click",function(e){
+    var t=e.target&&e.target.closest?e.target.closest("[data-consent]"):null;
+    if(!t)return;
+    e.preventDefault();
+    var quiere=t.getAttribute("data-consent");
+    if(quiere==="si"){guardar("si");ver(false);cargar();}
+    else if(quiere==="no"){
+      var yaCargado=!!document.getElementById("auraAds");
+      guardar("no");ver(false);
+      if(yaCargado)location.reload();
+    }
+    else if(quiere==="abrir")ver(true);
+  });
+})();<\/script>`;
+}
+
+/* --------------------------------------------------------------------
    Utilidades de escape / render
    -------------------------------------------------------------------- */
 function esc(s) {
@@ -116,7 +222,13 @@ function layout(opts) {
   const o = opts || {};
   const canonical = BASE + (o.path || "/");
   const title = o.title ? `${o.title} · ${SITE}` : `${SITE} — Encuentra tu match`;
-  const desc = o.description || "Aura es la app de citas donde importa quién eres de verdad: perfiles verificados, chat cifrado y matches con sentido.";
+  // V926 · Decía "chat cifrado". Es falso: `messages.body` es un TEXT en claro
+  // (server.js, CREATE TABLE messages) y encryptBuffer (features_phase6_vault)
+  // sólo se usa para notas de voz y grabaciones de llamada. El transporte va por
+  // TLS y los datos sensibles se cifran en reposo — eso sí es cierto y es lo que
+  // dice la política — pero un mensaje de chat no está cifrado. Misma corrección
+  // en el pie, en la portada, en public/app.js (6 idiomas) e index.html.
+  const desc = o.description || "Aura es la app de citas donde importa quién eres de verdad: perfiles verificados con documento y chat sólo cuando el interés es mutuo.";
   const jsonLdBlocks = [];
 
   // Organización (siempre)
@@ -153,8 +265,17 @@ function layout(opts) {
     `<a href="${n.path}"${n.path === o.path ? ' aria-current="page"' : ""}>${esc(n.label)}</a>`
   ).join("");
 
-  // AdSense solo donde hay contenido de editor medido (ver llevaAnuncios).
-  const adsHead = llevaAnuncios(o) ? adsenseLoaderHtml() : "";
+  // AdSense solo donde hay contenido de editor medido (ver llevaAnuncios), y
+  // sólo con permiso (ver el bloque de consentimiento). En el modo por defecto
+  // el <head> NO lleva el script: lo inyecta el banner si se acepta.
+  const conAnuncios = llevaAnuncios(o);
+  const cmpDeGoogle = ADSENSE_CMP === "google";
+  const adsHead = conAnuncios && cmpDeGoogle ? adsenseLoaderHtml() : "";
+  const consentUi = conAnuncios && !cmpDeGoogle
+    ? consentCssHtml() + consentBannerHtml() + consentScriptHtml() : "";
+  // El enlace del pie sólo tiene sentido donde hay algo que consentir.
+  const consentPie = conAnuncios && !cmpDeGoogle
+    ? ` · <a href="#" data-consent="abrir">Cookies</a>` : "";
 
   return `<!doctype html>
 <html lang="es">
@@ -259,9 +380,10 @@ function layout(opts) {
   </div></main>
   <footer class="site"><div class="wrap">
     <nav>${NAV.map((n) => `<a href="${n.path}">${esc(n.label)}</a>`).join("")}</nav>
-    <div>Aura es una app de citas para mayores de 18 años. Perfiles verificados, chat cifrado y matches con sentido.</div>
-    <div class="fine">© 2026 Aura · Hecho con ♥ en España · <a href="/inicio">Volver al inicio</a> · <a href="/">Abrir la app</a></div>
+    <div>Aura es una app de citas para mayores de 18 años. Perfiles verificados con documento y chat sólo cuando el interés es mutuo.</div>
+    <div class="fine">© 2026 Aura · Hecho con ♥ en España · <a href="/inicio">Volver al inicio</a> · <a href="/">Abrir la app</a>${consentPie}</div>
   </div></footer>
+  ${consentUi}
 </body>
 </html>`;
 }
@@ -292,7 +414,12 @@ const FAQ = [
   { cat: "Matches", q: "¿Cómo mejora Aura mis matches?", a: "Tus filtros deciden quién puede aparecer (edad, ciudad, intereses, estilo de vida…) y el orden es siempre el mismo: primero quien tiene un Boost activo, después quien está conectado, después los perfiles verificados y el resto al azar. No hay un sistema que aprenda de tus likes: para salir en más búsquedas, completa los campos de tu perfil y verifica la cuenta." },
   { cat: "Matches", q: "¿Puedo deshacer un «no me gusta»?", a: "Sí, con la suscripción Premium puedes deshacer la última acción y volver a valorar ese perfil." },
   { cat: "Matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con Premium los likes son ilimitados." },
-  { cat: "Chats", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. Todas pasan un filtro automático y respetamos la privacidad de ambos lados." },
+  // V926 · Decía "todas pasan un filtro automático". Es la MISMA falsedad que
+  // corregí en V925 en el otro FAQ, escrita con otras palabras: mis
+  // comprobaciones buscaban "filtros automáticos de contenido" y "filtro
+  // automático de seguridad", y este "pasan un filtro automático" pasó por
+  // delante de ellas. Ahora la comprobación busca la frase, no la variante.
+  { cat: "Chats", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. No pasan ningún filtro automático: si recibes algo inapropiado, denuncia la conversación y la revisa una persona en menos de 24 horas." },
   { cat: "Chats", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona os desmatcháis, la conversación desaparece." },
   { cat: "Chats", q: "¿Cómo activo notificaciones?", a: "En Ajustes → Notificaciones puedes personalizar avisos de matches, mensajes y likes recibidos." },
   { cat: "Seguridad", q: "¿Aura verifica los perfiles?", a: "Sí. Ofrecemos verificación por selfie y por documento. Los perfiles verificados llevan un distintivo azul." },
@@ -338,7 +465,13 @@ const PRIVACY = [
   { h: "8. Tus derechos (RGPD art. 15-22 y LOPD-GDD)", p: "Puedes ejercer de forma gratuita los derechos de acceso, rectificación, supresión («derecho al olvido»), limitación, portabilidad, oposición, revocación de consentimientos y no ser objeto de decisiones automatizadas. Escribe a <b>seguridad@citasaura.es</b> aportando prueba de identidad. Responderemos en un plazo máximo de un mes, ampliable a dos por complejidad." },
   { h: "9. Reclamaciones ante la autoridad de control", p: "Si consideras que tratamos tus datos incorrectamente, puedes presentar una reclamación ante la <b>Agencia Española de Protección de Datos</b> (AEPD): C/ Jorge Juan, 6, 28001 Madrid · <a href='https://www.aepd.es' target='_blank' rel='noopener'>www.aepd.es</a>." },
   { h: "10. Menores de edad", p: "El Servicio está prohibido para menores de 18 años. La verificación KYC lo impide técnicamente. Si detectamos una cuenta creada por un menor, la eliminaremos de inmediato y borraremos todos sus datos." },
-  { h: "11. Cookies y tecnologías similares", p: "Usamos únicamente cookies estrictamente necesarias para el funcionamiento del Servicio (sesión, seguridad, idioma). No usamos cookies publicitarias de terceros sin tu consentimiento previo." },
+  // V926 · Este punto decía "usamos únicamente cookies estrictamente
+  // necesarias". Desde que las guías y el FAQ llevan AdSense eso ya no es
+  // verdad, así que se cuenta lo que hay: dónde hay publicidad, que el script
+  // no se carga sin permiso y cómo se retira. La versión de la app (app.js,
+  // screenInfoPrivacy) dice lo mismo y ya no remite a una pantalla «Yo →
+  // Privacidad → Cookies» que nunca se construyó.
+  { h: "11. Cookies y tecnologías similares", p: "Dentro de la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios — las <a href='/guias'>guías</a> y las <a href='/faq'>preguntas frecuentes</a> — muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. El resto del sitio (portada, páginas legales, ayuda y contacto) no carga publicidad. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
   { h: "12. Medidas de seguridad", p: "Aplicamos medidas técnicas y organizativas adecuadas al riesgo: transporte cifrado TLS 1.2+, cifrado en reposo de datos sensibles, control de acceso por roles, seudonimización, hashing de identificadores biométricos, registro de accesos y auditorías periódicas conforme al art. 32 RGPD." },
   { h: "13. Actualizaciones de esta política", p: "Podremos modificar esta Política. Los cambios sustanciales se anunciarán con al menos 30 días de antelación por email y aviso en la aplicación." },
 ];
@@ -1002,7 +1135,9 @@ function pageHub() {
   ];
   const steps = [
     { n: "1", h: "Crea tu perfil", p: "Regístrate con tu correo, verifica tu identidad y añade tus fotos y una bio. Menos de dos minutos." },
-    { n: "2", h: "Descubre personas", p: "Explora perfiles afines a ti. Da like a quien te interese y salta al siguiente si no encaja." },
+    // V926 · Decía "perfiles afines a ti". Misma falsedad de siempre con otras
+    // palabras: nada mide afinidad. Quien decide es el filtro.
+    { n: "2", h: "Descubre personas", p: "Explora los perfiles que dejan pasar tus filtros: edad, ciudad, intereses. Da like a quien te interese y salta al siguiente si no encaja." },
     { n: "3", h: "Haz match y habla", p: "Cuando el interés es mutuo, se abre el chat. A partir de ahí, la conversación es cosa vuestra." },
   ];
   const guideCards = GUIDES.slice(0, 3).map((g) =>
@@ -1034,13 +1169,13 @@ function pageHub() {
 
     <div class="cta">
       <h2>Empieza hoy en menos de dos minutos</h2>
-      <p>Perfiles verificados, chat cifrado y matches con sentido.</p>
+      <p>Perfiles verificados con documento y chat sólo cuando el interés es mutuo.</p>
       <a class="btn" href="/">Abrir Aura</a>
     </div>`;
 
   return layout({
     title: "Aura, la app de citas con perfiles verificados",
-    description: "Aura es la app de citas donde importa quién eres de verdad. Perfiles verificados, chat cifrado y matches con sentido. Regístrate gratis.",
+    description: "Aura es la app de citas donde importa quién eres de verdad. Perfiles verificados con documento, chat sólo si hay match y un feed que decides tú con tus filtros. Regístrate gratis.",
     path: "/inicio",
     eyebrow: "✨ Conecta tu esencia",
     h1: "Encuentra tu match en Aura",
