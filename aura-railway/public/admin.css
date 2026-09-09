@@ -1660,6 +1660,107 @@ textarea.input { resize: vertical; min-height: 60px; }
   color: var(--text); overflow-wrap: anywhere;
 }
 
+/* V919 · Ventanas de dialogo del panel (.modal-backdrop / .modal).
+   ----------------------------------------------------------------------------
+   Estas dos clases SI estaban definidas... pero en styles.css, que es la hoja de
+   la aplicacion de los usuarios. El panel carga unicamente admin.css, asi que
+   aqui no existian. Efecto real, medido en un navegador: el fondo oscuro no
+   aparecia (position: static en vez de fixed, z-index: auto, sin color) y la
+   ventana no se centraba: se dibujaba como un bloque suelto a 1520 px hacia
+   abajo, fuera de la pantalla. Los tres dialogos afectados son:
+     · "Anadir infraccion" a un usuario
+     · "Eliminar cuenta" desde verificacion de identidad
+     · el visor grande de detalle
+   Es decir: se pulsaba el boton, no se veia nada, y el panel parecia colgado.
+   Estan pensadas para que el cuerpo del dialogo se pueda desplazar en un movil
+   con teclado abierto (max-height + overflow) y para no quedar debajo de la
+   barra de estado ni del notch (env(safe-area-inset-*)). */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(10, 12, 18, .62);
+  z-index: 9998;
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(16px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+  overflow-y: auto;                    /* dialogo alto en pantalla baja */
+  -webkit-overflow-scrolling: touch;
+  animation: adminModalIn .16s ease-out;
+}
+@supports (backdrop-filter: blur(2px)) {
+  .modal-backdrop { backdrop-filter: blur(2px); }
+}
+@keyframes adminModalIn { from { opacity: 0 } to { opacity: 1 } }
+
+.modal {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+  width: 100%;
+  max-width: 520px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  margin: auto;                        /* centrado aunque el fondo desplace */
+  animation: adminModalPop .16s ease-out;
+}
+@keyframes adminModalPop {
+  from { opacity: 0; transform: translateY(8px) scale(.985) }
+  to   { opacity: 1; transform: none }
+}
+/* Los titulos de dentro no heredan el color apagado de .field */
+.modal h2, .modal h3 { color: var(--text); }
+.modal .muted { color: var(--text-soft); }
+/* En movil el dialogo ocupa el ancho: un max-width de 520 px con padding fijo
+   dejaba los botones apretados en pantallas de 360 px. */
+@media (max-width: 560px) {
+  .modal { padding: 16px; border-radius: 12px; max-height: calc(100vh - 24px); }
+  /* Botones a lo ancho y en columna: en 360 px "Cancelar / Eliminar cuenta" no
+     caben en una fila sin recortarse. */
+  .modal-actions { flex-direction: column; align-items: stretch; }
+  .modal-actions .btn { width: 100%; }
+}
+
+/* El panel pone en MAYÚSCULAS todas las etiquetas de campo (.field label). Para
+   un rótulo corto como "MOTIVO" está bien, pero en estos diálogos hay casillas
+   cuyo texto es una frase entera ("También eliminar la sesión en Didit"), y una
+   frase de tres líneas en mayúsculas con las letras separadas no se lee: se
+   descifra. Como estos diálogos no se veían, esto no lo había visto nadie.
+   Se corrige solo dentro de .modal, así que el resto del panel no cambia. */
+.modal .field label.checkbox,
+.modal .field label.checkbox span,
+.modal label.checkbox,
+.modal label.checkbox span {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.45;
+}
+/* La casilla no se encoge cuando el texto ocupa varias líneas. */
+.modal label.checkbox input[type="checkbox"] {
+  flex: 0 0 auto; width: 17px; height: 17px; accent-color: var(--brand-1);
+}
+
+/* .modal-actions tampoco existia en admin.css. En el dialogo de eliminar cuenta
+   venia con estilos incrustados que la salvaban por casualidad; en cuanto se use
+   sin ellos, sin esta regla los botones saldrian uno debajo de otro alineados a
+   la izquierda. */
+.modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  margin-top: 16px; flex-wrap: wrap;
+}
+
+/* .btn-sm se usa en 8 sitios del panel (plantillas de email, campanas,
+   notificaciones) y no estaba definida: esos botones salian del tamano normal,
+   asi que la variante "pequena" no existia. */
+.btn.btn-sm, .btn-sm {
+  padding: 6px 10px;
+  font-size: 12.5px;
+  border-radius: 9px;
+}
+
 /* Drawer improvements */
 .drawer-wrap { position: relative; }
 .drawer-close {

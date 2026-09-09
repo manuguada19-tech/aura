@@ -217,13 +217,108 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "manuguada19@gmail.com").toLower
 // sin conocerlo) → el login admin queda deshabilitado en vez de usar una
 // contraseña conocida. La contraseña conocida antigua queda revocada.
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || crypto.randomBytes(24).toString("hex");
-const ADMIN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8h
+const ADMIN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000; // 8h · valor por defecto
+/* V919 · El panel tenía un campo "Token (min)" con un 60 dentro que no hacía
+   nada: nadie leía security.token_minutes, y la sesión duraba 8 horas fijas.
+   Un ajuste que muestra un número falso es peor que no tener el ajuste, porque
+   te hace creer que la sesión caduca en una hora cuando caduca en ocho.
+   Ahora el campo manda de verdad. El valor por defecto es 480 minutos = las 8
+   horas de siempre, así que sin tocar nada nada cambia. Se acota entre 5 minutos
+   y 30 días para que un cero o un número absurdo no deje el panel inservible ni
+   cree sesiones eternas. */
+function adminTokenTtlMs() {
+  const min = Number(getSetting("security.token_minutes", "480"));
+  if (!Number.isFinite(min) || min <= 0) return ADMIN_TOKEN_TTL_MS;
+  return Math.min(Math.max(Math.round(min), 5), 43200) * 60 * 1000;
+}
 const adminTokenCache = new Map(); // token -> { email, exp } (short-lived read cache)
 const ADMIN_TOKEN_CACHE_TTL = 5000;
 
+/* ============================================================
+   V919 · Contraseña de administrador cifrada
+   ------------------------------------------------------------
+   Hasta ahora la contraseña del panel se guardaba TAL CUAL en la tabla
+   settings (clave admin.password_override) y el login la comparaba con ===.
+   Quien pudiera leer la base de datos —o quien consiguiera una copia de los
+   datos— tenía la contraseña del panel a la vista.
+
+   Se cifra con scrypt, que viene en Node: no hace falta añadir ninguna
+   dependencia (bcrypt obligaría a compilar en el despliegue, con el riesgo de
+   que un fallo de instalación tire el arranque).
+
+   Lo importante del diseño: NO se puede perder el acceso. Se conservan los dos
+   caminos que ya funcionaban y solo se añade uno delante:
+     1. admin.password_hash  (nuevo, cifrado)
+     2. admin.password_override (el de antes, en claro) — y si acierta por aquí,
+        se cifra al momento y se borra la fila en claro. Se migra sola al
+        siguiente inicio de sesión, sin que haya que hacer nada.
+     3. ADMIN_PASSWORD de las variables de entorno, como último recurso.
+   Si el paso 1 fallara por cualquier motivo, los pasos 2 y 3 siguen ahí.
+   ============================================================ */
+const SCRYPT_N = 16384, SCRYPT_R = 8, SCRYPT_P = 1, SCRYPT_LEN = 32;
+
+function hashPassword(plano) {
+  const salt = crypto.randomBytes(16);
+  const dk = crypto.scryptSync(String(plano), salt, SCRYPT_LEN,
+    { N: SCRYPT_N, r: SCRYPT_R, p: SCRYPT_P });
+  return ["scrypt", SCRYPT_N, SCRYPT_R, SCRYPT_P,
+    salt.toString("hex"), dk.toString("hex")].join("$");
+}
+
+function esHash(v) { return String(v || "").startsWith("scrypt$"); }
+
+// Comparación en tiempo constante: dos cadenas de distinta longitud harían
+// fallar a timingSafeEqual, así que se hashean antes y se comparan los digests.
+function igualSeguro(a, b) {
+  const ha = crypto.createHash("sha256").update(String(a)).digest();
+  const hb = crypto.createHash("sha256").update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+
+function verifyPassword(plano, guardado) {
+  try {
+    if (!plano || !guardado) return false;
+    if (!esHash(guardado)) return igualSeguro(plano, guardado);
+    const [, n, r, p, saltHex, hashHex] = String(guardado).split("$");
+    const dk = crypto.scryptSync(String(plano), Buffer.from(saltHex, "hex"),
+      Buffer.from(hashHex, "hex").length,
+      { N: parseInt(n, 10), r: parseInt(r, 10), p: parseInt(p, 10) });
+    return crypto.timingSafeEqual(dk, Buffer.from(hashHex, "hex"));
+  } catch { return false; }
+}
+
+/* Comprueba la contraseña del panel contra los tres caminos y, si ha entrado
+   por el de texto en claro, lo convierte a cifrado y borra el claro.
+   Devuelve { ok, migrada }. */
+async function comprobarPasswordAdmin(intento) {
+  const hash  = getSetting("admin.password_hash", "") || "";
+  const claro = getSetting("admin.password_override", "") || "";
+
+  if (hash && verifyPassword(intento, hash)) return { ok: true, migrada: false };
+
+  if (claro && igualSeguro(intento, claro)) {
+    try {
+      await pool.execute(
+        "INSERT INTO settings (k,v) VALUES ('admin.password_hash',?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+        [hashPassword(intento)]
+      );
+      await pool.execute("DELETE FROM settings WHERE k='admin.password_override'");
+      runtimeSettingsLoadedAt = 0;
+      await loadRuntimeSettings();
+      await logActivity("security",
+        "La contraseña del panel estaba guardada sin cifrar en la base de datos. Se ha cifrado (scrypt) y se ha borrado la copia en claro. La contraseña es la misma; no hay que cambiar nada.");
+    } catch (e) { console.warn("[admin] migrar password:", e.message); }
+    return { ok: true, migrada: true };
+  }
+
+  // Último recurso: la variable de entorno. Nunca se guarda en la BD.
+  if (!hash && !claro && igualSeguro(intento, ADMIN_PASSWORD)) return { ok: true, migrada: false };
+  return { ok: false, migrada: false };
+}
+
 async function issueAdminToken(email) {
   const tok = crypto.randomBytes(32).toString("hex");
-  const exp = new Date(Date.now() + ADMIN_TOKEN_TTL_MS);
+  const exp = new Date(Date.now() + adminTokenTtlMs()); // V919 · lo dice el ajuste
   await pool.execute(
     "INSERT INTO admin_tokens (token, email, expires_at) VALUES (?,?,?)",
     [tok, email, exp]
@@ -309,7 +404,17 @@ function isSuperAdmin(req) {
    antes de exigirlo.
    ============================================================ */
 let AUTH_SESSION_SECRET = null;
-const USER_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 días
+const USER_TOKEN_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 días · valor por defecto
+/* V919 · "Refresh token (días)" era otro campo desconectado: ponía 30 y no lo
+   leía nadie. Resulta que 30 es justo lo que dura de verdad la sesión de un
+   usuario, así que en vez de borrar el campo lo conecto a lo que ya describía.
+   Por defecto sigue siendo 30 días: sin tocarlo, nada cambia. Se acota entre 1 y
+   365 días; si se baja, los usuarios tendrán que volver a entrar antes. */
+function userTokenTtlMs() {
+  const dias = Number(getSetting("security.refresh_days", "30"));
+  if (!Number.isFinite(dias) || dias <= 0) return USER_TOKEN_TTL_MS;
+  return Math.min(Math.max(Math.round(dias), 1), 365) * 24 * 60 * 60 * 1000;
+}
 
 async function ensureAuthSecret() {
   if (AUTH_SESSION_SECRET) return AUTH_SESSION_SECRET;
@@ -378,7 +483,10 @@ async function revokeAllSessions(uid) {
   _revokeAllAt.set(Number(uid), now);
 }
 
-function signUserToken(uid, ttlMs = USER_TOKEN_TTL_MS, did = null) {
+// V919 · Si quien llama no dice cuánto dura, manda el ajuste (30 días por
+// defecto, igual que antes). Los que pasan un ttlMs propio siguen mandando ellos.
+function signUserToken(uid, ttlMs = null, did = null) {
+  if (ttlMs == null) ttlMs = userTokenTtlMs();
   if (!AUTH_SESSION_SECRET) return null; // aún no inicializado
   const iat = Date.now();
   const exp = iat + ttlMs;
@@ -1928,7 +2036,9 @@ async function seed() {
     ["info","payments","Cobro Premium €9,99 procesado (usuario u_18492)"],
     ["error","payments","Timeout con Stripe (retry 3) — orden #INV-2026-02840"],
     ["info","moderation","Foto de u_8921 aprobada por moderador Alex R."],
-    ["debug","cron","Backup diario completado (12.4 GB)"],
+    // V919 · Aquí había un segundo "Backup diario completado (12.4 GB)". En V918
+    // quité el de la tabla `activity` pero se me pasó este, que sale en Logs con
+    // el mismo aspecto que una línea real. No hay copia diaria ni hay 12 GB.
     ["warn","chat","Detección de spam en conversación c_9821 (bloqueada)"],
     ["info","auth","2FA activado por usuario u_18492"],
     ["error","auth","Login rechazado — geolocalización inusual (Sofia, BG)"],
@@ -2024,7 +2134,15 @@ async function seed() {
     // Código de acceso para superadmin cuando la app está en pruebas privadas.
     // Se muestra en la pantalla de beta bajo "¿Eres administrador?" y permite
     // entrar aunque el email admin todavía no exista en la BD.
-    "app.superadmin_access_code": "AURA-0E6A4181",
+    //
+    // V919 · Aquí había un código FIJO escrito en el fuente ("AURA-0E6A4181").
+    // Como el repositorio es público, ese código lo podía leer cualquiera en
+    // GitHub, y con él POST /api/access/superadmin te crea/actualiza el usuario
+    // con role='superadmin' y te mete en la app como el administrador. Un
+    // secreto que viaja en el código fuente no es un secreto.
+    // Ahora no hay valor por defecto: se genera uno aleatorio en el primer
+    // arranque (ver ensureSuperadminAccessSettings) y se lee en el panel.
+    "app.superadmin_access_code": "",
     "app.email_verification_required": "true",
     "app.2fa_available": "true",
     // V732 · Margen de "cortesía" del gate por verificación de edad. Número de
@@ -2034,11 +2152,18 @@ async function seed() {
     "kyc.grace_limit": "10",
     "security.max_login_attempts": "5",
     "security.lockout_minutes": "15",
-    "security.token_minutes": "60",
+    // V919 · Este ponía "60" y no lo leía nadie: la sesión de admin duraba 8
+    // horas fijas. Ahora sí se lee, y el valor por defecto son esas 8 horas.
+    "security.token_minutes": "480",
     "security.refresh_days": "30",
     "security.rate_limit": "true",
     "security.log_ips": "true",
-    "security.suspicious_detection": "true",
+    // V919 · Aquí había "security.suspicious_detection": "true". Otro interruptor
+    // encendido por defecto conectado a NADA: en todo el servidor no hay ninguna
+    // detección de actividad sospechosa. Lo quito en lugar de dejarlo apagado,
+    // porque encendido hacía creer que algo vigilaba los accesos raros. Lo que sí
+    // existe y sí funciona: máx. intentos de login, bloqueo temporal, limitación
+    // de peticiones, registro de IPs y bloqueo de IPs/dispositivos.
     // V918 · "security.daily_backups" ya no se define aquí. Era un interruptor
     // activado por defecto que NO leía ningún código: daba a entender que había
     // copias diarias automáticas y no había ninguna. Se ha quitado también del
@@ -6053,8 +6178,16 @@ app.post("/api/admin/staff/:id/resend-invite", requireAdmin, wrap(async (req, re
   const [[m]] = await pool.query("SELECT * FROM staff WHERE id=?", [id]);
   if (!m) return res.status(404).json({ error: "not_found" });
   await pool.execute("UPDATE staff SET invited_at=NOW(), status='pending' WHERE id=?", [id]);
-  // Nota: aquí iría el envío real del email de invitación con nodemailer.
-  res.json({ ok: true, note: "invite_marked_resent" });
+  // V919 · Aquí NO se envía ningún email: solo se actualiza la fecha. Se
+  // devuelve dicho explícitamente (email_sent: false) para que el panel no pueda
+  // decir "invitación reenviada" cuando no se ha reenviado nada. Y aunque se
+  // enviara, el correo no serviría de mucho: la tabla `staff` no da acceso al
+  // panel, que se controla con app.access_admin_emails.
+  res.json({
+    ok: true,
+    email_sent: false,
+    note: "Solo se ha actualizado la fecha de invitación. El envío de email de invitación no está implementado, y la tabla staff todavía no concede acceso al panel.",
+  });
 }));
 
 /* ============================================================
@@ -6270,15 +6403,59 @@ app.get("/api/settings", wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT k, v FROM settings ORDER BY k");
   const obj = {};
   rows.forEach(r => obj[r.k] = r.v);
+  // V919 · La contraseña de admin no sale de aquí. Antes esta ruta devolvía
+  // "admin.password_override" con la contraseña en claro, así que quedaba en el
+  // navegador, en la caché y en cualquier captura del panel. Ahora se manda solo
+  // un aviso de si hay contraseña puesta ("admin.password_is_set"), que es lo
+  // único que el panel necesita para decidir el texto de ayuda.
+  const hayPass = !!(String(obj["admin.password_hash"] || "").trim() || String(obj["admin.password_override"] || "").trim());
+  delete obj["admin.password_hash"];
+  delete obj["admin.password_override"];
+  obj["admin.password_is_set"] = hayPass ? "1" : "";
   res.json(obj);
 }));
 app.put("/api/settings", wrap(async (req, res) => {
+  // V919 · Esta ruta es un escritor genérico: guarda en `settings` cualquier
+  // clave que le manden. Eso significa que si el panel (o cualquier otro
+  // cliente) envía "admin.password_override", la contraseña se guardaba tal cual
+  // en la base de datos, en claro, saltándose el cifrado de PUT /api/admin/me.
+  // La defensa no puede estar en el panel, porque el panel es solo un cliente y
+  // se puede sustituir por un curl. Tiene que estar aquí, en el servidor, que es
+  // el único sitio por el que pasan todos los caminos.
+  //
+  // Lo que hago: si llega la contraseña, la ciframos y la guardamos en
+  // "admin.password_hash", y nunca escribimos la fila en claro (además borramos
+  // la que pudiera existir de antes). El login sigue funcionando igual porque
+  // comprobarPasswordAdmin() acepta el hash.
   const entries = Object.entries(req.body || {});
+  const normales = [];
+  let passNueva = null;
   for (const [k, v] of entries) {
+    if (k === "admin.password_override" || k === "admin.password_hash") {
+      const val = String(v == null ? "" : v).trim();
+      if (val) passNueva = val;
+      continue;
+    }
+    normales.push([k, v]);
+  }
+  for (const [k, v] of normales) {
     await pool.execute(
       "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
       [k, String(v)]
     );
+  }
+  if (passNueva) {
+    // Si ya venía cifrada (empieza por "scrypt$") se respeta; si viene en claro
+    // se cifra aquí. En los dos casos la fila en claro desaparece.
+    const hash = esHash(passNueva) ? passNueva : hashPassword(passNueva);
+    await pool.execute(
+      "INSERT INTO settings (k, v) VALUES ('admin.password_hash',?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+      [hash]
+    );
+    await pool.execute("DELETE FROM settings WHERE k='admin.password_override'");
+    try {
+      await logActivity("security", "Contraseña de administrador actualizada y guardada cifrada (scrypt). No se almacena en claro.");
+    } catch {}
   }
   await logActivity("admin", `Configuración actualizada (${entries.length} campos)`);
   await loadRuntimeSettings();
@@ -6641,6 +6818,48 @@ function escribir(res, texto) {
   return new Promise((resolve) => res.once("drain", resolve));
 }
 
+/* V919 · Tachado de secretos en la copia de datos.
+   ------------------------------------------------------------------
+   La copia completa vuelca TODAS las tablas, y entre ellas hay tres que no
+   contienen datos, sino llaves:
+     · settings      → la contraseña de administrador y el código de acceso de
+                       superadmin. Con el código, cualquiera entra en la app como
+                       administrador.
+     · admin_tokens  → las sesiones de admin que están abiertas ahora mismo. Un
+                       token de estos vale para entrar sin contraseña hasta que
+                       caduca, así que es peor que la propia contraseña.
+     · user_2fa      → el secreto del segundo factor y los códigos de rescate de
+                       cada usuario. Con eso, el segundo factor deja de proteger.
+   El fichero de la copia acaba en la carpeta de descargas, en un pendrive o en
+   un Drive. Cualquiera de esos sitios se comparte por accidente. Así que estos
+   valores salen tachados y en la copia queda escrito qué se ha tachado, para que
+   nadie crea que la copia está corrupta.
+
+   Esto NO afecta a recuperar la app: si algún día se restaura, se vuelve a
+   poner la contraseña y las sesiones abiertas no interesa restaurarlas. */
+const TACHAR = {
+  // tabla → función que recibe la fila y devuelve la lista de columnas tachadas
+  settings: (fila) => {
+    const k = String(fila.k || "").toLowerCase();
+    const esSecreto = /password|secret|token|api_?key|private|superadmin_access_code|smtp_pass|emailjs/.test(k);
+    if (!esSecreto) return [];
+    fila.v = "[tachado por seguridad]";
+    return ["v"];
+  },
+  admin_tokens: (fila) => {
+    const tocadas = [];
+    if ("token" in fila) { fila.token = "[tachado por seguridad]"; tocadas.push("token"); }
+    return tocadas;
+  },
+  user_2fa: (fila) => {
+    const tocadas = [];
+    for (const c of ["secret", "recovery"]) {
+      if (c in fila && fila[c] != null) { fila[c] = "[tachado por seguridad]"; tocadas.push(c); }
+    }
+    return tocadas;
+  },
+};
+
 // GET /api/admin/backup/full-size → cuánto pesaría la copia, antes de pedirla.
 // Sirve para avisar en el panel: con las fotos dentro de la base de datos la
 // diferencia entre los dos modos puede ser de megas a gigas.
@@ -6698,7 +6917,8 @@ app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => 
   res.setHeader("X-Accel-Buffering", "no");
 
   const linea = (o) => JSON.stringify(o) + "\n";
-  let bytes = 0, totalFilas = 0, fotosOmitidas = 0;
+  let bytes = 0, totalFilas = 0, fotosOmitidas = 0, tachadas = 0;
+  const tachadoPorTabla = {};
   const cuenta = {};
   const salida = async (o) => { const s = linea(o); bytes += Buffer.byteLength(s); await escribir(res, s); };
 
@@ -6711,6 +6931,10 @@ app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => 
     aviso: conFotos
       ? "Copia completa: incluye las fotos (van dentro de la base de datos en base64)."
       : "Copia SIN fotos: las columnas de imagen se sustituyen por una marca. Sirve para recuperar cuentas, mensajes y pagos, no las imágenes.",
+    // V919
+    aviso_seguridad:
+      "Por seguridad NO se copian: la contraseña de administrador, el código de acceso de superadmin, las sesiones de admin abiertas (admin_tokens) ni los secretos de verificación en dos pasos (user_2fa). En su lugar aparece \"[tachado por seguridad]\". Si algún día restauras esta copia, tendrás que volver a poner la contraseña; no es un fallo de la copia. Aun así, este fichero lleva datos personales de tus usuarios: guárdalo cifrado y no lo subas a sitios compartidos.",
+    redacted_tables: Object.keys(TACHAR),
   });
 
   try {
@@ -6743,6 +6967,7 @@ app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => 
           break;
         }
         if (!filas.length) break;
+        const tachador = TACHAR[t] || null;
         for (const fila of filas) {
           if (!conFotos) {
             for (const c of pesadas) {
@@ -6753,6 +6978,14 @@ app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => 
               }
             }
           }
+          // V919 · Contraseñas, sesiones abiertas y secretos de 2FA salen tachados.
+          if (tachador) {
+            const tocadas = tachador(fila) || [];
+            if (tocadas.length) {
+              tachadas++;
+              tachadoPorTabla[t] = (tachadoPorTabla[t] || 0) + 1;
+            }
+          }
           await salida({ t, r: fila });
           n++; totalFilas++;
         }
@@ -6760,7 +6993,14 @@ app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => 
       }
       cuenta[t] = n;
     }
-    await salida({ __end__: true, rows: totalFilas, tables: Object.keys(cuenta).length, counts: cuenta, photos_omitted: fotosOmitidas, bytes });
+    await salida({
+      __end__: true, rows: totalFilas, tables: Object.keys(cuenta).length, counts: cuenta,
+      photos_omitted: fotosOmitidas, bytes,
+      // V919 · Se deja constancia de lo tachado para que la copia no parezca
+      // corrupta cuando alguien vea "[tachado por seguridad]" dentro.
+      redacted_rows: tachadas,
+      redacted_by_table: tachadoPorTabla,
+    });
     await logActivity("admin",
       `Copia completa de datos descargada (${conFotos ? "con" : "sin"} fotos): ${totalFilas} filas de ${Object.keys(cuenta).length} tablas, ${Math.round(bytes / 1048576)} MB`);
   } catch (e) {
@@ -11616,10 +11856,15 @@ app.post("/api/admin/login", wrap(async (req, res) => {
   if (!email || !password) return res.status(400).json({ error: "missing" });
   // Allow the admin to override the password from the panel (stored in settings).
   const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
-  const overridePass  = getSetting("admin.password_override", "") || "";
   const activeEmail = overrideEmail || ADMIN_EMAIL;
-  const activePass  = overridePass  || ADMIN_PASSWORD;
-  if (String(email).toLowerCase() !== activeEmail || String(password) !== activePass) {
+  // V919 · La contraseña ya no se compara con === contra un valor en claro:
+  // comprobarPasswordAdmin la valida contra el hash scrypt y, si la base de
+  // datos todavía guarda la versión en claro, la cifra en este mismo inicio de
+  // sesión y borra el claro. Los caminos antiguos siguen funcionando, así que
+  // este cambio no puede dejar a nadie fuera.
+  const emailOk = String(email).toLowerCase() === activeEmail;
+  const passOk = emailOk ? (await comprobarPasswordAdmin(String(password))).ok : false;
+  if (!emailOk || !passOk) {
     return res.status(401).json({ error: "invalid_credentials" });
   }
   const token = await issueAdminToken(activeEmail);
@@ -11657,15 +11902,19 @@ app.put("/api/admin/me", wrap(async (req, res) => {
   };
   // Password change requires the current one to be right
   if (password) {
-    const overridePass = getSetting("admin.password_override", "") || "";
-    const activePass = overridePass || ADMIN_PASSWORD;
-    if (String(current_password || "") !== activePass) {
+    // V919 · Se valida la actual por el mismo camino que el login (hash, claro
+    // heredado o variable de entorno) y la nueva se guarda YA CIFRADA. Se borra
+    // además la fila en claro, que es la que dejaba la contraseña a la vista de
+    // cualquiera que leyera la base de datos o una copia de los datos.
+    if (!(await comprobarPasswordAdmin(String(current_password || ""))).ok) {
       return res.status(400).json({ error: "wrong_current_password" });
     }
     if (String(password).length < 6) {
       return res.status(400).json({ error: "password_too_short" });
     }
-    await upsert("admin.password_override", password);
+    await upsert("admin.password_hash", hashPassword(String(password)));
+    await pool.execute("DELETE FROM settings WHERE k='admin.password_override'");
+    await logActivity("security", `Contraseña del panel cambiada (${entry.email}). Se guarda cifrada con scrypt.`);
   }
   await upsert("admin.display_name", name);
   await upsert("admin.role", role);
@@ -15925,28 +16174,147 @@ async function ensureDemoUser() {
   } catch (e) { /* silent */ }
 }
 
-// Garantiza que el código de acceso del superadmin y el email admin estén
-// configurados en cada arranque. Es idempotente: solo escribe si el valor
-// actual está vacío o falta la fila. Así el flujo "código de acceso" en la
-// pantalla de beta funciona aunque la BD ya existiera antes de introducir
-// esta funcionalidad.
+/* V919 · Códigos de acceso que ESTUVIERON ESCRITOS EN EL CÓDIGO FUENTE y que,
+   estando el repositorio publicado, hay que dar por conocidos por cualquiera.
+   Con uno de estos, POST /api/access/superadmin crea o actualiza el usuario con
+   role='superadmin' y mete a quien lo use en la app como el administrador.
+   No basta con dejar de escribirlos aquí: quien ya tenga la fila guardada en su
+   base de datos seguiría con el código publicado puesto. Por eso se comparan y
+   se sustituyen. Si alguna vez se filtra otro, se añade a esta lista. */
+const CODIGOS_ACCESO_QUEMADOS = new Set(["AURA-0E6A4181"]);
+
+// Código nuevo, aleatorio y legible por teléfono. 8 bytes = 64 bits: no se
+// adivina a fuerza bruta contra el endpoint, que solo tiene el límite por IP.
+function generarCodigoAcceso() {
+  const h = crypto.randomBytes(8).toString("hex").toUpperCase();
+  return "AURA-" + h.match(/.{1,4}/g).join("-");
+}
+
+/* Garantiza que el código de acceso del superadmin y el email admin estén
+   configurados en cada arranque.
+
+   Antes esto escribía un código fijo ("AURA-0E6A4181") cuando la fila faltaba.
+   Ojo con por qué importaba tanto: el mapa grande de ajustes por defecto vive
+   dentro de seed(), que se corta en seco si ya hay usuarios, así que en una
+   base de datos con gente esta función es LA ÚNICA que toca ese ajuste. El
+   código publicado llegaba aquí igualmente.
+
+   Ahora: si falta, está vacío o es uno de los quemados, se genera uno nuevo al
+   azar y se deja anotado en el registro de seguridad para que se pueda leer
+   desde el panel (Ajustes → Acceso) y no haya sorpresas. */
 async function ensureSuperadminAccessSettings() {
   try {
-    const defaults = {
-      "app.superadmin_access_code": "AURA-0E6A4181",
-      "app.access_admin_emails": ADMIN_EMAIL,
-    };
-    for (const [k, v] of Object.entries(defaults)) {
-      const [rows] = await pool.query("SELECT v FROM settings WHERE k=? LIMIT 1", [k]);
-      const cur = rows.length ? String(rows[0].v || "").trim() : null;
-      if (!cur) {
-        await pool.execute(
-          "INSERT INTO settings (k,v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
-          [k, v]
-        );
-      }
+    const [rows] = await pool.query(
+      "SELECT v FROM settings WHERE k='app.superadmin_access_code' LIMIT 1");
+    const actual = rows.length ? String(rows[0].v || "").trim() : "";
+    const quemado = CODIGOS_ACCESO_QUEMADOS.has(actual.toUpperCase());
+
+    if (!actual || quemado) {
+      const nuevo = generarCodigoAcceso();
+      await pool.execute(
+        "INSERT INTO settings (k,v) VALUES ('app.superadmin_access_code',?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+        [nuevo]
+      );
+      const motivo = quemado
+        ? `El código de acceso de superadmin era el que venía escrito en el código fuente, que es público. Se ha sustituido por uno nuevo: ${nuevo} — está en Ajustes → Acceso.`
+        : `No había código de acceso de superadmin. Se ha generado uno: ${nuevo} — está en Ajustes → Acceso.`;
+      console.warn("[superadmin] " + motivo);
+      try { await logActivity("security", motivo); } catch {}
+    }
+
+    const [ra] = await pool.query(
+      "SELECT v FROM settings WHERE k='app.access_admin_emails' LIMIT 1");
+    if (!(ra.length ? String(ra[0].v || "").trim() : "")) {
+      await pool.execute(
+        "INSERT INTO settings (k,v) VALUES ('app.access_admin_emails',?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+        [ADMIN_EMAIL]
+      );
     }
   } catch (e) { console.warn("[superadmin] ensure settings:", e.message); }
+}
+
+/* V919 · Borra de la base de datos las líneas inventadas de "copia de seguridad".
+   -----------------------------------------------------------------------------
+   En V918 quité esos mensajes del código que rellena la base de datos la primera
+   vez, pero eso no arregla nada en una instalación que ya está funcionando:
+   seed() se salta ese relleno cuando ya hay usuarios, así que las filas que se
+   insertaron hace meses siguen ahí, en Actividad y en Logs, con la misma pinta
+   que una línea real. Dicen que hay una copia diaria de 12,4 GB. No existe
+   ninguna copia automática, y desde luego no hay 12 GB.
+
+   Se borran por su texto exacto, así que no puede llevarse por delante nada más.
+   Se hace una sola vez (queda marcado en settings) y se anota cuántas filas se
+   han borrado, para que quede constancia de que las he tocado yo. */
+async function limpiarCopiasInventadas() {
+  const MARCA = "maintenance.fake_backup_logs_cleaned";
+  try {
+    const [hecho] = await pool.query("SELECT v FROM settings WHERE k=? LIMIT 1", [MARCA]);
+    if (hecho.length && String(hecho[0].v) === "1") return;
+
+    const TEXTOS = [
+      "Backup diario completado (12.4 GB)",
+      "Copia de seguridad automática completada (12.4 GB)",
+      "Copia de seguridad automatica completada (12.4 GB)",
+    ];
+    let borradas = 0;
+    for (const txt of TEXTOS) {
+      try {
+        const [r1] = await pool.execute("DELETE FROM logs WHERE message=?", [txt]);
+        borradas += r1.affectedRows || 0;
+      } catch {}
+      try {
+        const [r2] = await pool.execute("DELETE FROM activity WHERE action=?", [txt]);
+        borradas += r2.affectedRows || 0;
+      } catch {}
+    }
+    await pool.execute(
+      "INSERT INTO settings (k,v) VALUES (?,'1') ON DUPLICATE KEY UPDATE v='1'", [MARCA]);
+    if (borradas) {
+      const msg = `Se han borrado ${borradas} líneas de registro que decían que existía una copia de seguridad diaria de 12,4 GB. Eran texto de ejemplo metido al crear la base de datos: esa copia nunca ha existido. Las copias se hacen a mano desde Ajustes → Copia de datos.`;
+      console.warn("[limpieza] " + msg);
+      try { await logActivity("admin", msg); } catch {}
+    }
+  } catch (e) { console.warn("[limpieza] copias inventadas:", e.message); }
+}
+
+/* V919 · Pone al día los dos ajustes de sesión que antes no hacían nada.
+   -----------------------------------------------------------------------------
+   Cuidado con esto, porque es la trampa de conectar un ajuste que estaba muerto:
+   en la base de datos que ya está funcionando, security.token_minutes vale "60",
+   porque así se creó hace meses. Ese 60 nunca se leyó: la sesión de admin duraba
+   8 horas. Si ahora empiezo a leer el ajuste y respeto ese 60, la sesión pasa de
+   8 horas a 1 sin que nadie lo haya pedido, y encima parecería un fallo mío.
+
+   Así que solo en ese caso concreto (el valor sigue siendo exactamente el 60 que
+   venía de fábrica y no hacía nada) se sustituye por 480 minutos, que son las 8
+   horas de siempre. Si el valor es cualquier otro, se respeta: significa que
+   alguien lo ha cambiado a mano y eso sí es una decisión.
+
+   También se borra el interruptor de "detección de actividad sospechosa", que
+   está guardado en "true" y no vigila nada. */
+async function ajustarSesionesUnaVez() {
+  const MARCA = "maintenance.session_settings_v919";
+  try {
+    const [hecho] = await pool.query("SELECT v FROM settings WHERE k=? LIMIT 1", [MARCA]);
+    if (hecho.length && String(hecho[0].v) === "1") return;
+
+    const [tm] = await pool.query("SELECT v FROM settings WHERE k='security.token_minutes' LIMIT 1");
+    const actual = tm.length ? String(tm[0].v || "").trim() : "";
+    if (actual === "60" || actual === "") {
+      await pool.execute(
+        "INSERT INTO settings (k,v) VALUES ('security.token_minutes','480') ON DUPLICATE KEY UPDATE v='480'");
+      console.warn("[ajustes] 'Tu sesión de admin' pasa a 480 min (8 h). Antes decía 60 pero no se usaba: la sesión ya duraba 8 h. Se deja como estaba de verdad.");
+      try {
+        await logActivity("admin", "El ajuste de duración de la sesión de admin ya funciona. Se ha puesto en 480 minutos (8 horas), que es lo que duraba de verdad; el 60 que aparecía antes no se usaba. Puedes cambiarlo en Ajustes → Seguridad.");
+      } catch {}
+    }
+
+    // El interruptor que no vigilaba nada: fuera de la BD.
+    try { await pool.execute("DELETE FROM settings WHERE k='security.suspicious_detection'"); } catch {}
+
+    await pool.execute(
+      "INSERT INTO settings (k,v) VALUES (?,'1') ON DUPLICATE KEY UPDATE v='1'", [MARCA]);
+  } catch (e) { console.warn("[ajustes] sesiones v919:", e.message); }
 }
 
 // V545 · Fase 1 de features (rompehielo, stickers, audios, mensajes efímeros)
@@ -15991,6 +16359,8 @@ app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT, "· migra
     await rebrandAuraOnce();
     await seedConversations();
     await ensureSuperadminAccessSettings();
+    await limpiarCopiasInventadas(); // V919 · quita las líneas de copia inventadas
+    await ajustarSesionesUnaVez();   // V919 · antes de leer los ajustes de sesión
     await loadRuntimeSettings();
     await ensureAuthSecret(); // función 1 · secreto para firmar tokens de sesión
     await loadRevocations();  // V748 · carga revocaciones de sesión persistidas

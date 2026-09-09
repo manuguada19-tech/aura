@@ -8391,9 +8391,12 @@ async function viewSettings(root){
     const genBtn = el("button", {
       type: "button", class: "btn ghost", title: "Generar y guardar código nuevo",
       onclick: async (e) => {
-        const hex = Array.from(crypto.getRandomValues(new Uint8Array(4)))
+        // V919 · Antes 4 bytes (32 bits). Este código se prueba contra un
+        // endpoint público que solo tiene límite por IP, así que se sube a 8
+        // bytes (64 bits) y se agrupa para poderlo dictar por teléfono.
+        const hex = Array.from(crypto.getRandomValues(new Uint8Array(8)))
           .map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
-        const code = `AURA-${hex}`;
+        const code = "AURA-" + hex.match(/.{1,4}/g).join("-");
         inp.value = code;
         inp.type = "text";
         // V595 · Guardado inmediato: el nuevo código queda activo al momento,
@@ -8412,16 +8415,34 @@ async function viewSettings(root){
         }
       },
     }, "🎲");
-    return el("label", { class: "field" }, [
+    // V919 · Aviso si el código guardado es uno de los que estuvieron escritos
+    // en el código fuente. El repositorio es público, así que ese código lo
+    // puede leer cualquiera, y con él se entra en la app como superadmin.
+    // El servidor ya lo sustituye solo al arrancar; esto es el cinturón por si
+    // alguien lo vuelve a poner a mano.
+    const QUEMADOS = ["AURA-0E6A4181"];
+    const actual = String(s["app.superadmin_access_code"] || "").trim().toUpperCase();
+    const kids = [
       el("span", {}, "Código de acceso superadmin (pantalla de pruebas privadas)"),
       el("div", { style: "display:flex; gap:8px" }, [inp, eyeBtn, genBtn]),
-    ]);
+    ];
+    if (QUEMADOS.includes(actual)) {
+      kids.push(el("div", { class: "small", style: "background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:8px;padding:8px 10px;margin-top:6px;line-height:1.45" }, [
+        el("strong", {}, "Este código está publicado. "),
+        el("span", {}, "Es el que venía escrito en el código fuente del repositorio, así que puede leerlo cualquiera. Con él se entra en la app como superadministrador. Pulsa 🎲 para poner uno nuevo ahora."),
+      ]));
+    } else {
+      kids.push(el("div", { class: "muted small", style: "margin-top:6px;line-height:1.45" },
+        "Con este código se entra en la app como superadministrador desde la pantalla de pruebas privadas. Trátalo como una contraseña: no lo pegues en chats ni en capturas. 👁 lo muestra, 🎲 pone uno nuevo al instante."));
+    }
+    return el("label", { class: "field" }, kids);
   }
 
-  // V598 · Cambiar la contraseña de administrador desde el panel. El backend
-  // usa el ajuste `admin.password_override`: si está definido, sustituye a la
-  // variable de entorno ADMIN_PASSWORD en el login. Dejar el campo vacío y
-  // guardar mantiene la contraseña actual (no la borra).
+  // V598 · Cambiar la contraseña de administrador desde el panel. Dejar el campo
+  // vacío y guardar mantiene la contraseña actual (no la borra).
+  // V919 · El servidor ya no guarda la contraseña en claro: la cifra (scrypt) en
+  // `admin.password_hash`. Este campo la manda igual que antes; la conversión la
+  // hace el servidor, así que da lo mismo por qué camino llegue.
   function adminPasswordField() {
     const inp = el("input", {
       class: "input", type: "password", autocomplete: "new-password",
@@ -8449,7 +8470,10 @@ async function viewSettings(root){
         }
       },
     }, "💾");
-    const hasOverride = !!(s["admin.password_override"] || "").trim();
+    // V919 · Ya no se lee la contraseña: el servidor no la manda. Solo llega el
+    // aviso de si hay una puesta. Antes se leía "admin.password_override", que
+    // venía en claro dentro de la respuesta de /api/settings.
+    const hasOverride = !!(s["admin.password_is_set"] || "").trim();
     return el("div", {}, [
       el("label", { class: "field" }, [
         el("span", {}, "Contraseña de administrador"),
@@ -8569,12 +8593,21 @@ async function viewSettings(root){
     el("div", { class: "grid-3" }, [
       textField("security.max_login_attempts", "Máx. intentos login"),
       textField("security.lockout_minutes", "Bloqueo (min)"),
-      textField("security.token_minutes", "Token (min)"),
+      // V919 · Antes decía "Token (min)" con un 60 que no hacía nada: la sesión
+      // duraba 8 horas. Ahora el campo manda y el nombre dice qué es.
+      textField("security.token_minutes", "Tu sesión de admin (min)"),
     ]),
-    textField("security.refresh_days", "Refresh token (días)"),
+    // V919 · Antes "Refresh token (días)", desconectado. Ahora fija de verdad
+    // cuánto aguanta la sesión de un usuario de la app sin volver a entrar.
+    textField("security.refresh_days", "Sesión de usuario (días)"),
+    el("p", { class: "field-help" },
+      "Tu sesión de admin: 480 min = 8 horas (lo de siempre). La sesión de usuario son 30 días. Si bajas estos números, tú y tus usuarios tendréis que volver a entrar más a menudo."),
     toggleField("security.rate_limit", "Limitación de peticiones"),
     toggleField("security.log_ips", "Registrar IPs"),
-    toggleField("security.suspicious_detection", "Detección de actividad sospechosa"),
+    // V919 · Aquí había "Detección de actividad sospechosa", encendido y
+    // conectado a nada: no existe ninguna detección de ese tipo en el servidor.
+    // Quitado por lo mismo que el de copias diarias en V918: un interruptor que
+    // no hace nada te hace creer que estás protegido.
     // V918 · Aquí había un interruptor «Backups diarios automáticos», activado
     // por defecto y conectado a NADA: ningún código leía security.daily_backups.
     // Se ha quitado en vez de dejarlo apagado, porque un interruptor que no hace
@@ -17145,6 +17178,40 @@ const ROLE_COLOR = { admin: "#c26bff", moderator: "#5b9bff", viewer: "#7a869a" }
 
 async function viewStaff(root) {
   root.appendChild(viewTitle("Staff & Permisos", "Administradores, moderadores e invitaciones"));
+
+  /* V919 · Aviso obligado: esta pantalla todavía no da acceso a nadie.
+     ------------------------------------------------------------------------
+     He revisado el servidor entero. La tabla `staff` solo se lee en el sitio que
+     pinta esta lista: NADA más la consulta. El login del panel comprueba
+     únicamente el correo del administrador (app.access_admin_emails), así que
+     una persona añadida aquí no puede entrar al panel de ninguna manera, ni con
+     permisos ni sin ellos. Y "Reenviar invitación" no envía ningún email: solo
+     cambia la fecha en la base de datos (en el servidor, donde iría el envío,
+     hay un comentario que dice justo eso).
+     Sin este aviso, lo lógico es invitar a un moderador, decirle que ya tiene
+     acceso, y que la persona no reciba nada y no pueda entrar. Prefiero decirlo
+     antes que dejar que se descubra así. Las tarjetas se quedan: sirven para
+     tener apuntado quién va a llevar qué cuando esto funcione. */
+  root.appendChild(el("div", {
+    style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);" +
+           "border-radius:10px;padding:12px 14px;margin:0 0 14px;line-height:1.5;font-size:13px",
+  }, [
+    el("div", { style: "font-weight:700;margin-bottom:4px" }, "⚠️ Esta pantalla todavía no da acceso a nadie"),
+    el("div", {}, [
+      el("span", {}, "Puedes apuntar aquí a tu equipo, pero hoy "),
+      el("strong", {}, "no funciona todavía"),
+      el("span", {}, ": quien añadas "),
+      el("strong", {}, "no podrá entrar al panel"),
+      el("span", {}, " y el botón de invitación "),
+      el("strong", {}, "no envía ningún correo"),
+      el("span", {}, ". Los permisos de cada tarjeta no se aplican en ningún sitio."),
+    ]),
+    el("div", { style: "margin-top:6px" }, [
+      el("span", {}, "Al panel solo se entra con el correo de administrador que hay en "),
+      el("strong", {}, "Ajustes → Acceso"),
+      el("span", {}, ". Úsalo como una lista de a quién quieres dar acceso más adelante, no como una lista de quién lo tiene."),
+    ]),
+  ]));
   // Inyectar estilo específico una sola vez
   if (!document.getElementById("staffCss")) {
     const st = document.createElement("style");
@@ -17174,7 +17241,8 @@ async function viewStaff(root) {
     ["🛡️","Administrador con todos los permisos"],
     ["🧑‍⚖️","Moderador con permisos parciales"],
     ["👀","Solo lectura (viewer)"],
-    ["✉️","Reenviar email de invitación"],
+    // V919 · Ponía "Reenviar email de invitación". No se envía ningún email.
+    ["✉️","Marcar como invitado (no envía email todavía)"],
     ["🔒","Suspender / reactivar"],
     ["🗑","Eliminar del staff"],
   ]));
@@ -17235,10 +17303,13 @@ async function viewStaff(root) {
     const acts = el("div", { class: "staff-acts" });
     acts.appendChild(btn("✏️ Editar", () => openStaffModal(m)));
     if (st === "pending") {
-      acts.appendChild(btn("✉️ Reenviar", async () => {
+      // V919 · Antes decía "Invitación reenviada". No se reenvía nada: el
+      // servidor solo actualiza la fecha, no hay envío de email implementado.
+      // Decir "reenviada" hace esperar un correo que no va a llegar.
+      acts.appendChild(btn("✉️ Marcar como invitado", async () => {
         try {
           await api(`/api/admin/staff/${m.id}/resend-invite`, { method: "POST" });
-          toast("Invitación reenviada");
+          toast("Fecha de invitación actualizada — ojo: no se envía ningún email todavía");
         } catch (e) { toast("Error: " + e.message); }
       }));
     }
