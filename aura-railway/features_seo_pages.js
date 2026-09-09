@@ -8,10 +8,11 @@
    guías originales. No toca la app ni las sesiones: solo añade rutas
    públicas antes del fallback SPA.
 
-   IMPORTANTE: no habilita anuncios. Solo aporta el contenido de editor
-   que exige la política de AdSense. Los anuncios se activan tras la
-   aprobación de Google y deben ir en estas páginas de contenido, nunca
-   dentro de las pantallas de la app (swipe/chat), que Google prohíbe.
+   ANUNCIOS: este módulo SÍ carga el código de AdSense, pero sólo en las
+   páginas que son contenido de editor de verdad (las guías y el FAQ).
+   Nunca dentro de las pantallas de la app (swipe/chat), que Google prohíbe.
+   Ver el bloque "AdSense" más abajo: la decisión no se declara a mano, se
+   mide sobre el cuerpo de cada página.
    ===================================================================== */
 
 "use strict";
@@ -23,14 +24,58 @@ const TODAY = "2026-09-02";
 /* --------------------------------------------------------------------
    AdSense (SOLO en páginas de contenido rastreable, nunca en la app)
    --------------------------------------------------------------------
-   La política de AdSense exige que los anuncios aparezcan en páginas con
-   contenido original y de valor. Estas páginas server-side (guías, FAQ,
-   cómo funciona, inicio) cumplen ese requisito, así que aquí SÍ es correcto
-   cargar el código de anuncios. El slot en el cuerpo es opcional: si no hay
-   ADSENSE_SLOT_CONTENT configurado, el loader habilita los Auto Ads (que se
-   activan/desactivan desde el panel de AdSense) sin insertar unidades fijas. */
+   V924. Google rechazó la propiedad con "Anuncios servidos por Google en
+   pantallas sin contenido del editor". Hasta ahora el código de anuncios se
+   cargaba con una marca puesta a mano (`ads: true`) en cinco tipos de página,
+   y dos de ellas no son contenido de editor:
+
+     /guias          1603 caracteres, y es un ÍNDICE: casi todo son enlaces.
+     /como-funciona  1619 caracteres, promocional y flojo.
+     /inicio         2525 caracteres, pero es la portada: su función es que te
+                     registres ("Crear cuenta gratis", "Abrir Aura"), no informar.
+
+   Como ADSENSE_SLOT_CONTENT viene vacío, además, no había ninguna unidad fija:
+   colocaba los Auto Ads, o sea que decidía Google DÓNDE ponerlos dentro de esas
+   páginas. Nosotros no controlábamos nada.
+
+   Ahora los anuncios se limitan a las guías y al FAQ, y hacen falta DOS
+   condiciones a la vez:
+     1) que la página se declare contenido (`ads: true`), y
+     2) que su cuerpo mida de verdad — PROSA_MINIMA de texto que no sea enlace.
+   La medida es la red de seguridad: si algún día alguien marca `ads: true` en
+   una página escasa, o una guía se queda corta, el código de anuncios NO se
+   emite. Un olvido deja la página sin anuncios (se pierde dinero, se nota y se
+   arregla) en vez de repetir la infracción que nos rechazaron. */
 const ADSENSE_CLIENT = "ca-pub-9759358849227466";
 const ADSENSE_SLOT_CONTENT = process.env.ADSENSE_SLOT_CONTENT || "";
+
+// Mínimo de prosa (sin contar el texto de los enlaces) para que una página pueda
+// llevar anuncios. Medido con esta misma función sobre las páginas reales:
+//   con anuncios:  guía más corta 2061 · FAQ 2954 · guía más larga 2954
+//   sin anuncios:  /ayuda 79 · /contacto 329 · /guias 1110 · /como-funciona 1379
+//                  /inicio 1644
+// 1800 deja fuera todo lo flojo y da 261 de margen a la guía más corta.
+const PROSA_MINIMA = 1800;
+
+// Texto de editor del cuerpo: se quitan scripts, estilos y el texto de los
+// ENLACES, porque una página hecha de enlaces es navegación, no contenido — que
+// es justo lo que la política de Google no admite bajo un anuncio.
+function prosaDeEditor(html) {
+  return String(html == null ? "" : html)
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<a\b[\s\S]*?<\/a>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&[a-z]+;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim().length;
+}
+
+// Única puerta de los anuncios. Las dos condiciones, juntas.
+function llevaAnuncios(o) {
+  if (!o || o.ads !== true) return false;
+  return prosaDeEditor(o.bodyHtml) >= PROSA_MINIMA;
+}
 
 // Loader del script de AdSense (para el <head> de páginas con contenido).
 function adsenseLoaderHtml() {
@@ -101,8 +146,8 @@ function layout(opts) {
     `<a href="${n.path}"${n.path === o.path ? ' aria-current="page"' : ""}>${esc(n.label)}</a>`
   ).join("");
 
-  // AdSense solo en páginas con contenido de editor (o.ads === true).
-  const adsHead = o.ads ? adsenseLoaderHtml() : "";
+  // AdSense solo donde hay contenido de editor medido (ver llevaAnuncios).
+  const adsHead = llevaAnuncios(o) ? adsenseLoaderHtml() : "";
 
   return `<!doctype html>
 <html lang="es">
@@ -643,7 +688,8 @@ function pageHub() {
     h1: "Encuentra tu match en Aura",
     sub: "Conexiones reales, momentos únicos. La app de citas con perfiles verificados y seguridad de verdad.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }],
-    ads: true,
+    // V924 · Sin anuncios: la portada existe para que te registres, no para
+    // informar. Bajo la política de Google no es contenido de editor.
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
@@ -839,7 +885,9 @@ function pageComoFunciona() {
     h1: "Cómo funciona Aura",
     sub: "De crear tu perfil a tu primera cita, explicado paso a paso.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Cómo funciona", path: "/como-funciona" }],
-    ads: true,
+    // V924 · Sin anuncios: 1619 caracteres y promocional. Si algún día se
+    // convierte en una explicación de verdad, se le pone `ads: true` y la
+    // medida de PROSA_MINIMA decidirá sola.
     bodyHtml: body,
   });
 }
@@ -857,7 +905,8 @@ function pageGuidesIndex() {
     h1: "Guías de citas",
     sub: "Consejos prácticos para conocer gente de forma segura y con sentido.",
     breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Guías", path: "/guias" }],
-    ads: true,
+    // V924 · Sin anuncios: es un índice, casi todo enlaces. Una pantalla de
+    // navegación con un anuncio es exactamente lo que Google nos reprochó.
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",

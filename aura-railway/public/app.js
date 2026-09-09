@@ -4591,28 +4591,19 @@ function showInterstitial(ctx) {
     }, 1000);
   }
 
-  // Renderiza el anuncio real o placeholder según red
-  const net = ctx.network || "adsense";
-  const pub = ctx.publisher_id || "";
-  const slotId = ctx.interstitial?.slot || "";
-  if (net === "adsense" && pub && slotId) {
-    ensureAdSenseLoader(pub).then(ok => {
-      if (!ok) { slot.innerHTML = adPlaceholderHtml("AdSense no disponible"); return; }
-      const ins = document.createElement("ins");
-      ins.className = "adsbygoogle";
-      ins.style.display = "block";
-      ins.style.width = "100%";
-      ins.style.height = "100%";
-      ins.setAttribute("data-ad-client", pub);
-      ins.setAttribute("data-ad-slot", slotId);
-      ins.setAttribute("data-ad-format", "auto");
-      ins.setAttribute("data-full-width-responsive", "true");
-      slot.appendChild(ins);
-      try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch(_) {}
-    });
-  } else {
-    slot.innerHTML = adPlaceholderHtml("Anuncio " + (net || "").toUpperCase());
-  }
+  // V924 · Aquí NO se carga nunca un anuncio de Google, a propósito.
+  //
+  // Este intersticial lo construye la app: es un overlay nuestro, tapando la
+  // pantalla, con un botón de cerrar que nosotros habilitamos cuando queremos (y
+  // con "cierre obligatorio" ni eso). Meter dentro una unidad de AdSense es
+  // precisamente lo que Google prohíbe: los únicos intersticiales admitidos son
+  // los "vignette" que coloca Auto Ads, no los del editor. Con la propiedad ya
+  // rechazada, dejar este camino abierto era un botón en el panel capaz de
+  // tumbar la cuenta el día que alguien lo pulsara.
+  //
+  // El overlay se mantiene para creatividades propias (promos de Aura, avisos),
+  // que es un uso legítimo y no depende de ninguna red externa.
+  slot.innerHTML = adPlaceholderHtml("Anuncio propio");
 
   let remaining = delay;
   if (remaining <= 0) {

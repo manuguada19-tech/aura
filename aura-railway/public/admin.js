@@ -14128,9 +14128,16 @@ async function viewAdsAdmin(root){
       textField("ads.slot_discover_top", "Slot: Descubrir (arriba)", "1234567890"),
       textField("ads.slot_discover_bottom", "Slot: Descubrir (abajo)", "0987654321"),
       textField("ads.slot_messages", "Slot: Mensajes", "1122334455"),
-      textField("ads.slot_interstitial", "Slot: Intersticial (pantalla completa)", "5544332211"),
+      textField("ads.slot_interstitial", "Slot: Intersticial (ya no se usa — ver nota abajo)", "5544332211"),
     ]),
     el("h4", { style: "margin:14px 0 6px" }, "Anuncios a pantalla completa (intersticial)"),
+    // V924 · El intersticial ya no puede servir anuncios de Google (ver app.js,
+    // showInterstitial). Se dice aquí para no ofrecer un campo que no hace nada.
+    el("p", { class: "muted", style: "margin:0 0 10px" },
+      "El intersticial muestra SOLO creatividades propias de Aura. No sirve anuncios de "
+      + "Google: la política de AdSense no admite intersticiales construidos por el editor "
+      + "(sólo los “vignette” que coloca Google por su cuenta), y hacerlo puede costar la "
+      + "cuenta. El campo “Slot: Intersticial” queda sin efecto."),
     el("div", { class: "grid-2" }, [
       toggleField("ads.interstitial_enabled", "Activar intersticial", false),
       textField("ads.interstitial_frequency", "Frecuencia (cada N navegaciones)", "5", "5"),
