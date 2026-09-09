@@ -89,6 +89,39 @@ function adsenseLoaderHtml() {
   return `<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${ADSENSE_CLIENT}" crossorigin="anonymous"></script>`;
 }
 
+/* Etiqueta propia del gestor de consentimiento de Google (Funding Choices).
+   --------------------------------------------------------------------
+   V929. Con ADSENSE_CMP=google encendido, el mensaje NO aparecía: `window.
+   googlefc` no existía en la página. El motivo es que la etiqueta de anuncios
+   sólo trae el mensaje consigo cuando la propiedad ya sirve anuncios, y ésta
+   está en revisión. O sea que el modo certificado quedaba a medias: la etiqueta
+   puesta, cookies posibles, y ninguna puerta para decir sí o no.
+
+   Esta etiqueta carga el mensaje por su cuenta, sin depender de que haya
+   anuncios. Es la instalación que documenta Google y va lo más arriba posible
+   del <head>: antes que la de anuncios, para que el aviso pueda decidir antes
+   de que se pinte nada.
+
+   El iframe `googlefcPresent` no es adorno: es la señal por la que el script de
+   Google reconoce que su etiqueta está en la página. Sin ella hay casos en los
+   que no muestra el mensaje. Se crea oculto y fuera de pantalla, y si el <body>
+   aún no existe se reintenta en el siguiente turno.
+
+   SÓLO en modo Google. En el modo por defecto manda el banner de aquí y no se
+   carga NADA de Google antes del "Aceptar": emitir esto allí convertiría en
+   mentira la frase del punto 11, que es exactamente el fallo que arregló V928. */
+function fundingChoicesHtml() {
+  const PUB = ADSENSE_CLIENT.replace(/^ca-/, "");
+  return `<script async src="https://fundingchoicesmessages.google.com/i/${PUB}?ers=1"></script>`
+    + `<script>(function(){function poner(){`
+    + `if(window.frames["googlefcPresent"])return;`
+    + `if(!document.body){setTimeout(poner,0);return;}`
+    + `var m=document.createElement("iframe");`
+    + `m.style="width:0;height:0;border:none;z-index:-1000;left:-1000px;top:-1000px";`
+    + `m.style.display="none";m.name="googlefcPresent";document.body.appendChild(m);`
+    + `}poner();})();</script>`;
+}
+
 // Unidad de anuncio in-content. Sólo se inserta si hay slot configurado; si no,
 // devuelve cadena vacía y son los Auto Ads quienes colocan el anuncio.
 function adUnit() {
@@ -121,10 +154,10 @@ function adUnit() {
        "Aceptar". Sin respuesta o con "Rechazar" no se carga nada de Google, así
        que no hay cookie publicitaria posible.
      ADSENSE_CMP = "google" → el script se emite normal y el mensaje lo pone
-       Google (Funding Choices, certificada). El banner de aquí se calla: el
-       mensaje de Google VIAJA DENTRO de la etiqueta de anuncios, o sea que
-       bloquear la etiqueta con un banner propio impediría que apareciese, y
-       dejarlos a los dos saldrían dos avisos seguidos.
+       Google (Funding Choices, certificada), cargado con su propia etiqueta
+       (ver fundingChoicesHtml, V929). El banner de aquí se calla: bloquear la
+       etiqueta de anuncios con un banner propio impediría que Google midiera
+       nada, y dejarlos a los dos saldrían dos avisos seguidos.
 
    En los dos modos manda antes llevaAnuncios(): si la página no lleva
    anuncios no se emite nada — ni script, ni banner, ni cookies, ni el enlace
@@ -146,7 +179,14 @@ function adUnit() {
         para volver a abrir su mensaje. Si googlefc no aparece (extensión que lo
         bloquea, o visita desde fuera del EEE, donde Google no muestra mensaje
         y no hay nada que retirar) se enseña un aviso propio explicándolo, en
-        vez de un enlace que no hace nada. */
+        vez de un enlace que no hace nada.
+
+   V929 · Y con el interruptor encendido en producción, el mensaje no salía: la
+   etiqueta de anuncios sólo lo trae cuando la propiedad ya sirve anuncios, y la
+   nuestra está en revisión. Quedaba el peor de los estados posibles — etiqueta
+   cargada, cookies posibles, ninguna puerta para consentir ni rechazar — así que
+   ahora el gestor se carga con SU etiqueta, antes que la de anuncios, y no
+   depende de que Google haya aprobado nada (ver fundingChoicesHtml). */
 const ADSENSE_CMP = String(process.env.ADSENSE_CMP || "").trim().toLowerCase();
 // Un solo sitio decide el modo: lo consultan layout() y el texto del punto 11.
 // Si cada uno lo calculase por su cuenta, el HTML y la política podrían acabar
@@ -342,6 +382,10 @@ function layout(opts) {
   // sólo con permiso (ver el bloque de consentimiento). En el modo por defecto
   // el <head> NO lleva el script: lo inyecta el banner si se acepta.
   const conAnuncios = llevaAnuncios(o);
+  // V929 · La etiqueta del gestor de consentimiento va SEPARADA y ANTES que la
+  // de anuncios: el mensaje tiene que poder salir aunque la propiedad todavía no
+  // sirva anuncios, que es la razón de que no apareciera nada.
+  const cmpHead = conAnuncios && cmpDeGoogle ? fundingChoicesHtml() : "";
   const adsHead = conAnuncios && cmpDeGoogle ? adsenseLoaderHtml() : "";
   // V928 · Los dos modos emiten interfaz de consentimiento, no sólo el propio.
   // El de Google no pregunta desde aquí (lo hace su mensaje certificado), pero
@@ -372,6 +416,7 @@ function layout(opts) {
   <meta property="og:image" content="${BASE}/assets/welcome-logo-light.png"/>
   <meta name="twitter:card" content="summary"/>
   <link rel="icon" href="/assets/welcome-logo-light.png"/>
+  ${cmpHead}
   ${adsHead}
   ${jsonLdHtml}
   <style>
@@ -550,7 +595,7 @@ const TERMS = [
 function textoCookiesHtml() {
   const inicio = "Dentro de la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios — las <a href='/guias'>guías</a> y las <a href='/faq'>preguntas frecuentes</a> — muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. ";
   const medio = cmpDeGoogle
-    ? "El consentimiento en esas páginas lo recoge el <b>gestor de consentimiento certificado de Google</b> (Funding Choices, TCF v2.2), que aparece al entrar: el código de Google se carga con la página porque ese aviso viaja dentro de él, y es tu respuesta la que decide si puede haber cookies de publicidad y si los anuncios se personalizan. Si rechazas, verás anuncios sin personalizar y no se usarán cookies publicitarias basadas en tu actividad. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas, que vuelve a abrir el aviso de Google. "
+    ? "El consentimiento en esas páginas lo recoge el <b>gestor de consentimiento certificado de Google</b> (Funding Choices, TCF v2.2), que aparece al entrar: el código de Google se carga con la página —el del propio aviso y el de los anuncios—, y es tu respuesta la que decide si puede haber cookies de publicidad y si los anuncios se personalizan. Si rechazas, verás anuncios sin personalizar y no se usarán cookies publicitarias basadas en tu actividad. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas, que vuelve a abrir el aviso de Google. "
     : "El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria. Puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. ";
   const fin = "El resto del sitio (portada, páginas legales, ayuda y contacto) no carga publicidad. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste.";
   return inicio + medio + fin;
