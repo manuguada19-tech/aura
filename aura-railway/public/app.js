@@ -17500,6 +17500,11 @@ function screenInfoPrivacy(root) {
     // empezaron a llevar AdSense; lo segundo no lo fue nunca. Dentro de la app
     // sigue sin haber publicidad (index.html no carga ningún script de
     // anuncios), y así se dice. Mismo texto en features_seo_pages.js.
+    // OJO: eso depende del ajuste `ads.enabled`, que la migración de V383 deja
+    // en false pero que el panel puede encender. Si algún día se encienden los
+    // anuncios de la app, esta frase pasa a ser falsa y además haría falta una
+    // puerta de consentimiento aquí dentro, que no existe. El panel lo avisa
+    // junto al interruptor (admin.js, viewAds).
     { h: "11. Cookies y tecnologías similares",
       p: "En la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): dentro de la app no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios (las guías y las preguntas frecuentes) muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. El código de Google <b>no se carga hasta que lo aceptas</b> en el aviso que aparece al entrar en esas páginas; si lo rechazas, o si no respondes, no se descarga ni se coloca ninguna cookie publicitaria, y puedes cambiar tu decisión desde el enlace «Cookies» del pie. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
     { h: "12. Medidas de seguridad",

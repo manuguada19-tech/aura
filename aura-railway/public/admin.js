@@ -14106,6 +14106,19 @@ async function viewAdsAdmin(root){
   }
 
   const body = [
+    // V926 · Aviso antes del interruptor. Los anuncios de las guías y el FAQ no
+    // se tocan desde aquí: los sirve features_seo_pages.js con su propia puerta
+    // de consentimiento. "Anuncios activos" enciende los de DENTRO de la app, y
+    // ahí no hay ninguna puerta: encenderlo sin construirla antes incumpliría el
+    // RGPD y la política de consentimiento de Google, y dejaría en falso el
+    // punto 11 de la política de privacidad ("dentro de la app no hay
+    // publicidad"). Se dice aquí porque es aquí donde se pulsa.
+    el("p", { class: "muted", style: "margin:0 0 10px" },
+      "Este interruptor afecta SÓLO a los anuncios dentro de la app. Los de las guías y "
+      + "las preguntas frecuentes de citasaura.es se sirven aparte, con su propio aviso de "
+      + "cookies. Ojo: la app no tiene aviso de consentimiento, así que activar esto sin "
+      + "construirlo antes incumpliría el RGPD y dejaría en falso el punto 11 de la "
+      + "política de privacidad, que dice que dentro de la app no hay publicidad."),
     el("div", { class: "grid-2" }, [
       toggleField("ads.enabled", "Anuncios activos", true),
       toggleField("ads.only_free_plan", "Mostrar solo a usuarios del plan Free", true),
