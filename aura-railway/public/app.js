@@ -9448,10 +9448,24 @@ async function openNearbyMap() {
   let searchSeq = 0; // descarta respuestas viejas si llega una nueva
   // V854 · Exploración estilo mapa: al mover/ampliar el mapa se buscan solos los
   // usuarios de la zona que estás mirando (sin pulsar botones). Estas banderas
-  // evitan bucles: suppressAutoSearch salta la búsqueda del "moveend" que provoca
-  // un centrado PROGRAMÁTICO (setView), y pinDragging la salta mientras arrastras
-  // el pin (que ya busca solo al soltarlo). autoSearchTimer aplica un antirrebote.
-  let suppressAutoSearch = false;
+  // evitan bucles: el "moveend" que provoca un centrado PROGRAMÁTICO (setView) no
+  // debe buscar, y pinDragging salta la búsqueda mientras arrastras el pin (que ya
+  // busca al soltarlo). autoSearchTimer aplica un antirrebote.
+  //
+  // V921 · "El pin se mueve solo": esto era una bandera de un solo uso
+  // (suppressAutoSearch = true, y el primer "moveend" la ponía a false). Un
+  // centrado del programa NO manda un solo "moveend": setView manda el suyo y
+  // acto seguido map.invalidateSize() -- el de los 120 ms al abrir el mapa, y el
+  // de cada cambio de tamaño del panel -- manda OTRO. El primero gastaba la
+  // bandera y el segundo pasaba de largo, movía el pin al centro de la pantalla y
+  // lanzaba una búsqueda sin que el usuario hubiera tocado el mapa.
+  //
+  // Ahora es una VENTANA de tiempo: durante los 900 ms siguientes a un centrado
+  // programático se ignoran todos los "moveend", no solo el primero. Los 900 ms
+  // son los mismos que ya tenía la salvaguarda anterior, y cubren de sobra la
+  // animación de setView. El precio, dicho claro: si mueves el mapa con el dedo
+  // dentro de esa ventana, esa vez no se busca sola; el siguiente movimiento sí.
+  let suppressUntil = 0;
   let pinDragging = false;
   let autoSearchTimer = null;
 
@@ -9549,12 +9563,13 @@ async function openNearbyMap() {
   // real del mapa para que el punto aparezca justo en medio de la franja que sí
   // se ve, con el pin y "Tú estás aquí" bien visibles.
   function centerOnVisible(lat, lng, zoom, animate) {
-    // V854 · Este centrado es PROGRAMÁTICO (setView): marca que el "moveend" que
-    // provoque NO debe disparar una búsqueda automática (evita bucles/duplicados).
-    // Salvaguarda: si por lo que sea no llega el "moveend" (p. ej. la vista no
-    // cambió), reponemos la bandera para no bloquear futuras búsquedas al explorar.
-    suppressAutoSearch = true;
-    setTimeout(() => { suppressAutoSearch = false; }, 900);
+    // V854 · Este centrado es PROGRAMÁTICO (setView): los "moveend" que provoque
+    // NO deben disparar una búsqueda automática (evita bucles/duplicados).
+    // V921 · Ventana de tiempo en vez de bandera de un solo uso: un centrado manda
+    // más de un "moveend" (el de setView y el de invalidateSize), y con la bandera
+    // el segundo se colaba y movía el pin solo. La ventana caduca por sí misma, así
+    // que tampoco hace falta reponer nada si el "moveend" no llega nunca.
+    suppressUntil = Date.now() + 900;
     const z = Number.isFinite(zoom) ? zoom : (map.getZoom() || CLOSE_ZOOM);
     try {
       const cRect = mapEl.getBoundingClientRect();
@@ -9750,11 +9765,13 @@ async function openNearbyMap() {
   // arrastra o hace zoom en el mapa, tras un breve reposo (antirrebote) movemos
   // el pin al centro de lo que está mirando y buscamos allí, SIN recentrar a casa
   // aunque esté vacío (keepView). Los movimientos PROGRAMÁTICOS (centrar al
-  // abrir, "mi ubicación", ir a una ciudad) se ignoran vía suppressAutoSearch, y
-  // el arrastre del pin vía pinDragging (ese ya busca al soltar).
+  // abrir, "mi ubicación", ir a una ciudad) se ignoran durante la ventana que abre
+  // centerOnVisible (V921: antes era una bandera de un solo uso y el segundo
+  // "moveend" del centrado se colaba), y el arrastre del pin vía pinDragging (ese
+  // ya busca al soltar).
   map.on("movestart", () => { if (autoSearchTimer) { clearTimeout(autoSearchTimer); autoSearchTimer = null; } });
   map.on("moveend", () => {
-    if (suppressAutoSearch) { suppressAutoSearch = false; return; }
+    if (Date.now() < suppressUntil) return;   // V921 · centrado del programa, no del dedo
     if (pinDragging) return;
     if (autoSearchTimer) clearTimeout(autoSearchTimer);
     autoSearchTimer = setTimeout(() => {
