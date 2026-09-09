@@ -340,10 +340,29 @@ async function issueAdminToken(email, role = "superadmin", mustChangePw = false)
   const tok = crypto.randomBytes(32).toString("hex");
   const exp = new Date(Date.now() + adminTokenTtlMs()); // V919 · lo dice el ajuste
   const mcp = mustChangePw ? 1 : 0;
-  await pool.execute(
-    "INSERT INTO admin_tokens (token, email, expires_at, role, must_change_pw) VALUES (?,?,?,?,?)",
-    [tok, email, exp, role, mcp]
-  );
+  /* V923 · Si las columnas `role` / `must_change_pw` no existen, se entra igual.
+     Esto no es prudencia teórica: pasó. Los ALTER de V920 usaban sintaxis de
+     MariaDB, MySQL los rechazó, el catch de migrate() los dio por benignos y este
+     INSERT empezó a fallar contra columnas inexistentes. Como aquí no había
+     respaldo, el error subía hasta wrap(), que devolvía un 500... que la pantalla
+     de login enseñaba como "correo o contraseña incorrectos". Nadie entraba al
+     panel y el mensaje culpaba a la contraseña.
+     Ahora, si el INSERT completo falla, se reintenta con las columnas de siempre.
+     La sesión nace sin rango escrito en la base de datos, y verifyAdminToken la
+     lee como superadmin (ver allí): peor que tener la columna, pero infinitamente
+     mejor que dejar al dueño fuera de su panel. */
+  try {
+    await pool.execute(
+      "INSERT INTO admin_tokens (token, email, expires_at, role, must_change_pw) VALUES (?,?,?,?,?)",
+      [tok, email, exp, role, mcp]
+    );
+  } catch (e) {
+    console.warn("[admin] INSERT con rango falló, reintento sin él:", e.message);
+    await pool.execute(
+      "INSERT INTO admin_tokens (token, email, expires_at) VALUES (?,?,?)",
+      [tok, email, exp]
+    );
+  }
   adminTokenCache.set(tok, { email, role, must_change_pw: mcp, exp: exp.getTime(), cachedAt: Date.now() });
   return tok;
 }
@@ -388,7 +407,27 @@ async function verifyAdminToken(tok) {
     adminTokenCache.set(tok, { ...entry, cachedAt: Date.now() });
     return entry;
   } catch (e) {
-    return null;
+    /* V923 · El respaldo que decía el comentario de arriba NO FUNCIONABA, y por eso
+       el bloqueo fue total. Si la columna no existe, no es que `rows[0].role` llegue
+       vacío: es que el propio SELECT falla con "unknown column" y salta aquí, donde
+       se devolvía null. Devolver null significa "sesión no válida", así que además
+       de no poder entrar, a quien ya estuviera dentro se le cerraba la sesión.
+       Ahora se reintenta con las columnas que existen desde siempre y se asume
+       superadmin, que es lo que el comentario prometía y no cumplía. Solo llega
+       aquí quien ya tiene una fila de sesión válida y sin caducar. */
+    try {
+      const [rows] = await pool.query(
+        "SELECT email, UNIX_TIMESTAMP(expires_at)*1000 AS exp FROM admin_tokens WHERE token=? AND expires_at > NOW() LIMIT 1",
+        [tok]
+      );
+      if (!rows.length) { adminTokenCache.delete(tok); return null; }
+      console.warn("[admin] sesión leída sin columna de rango:", e.message);
+      const entry = { email: rows[0].email, role: "superadmin", must_change_pw: 0, exp: Number(rows[0].exp) };
+      adminTokenCache.set(tok, { ...entry, cachedAt: Date.now() });
+      return entry;
+    } catch (e2) {
+      return null;
+    }
   }
 }
 async function revokeAdminToken(tok) {
@@ -710,7 +749,15 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
                tampoco sabía por qué no entraba. El caso de credenciales sigue
                siendo genérico a propósito: decir "ese correo no existe" le
                confirmaría a un desconocido qué correos tienen acceso. */
-            if (data && (data.error === "locked" || data.error === "too_many_attempts")) {
+            if (r.status >= 500) {
+              /* V923 · Esto no estaba, y salió caro. Cualquier respuesta que no
+                 fuera 200 caía en "correo o contraseña incorrectos", así que
+                 cuando el servidor se rompió por una columna que faltaba (ver
+                 issueAdminToken) la pantalla acusó a la contraseña y el fallo real
+                 quedó invisible. Un 5xx no lo puede haber causado lo que escribes:
+                 se dice que es del servidor. */
+              err.textContent = "El servidor ha fallado al iniciar la sesión. No es tu contraseña: vuelve a probar en un minuto y, si sigue igual, hay que mirar el servidor.";
+            } else if (data && (data.error === "locked" || data.error === "too_many_attempts")) {
               err.textContent = data.message || "Demasiados intentos. Espera unos minutos y vuelve a probar.";
             } else {
               err.textContent = "Correo o contraseña incorrectos. Si te acaban de dar acceso, comprueba que quien te lo ha dado te haya puesto una contraseña.";
@@ -1125,14 +1172,27 @@ async function migrate() {
        quedan como superadmin y la sesión abierta sigue funcionando con todo el
        poder, sin volver a entrar. Si el valor por defecto fuese 'viewer', el
        dueño se encontraría su propio panel en modo lectura tras el despliegue.
-       A partir de ahí, cada sesión nueva escribe su rango explícitamente. */
-    `ALTER TABLE admin_tokens ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'superadmin'`,
+       A partir de ahí, cada sesión nueva escribe su rango explícitamente.
+
+       V923 · SIN "IF NOT EXISTS", Y ESTO ES EL ARREGLO DEL BLOQUEO. Escribí estos
+       ALTER con `ADD COLUMN IF NOT EXISTS`, que es sintaxis de MariaDB: MySQL no
+       la admite y devuelve error de sintaxis (1064). El catch de abajo trata
+       cualquier error de ALTER como benigno, así que los tres se saltaron EN
+       SILENCIO y las columnas nunca se crearon. A partir de ahí, cada inicio de
+       sesión intentaba escribir `role` en una columna que no existe y moría con un
+       500, que la pantalla de login mostraba como "correo o contraseña
+       incorrectos". Nadie podía entrar al panel.
+       Ahora van sin IF NOT EXISTS, como el resto del fichero (ver los ALTER de
+       `users` unas líneas más abajo): en una base de datos donde ya existan, MySQL
+       devuelve 1060/1061 (duplicado) y el catch lo ignora, que es exactamente el
+       comportamiento que se buscaba. */
+    `ALTER TABLE admin_tokens ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'superadmin'`,
     /* Se guarda en la sesión, no se consulta en cada petición: si la persona
        entró con una contraseña temporal, el servidor la tiene en cuarentena
        hasta que la cambie. Al cambiarla se le cierran las sesiones, así que la
        siguiente nace ya sin la marca (por eso no se queda pegada). */
-    `ALTER TABLE admin_tokens ADD COLUMN IF NOT EXISTS must_change_pw TINYINT(1) NOT NULL DEFAULT 0`,
-    `ALTER TABLE admin_tokens ADD INDEX IF NOT EXISTS idx_email (email)`,
+    `ALTER TABLE admin_tokens ADD COLUMN must_change_pw TINYINT(1) NOT NULL DEFAULT 0`,
+    `ALTER TABLE admin_tokens ADD INDEX idx_email (email)`,
     // V824 · Registro de auditoría de acciones de admin (quién hizo qué y cuándo).
     // Additivo: sólo se escribe desde el middleware de auditoría; ninguna función
     // existente depende de esta tabla.
@@ -6417,14 +6477,19 @@ app.post("/api/my/popup/:id/event", wrap(async (req, res) => {
          semanas sin cambiarse.
      Van en ALTER aparte del CREATE porque en una instalación que ya funciona el
      CREATE TABLE IF NOT EXISTS no hace nada: las columnas nuevas solo llegan
-     por aquí. Cada una en su try, para que si una falla las otras entren. */
+     por aquí. Cada una en su try, para que si una falla las otras entren.
+
+     V923 · Sin `IF NOT EXISTS`, por lo mismo que los de admin_tokens: es sintaxis
+     de MariaDB y MySQL la rechaza con error de sintaxis, así que estas cuatro
+     columnas tampoco se crearon y el equipo no podía ni tener contraseña. Con el
+     ALTER a secas, si ya existen sale un 1060 (duplicado) que este catch ignora. */
   for (const s of [
-    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL",
-    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS must_change_password TINYINT(1) NOT NULL DEFAULT 1",
-    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS password_set_at DATETIME NULL",
+    "ALTER TABLE staff ADD COLUMN password_hash VARCHAR(255) NULL",
+    "ALTER TABLE staff ADD COLUMN must_change_password TINYINT(1) NOT NULL DEFAULT 1",
+    "ALTER TABLE staff ADD COLUMN password_set_at DATETIME NULL",
     // Su foto de perfil. Sin esto, "Mi perfil" del equipo escribiría en el ajuste
     // global admin.avatar y le cambiaría la foto al dueño.
-    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS avatar LONGTEXT NULL",
+    "ALTER TABLE staff ADD COLUMN avatar LONGTEXT NULL",
   ]) {
     try { await pool.query(s); } catch (e) { console.warn("[staff] alter:", e.message); }
   }
