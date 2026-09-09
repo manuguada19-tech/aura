@@ -368,8 +368,20 @@ function authHeaders(extra) {
   return h;
 }
 function handleAuthFailure() {
-  localStorage.removeItem("adminToken");
+  limpiarSesionAdmin();
   location.href = "/";
+}
+/* V920 · Al salir hay que borrar también el rango guardado. Si se quedara, la
+   siguiente persona que entre en este mismo navegador vería el menú del rango
+   anterior hasta que /api/admin/me respondiera: si el que se fue era el dueño y
+   entra un moderador, vería un instante entradas que no le corresponden. No es
+   un agujero (el servidor le negaría los datos), pero es confuso y evitable. */
+function limpiarSesionAdmin() {
+  try {
+    localStorage.removeItem("adminToken");
+    localStorage.removeItem("adminRole");
+    localStorage.removeItem("adminMustChangePw");
+  } catch (e) {}
 }
 
 /* Símbolo de moneda para mostrar (EUR → €, USD → $, GBP → £, JPY → ¥) */
@@ -413,9 +425,18 @@ async function api(url, opts) {
   if (!r.ok) {
     let data = null;
     try { data = await r.json(); } catch {}
-    const err = new Error(method + " " + url + " " + r.status);
+    /* V920 · El mensaje del error pasa a ser el que manda el servidor, si manda
+       alguno. Antes era siempre "PATCH /api/admin/staff/3 403", y hay decenas de
+       sitios en este fichero que hacen toast("Error: " + e.message): con los
+       rangos, cada acción denegada le habría enseñado a la persona una línea de
+       jerga con un número, sin decirle que le falta rango. Arreglarlo aquí lo
+       arregla en todas esas decenas de sitios de una vez, sin tocarlos.
+       err.data se conserva intacto para el código que mira err.data.error. */
+    const humano = data && (data.message || data.detail);
+    const err = new Error(humano || (method + " " + url + " " + r.status));
     err.status = r.status;
     err.data = data;
+    err.endpoint = method + " " + url;
     throw err;
   }
   try { return await r.json(); } catch { return {}; }
@@ -502,7 +523,7 @@ document.addEventListener("click", async (e) => {
   if (!b) return;
   if (!(await askConfirm("¿Cerrar sesión de administrador?", { okText: "Cerrar sesión", danger: true }))) return;
   fetch("/api/admin/logout", { method: "POST", headers: authHeaders() }).finally(() => {
-    localStorage.removeItem("adminToken");
+    limpiarSesionAdmin();
     location.href = "/";
   });
 });
@@ -611,10 +632,30 @@ function openTwoFaDisable(box) {
 async function openAdminProfile() {
   let me = {};
   try { me = await api.get("/api/admin/me"); } catch {}
+  /* V920 · Este cajón lo abren ahora dos clases de persona muy distintas.
+     El DUEÑO edita ajustes globales de la instalación (su correo de acceso, su
+     contraseña). Alguien del EQUIPO edita SU FILA de la tabla del equipo, y no
+     puede tocar ni su correo ni su rango. Si se le enseñaran los mismos campos,
+     el formulario prometería cosas que el servidor va a ignorar — y en el caso
+     del correo de acceso, antes de V920 no las ignoraba: se lo escribía encima
+     al del dueño y lo dejaba fuera de su panel. */
+  const esDueno = me.is_owner !== false;
+  const debeCambiar = !!me.must_change_password;
   const node = el("div", { class: "drawer-form" }, [
-    el("h2", {}, "Mi perfil de administrador"),
-    el("p", { class: "help" }, "Personaliza cómo se muestra tu cuenta en el panel. Los cambios se guardan al pulsar “Guardar”."),
+    el("h2", {}, esDueno ? "Mi perfil de administrador" : "Mi perfil"),
+    el("p", { class: "help" }, esDueno
+      ? "Personaliza cómo se muestra tu cuenta en el panel. Los cambios se guardan al pulsar “Guardar”."
+      : "Tu nombre, tu foto y tu contraseña. Tu correo y tu rango los gestiona el administrador principal."),
   ]);
+  if (debeCambiar) {
+    node.appendChild(el("div", {
+      style: "background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.45);border-radius:10px;" +
+             "padding:12px 14px;margin:0 0 12px;line-height:1.55;font-size:13px",
+    }, [
+      el("div", { style: "font-weight:700;margin-bottom:4px" }, "⚠️ Tienes que cambiar tu contraseña"),
+      el("div", {}, "La que estás usando la generó el administrador principal y él la ha visto. Hasta que pongas una tuya, el panel no te dejará hacer cambios."),
+    ]));
+  }
   // Avatar preview + upload
   const avatarPreview = el("div", { class: "ap-avatar", id: "apAvatar", style: `background-image:url('${me.avatar || "https://i.pravatar.cc/160?img=12"}')` });
   const avatarInput = el("input", { type: "file", accept: "image/*", id: "apAvatarInput", style: "display:none" });
@@ -656,53 +697,88 @@ async function openAdminProfile() {
   setTimeout(() => { passCurrent.value = ""; passNew.value = ""; passNew2.value = ""; }, 50);
 
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Nombre visible"), nameInput ]));
-  node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Cargo / rol"), roleInput ]));
-  node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Email de acceso"), emailInput ]));
-  // 2FA section
-  node.appendChild(el("h3", { class: "ap-h3" }, "🔐 Verificación en dos pasos (2FA)"));
-  const twoFaBox = el("div", { class: "twofa-box", style: "background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px;margin-bottom:12px" });
-  node.appendChild(twoFaBox);
-  (async () => {
-    try {
-      const st = await fetch("/api/admin/2fa/status", { headers: authHeaders() }).then(r => r.json());
-      renderTwoFaBox(twoFaBox, !!st.enabled);
-    } catch { renderTwoFaBox(twoFaBox, false); }
-  })();
+  if (esDueno) {
+    node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Cargo / rol"), roleInput ]));
+    node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Email de acceso"), emailInput ]));
+  } else {
+    /* Al equipo se le muestra su correo y su rango, pero como TEXTO, no como
+       campos: son datos que necesita ver y que no puede cambiar. Un campo
+       editable que el servidor ignora es peor que no tener campo. */
+    node.appendChild(el("div", { class: "field" }, [
+      el("span", {}, "Tu correo de acceso"),
+      el("div", { style: "padding:8px 0;font-weight:600" }, me.email || ""),
+    ]));
+    node.appendChild(el("div", { class: "field" }, [
+      el("span", {}, "Tu rango"),
+      el("div", { style: "padding:8px 0;font-weight:600" }, me.role || "Equipo"),
+      el("small", { class: "help" }, "Lo cambia solo el administrador principal, desde Staff & Permisos."),
+    ]));
+  }
+  /* El recuadro de 2FA solo se le pinta al dueño, y hay que decir por qué:
+     llama a /api/admin/2fa/status, que NO EXISTE en el servidor. La petición
+     falla, el catch dibuja "desactivado" y no hay manera de activarlo. Con una
+     sola persona era una caja inútil; con un equipo entero sería peor, porque
+     cada uno vería un candado que no cierra nada y se quedaría tranquilo.
+     El 2FA de verdad (/api/2fa/*) es el de los usuarios de la app, no el del
+     panel. No lo arreglo aquí porque no es este trabajo, pero no lo repito. */
+  if (esDueno) {
+    node.appendChild(el("h3", { class: "ap-h3" }, "🔐 Verificación en dos pasos (2FA)"));
+    const twoFaBox = el("div", { class: "twofa-box", style: "background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px;margin-bottom:12px" });
+    node.appendChild(twoFaBox);
+    (async () => {
+      try {
+        const st = await fetch("/api/admin/2fa/status", { headers: authHeaders() }).then(r => r.json());
+        renderTwoFaBox(twoFaBox, !!st.enabled);
+      } catch { renderTwoFaBox(twoFaBox, false); }
+    })();
+  }
 
   node.appendChild(el("h3", { class: "ap-h3" }, "Cambiar contraseña"));
-  node.appendChild(el("p", { class: "help" }, "Deja los campos en blanco si no quieres cambiarla."));
+  node.appendChild(el("p", { class: "help" }, esDueno
+    ? "Deja los campos en blanco si no quieres cambiarla."
+    : "Mínimo 8 caracteres, y distinta de la temporal que te dieron."));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Contraseña actual"), passCurrent ]));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Nueva contraseña"), passNew ]));
   node.appendChild(el("label", { class: "field" }, [ el("span", {}, "Repetir nueva contraseña"), passNew2 ]));
 
   const saveBtn = btn("Guardar", "primary", async () => {
-    const body = {
-      name: nameInput.value.trim(),
-      role: roleInput.value.trim(),
-      email: emailInput.value.trim(),
-      avatar: avatarData,
-    };
+    const body = { name: nameInput.value.trim(), avatar: avatarData };
+    // El equipo no manda ni rol ni email: el servidor los ignora, y mandarlos
+    // haría creer que se pueden cambiar.
+    if (esDueno) {
+      body.role = roleInput.value.trim();
+      body.email = emailInput.value.trim();
+    }
     // Solo cambiar contraseña si el usuario ha rellenado explícitamente
     // los tres campos (actual + nueva + repetir). Así, si edita solo su
     // nombre/rol/email, no se le exige contraseña.
+    const minimo = esDueno ? 6 : 8;
     const wantsPass = passNew.value.trim().length > 0 || passNew2.value.trim().length > 0;
     if (wantsPass) {
       if (!passCurrent.value.trim()) return toast("Escribe tu contraseña actual para cambiarla");
       if (passNew.value !== passNew2.value) return toast("Las contraseñas no coinciden");
-      if (passNew.value.length < 6) return toast("La nueva contraseña es demasiado corta");
+      if (passNew.value.length < minimo) return toast(`La nueva contraseña necesita ${minimo} caracteres o más`);
       body.current_password = passCurrent.value;
       body.password = passNew.value;
     }
+    if (debeCambiar && !wantsPass) return toast("Tienes que poner una contraseña nueva antes de seguir");
     try {
       await api.put("/api/admin/me", body);
       toast("Perfil actualizado");
       // Reflect changes live in the topbar and sidebar
-      applyAdminUserUi({ name: body.name, role: body.role, avatar: body.avatar });
+      applyAdminUserUi({ name: body.name, role: esDueno ? body.role : me.role, avatar: body.avatar });
+      if (debeCambiar && wantsPass) {
+        // Ya no hace falta el aviso: se limpia para que no vuelva a salir.
+        try { localStorage.removeItem("adminMustChangePw"); } catch (e) {}
+        toast("Contraseña cambiada. Ya puedes trabajar con normalidad.");
+      }
       drawer.close();
     } catch (err) {
       const msg = err && err.data && err.data.error;
       if (msg === "wrong_current_password") toast("Contraseña actual incorrecta");
-      else if (msg === "password_too_short") toast("La nueva contraseña es demasiado corta");
+      else if (msg === "password_too_short") toast(`La nueva contraseña necesita ${minimo} caracteres o más`);
+      else if (msg === "same_password") toast("La contraseña nueva tiene que ser distinta de la temporal");
+      else if (msg === "staff_not_found") toast("Tu cuenta ya no está en el equipo. Habla con el administrador principal.");
       else toast("Error al guardar");
     }
   });
@@ -725,6 +801,21 @@ function applyAdminUserUi(u) {
   try {
     const me = await fetch("/api/admin/me", { headers: authHeaders() }).then(r => r.ok ? r.json() : {});
     if (me && (me.name || me.avatar || me.role)) applyAdminUserUi(me);
+    /* V920 · El rango se refresca desde el servidor y se vuelve a aplicar el
+       menú. Hace falta porque el que hay guardado se escribió al iniciar sesión,
+       y entre entonces y ahora el administrador principal puede haberlo
+       cambiado. Aquí es donde el panel se enteraría de que le han bajado el
+       rango, sin esperar a que caduque nada. */
+    if (me && me.role_key) {
+      try { localStorage.setItem("adminRole", me.role_key); } catch (e) {}
+      try { aplicarMenuPorRango(); } catch (e) {}
+    }
+    /* Contraseña temporal sin cambiar: se le abre el perfil directamente. El
+       servidor no le va a dejar hacer nada más, así que dejarle dar vueltas por
+       el panel chocándose con errores sería una pequeña crueldad. */
+    if (me && me.must_change_password) {
+      setTimeout(() => { try { openAdminProfile(); } catch (e) {} }, 600);
+    }
   } catch {}
 })();
 // Click handlers on avatar/user
@@ -1348,7 +1439,141 @@ $("#nav").addEventListener("click", (e) => {
 })();
 
 let __currentAdminView = "dashboard";
+/* ============================================================
+   V920 · El panel se adapta al rango de quien ha entrado
+   ------------------------------------------------------------
+   AVISO IMPORTANTE SOBRE QUÉ ES ESTO Y QUÉ NO ES: esconder entradas del menú
+   NO es seguridad. Cualquiera puede editar esto en su navegador o escribir el
+   hash a mano. Quien decide de verdad es el servidor, que comprueba el rango en
+   cada petición. Esto es COMODIDAD: que nadie pierda el tiempo abriendo
+   pantallas donde todos los botones le van a dar 403.
+   El nivel de cada vista está puesto para que coincida con lo que el servidor
+   permite. Si una pantalla es solo de lectura y no está reservada, se ve desde
+   "Solo lectura", porque un equipo que no puede mirar no sirve para nada.
+   ============================================================ */
+const VISTA_NIVEL = {
+  // -- Solo lectura y arriba (1): mirar y el trabajo de moderación --
+  dashboard: 1, users: 1, user_activity: 1, moderation: 1, reports: 1,
+  appeals: 1, tickets: 1, chats: 1, infractions: 1, kyc: 1, duplicates: 1,
+  logs: 1, stats: 1, fx_now_status: 1, live: 1,
+  // -- Administrador y arriba (3): hablarle a los usuarios y el contenido --
+  content: 3, design: 3, match_celebrate: 3, promos: 3, notifications: 3,
+  fx_notifications: 3, fx_push_ctx: 3, push_campaigns: 3, popups: 3, emails: 3,
+  newsletter: 3, invites: 3, waitlist: 3,
+  /* "Emails de mantenimiento" sube a 4 (solo el dueño) por la misma regla que
+     aplico al resto: la única acción de verdad de esa pantalla es
+     POST /api/admin/maintenance/notify, que es del dueño, así que un
+     Administrador la vería sin poder hacer nada. Los otros dos botones de esa
+     pantalla (borrar destinatarios) apuntan a rutas que el servidor NO tiene
+     registradas: dan 404 desde antes de esto, y lo dejo apuntado sin tocarlo. */
+  maintenance_emails: 4,
+  // Códigos de verificación: con uno se entra en la app como esa persona.
+  otp: 3,
+  // Datos personales y contenido privado de los usuarios.
+  fx_gdpr: 3, fx_vault: 3, fx_heatmap: 3,
+  // -- Solo el dueño (4) --
+  // Ajustes, equipo, copias de datos y auditoría: las llaves de la casa.
+  settings: 4, backup: 4, staff: 4, audit: 4,
+  // Dinero, y el resto de módulos cuyas escrituras el servidor todavía no
+  // tiene clasificadas para el equipo: se esconden en vez de dejar pantallas
+  // donde todo da 403. Si quieres abrir alguna a los administradores, se añade
+  // la regla en el servidor y se sube aquí; los dos sitios, no uno.
+  subscriptions: 4, payments: 4, reads: 4, boost: 4, ads: 4,
+  fx_moderation_ai: 4, fx_rewards: 4, fx_icebreakers: 4, fx_stickers: 4,
+  fx_stories: 4, fx_events: 4, fx_achievements: 4, fx_zones: 4,
+  fx_video: 4, fx_voice_notes: 4, fx_ab: 4, device_incidents: 4,
+};
+const NIVEL_POR_RANGO = { viewer: 1, moderator: 2, admin: 3, superadmin: 4 };
+
+/* Se lee de localStorage a propósito, y no de una petición: route() se ejecuta
+   en cuanto carga la página y no puede esperar. Si no hay nada guardado (por
+   ejemplo una sesión abierta desde antes de este despliegue), se asume el nivel
+   máximo: quien ya estaba dentro es el dueño, y prefiero que le siga
+   funcionando todo a esconderle su propio panel por un dato que falta. */
+function nivelUsuario() {
+  let r = "";
+  try { r = localStorage.getItem("adminRole") || ""; } catch (e) {}
+  if (!r) return 4;
+  return NIVEL_POR_RANGO[String(r).toLowerCase()] || 4;
+}
+function puedeVerVista(view) {
+  const necesario = VISTA_NIVEL[String(view || "")];
+  // Vista que no conozco: se deja pasar y que el servidor decida. Esconder algo
+  // que no sé qué es acabaría escondiendo pantallas nuevas por descuido.
+  if (!necesario) return true;
+  return nivelUsuario() >= necesario;
+}
+function aplicarMenuPorRango() {
+  const nivel = nivelUsuario();
+  if (nivel >= 4) return; // el dueño lo ve todo
+  /* El rótulo de abajo viene puesto a mano en admin.html: dice
+     "Superadministrador" para todo el mundo hasta que contesta /api/admin/me. En
+     las capturas se veía a un Moderador con "Superadministrador" bajo su nombre;
+     y si esa petición falla, se queda así toda la sesión. Se corrige aquí con el
+     rango guardado, que ya se ha leído. Mismas palabras que usa el servidor
+     (NIVEL_NOMBRE), para que al llegar la respuesta el texto no cambie. */
+  const NOMBRE_NIVEL = { 1: "Solo lectura", 2: "Moderador", 3: "Administrador" };
+  if (NOMBRE_NIVEL[nivel]) {
+    document.querySelectorAll(".au-role").forEach(n => { n.textContent = NOMBRE_NIVEL[nivel]; });
+  }
+  document.querySelectorAll("[data-view]").forEach(n => {
+    const v = n.getAttribute("data-view");
+    if (!puedeVerVista(v)) n.style.display = "none";
+  });
+  /* Los títulos de sección que se quedan sin ninguna entrada visible se esconden
+     también: un título con nada debajo parece un fallo de carga.
+
+     OJO CON LA FORMA DEL MENÚ: en admin.html es PLANO. El título es
+     `<div class="nav-section">General</div>` y las entradas son sus HERMANOS, no
+     sus hijos. Mi primera versión buscaba las entradas DENTRO del título, no
+     encontraba ninguna y se iba sin hacer nada: a un Solo lectura le quedaba
+     "Monetización" flotando sin nada debajo. La comprobación de la prueba salía
+     verde porque medía cero elementos; lo que lo destapó fue el control, al meter
+     el fallo a propósito y ver que la prueba seguía en verde. */
+  document.querySelectorAll(".nav-group, .nav-section, details").forEach(g => {
+    const items = Array.from(g.querySelectorAll("[data-view]"));
+    if (!items.length) {
+      // Menú plano: los hermanos que haya hasta el siguiente título.
+      for (let n = g.nextElementSibling; n; n = n.nextElementSibling) {
+        if (n.classList && (n.classList.contains("nav-section") || n.classList.contains("nav-group"))) break;
+        if (n.hasAttribute && n.hasAttribute("data-view")) items.push(n);
+        else if (n.querySelectorAll) items.push(...n.querySelectorAll("[data-view]"));
+      }
+    }
+    if (!items.length) return;
+    const visibles = items.some(n => n.style.display !== "none");
+    if (!visibles) g.style.display = "none";
+  });
+}
+document.addEventListener("DOMContentLoaded", () => { try { aplicarMenuPorRango(); } catch (e) {} });
+
 function route(view) {
+  /* Blindaje: esconder la entrada del menú no basta, porque el hash se escribe a
+     mano (#/settings) y route() lo obedecería. Aquí se corta. Lo que el
+     servidor ya niega son los DATOS; esto evita además la pantalla vacía con
+     errores por todas partes, que parece un panel roto. */
+  if (!puedeVerVista(view)) {
+    const container = $("#view");
+    if (container) {
+      container.innerHTML = "";
+      container.appendChild(el("div", { style: "padding:28px;max-width:560px" }, [
+        el("h2", { style: "margin:0 0 8px" }, "Esta pantalla no es para tu rango"),
+        el("p", { class: "muted", style: "line-height:1.6" },
+          "Tu cuenta no tiene permiso para abrir esta parte del panel. No es un error: lo decide el servidor, y por eso tampoco cambia nada escribiendo la dirección a mano."),
+        el("p", { class: "muted", style: "line-height:1.6" },
+          "Si necesitas entrar aquí para tu trabajo, pídeselo al administrador principal."),
+        el("button", {
+          class: "btn primary", style: "margin-top:12px",
+          onclick: () => { location.hash = "#/dashboard"; },
+        }, "Volver al inicio"),
+      ]));
+    }
+    /* No se redirige sola al inicio a propósito: al cambiar el hash se volvería
+       a llamar a route(), se borraría este aviso y la persona vería el panel
+       saltar sin entender por qué. Se le explica y decide ella. */
+    __currentAdminView = view;
+    return;
+  }
   const map = {
     dashboard: viewDashboard, users: viewUsers, moderation: viewModeration,
     reports: viewReports, appeals: viewAppeals, tickets: viewTickets, chats: viewChatsAdmin, otp: viewOtpCodes,
@@ -17177,39 +17402,41 @@ const ROLE_LABEL = { admin: "🛡️ Admin", moderator: "🧑‍⚖️ Moderador
 const ROLE_COLOR = { admin: "#c26bff", moderator: "#5b9bff", viewer: "#7a869a" };
 
 async function viewStaff(root) {
-  root.appendChild(viewTitle("Staff & Permisos", "Administradores, moderadores e invitaciones"));
+  root.appendChild(viewTitle("Staff & Permisos", "Quién entra al panel y con qué rango"));
 
-  /* V919 · Aviso obligado: esta pantalla todavía no da acceso a nadie.
+  /* V920 · Esta pantalla YA da acceso de verdad, y el aviso cambia de sentido.
      ------------------------------------------------------------------------
-     He revisado el servidor entero. La tabla `staff` solo se lee en el sitio que
-     pinta esta lista: NADA más la consulta. El login del panel comprueba
-     únicamente el correo del administrador (app.access_admin_emails), así que
-     una persona añadida aquí no puede entrar al panel de ninguna manera, ni con
-     permisos ni sin ellos. Y "Reenviar invitación" no envía ningún email: solo
-     cambia la fecha en la base de datos (en el servidor, donde iría el envío,
-     hay un comentario que dice justo eso).
-     Sin este aviso, lo lógico es invitar a un moderador, decirle que ya tiene
-     acceso, y que la persona no reciba nada y no pueda entrar. Prefiero decirlo
-     antes que dejar que se descubra así. Las tarjetas se quedan: sirven para
-     tener apuntado quién va a llevar qué cuando esto funcione. */
+     Dos cosas que arreglo aquí:
+     1. Lo que hace la pantalla: el login del servidor consulta esta tabla, así
+        que cada persona entra con SU correo y SU contraseña, y su rango se
+        aplica en el servidor (no en el navegador: esconder botones no es una
+        medida de seguridad, es comodidad).
+     2. UN ERROR MÍO DE V919: el aviso anterior decía que al panel se entra con
+        el correo de "Ajustes → Acceso". Es falso, y lo digo claramente porque lo
+        escribí yo. `app.access_admin_emails`, que es lo que hay en esa pantalla,
+        controla quién entra EN LA APP durante las pruebas privadas. El correo
+        del panel es otro: está en "Mi perfil de administrador". Confundí los dos
+        porque los dos llevan "admin" y "email" en el nombre. */
   root.appendChild(el("div", {
-    style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);" +
+    style: "background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.4);" +
            "border-radius:10px;padding:12px 14px;margin:0 0 14px;line-height:1.5;font-size:13px",
   }, [
-    el("div", { style: "font-weight:700;margin-bottom:4px" }, "⚠️ Esta pantalla todavía no da acceso a nadie"),
+    el("div", { style: "font-weight:700;margin-bottom:4px" }, "🔑 Cómo se da acceso"),
     el("div", {}, [
-      el("span", {}, "Puedes apuntar aquí a tu equipo, pero hoy "),
-      el("strong", {}, "no funciona todavía"),
-      el("span", {}, ": quien añadas "),
-      el("strong", {}, "no podrá entrar al panel"),
-      el("span", {}, " y el botón de invitación "),
-      el("strong", {}, "no envía ningún correo"),
-      el("span", {}, ". Los permisos de cada tarjeta no se aplican en ningún sitio."),
+      el("span", {}, "Añadir a alguien aquí "),
+      el("strong", {}, "no le deja entrar todavía"),
+      el("span", {}, ": queda como "),
+      el("strong", {}, "Pendiente"),
+      el("span", {}, ". Para darle acceso, pulsa "),
+      el("strong", {}, "🔑 Poner contraseña temporal"),
+      el("span", {}, " en su tarjeta. Se te muestra una vez, se la pasas tú (el panel "),
+      el("strong", {}, "no envía correos"),
+      el("span", {}, ") y esa persona tendrá que cambiarla al entrar."),
     ]),
     el("div", { style: "margin-top:6px" }, [
-      el("span", {}, "Al panel solo se entra con el correo de administrador que hay en "),
-      el("strong", {}, "Ajustes → Acceso"),
-      el("span", {}, ". Úsalo como una lista de a quién quieres dar acceso más adelante, no como una lista de quién lo tiene."),
+      el("span", {}, "Lo que manda es el "),
+      el("strong", {}, "rango"),
+      el("span", {}, ", y se aplica en el servidor: un Moderador no puede borrar cuentas ni descargar los datos aunque escriba la dirección a mano. Tu cuenta de administrador principal no se puede borrar, suspender ni degradar desde aquí."),
     ]),
   ]));
   // Inyectar estilo específico una sola vez
@@ -17237,18 +17464,21 @@ async function viewStaff(root) {
     document.head.appendChild(st);
   }
 
-  root.appendChild(sectionLegend("Guía", [
-    ["🛡️","Administrador con todos los permisos"],
-    ["🧑‍⚖️","Moderador con permisos parciales"],
-    ["👀","Solo lectura (viewer)"],
-    // V919 · Ponía "Reenviar email de invitación". No se envía ningún email.
-    ["✉️","Marcar como invitado (no envía email todavía)"],
-    ["🔒","Suspender / reactivar"],
-    ["🗑","Eliminar del staff"],
+  /* V920 · Qué puede hacer cada rango. Esto no es decoración: es la única
+     explicación que vas a tener a mano cuando decidas qué rango darle a alguien,
+     y tiene que coincidir con lo que aplica el servidor. */
+  root.appendChild(sectionLegend("Qué puede hacer cada rango", [
+    ["👑","Superadmin (tú) · todo, sin excepciones: ajustes, equipo, copias de datos y contraseñas"],
+    ["🛡️","Administrador · lo del moderador + avisos, campañas, popups, newsletters, plantillas, invitaciones, contenido, promos y borrar cuentas"],
+    ["🧑‍⚖️","Moderador · suspender y reactivar usuarios, infracciones, denuncias, apelaciones, tickets, fotos de \"busco ahora\", KYC y moderación de chats"],
+    ["👀","Solo lectura · puede mirar, no puede cambiar nada"],
+    ["🔑","Poner contraseña temporal (es lo que da el acceso; se muestra una vez)"],
+    ["🔒","Suspender / reactivar (suspender le cierra la sesión al momento)"],
+    ["🗑","Eliminar del equipo"],
   ]));
 
   const toolbar = el("div", { class: "toolbar", style: "display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px" });
-  const btnNew = btn("➕ Invitar nuevo miembro", () => openStaffModal(null));
+  const btnNew = btn("➕ Añadir al equipo", () => openStaffModal(null));
   btnNew.className = "btn primary";
   toolbar.appendChild(btnNew);
   root.appendChild(toolbar);
@@ -17261,14 +17491,75 @@ async function viewStaff(root) {
     try {
       const j = await api("/api/admin/staff");
       const items = j.items || [];
+      /* V920 · Tu cuenta primero, y como tarjeta FIJA sin botones.
+         No es una fila de esta tabla: el dueño del panel es el correo de "Mi
+         perfil de administrador", y el servidor se niega a meterlo aquí. Sale
+         pintado para que la pantalla enseñe a todo el mundo que tiene acceso —
+         si no apareciera, la lista mentiría por omisión — pero sin Suspender,
+         sin Eliminar y sin cambiar de rango, porque no existe ninguna secuencia
+         de clics que pueda dejarte fuera de tu propio panel. */
+      if (j.owner_email) grid.appendChild(renderOwnerCard(j.owner_email));
       if (!items.length) {
-        grid.appendChild(el("p", { class: "muted", style: "grid-column:1/-1" }, "Sin miembros de staff. Invita al primero con el botón de arriba."));
+        grid.appendChild(el("p", { class: "muted", style: "grid-column:1/-1" },
+          "Todavía no hay nadie más en el equipo. Añade al primero con el botón de arriba y luego ponle una contraseña temporal."));
         return;
       }
       items.forEach(m => grid.appendChild(renderStaffCard(m)));
     } catch (e) {
       grid.appendChild(el("p", { class: "err" }, "Error: " + e.message));
     }
+  }
+
+  function renderOwnerCard(email) {
+    const card = el("div", { class: "staff-card", style: "border-color:rgba(245,158,11,.55)" });
+    card.appendChild(el("div", { class: "staff-head" }, [
+      el("div", { class: "staff-avatar", style: "background:linear-gradient(135deg,#f59e0b,#c26bff)" }, "👑"),
+      el("div", { style: "flex:1;min-width:0" }, [
+        el("div", { style: "font-weight:600" }, "Administrador principal"),
+        el("div", { class: "muted", style: "font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" }, email),
+      ]),
+      el("span", { class: "staff-role", style: "background:#f59e0b" }, "Superadmin"),
+    ]));
+    card.appendChild(el("div", { class: "muted", style: "font-size:12px;line-height:1.5" },
+      "Tu cuenta. No se puede suspender, eliminar ni bajar de rango desde aquí, a propósito. El correo y la contraseña se cambian en “Mi perfil de administrador”."));
+    return card;
+  }
+
+  /* La contraseña temporal se ve UNA VEZ. Después solo queda su hash en la base
+     de datos, así que este diálogo es la única oportunidad de copiarla: por eso
+     lleva botón de copiar, no se cierra pulsando fuera sin querer, y lo dice. */
+  function mostrarPasswordTemporal(d) {
+    const campo = el("input", {
+      class: "input", readonly: "readonly", value: d.temp_password,
+      style: "width:100%;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:16px;letter-spacing:.5px;text-align:center",
+    });
+    const modal = el("div", { class: "modal-backdrop" }, [
+      el("div", { class: "modal", style: "max-width:460px;" }, [
+        el("h3", { style: "margin:0 0 6px;" }, "🔑 Contraseña temporal"),
+        el("p", { class: "muted", style: "margin:0 0 10px;line-height:1.5;font-size:13px" },
+          "Para " + d.email + ". Cópiala ahora: al cerrar esta ventana no se vuelve a mostrar."),
+        campo,
+        el("div", {
+          style: "margin-top:10px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);" +
+                 "border-radius:8px;padding:10px 12px;font-size:13px;line-height:1.5",
+        }, "Pásasela tú por donde quieras: el panel no envía correos. Al entrar con ella, el servidor le obligará a cambiarla antes de dejarle hacer nada."),
+        el("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap" }, [
+          el("button", {
+            class: "btn", onclick: async () => {
+              try {
+                campo.select();
+                if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(d.temp_password);
+                else document.execCommand("copy");
+                toast("Contraseña copiada");
+              } catch (e) { toast("Cópiala a mano: " + e.message, "err"); }
+            },
+          }, "📋 Copiar"),
+          el("button", { class: "btn primary", onclick: () => modal.remove() }, "Ya la he guardado"),
+        ]),
+      ]),
+    ]);
+    document.body.appendChild(modal);
+    setTimeout(() => { try { campo.select(); } catch (e) {} }, 50);
   }
 
   function renderStaffCard(m) {
@@ -17284,8 +17575,16 @@ async function viewStaff(root) {
       el("span", { class: "staff-role", style: `background:${ROLE_COLOR[m.role] || "#7a869a"}` }, ROLE_LABEL[m.role] || m.role),
     ]));
     const st = (m.status || "active");
+    /* V920 · El estado ahora significa algo concreto, y el texto lo dice en vez
+       de dejarlo a la imaginación. "Pendiente de aceptar" era engañoso: nadie
+       acepta nada, no hay email; lo que falta es que le pongas una contraseña. */
+    const puedeEntrar = st === "active" && m.has_password;
+    const etiqueta = st === "suspended" ? "Suspendido · no puede entrar"
+      : !m.has_password ? "Sin contraseña · no puede entrar"
+      : m.must_change_password ? "Contraseña temporal sin cambiar"
+      : "Activo · puede entrar";
     card.appendChild(el("div", {}, [
-      el("span", { class: "staff-status " + st }, st === "pending" ? "Pendiente de aceptar" : st === "suspended" ? "Suspendido" : "Activo"),
+      el("span", { class: "staff-status " + (puedeEntrar ? "active" : st === "suspended" ? "suspended" : "pending") }, etiqueta),
       el("span", { class: "muted", style: "margin-left:8px;font-size:12px" }, m.last_login ? "Último acceso " + new Date(m.last_login).toLocaleDateString() : "Nunca ha entrado"),
     ]));
     const pdiv = el("div", { class: "staff-perms" });
@@ -17302,17 +17601,22 @@ async function viewStaff(root) {
     card.appendChild(pdiv);
     const acts = el("div", { class: "staff-acts" });
     acts.appendChild(btn("✏️ Editar", () => openStaffModal(m)));
-    if (st === "pending") {
-      // V919 · Antes decía "Invitación reenviada". No se reenvía nada: el
-      // servidor solo actualiza la fecha, no hay envío de email implementado.
-      // Decir "reenviada" hace esperar un correo que no va a llegar.
-      acts.appendChild(btn("✉️ Marcar como invitado", async () => {
-        try {
-          await api(`/api/admin/staff/${m.id}/resend-invite`, { method: "POST" });
-          toast("Fecha de invitación actualizada — ojo: no se envía ningún email todavía");
-        } catch (e) { toast("Error: " + e.message); }
-      }));
-    }
+    /* V920 · Este es el botón que de verdad da acceso, y sustituye al de
+       "Marcar como invitado" (que solo cambiaba una fecha). Si ya tiene
+       contraseña, el texto avisa de que la de antes deja de valer: no es lo
+       mismo dar acceso por primera vez que quitárselo sin querer a alguien. */
+    const yaTiene = !!m.has_password;
+    acts.appendChild(btn(yaTiene ? "🔑 Nueva contraseña temporal" : "🔑 Poner contraseña temporal", async () => {
+      const aviso = yaTiene
+        ? `Se le generará una contraseña nueva a ${m.email}. La que tenía dejará de funcionar y se le cerrará la sesión.`
+        : `Se le generará una contraseña temporal a ${m.email} y podrá entrar al panel como ${ROLE_LABEL[m.role] || m.role}.`;
+      if (!(await askConfirm(aviso, { okText: "Generar" }))) return;
+      try {
+        const d = await api(`/api/admin/staff/${m.id}/set-password`, { method: "POST" });
+        mostrarPasswordTemporal(d);
+        load();
+      } catch (e) { toast("Error: " + e.message, "err"); }
+    }));
     if (st !== "suspended") {
       acts.appendChild(btn("🔒 Suspender", async () => {
         try { await api(`/api/admin/staff/${m.id}`, { method: "PATCH", body: JSON.stringify({ status: "suspended" }) }); load(); } catch(e){ toast(e.message); }
@@ -17336,7 +17640,7 @@ async function viewStaff(root) {
     const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border,#2a2f3a);border-radius:14px;max-width:640px;width:100%;max-height:90vh;overflow-y:auto;padding:24px" });
     overlay.appendChild(modal);
     overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
-    modal.appendChild(el("h3", { style: "margin:0 0 12px" }, isEdit ? "Editar miembro" : "Invitar nuevo miembro"));
+    modal.appendChild(el("h3", { style: "margin:0 0 12px" }, isEdit ? "Editar miembro" : "Añadir al equipo"));
 
     const emailInp = el("input", { type: "email", value: m?.email || "", placeholder: "email@dominio.com", class: "input", style: "width:100%" });
     const nameInp = el("input", { type: "text", value: m?.name || "", placeholder: "Nombre para mostrar", class: "input", style: "width:100%" });
@@ -17367,9 +17671,24 @@ async function viewStaff(root) {
     modal.appendChild(emailInp);
     modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, "Nombre"));
     modal.appendChild(nameInp);
-    modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, "Rol"));
+    modal.appendChild(el("label", { style: "display:block;margin:8px 0 4px;font-size:13px" }, "Rango"));
     modal.appendChild(roleSel);
-    modal.appendChild(el("label", { style: "display:block;margin:12px 0 4px;font-size:13px" }, "Permisos (solo si no es admin)"));
+    modal.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:4px;line-height:1.5" },
+      "Es lo único que decide qué puede hacer. El servidor lo aplica en todas las peticiones."));
+    if (isEdit) {
+      modal.appendChild(el("div", { class: "muted", style: "font-size:12px;margin-top:6px;line-height:1.5" },
+        "El correo no se puede cambiar: sería cambiar de persona conservando la contraseña. Si te has equivocado, bórralo y añádelo de nuevo."));
+    }
+    /* V920 · Estas casillas NO se aplican en ningún sitio y hay que decirlo.
+       Se guardan en la base de datos desde antes de este trabajo, pero el
+       servidor decide por RANGO, no por casilla. Dejarlas sin aviso haría creer
+       que desmarcar "Usuarios" impide tocar usuarios, y no lo impide. Las dejo
+       porque sirven para apuntar de qué se encarga cada uno. */
+    modal.appendChild(el("label", { style: "display:block;margin:14px 0 4px;font-size:13px" }, "Áreas de las que se encarga (solo una nota)"));
+    modal.appendChild(el("div", {
+      style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:8px;" +
+             "padding:8px 10px;margin-bottom:8px;font-size:12px;line-height:1.5",
+    }, "Estas casillas no limitan nada todavía: son una nota para ti. Lo que se aplica de verdad es el rango de arriba."));
     modal.appendChild(permsGrid);
 
     const err = el("div", { class: "err", style: "margin-top:10px;display:none" });
@@ -17377,15 +17696,20 @@ async function viewStaff(root) {
 
     const acts = el("div", { style: "display:flex;gap:8px;margin-top:16px;justify-content:flex-end" });
     const cancel = btn("Cancelar", () => overlay.remove());
-    const save = btn(isEdit ? "💾 Guardar" : "✉️ Invitar", async () => {
+    const save = btn(isEdit ? "💾 Guardar" : "➕ Añadir al equipo", async () => {
       const perms = Array.from(permsGrid.querySelectorAll("input:checked")).map(c => c.value);
       const body = { email: emailInp.value.trim(), name: nameInp.value.trim(), role: roleSel.value, permissions: perms };
       if (!body.email) { err.textContent = "Email requerido"; err.style.display = "block"; return; }
+      // Al editar no se manda el correo: el servidor lo ignora, y mandarlo daría
+      // a entender que se puede cambiar.
+      if (isEdit) delete body.email;
       try {
         if (isEdit) await api(`/api/admin/staff/${m.id}`, { method: "PATCH", body: JSON.stringify(body) });
         else await api("/api/admin/staff", { method: "POST", body: JSON.stringify(body) });
         overlay.remove();
-        toast(isEdit ? "Cambios guardados" : "Invitación enviada");
+        // V919 decía "Invitación enviada" y no se enviaba nada. Ahora se dice qué
+        // ha pasado de verdad y qué falta para que la persona pueda entrar.
+        toast(isEdit ? "Cambios guardados" : "Añadido. Ahora ponle una contraseña temporal para que pueda entrar.");
         load();
       } catch (e) { err.textContent = e.message; err.style.display = "block"; }
     });

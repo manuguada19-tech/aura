@@ -316,30 +316,75 @@ async function comprobarPasswordAdmin(intento) {
   return { ok: false, migrada: false };
 }
 
-async function issueAdminToken(email) {
+/* V920 · ¿Esta clave de `settings` guarda un secreto?
+   Una sola definición para los dos sitios que lo necesitan:
+     · el tachado de la copia completa de datos (TACHAR, más abajo);
+     · el filtrado de GET /api/settings para quien no sea el dueño.
+   Estaba escrita solo en el primero. Con dos copias, el día que se añada un
+   ajuste secreto nuevo se acuerda uno de tachar la copia y se olvida de filtrar
+   la respuesta al panel, o al revés. Con una sola, se arregla en los dos sitios
+   a la vez. Importa porque entre estas claves está el código de acceso de
+   superadmin: con él se entra en la app como administrador. */
+function esClaveSecreta(k) {
+  return /password|secret|token|api_?key|private|superadmin_access_code|smtp_pass|emailjs/
+    .test(String(k || "").toLowerCase());
+}
+
+/* V920 · La sesión guarda el rango con el que se entró.
+   Antes solo guardaba el email, porque solo había una identidad posible. El
+   rango se fija al entrar y no se vuelve a consultar en cada petición (hay una
+   caché de 5 s sobre esta tabla). Eso obliga a lo de abajo: cuando a alguien se
+   le cambia el rango o se le suspende, hay que BORRARLE las sesiones, o
+   seguiría con el rango viejo hasta que caducara. */
+async function issueAdminToken(email, role = "superadmin", mustChangePw = false) {
   const tok = crypto.randomBytes(32).toString("hex");
   const exp = new Date(Date.now() + adminTokenTtlMs()); // V919 · lo dice el ajuste
+  const mcp = mustChangePw ? 1 : 0;
   await pool.execute(
-    "INSERT INTO admin_tokens (token, email, expires_at) VALUES (?,?,?)",
-    [tok, email, exp]
+    "INSERT INTO admin_tokens (token, email, expires_at, role, must_change_pw) VALUES (?,?,?,?,?)",
+    [tok, email, exp, role, mcp]
   );
-  adminTokenCache.set(tok, { email, exp: exp.getTime(), cachedAt: Date.now() });
+  adminTokenCache.set(tok, { email, role, must_change_pw: mcp, exp: exp.getTime(), cachedAt: Date.now() });
   return tok;
+}
+
+/* Cierra en el momento todas las sesiones de un correo. Se llama al suspender,
+   borrar o cambiar el rango de alguien del equipo, y al ponerle contraseña
+   nueva. Sin esto, "Suspender" no echaría a nadie: la persona seguiría dentro
+   con su sesión abierta hasta ocho horas. */
+async function revokeAdminSessionsFor(email) {
+  const em = String(email || "").toLowerCase().trim();
+  if (!em) return 0;
+  for (const [tok, v] of adminTokenCache.entries()) {
+    if (String(v && v.email || "").toLowerCase() === em) adminTokenCache.delete(tok);
+  }
+  try {
+    const [r] = await pool.execute("DELETE FROM admin_tokens WHERE LOWER(email)=?", [em]);
+    return r.affectedRows || 0;
+  } catch (e) { console.warn("[admin] revocar sesiones:", e.message); return 0; }
 }
 async function verifyAdminToken(tok) {
   if (!tok) return null;
   const cached = adminTokenCache.get(tok);
   if (cached && Date.now() - cached.cachedAt < ADMIN_TOKEN_CACHE_TTL) {
     if (cached.exp < Date.now()) { adminTokenCache.delete(tok); return null; }
-    return { email: cached.email, exp: cached.exp };
+    return { email: cached.email, role: cached.role || "superadmin",
+             must_change_pw: cached.must_change_pw ? 1 : 0, exp: cached.exp };
   }
   try {
     const [rows] = await pool.query(
-      "SELECT email, UNIX_TIMESTAMP(expires_at)*1000 AS exp FROM admin_tokens WHERE token=? AND expires_at > NOW() LIMIT 1",
+      "SELECT email, role, must_change_pw, UNIX_TIMESTAMP(expires_at)*1000 AS exp FROM admin_tokens WHERE token=? AND expires_at > NOW() LIMIT 1",
       [tok]
     );
     if (!rows.length) { adminTokenCache.delete(tok); return null; }
-    const entry = { email: rows[0].email, exp: Number(rows[0].exp) };
+    /* V920 · Si la columna `role` no existiera (el ALTER falló en una base de
+       datos vieja), rows[0].role llega undefined. Se cae a 'superadmin' a
+       propósito: quien ya tiene una sesión válida es el dueño, y prefiero que el
+       panel siga funcionando a bloquearlo por una migración fallida. Nadie del
+       equipo puede llegar aquí sin haber pasado por el login, que sí escribe el
+       rango explícitamente. */
+    const entry = { email: rows[0].email, role: rows[0].role || "superadmin",
+                    must_change_pw: rows[0].must_change_pw ? 1 : 0, exp: Number(rows[0].exp) };
     adminTokenCache.set(tok, { ...entry, cachedAt: Date.now() });
     return entry;
   } catch (e) {
@@ -631,8 +676,15 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
       var t = localStorage.getItem("adminToken");
       if (t) {
         fetch("/api/admin/me", { headers: { "Authorization": "Bearer " + t }, cache: "no-store" })
-          .then(function(r){ if (r.ok) location.replace("/admin.html?adminToken=" + encodeURIComponent(t)); else localStorage.removeItem("adminToken"); })
-          .catch(function(){ localStorage.removeItem("adminToken"); });
+          .then(function(r){
+            if (r.ok) { location.replace("/admin.html?adminToken=" + encodeURIComponent(t)); return; }
+            // Sesión caducada: se limpia también el rango guardado, o el próximo
+            // que entre en este navegador vería un instante el menú del anterior.
+            localStorage.removeItem("adminToken");
+            localStorage.removeItem("adminRole");
+            localStorage.removeItem("adminMustChangePw");
+          })
+          .catch(function(){ localStorage.removeItem("adminToken"); localStorage.removeItem("adminRole"); });
       }
       var f = document.getElementById("loginForm");
       var err = document.getElementById("err");
@@ -650,8 +702,30 @@ const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
             body: JSON.stringify({email: email, password: password})
           });
           var data = await r.json();
-          if (!r.ok) { err.textContent = "Credenciales incorrectas"; btn.disabled = false; btn.textContent = "Entrar"; return; }
+          if (!r.ok) {
+            /* V920 · Al panel entra ahora más de una persona, y el mensaje único
+               "Credenciales incorrectas" dejaba a oscuras los dos casos nuevos:
+               quien está bloqueado por intentos fallidos se creía que había
+               olvidado la contraseña, y quien todavía no tiene contraseña puesta
+               tampoco sabía por qué no entraba. El caso de credenciales sigue
+               siendo genérico a propósito: decir "ese correo no existe" le
+               confirmaría a un desconocido qué correos tienen acceso. */
+            if (data && (data.error === "locked" || data.error === "too_many_attempts")) {
+              err.textContent = data.message || "Demasiados intentos. Espera unos minutos y vuelve a probar.";
+            } else {
+              err.textContent = "Correo o contraseña incorrectos. Si te acaban de dar acceso, comprueba que quien te lo ha dado te haya puesto una contraseña.";
+            }
+            btn.disabled = false; btn.textContent = "Entrar"; return;
+          }
           localStorage.setItem("adminToken", data.token);
+          /* El rango se guarda aquí para que el panel pueda esconder al cargar lo
+             que esa persona no puede usar, SIN esperar a una petición. Es solo
+             comodidad: quien lo cambie a mano en el navegador no gana nada,
+             porque quien decide es el servidor en cada petición. */
+          try {
+            localStorage.setItem("adminRole", data.role || "");
+            localStorage.setItem("adminMustChangePw", data.must_change_password ? "1" : "");
+          } catch (e2) {}
           location.replace("/admin.html?adminToken=" + encodeURIComponent(data.token));
         } catch (ex) {
           err.textContent = "Error de red"; btn.disabled = false; btn.textContent = "Entrar";
@@ -837,6 +911,195 @@ app.use((req, res, next) => {
   next();
 });
 
+/* ============================================================
+   V920 · RANGOS DEL EQUIPO — el único sitio donde se decide quién puede qué
+   ------------------------------------------------------------
+   Por qué está aquí y no repartido por los handlers: todas las peticiones
+   /api/* que no son públicas pasan por el candado de arriba (requireAdmin), así
+   que este es el único punto por el que pasan las 171 rutas de escritura del
+   panel, incluidas las de los 13 módulos features_*.js. Poner la comprobación
+   en cada handler significaría 171 sitios donde olvidarse de una.
+
+   Va DESPUÉS de la auditoría a propósito: la auditoría se engancha al final de
+   la respuesta, así que un intento denegado queda grabado en admin_audit_log con
+   su 403. Se ve quién intentó qué y no pudo.
+
+   Los rangos son NIVELES, no casillas por área:
+       superadmin 4  >  admin 3  >  moderator 2  >  viewer 1
+   Cada regla pide un nivel mínimo. Y lo importante:
+
+   LO QUE NO ESTÁ EN LA LISTA, NO SE PUEDE ESCRIBIR.
+
+   Esa decisión es deliberada. Con 171 rutas es seguro que me olvido de
+   clasificar alguna. Si el olvido dejara la ruta ABIERTA, habría un agujero que
+   nadie ve hasta que alguien lo usa. Dejándola CERRADA, el olvido se convierte
+   en un botón que da 403, alguien lo dice, y se añade la regla. Un fallo que se
+   nota es infinitamente mejor que uno que no.
+
+   El dueño no pasa por ninguna de estas reglas. Sale por el `return next()` de
+   las primeras líneas.
+   ============================================================ */
+const NIVEL = { viewer: 1, moderator: 2, admin: 3, superadmin: 4 };
+const NIVEL_NOMBRE = { 1: "Solo lectura", 2: "Moderador", 3: "Administrador", 4: "Superadmin" };
+function nivelDe(role) { return NIVEL[String(role || "").toLowerCase()] || 0; }
+
+/* Lecturas reservadas. Por defecto CUALQUIER GET está permitido desde
+   solo-lectura: media pantalla del panel son listados, y un equipo que no puede
+   mirar no sirve para nada. Las excepciones son las que permiten SACAR los datos
+   de la app o SUBIR de rango, que es otra cosa distinta de mirar.
+   Se evalúan en orden y gana la primera que coincide. */
+const LECTURA_RESERVADA = [
+  // Copia completa de la base de datos, exportaciones y CSV: es llevarse todo.
+  [/^\/api\/admin\/backup(\/|$)/, 4],
+  [/\/export(\/|$)|\.csv$/, 4],
+  // La lista del equipo y el registro de auditoría: quién manda y qué ha hecho.
+  [/^\/api\/admin\/staff(\/|$)/, 4],
+  [/^\/api\/admin\/audit-log(\/|$)/, 4],
+  /* Estas dos NO estaban en el plan; las añado porque al revisar los GET
+     aparecieron y son escalada de privilegio disfrazada de lectura:
+       · otp-codes devuelve los códigos de verificación en claro de cualquier
+         correo. Con uno se entra EN LA APP como esa persona. Leerlo no es
+         mirar: es poder suplantar a un usuario.
+       · vault/media sirve el contenido privado que los usuarios guardan bajo
+         petición de acceso aprobada. Un "solo lectura" no debería poder verlo
+         por la puerta de atrás. */
+  [/^\/api\/admin\/otp-codes(\/|$)/, 3],
+  [/^\/api\/admin\/vault\/(media|access-logs)(\/|$)/, 3],
+];
+
+/* Escrituras permitidas. Se compara contra "MÉTODO /ruta" (con los ids reales
+   ya sustituidos, p. ej. "POST /api/admin/kyc/42/approve").
+   EL ORDEN IMPORTA: las excepciones van ANTES de la regla general que las
+   contendría, porque gana la primera coincidencia. */
+const ESCRITURA = [
+  /* --- 1. Excepciones que hay que restar antes de sumar --- */
+  // Desde la ficha de KYC se puede BORRAR la cuenta. Eso no es moderar.
+  [/^(POST|DELETE) \/api\/admin\/kyc\/[^/]+\/delete-account$/, 4],
+  // Configurar la IA de moderación es cambiar las reglas, no aplicarlas.
+  [/^(POST|PUT|PATCH) \/api\/admin\/moderation\/ai-config$/, 4],
+  // Borrar un ticket entero destruye la conversación de soporte (la prueba de
+  // lo que se dijo). Responder y cerrar sí, borrar no.
+  [/^DELETE \/api\/tickets\/[^/]+$/, 3],
+  // Borrados masivos: un clic que se lleva muchas filas por delante.
+  [/^(POST|DELETE) \/api\/admin\/moderation\/bulk-delete$/, 3],
+
+  /* --- 2. Su propio perfil: cualquiera, siempre ---
+     Sin esto, un moderador con contraseña temporal no podría cambiarla y se
+     quedaría dando vueltas. El handler de /api/admin/me distingue al dueño del
+     equipo, y a nadie del equipo le deja tocar su correo ni su rango. */
+  [/^(PUT|POST) \/api\/admin\/me$/, 1],
+  /* Y salir. Sin esta línea, "Cerrar sesión" devolvía 403 a todo el equipo y su
+     token seguía siendo válido ocho horas más: el panel borra el navegador en el
+     .finally(), así que parecía que habían salido pero la sesión valía. */
+  [/^POST \/api\/admin\/logout$/, 1],
+
+  /* --- 3. Moderador (2): atender a la gente y aplicar las normas --- */
+  // Suspender, banear, avisar y reactivar
+  [/^POST \/api\/users\/[^/]+\/action$/, 2],
+  [/^POST \/api\/users\/bulk$/, 2],
+  [/^POST \/api\/admin\/users\/[^/]+\/moderate$/, 2],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/users\/[^/]+\/restrictions/, 2],
+  // Infracciones
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/infractions(\/|$)/, 2],
+  // Denuncias
+  [/^PATCH \/api\/reports\/[^/]+$/, 2],
+  [/^POST \/api\/reports\/user\/[^/]+\/resolve-all$/, 2],
+  // Apelaciones
+  [/^PATCH \/api\/appeals\/[^/]+$/, 2],
+  // Tickets de soporte (responder, cambiar estado, repartir)
+  [/^(POST|PUT|PATCH) \/api\/tickets(\/|$)/, 2],
+  [/^POST \/api\/(tickets|moderation)\/auto-assign$/, 2],
+  // Fotos de "busco ahora": aprobar / rechazar
+  [/^POST \/api\/admin\/now-photos\/[^/]+\/(approve|reject|ai-check)$/, 2],
+  // KYC: aprobar y rechazar (borrar la cuenta NO — está arriba, en el punto 1)
+  [/^POST \/api\/admin\/kyc\/[^/]+\/(approve|reject|sync)$/, 2],
+  // Moderación de chats y de la cola de contenido
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/chats(\/|$)/, 2],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/moderation(\/|$)/, 2],
+  [/^PATCH \/api\/conversations\/[^/]+$/, 2],
+
+  /* --- 4. Administrador (3): además, hablarle a los usuarios y el contenido --- */
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/notifications(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/push(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/popups(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/newsletters(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/email-templates(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/invites(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/campaigns(\/|$)/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/content$/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/promotions(\/|$)/, 3],
+  [/^POST \/api\/promos\/bulk-generate$/, 3],
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/waitlist(\/|$)/, 3],
+  // Borrar cuentas y editar fichas de usuario
+  [/^POST \/api\/admin\/users\/[^/]+\/full-delete$/, 3],
+  [/^DELETE \/api\/users\/[^/]+$/, 3],
+  [/^(POST|PATCH) \/api\/users$/, 3],
+  [/^PATCH \/api\/users\/[^/]+$/, 3],
+  [/^DELETE \/api\/users\/[^/]+\/activity$/, 3],
+  // Los catálogos con los que trabaja el equipo de moderación
+  [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/(deletion-reasons|kyc-reasons|mod-rules|mod-templates|user-rules|ticket-macros)(\/|$)/, 3],
+];
+
+/* Nivel que hace falta para esta petición. Devuelve 4 (solo el dueño) cuando no
+   reconoce la ruta, que es el caso por defecto de todas las escrituras. */
+function nivelNecesario(method, path) {
+  const m = String(method || "").toUpperCase();
+  if (m === "GET" || m === "HEAD" || m === "OPTIONS") {
+    for (const [re, n] of LECTURA_RESERVADA) if (re.test(path)) return n;
+    return 1; // leer, en general, se puede
+  }
+  const clave = `${m} ${path}`;
+  for (const [re, n] of ESCRITURA) if (re.test(clave)) return n;
+  return 4; // cerrado por defecto
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/")) return next();
+  // Sin sesión de admin no hay nada que decidir: o es una ruta pública, o el
+  // candado de arriba ya ha devuelto 401.
+  if (!req.admin) return next();
+
+  /* EL DUEÑO SALE POR AQUÍ Y NO LEE NI UNA REGLA MÁS.
+     Se comprueba por las dos vías a propósito: por correo (el de Mi perfil de
+     administrador) y por rango de la sesión. Si el dueño se cambia el correo,
+     su sesión abierta deja de coincidir por correo pero sigue siendo
+     'superadmin', y al revés. Ninguna de las dos por sí sola es suficiente para
+     que no se pueda quedar fuera; las dos juntas sí. Y 'superadmin' no se puede
+     conceder a nadie del equipo: los endpoints de staff lo rechazan. */
+  if (isSuperAdmin(req) || String(req.admin.role || "") === "superadmin") return next();
+
+  const nivel = nivelDe(req.admin.role);
+  const path = req.path;
+
+  /* Contraseña temporal sin cambiar: no puede TOCAR nada más que su perfil.
+     Leer sí puede, y es a propósito: el panel necesita cargar para poder
+     mostrarle el aviso de cambiar la contraseña. Si le cerrase también las
+     lecturas, la pantalla se quedaría en blanco y no habría manera de cambiarla
+     sin llamarte a ti. */
+  if (req.admin.must_change_pw && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    /* Salir siempre se puede. Sin esta excepción, "Cerrar sesión" recibía un 403
+       y el token seguía vivo ocho horas: el panel limpia el navegador en el
+       .finally(), así que parecía que se había salido pero la sesión valía. */
+    if (!/^\/api\/admin\/(me|logout)$/.test(path)) {
+      return res.status(403).json({
+        error: "must_change_password",
+        message: "Antes de hacer cambios tienes que poner una contraseña nueva.",
+      });
+    }
+  }
+
+  const necesario = nivelNecesario(req.method, path);
+  if (nivel < necesario) {
+    return res.status(403).json({
+      error: "forbidden_role",
+      your_role: req.admin.role || null,
+      required: NIVEL_NOMBRE[necesario] || "Superadmin",
+      message: `Esta acción necesita el rango "${NIVEL_NOMBRE[necesario] || "Superadmin"}". El tuyo es "${NIVEL_NOMBRE[nivel] || "sin rango"}".`,
+    });
+  }
+  next();
+});
+
 /* ---------- Schema ---------- */
 async function migrate() {
   const stmts = [
@@ -855,6 +1118,21 @@ async function migrate() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_exp (expires_at)
     )`,
+    /* V920 · El rango viaja en la sesión, no se consulta en cada petición.
+       OJO CON EL VALOR POR DEFECTO, que es lo que evita un bloqueo: cuando este
+       despliegue arranque, las sesiones que ya estén abiertas (la del dueño) no
+       tienen columna `role`. Al añadirla con DEFAULT 'superadmin', esas filas
+       quedan como superadmin y la sesión abierta sigue funcionando con todo el
+       poder, sin volver a entrar. Si el valor por defecto fuese 'viewer', el
+       dueño se encontraría su propio panel en modo lectura tras el despliegue.
+       A partir de ahí, cada sesión nueva escribe su rango explícitamente. */
+    `ALTER TABLE admin_tokens ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'superadmin'`,
+    /* Se guarda en la sesión, no se consulta en cada petición: si la persona
+       entró con una contraseña temporal, el servidor la tiene en cuarentena
+       hasta que la cambie. Al cambiarla se le cierran las sesiones, así que la
+       siguiente nace ya sin la marca (por eso no se queda pegada). */
+    `ALTER TABLE admin_tokens ADD COLUMN IF NOT EXISTS must_change_pw TINYINT(1) NOT NULL DEFAULT 0`,
+    `ALTER TABLE admin_tokens ADD INDEX IF NOT EXISTS idx_email (email)`,
     // V824 · Registro de auditoría de acciones de admin (quién hizo qué y cuándo).
     // Additivo: sólo se escribe desde el middleware de auditoría; ninguna función
     // existente depende de esta tabla.
@@ -6127,22 +6405,101 @@ app.post("/api/my/popup/:id/event", wrap(async (req, res) => {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     `);
   } catch (e) { console.warn("[staff] ensure:", e.message); }
+  /* V920 · Columnas para que esta tabla dé acceso de verdad. Hasta ahora era una
+     lista de contactos: guardaba el rango y los permisos y nadie los leía.
+       · password_hash        · scrypt, mismo formato que la del dueño.
+       · must_change_password · la contraseña la pone el dueño y se la pasa a
+         mano (el envío de emails no está implementado), así que hasta que la
+         persona la cambie el servidor no le deja hacer nada más. Nace en 1: una
+         fila sin contraseña tampoco puede entrar, así que no cambia nada para
+         las que ya existan.
+       · password_set_at      · para saber si una contraseña temporal lleva
+         semanas sin cambiarse.
+     Van en ALTER aparte del CREATE porque en una instalación que ya funciona el
+     CREATE TABLE IF NOT EXISTS no hace nada: las columnas nuevas solo llegan
+     por aquí. Cada una en su try, para que si una falla las otras entren. */
+  for (const s of [
+    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255) NULL",
+    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS must_change_password TINYINT(1) NOT NULL DEFAULT 1",
+    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS password_set_at DATETIME NULL",
+    // Su foto de perfil. Sin esto, "Mi perfil" del equipo escribiría en el ajuste
+    // global admin.avatar y le cambiaría la foto al dueño.
+    "ALTER TABLE staff ADD COLUMN IF NOT EXISTS avatar LONGTEXT NULL",
+  ]) {
+    try { await pool.query(s); } catch (e) { console.warn("[staff] alter:", e.message); }
+  }
 })();
 
+/* ============================================================
+   V920 · EQUIPO — estas filas ya SÍ dan acceso al panel
+   ------------------------------------------------------------
+   Hasta ahora esta pantalla era una lista de contactos: guardaba correo, nombre,
+   rango y permisos, y nadie los leía nunca. El login comparaba con un único
+   correo, así que añadir a alguien aquí no le daba acceso a nada. Ahora el login
+   consulta esta tabla, y por eso todo lo de abajo pasa a ser delicado:
+
+     · Solo el dueño puede tocar esta pantalla. El control de rangos de arriba ya
+       lo impide (las escrituras sin clasificar se deniegan y las lecturas de
+       /api/admin/staff están reservadas), pero se comprueba también aquí: si
+       algún día alguien mueve estas rutas, el candado se mueve con ellas.
+     · El correo del dueño no puede estar en esta tabla. Si estuviera, quien
+       editara esa fila podría suplantarlo o bajarle el rango.
+     · 'superadmin' no se puede conceder. El ENUM de la columna ya lo impide en
+       la base de datos; se valida además aquí para dar un error claro.
+     · Quitar el rango, suspender o borrar CIERRA LAS SESIONES en el momento. Sin
+       eso, "Suspender" no echaría a nadie: seguiría dentro con el rango viejo
+       hasta ocho horas, porque el rango viaja en el token.
+   ============================================================ */
+const ROLES_STAFF = new Set(["admin", "moderator", "viewer"]);
+function soloDueno(req, res) {
+  if (isSuperAdmin(req) || String(req.admin?.role || "") === "superadmin") return false;
+  res.status(403).json({
+    error: "forbidden_role", required: "Superadmin",
+    message: "Solo el administrador principal puede gestionar el equipo.",
+  });
+  return true;
+}
+
 app.get("/api/admin/staff", requireAdmin, wrap(async (req, res) => {
-  const [rows] = await pool.query("SELECT * FROM staff ORDER BY created_at DESC");
-  res.json({ items: rows });
+  if (soloDueno(req, res)) return;
+  /* Antes era SELECT *, que ahora se llevaría también password_hash al
+     navegador. Se enumeran las columnas: lo que no se pide no se puede filtrar
+     mal. De la contraseña solo sale SI HAY o no, nunca el hash. */
+  const [rows] = await pool.query(
+    `SELECT id, email, name, role, permissions, status, last_login, invited_at,
+            created_at, password_set_at, must_change_password,
+            (password_hash IS NOT NULL AND password_hash <> '') AS has_password
+       FROM staff ORDER BY created_at DESC`
+  );
+  res.json({
+    items: rows.map(r => ({ ...r, has_password: !!r.has_password,
+                            must_change_password: !!r.must_change_password })),
+    owner_email: activeAdminEmail(),
+  });
 }));
 
 app.post("/api/admin/staff", requireAdmin, wrap(async (req, res) => {
+  if (soloDueno(req, res)) return;
   const { email, name, role, permissions } = req.body || {};
   if (!email) return res.status(400).json({ error: "missing_email" });
+  const em = String(email).toLowerCase().trim().slice(0, 190);
+  if (em === activeAdminEmail()) {
+    return res.status(400).json({ error: "is_owner_email",
+      message: "Ese es tu propio correo de acceso. El administrador principal no se añade al equipo." });
+  }
+  const rol = String(role || "moderator").toLowerCase();
+  if (!ROLES_STAFF.has(rol)) {
+    return res.status(400).json({ error: "bad_role",
+      message: "El rango tiene que ser Administrador, Moderador o Solo lectura." });
+  }
   try {
     const [ins] = await pool.execute(
       `INSERT INTO staff (email, name, role, permissions, status) VALUES (?,?,?,?,'pending')`,
-      [String(email).toLowerCase().slice(0,190), name || null, role || "moderator", JSON.stringify(permissions || [])]
+      [em, name || null, rol, JSON.stringify(permissions || [])]
     );
-    res.json({ ok: true, id: ins.insertId });
+    await logActivity("admin", `Añadido al equipo: ${em} (${rol}). Todavía sin contraseña: no puede entrar.`);
+    res.json({ ok: true, id: ins.insertId, status: "pending",
+      note: "Añadido, pero aún no puede entrar. Ponle una contraseña temporal para darle acceso." });
   } catch (e) {
     if (e.code === "ER_DUP_ENTRY") return res.status(409).json({ error: "duplicate_email" });
     throw e;
@@ -6150,43 +6507,128 @@ app.post("/api/admin/staff", requireAdmin, wrap(async (req, res) => {
 }));
 
 app.patch("/api/admin/staff/:id", requireAdmin, wrap(async (req, res) => {
+  if (soloDueno(req, res)) return;
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: "bad_id" });
-  const fields = ["name","role","permissions","status"];
+  const [[actual]] = await pool.query("SELECT email, role, status FROM staff WHERE id=? LIMIT 1", [id]);
+  if (!actual) return res.status(404).json({ error: "not_found" });
+  if (String(actual.email).toLowerCase() === activeAdminEmail()) {
+    return res.status(400).json({ error: "is_owner_email",
+      message: "Esa fila es tu propio correo de acceso y no se puede editar desde aquí." });
+  }
+  if ("role" in req.body && !ROLES_STAFF.has(String(req.body.role || "").toLowerCase())) {
+    return res.status(400).json({ error: "bad_role",
+      message: "El rango tiene que ser Administrador, Moderador o Solo lectura." });
+  }
+  // `email` NO está en la lista: cambiar el correo de una fila sería cambiar de
+  // persona conservando la contraseña. Se borra y se añade de nuevo.
+  const fields = ["name", "role", "permissions", "status"];
   const updates = [], params = [];
   for (const f of fields) {
     if (f in req.body) {
       updates.push(`${f}=?`);
-      params.push(f === "permissions" ? JSON.stringify(req.body[f] || []) : req.body[f]);
+      params.push(f === "permissions" ? JSON.stringify(req.body[f] || []) :
+                  f === "role" ? String(req.body[f]).toLowerCase() : req.body[f]);
     }
   }
   if (!updates.length) return res.json({ ok: true });
   params.push(id);
   await pool.execute(`UPDATE staff SET ${updates.join(", ")} WHERE id=?`, params);
-  res.json({ ok: true });
+
+  /* Si le ha cambiado el rango o el estado, fuera sus sesiones. Es lo que hace
+     que "Suspender" signifique algo y que bajar de rango no tarde ocho horas. */
+  const cambiaRango = "role" in req.body && String(req.body.role).toLowerCase() !== String(actual.role);
+  const cambiaEstado = "status" in req.body && String(req.body.status) !== String(actual.status);
+  let sesiones = 0;
+  if (cambiaRango || cambiaEstado) {
+    sesiones = await revokeAdminSessionsFor(actual.email);
+    await logActivity("admin",
+      `Equipo: ${actual.email} → rango ${req.body.role || actual.role}, estado ${req.body.status || actual.status}. Sesiones cerradas: ${sesiones}.`);
+  }
+  res.json({ ok: true, sessions_revoked: sesiones });
 }));
 
 app.delete("/api/admin/staff/:id", requireAdmin, wrap(async (req, res) => {
+  if (soloDueno(req, res)) return;
   const id = parseInt(req.params.id, 10);
   if (!id) return res.status(400).json({ error: "bad_id" });
+  const [[actual]] = await pool.query("SELECT email FROM staff WHERE id=? LIMIT 1", [id]);
+  if (!actual) return res.json({ ok: true });
+  if (String(actual.email).toLowerCase() === activeAdminEmail()) {
+    return res.status(400).json({ error: "is_owner_email",
+      message: "No se puede borrar tu propio correo de acceso." });
+  }
   await pool.execute("DELETE FROM staff WHERE id=?", [id]);
-  res.json({ ok: true });
+  const sesiones = await revokeAdminSessionsFor(actual.email);
+  await logActivity("admin", `Equipo: ${actual.email} eliminado. Sesiones cerradas: ${sesiones}.`);
+  res.json({ ok: true, sessions_revoked: sesiones });
+}));
+
+/* Contraseña temporal. Esto es lo que de verdad da el acceso, y sustituye al
+   "reenviar invitación" que no enviaba nada: el envío de emails del panel no
+   está implementado, así que la contraseña se genera aquí, se devuelve UNA SOLA
+   VEZ para que la copies y se la pases tú por donde quieras, y la persona está
+   obligada a cambiarla en cuanto entre (must_change_password). Después ni tú la
+   puedes volver a ver: en la base de datos solo queda el hash scrypt. */
+const ALFABETO_TEMP = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+function passwordTemporal(largo = 14) {
+  // Sin I, l, O, 0 ni 1: la contraseña se copia y se dicta a mano, y confundir
+  // una l con un 1 acaba en "no me deja entrar".
+  const bytes = crypto.randomBytes(largo);
+  let out = "";
+  for (let i = 0; i < largo; i++) out += ALFABETO_TEMP[bytes[i] % ALFABETO_TEMP.length];
+  return out.slice(0, 4) + "-" + out.slice(4, 9) + "-" + out.slice(9);
+}
+
+app.post("/api/admin/staff/:id/set-password", requireAdmin, wrap(async (req, res) => {
+  if (soloDueno(req, res)) return;
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [[m]] = await pool.query("SELECT id, email, role FROM staff WHERE id=? LIMIT 1", [id]);
+  if (!m) return res.status(404).json({ error: "not_found" });
+  if (String(m.email).toLowerCase() === activeAdminEmail()) {
+    return res.status(400).json({ error: "is_owner_email",
+      message: "Tu contraseña se cambia en Mi perfil de administrador, no aquí." });
+  }
+  if (!ROLES_STAFF.has(String(m.role || "").toLowerCase())) {
+    return res.status(400).json({ error: "bad_role",
+      message: "Esa fila tiene un rango que no reconozco. Corrígelo antes de darle acceso." });
+  }
+  const temp = passwordTemporal();
+  await pool.execute(
+    `UPDATE staff SET password_hash=?, must_change_password=1, password_set_at=NOW(),
+                      status='active', invited_at=NOW() WHERE id=?`,
+    [hashPassword(temp), id]
+  );
+  // Si ya tenía sesión abierta con la contraseña anterior, se cierra.
+  const sesiones = await revokeAdminSessionsFor(m.email);
+  await logActivity("security",
+    `Contraseña temporal generada para ${m.email} (${m.role}). Tendrá que cambiarla al entrar. Sesiones cerradas: ${sesiones}.`);
+  res.json({
+    ok: true,
+    email: m.email,
+    role: m.role,
+    temp_password: temp,
+    shown_once: true,
+    email_sent: false,
+    note: "Cópiala ahora: no se vuelve a mostrar. Pásasela tú (el panel no envía correos) y tendrá que cambiarla al entrar.",
+  });
 }));
 
 app.post("/api/admin/staff/:id/resend-invite", requireAdmin, wrap(async (req, res) => {
+  if (soloDueno(req, res)) return;
   const id = parseInt(req.params.id, 10);
   const [[m]] = await pool.query("SELECT * FROM staff WHERE id=?", [id]);
   if (!m) return res.status(404).json({ error: "not_found" });
-  await pool.execute("UPDATE staff SET invited_at=NOW(), status='pending' WHERE id=?", [id]);
-  // V919 · Aquí NO se envía ningún email: solo se actualiza la fecha. Se
-  // devuelve dicho explícitamente (email_sent: false) para que el panel no pueda
-  // decir "invitación reenviada" cuando no se ha reenviado nada. Y aunque se
-  // enviara, el correo no serviría de mucho: la tabla `staff` no da acceso al
-  // panel, que se controla con app.access_admin_emails.
+  await pool.execute("UPDATE staff SET invited_at=NOW() WHERE id=?", [id]);
+  /* V919 · Aquí NO se envía ningún email: solo se actualiza la fecha.
+     V920 · Y ya no pone status='pending', que era peor que no hacer nada:
+     "reenviar la invitación" a alguien que ya tenía acceso lo dejaba en pending
+     y le quitaba la entrada al panel. Para dar acceso está set-password. */
   res.json({
     ok: true,
     email_sent: false,
-    note: "Solo se ha actualizado la fecha de invitación. El envío de email de invitación no está implementado, y la tabla staff todavía no concede acceso al panel.",
+    note: "Solo se ha actualizado la fecha. El panel no envía emails: para dar acceso, usa \"Poner contraseña temporal\".",
   });
 }));
 
@@ -6412,6 +6854,21 @@ app.get("/api/settings", wrap(async (req, res) => {
   delete obj["admin.password_hash"];
   delete obj["admin.password_override"];
   obj["admin.password_is_set"] = hayPass ? "1" : "";
+  /* V920 · Al equipo se le quitan los secretos de esta respuesta.
+     Esta ruta la necesita medio panel (marca, textos, límites, flags), así que
+     cerrarla al equipo dejaría el panel a medias. Pero devuelve la tabla
+     `settings` ENTERA, y ahí dentro están el código de acceso de superadmin (con
+     él se entra en la app como administrador), las credenciales de SMTP y las
+     claves de EmailJS. Un "solo lectura" se las llevaba todas con abrir el panel.
+     Se filtra con la misma función que tacha la copia de datos, para que no
+     puedan discrepar. El dueño sigue viéndolo todo, igual que antes. */
+  if (!isSuperAdmin(req) && String(req.admin?.role || "") !== "superadmin") {
+    let quitadas = 0;
+    for (const k of Object.keys(obj)) {
+      if (esClaveSecreta(k)) { delete obj[k]; quitadas++; }
+    }
+    obj["_filtrado_por_rango"] = String(quitadas);
+  }
   res.json(obj);
 }));
 app.put("/api/settings", wrap(async (req, res) => {
@@ -6840,11 +7297,20 @@ function escribir(res, texto) {
 const TACHAR = {
   // tabla → función que recibe la fila y devuelve la lista de columnas tachadas
   settings: (fila) => {
-    const k = String(fila.k || "").toLowerCase();
-    const esSecreto = /password|secret|token|api_?key|private|superadmin_access_code|smtp_pass|emailjs/.test(k);
-    if (!esSecreto) return [];
+    // V920 · La expresión estaba escrita aquí a mano. Ahora la comparte con el
+    // filtrado de GET /api/settings (esClaveSecreta), para que añadir un ajuste
+    // secreto nuevo lo tape en los dos sitios de una vez y no en uno solo.
+    if (!esClaveSecreta(fila.k)) return [];
     fila.v = "[tachado por seguridad]";
     return ["v"];
+  },
+  // V920 · La tabla del equipo guarda ahora contraseñas cifradas. No salen.
+  staff: (fila) => {
+    const tocadas = [];
+    if ("password_hash" in fila && fila.password_hash != null) {
+      fila.password_hash = "[tachado por seguridad]"; tocadas.push("password_hash");
+    }
+    return tocadas;
   },
   admin_tokens: (fila) => {
     const tocadas = [];
@@ -11851,9 +12317,29 @@ app.put("/api/content", wrap(async (req, res) => {
 }));
 
 // Admin auth
+/* V920 · Ahora al panel puede entrar más de una persona.
+   EL ORDEN DE ESTE HANDLER ES LA GARANTÍA DE QUE EL DUEÑO NO SE QUEDA FUERA:
+     1. Frenos por IP y por correo (nuevos: el login del panel no los tenía).
+     2. El dueño (activeAdminEmail) por el camino de siempre, SIN TOCAR NADA.
+     3. Si no es el dueño, se busca en `staff`.
+     4. Si no, 401.
+   El paso 2 es exactamente el código que ya había. Si el paso 3 estuviera roto
+   de cualquier manera, el dueño seguiría entrando igual, porque su camino
+   termina en un `return` antes de llegar ahí. */
 app.post("/api/admin/login", wrap(async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: "missing" });
+
+  /* Freno a la fuerza bruta. Estos dos ayudantes ya existían en el fichero pero
+     solo estaban enchufados a los dos logins de usuario; el del panel, que es la
+     puerta con más poder detrás, aceptaba intentos ilimitados. */
+  const ip = clientIp(req);
+  if (!authIpAllow(ip)) return res.status(429).json({ error: "too_many_attempts" });
+  const emailNorm = String(email).toLowerCase().trim();
+  if (loginLocked(emailNorm)) {
+    return res.status(429).json({ error: "locked", message: "Demasiados intentos fallidos. Prueba de nuevo en unos minutos." });
+  }
+
   // Allow the admin to override the password from the panel (stored in settings).
   const overrideEmail = (getSetting("admin.email", "") || "").toLowerCase();
   const activeEmail = overrideEmail || ADMIN_EMAIL;
@@ -11862,29 +12348,119 @@ app.post("/api/admin/login", wrap(async (req, res) => {
   // datos todavía guarda la versión en claro, la cifra en este mismo inicio de
   // sesión y borra el claro. Los caminos antiguos siguen funcionando, así que
   // este cambio no puede dejar a nadie fuera.
-  const emailOk = String(email).toLowerCase() === activeEmail;
-  const passOk = emailOk ? (await comprobarPasswordAdmin(String(password))).ok : false;
-  if (!emailOk || !passOk) {
+  const emailOk = emailNorm === activeEmail;
+  if (emailOk) {
+    const passOk = (await comprobarPasswordAdmin(String(password))).ok;
+    if (!passOk) {
+      recordLoginFail(emailNorm);
+      return res.status(401).json({ error: "invalid_credentials" });
+    }
+    clearLoginFails(emailNorm);
+    const token = await issueAdminToken(activeEmail, "superadmin", false);
+    await logActivity("admin", `Inicio de sesión de administrador (${activeEmail})`);
+    return res.json({ ok: true, token, email: activeEmail, role: "superadmin",
+                      must_change_password: false, expiresIn: ADMIN_TOKEN_TTL_MS });
+  }
+
+  /* ---- Equipo (tabla `staff`) ----
+     Para entrar hacen falta las tres cosas a la vez: estar `active`, tener
+     contraseña puesta y acertarla. `pending` (recién añadido, sin contraseña) y
+     `suspended` no entran, y el mensaje de error es el mismo en todos los casos
+     para no revelar si un correo existe en el equipo o no. */
+  let fila = null;
+  try {
+    const [rows] = await pool.query(
+      "SELECT id, email, name, role, status, password_hash FROM staff WHERE LOWER(email)=? LIMIT 1",
+      [emailNorm]
+    );
+    fila = rows[0] || null;
+  } catch (e) {
+    // Si la tabla no existiera, esto no debe tumbar el login del dueño (que ya
+    // ha respondido arriba) ni devolver un 500 revelador.
+    console.warn("[admin] login staff:", e.message);
+  }
+
+  // Misma lista que valida la pantalla de Equipo (ROLES_STAFF): un rango que no
+  // esté ahí no entra, ni aunque alguien lo escriba a mano en la base de datos.
+  const puede = !!(fila && fila.status === "active" && fila.password_hash &&
+                   ROLES_STAFF.has(String(fila.role || "").toLowerCase()) &&
+                   verifyPassword(String(password), fila.password_hash));
+  if (!puede) {
+    recordLoginFail(emailNorm);
     return res.status(401).json({ error: "invalid_credentials" });
   }
-  const token = await issueAdminToken(activeEmail);
-  await logActivity("admin", `Inicio de sesión de administrador (${activeEmail})`);
-  res.json({ ok: true, token, email: activeEmail, expiresIn: ADMIN_TOKEN_TTL_MS });
+
+  clearLoginFails(emailNorm);
+  let debeCambiar = false;
+  try {
+    const [r2] = await pool.query("SELECT must_change_password FROM staff WHERE id=? LIMIT 1", [fila.id]);
+    debeCambiar = !!(r2[0] && r2[0].must_change_password);
+  } catch (e) { debeCambiar = false; }
+  try {
+    await pool.execute("UPDATE staff SET last_login=NOW() WHERE id=?", [fila.id]);
+  } catch (e) { /* la columna existe desde que se creó la tabla; si no, da igual */ }
+
+  const token = await issueAdminToken(fila.email, String(fila.role), debeCambiar);
+  await logActivity("admin", `Inicio de sesión del equipo: ${fila.email} (${fila.role})`);
+  res.json({ ok: true, token, email: fila.email, role: String(fila.role),
+             name: fila.name || "", must_change_password: debeCambiar,
+             expiresIn: ADMIN_TOKEN_TTL_MS });
 }));
 app.post("/api/admin/logout", wrap(async (req, res) => {
   const tok = readAdminToken(req);
   await revokeAdminToken(tok);
   res.json({ ok: true });
 }));
+/* V920 · Este par de rutas era una TRAMPA DE BLOQUEO, y es la razón de que el
+   acceso del equipo no se pudiera enchufar sin arreglarlas primero.
+   El PUT guardaba `admin.email`, `admin.display_name`, `admin.role` y
+   `admin.avatar`, que son ajustes GLOBALES: uno solo para toda la instalación.
+   Con un único administrador eso era correcto. En cuanto entra un moderador y
+   pulsa "Guardar" en su perfil, escribe SU correo en `admin.email`... que es
+   justo el ajuste que el login usa para decidir quién es el dueño. Resultado:
+   el moderador se convierte en el dueño y a ti te deja fuera de tu propio panel,
+   sin querer y con dos clics.
+   Solución: la ruta mira quién llama. El dueño, exactamente igual que antes. El
+   equipo, contra SU fila de `staff`, y sin poder tocar su correo ni su rango. */
+function esDuenoDelPanel(entry) {
+  const who = String(entry?.email || "").toLowerCase();
+  return String(entry?.role || "") === "superadmin" || (!!who && who === activeAdminEmail());
+}
+
 app.get("/api/admin/me", wrap(async (req, res) => {
   const entry = await verifyAdminToken(readAdminToken(req));
   if (!entry) return res.status(401).json({ error: "unauthorized" });
+  if (!esDuenoDelPanel(entry)) {
+    let fila = null;
+    try {
+      const [rows] = await pool.query(
+        "SELECT name, role, avatar, must_change_password FROM staff WHERE LOWER(email)=? LIMIT 1",
+        [String(entry.email).toLowerCase()]
+      );
+      fila = rows[0] || null;
+    } catch (e) { console.warn("[admin/me] staff:", e.message); }
+    return res.json({
+      ok: true,
+      email: entry.email,
+      name: (fila && fila.name) || entry.email,
+      role: NIVEL_NOMBRE[nivelDe(entry.role)] || "Equipo",
+      role_key: entry.role || "",
+      avatar: (fila && fila.avatar) || "",
+      is_owner: false,
+      must_change_password: !!(fila && fila.must_change_password) || !!entry.must_change_pw,
+      // El equipo no gestiona el correo de acceso al panel: no se le manda.
+      override_email: "",
+    });
+  }
   res.json({
     ok: true,
     email: entry.email,
     name: getSetting("admin.display_name", "") || "Administrador",
     role: getSetting("admin.role", "") || "Superadministrador",
+    role_key: "superadmin",
     avatar: getSetting("admin.avatar", "") || "",
+    is_owner: true,
+    must_change_password: false,
     override_email: getSetting("admin.email", "") || "",
   });
 }));
@@ -11893,6 +12469,59 @@ app.put("/api/admin/me", wrap(async (req, res) => {
   const entry = await verifyAdminToken(readAdminToken(req));
   if (!entry) return res.status(401).json({ error: "unauthorized" });
   const { name, role, avatar, email, password, current_password } = req.body || {};
+
+  /* --- Camino del equipo: su fila de `staff`, nunca los ajustes globales --- */
+  if (!esDuenoDelPanel(entry)) {
+    const em = String(entry.email).toLowerCase();
+    let fila = null;
+    try {
+      const [rows] = await pool.query("SELECT id, password_hash FROM staff WHERE LOWER(email)=? LIMIT 1", [em]);
+      fila = rows[0] || null;
+    } catch (e) { console.warn("[admin/me] staff:", e.message); }
+    if (!fila) return res.status(404).json({ error: "staff_not_found" });
+
+    if (password) {
+      if (!fila.password_hash || !verifyPassword(String(current_password || ""), fila.password_hash)) {
+        return res.status(400).json({ error: "wrong_current_password" });
+      }
+      if (String(password).length < 8) {
+        return res.status(400).json({ error: "password_too_short",
+          message: "La contraseña nueva necesita 8 caracteres o más." });
+      }
+      if (verifyPassword(String(password), fila.password_hash)) {
+        return res.status(400).json({ error: "same_password",
+          message: "La contraseña nueva tiene que ser distinta de la temporal." });
+      }
+      await pool.execute(
+        "UPDATE staff SET password_hash=?, must_change_password=0, password_set_at=NOW() WHERE id=?",
+        [hashPassword(String(password)), fila.id]
+      );
+      /* Se levanta el bloqueo de "tienes que cambiar la contraseña" en la sesión
+         que ya está abierta. Sin esto la persona cambiaría la contraseña y el
+         panel seguiría diciéndole que la cambie, porque el aviso viaja en el
+         token y no se vuelve a leer de `staff` en cada petición. */
+      try { await pool.execute("UPDATE admin_tokens SET must_change_pw=0 WHERE LOWER(email)=?", [em]); } catch (e) {}
+      for (const [tok, v] of adminTokenCache.entries()) {
+        if (String(v && v.email || "").toLowerCase() === em) adminTokenCache.set(tok, { ...v, must_change_pw: 0 });
+      }
+      if (req.admin) req.admin.must_change_pw = 0;
+      await logActivity("security", `${em} ha cambiado su contraseña del panel.`);
+    }
+
+    if (name !== undefined) {
+      await pool.execute("UPDATE staff SET name=? WHERE id=?", [String(name || "").slice(0, 120) || null, fila.id]);
+    }
+    if (avatar !== undefined) {
+      await pool.execute("UPDATE staff SET avatar=? WHERE id=?", [avatar ? String(avatar) : null, fila.id]);
+    }
+    /* `email` y `role` se IGNORAN a propósito, no se rechazan con error: el mismo
+       formulario del panel los manda, y lo que importa es que no lleguen a
+       escribirse. Cambiar su correo sería cambiar de identidad, y subirse el
+       rango sería ascenderse a sí mismo. */
+    return res.json({ ok: true, is_owner: false, ignored: ["email", "role"] });
+  }
+
+  /* --- Camino del dueño: igual que antes de V920, sin un solo cambio --- */
   const upsert = async (k, v) => {
     if (v === undefined) return;
     await pool.execute(
