@@ -275,7 +275,7 @@ function consentScriptHtml() {
 function consentGoogleAvisoHtml() {
   return `<div class="ck" id="${CONSENT_ID_GOOGLE}" hidden role="dialog" aria-label="Cookies publicitarias">
     <div class="ck-in">
-      <p><strong>No se ha podido abrir el panel de cookies de Google.</strong> Suele pasar por dos motivos: una extensión del navegador lo bloquea, o estás fuera del Espacio Económico Europeo y del Reino Unido, donde Google no muestra ese aviso y no hay consentimiento que retirar. Puedes bloquear las cookies de terceros en tu navegador o escribirnos a <a href="mailto:seguridad@citasaura.es">seguridad@citasaura.es</a>. Detalle en la <a href="/privacidad">política de privacidad</a>.</p>
+      <p><strong>No se ha podido abrir el panel de cookies de Google.</strong> Puede ser por tres motivos: una extensión del navegador lo bloquea, el aviso de Google no está disponible en este momento, o estás fuera del Espacio Económico Europeo y del Reino Unido, donde Google no lo muestra y no hay consentimiento que retirar. Puedes bloquear las cookies de terceros en tu navegador o escribirnos a <a href="mailto:seguridad@citasaura.es">seguridad@citasaura.es</a>. Detalle en la <a href="/privacidad">política de privacidad</a>.</p>
       <div class="ck-btns">
         <button type="button" class="ck-no" data-consent="cerrar">Cerrar</button>
       </div>
