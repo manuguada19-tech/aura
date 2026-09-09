@@ -3070,9 +3070,28 @@ async function openUserDrawer(id, onChange) {
     body.verified = body.verified === "on" ? 1 : 0;
     try {
       await api.patch("/api/users/" + id, body);
+      // V918 · La zona guardada pasa a ser la de referencia. Sin esto, si luego
+      // falla cualquier otro guardado, el desplegable se revertiría a la zona
+      // que tenía el usuario al abrir el cajón y no a la que ya está en la BD.
+      u.zone = body.zone || u.zone;
       onChange?.();
       if (closeAfter) { toast("Cambios guardados"); drawer.close(); }
-    } catch { toast("Error al guardar"); }
+    } catch (e) {
+      // V918 · Antes esto era `catch { toast("Error al guardar") }`: cualquier
+      // motivo se veía igual. Con el candado de zona hace falta decir POR QUÉ,
+      // y devolver el desplegable a su sitio para no dejar en pantalla una zona
+      // que no se ha guardado.
+      const motivo = e?.data?.detail || {
+        zone_change_forbidden: "Solo el administrador principal puede cambiar la zona.",
+        invalid_zone: "Zona no válida. Solo Hetero o LGTB.",
+        invalid_role: "Rol no válido.",
+      }[e?.data?.error];
+      if (e?.data?.error === "zone_change_forbidden" || e?.data?.error === "invalid_zone") {
+        const sel = form.querySelector('[name="zone"]');
+        if (sel) sel.value = u.zone || "hetero";
+      }
+      toast(motivo ? "No se ha guardado: " + motivo : "Error al guardar");
+    }
   }
   const form = el("form", { class: "form", "data-no-autosave": "true", onsubmit: async (e) => {
     e.preventDefault();
@@ -3152,6 +3171,20 @@ async function openUserDrawer(id, onChange) {
       el("option", { value: "hetero", selected: u.zone==="hetero" }, "Hetero"),
       el("option", { value: "lgtb", selected: u.zone==="lgtb" }, "LGTB"),
     ])),
+  ]));
+  // V918 · Aviso de zona. Hay DOS caminos para cambiar de zona y hacen cosas
+  // opuestas: este (UPDATE de una columna, nada más) y el de la propia
+  // aplicación (POST /api/my/zone/change), que archiva y luego BORRA la cuenta
+  // entera. Como el aviso destructivo solo se ve en la app, desde aquí parecía
+  // que cambiar la zona podía borrar datos. Se dice explícitamente que no.
+  form.appendChild(el("div", {
+    class: "small",
+    style: "background:rgba(59,130,246,.10);border:1px solid rgba(59,130,246,.32);border-radius:8px;padding:8px 10px;margin:0 0 10px;line-height:1.45",
+  }, [
+    el("strong", {}, "Cambiar la zona desde aquí NO borra nada. "),
+    el("span", {}, "Se cambia solo la zona: conserva perfil, fotos, likes, matches, chats, plan y su historial. El usuario deja de verse en la zona antigua y empieza a verse en la nueva. Sus matches y chats anteriores siguen ahí (son de gente de la otra zona). Solo puede hacerlo el administrador principal, y queda anotado en el registro de seguridad."),
+    el("div", { style: "margin-top:5px;opacity:.85" },
+      "Distinto es cuando lo hace el propio usuario desde la app: ahí sí se archiva y se elimina su cuenta, y tiene que registrarse de nuevo."),
   ]));
   const GENDER_OPTIONS = [
     { v: "",             l: "— Sin especificar —" },
@@ -7256,16 +7289,154 @@ async function viewUserActivity(root){
   // desplegable de resultados del buscador (position:absolute). Contenedor propio.
   root.appendChild(el("div", { style: "background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px;overflow:visible" }, [
     el("h3", { style: "margin:0 0 10px;font-size:15px" }, "Elegir usuario"),
+    el("small", { class: "muted", style: "display:block;margin-bottom:8px" },
+      "Busca uno concreto, o elígelo del listado de abajo sin tener que buscarlo."),
     picker.wrap,
   ]));
+
+  // V918 · Listado de usuarios. Antes había que saberse el nombre o el email de
+  // memoria para poder ver la actividad de alguien.
+  const listaBox = el("div", { style: "background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:16px" });
+  root.appendChild(listaBox);
   root.appendChild(results);
 
   const REACT = { like: "❤️ Me gusta", super: "⭐ Superlike", pass: "✖️ No me gusta" };
   const zoneLabel = (z) => z === "lgtb" ? "LGTB+" : z === "hetero" ? "Hetero" : (z || "—");
 
+  // ---- Listado de usuarios (V918) ---------------------------------------
+  const listState = { period: "30d", sort: "connected", zone: "", plan: "", q: "" };
+  const PERIODOS = [
+    { v: "24h", t: "Últimas 24 h" },
+    { v: "7d",  t: "Últimos 7 días" },
+    { v: "30d", t: "Últimos 30 días" },
+    { v: "90d", t: "Últimos 90 días" },
+    { v: "all", t: "Desde siempre" },
+  ];
+
+  function selector(etiqueta, valor, opciones, onChange) {
+    const s = el("select", { class: "input", style: "min-width:150px" });
+    opciones.forEach((o) => {
+      const op = el("option", { value: o.v }, o.t);
+      if (o.v === valor) op.selected = true;
+      s.appendChild(op);
+    });
+    s.addEventListener("change", () => onChange(s.value));
+    return el("label", { style: "display:flex;flex-direction:column;gap:4px;font-size:12px" }, [
+      el("span", { class: "muted" }, etiqueta), s,
+    ]);
+  }
+
+  async function loadLista() {
+    listaBox.innerHTML = "";
+    listaBox.appendChild(el("h3", { style: "margin:0 0 4px;font-size:15px" }, "Usuarios"));
+    listaBox.appendChild(el("small", { class: "muted", style: "display:block;margin-bottom:12px" },
+      "Ordenados por última conexión. Pulsa en cualquiera para ver su actividad completa."));
+
+    // Filtros.
+    const filtros = el("div", { style: "display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px" });
+    filtros.appendChild(selector("Periodo", listState.period, PERIODOS, (v) => { listState.period = v; loadLista(); }));
+    filtros.appendChild(selector("Ordenar por", listState.sort, [
+      { v: "connected", t: "Última conexión" },
+      { v: "created",   t: "Fecha de registro" },
+    ], (v) => { listState.sort = v; loadLista(); }));
+    filtros.appendChild(selector("Zona", listState.zone, [
+      { v: "", t: "Todas" }, { v: "hetero", t: "Hetero" }, { v: "lgtb", t: "LGTB+" },
+    ], (v) => { listState.zone = v; loadLista(); }));
+    filtros.appendChild(selector("Plan", listState.plan, [
+      { v: "", t: "Todos" }, { v: "free", t: "Free" }, { v: "premium", t: "Premium" },
+      { v: "gold", t: "Oro" }, { v: "platinum", t: "Platino" },
+    ], (v) => { listState.plan = v; loadLista(); }));
+    const filtroTexto = el("input", { class: "input", type: "text", placeholder: "Filtrar por nombre o email…", value: listState.q, style: "min-width:200px" });
+    let deb;
+    filtroTexto.addEventListener("input", () => {
+      clearTimeout(deb);
+      deb = setTimeout(() => { listState.q = filtroTexto.value.trim(); loadLista(); }, 350);
+    });
+    filtros.appendChild(el("label", { style: "display:flex;flex-direction:column;gap:4px;font-size:12px;flex:1;min-width:200px" }, [
+      el("span", { class: "muted" }, "Buscar en el listado"), filtroTexto,
+    ]));
+    listaBox.appendChild(filtros);
+
+    const cargando = el("div", { class: "loading" }, "Cargando usuarios…");
+    listaBox.appendChild(cargando);
+
+    let data;
+    try {
+      const qs = new URLSearchParams({
+        period: listState.period, sort: listState.sort, limit: "100",
+      });
+      if (listState.zone) qs.set("zone", listState.zone);
+      if (listState.plan) qs.set("plan", listState.plan);
+      if (listState.q) qs.set("q", listState.q);
+      data = await api.get("/api/admin/users/activity-list?" + qs.toString());
+    } catch (e) {
+      cargando.remove();
+      listaBox.appendChild(el("div", { class: "error" }, "No se pudo cargar el listado de usuarios."));
+      return;
+    }
+    cargando.remove();
+
+    const items = data.items || [];
+    if (!items.length) {
+      listaBox.appendChild(el("div", { class: "muted", style: "padding:12px 0" },
+        listState.period === "all"
+          ? "No hay usuarios que coincidan con los filtros."
+          : "Nadie se ha conectado en ese periodo. Prueba a ampliarlo."));
+      return;
+    }
+
+    listaBox.appendChild(el("div", { class: "muted small", style: "margin-bottom:8px" },
+      `Mostrando ${items.length} de ${data.total} usuarios.` +
+      (data.total > items.length ? " Acota con los filtros para ver el resto." : "")));
+
+    const t = el("table", { class: "data-table" });
+    t.appendChild(el("thead", {}, [ el("tr", {}, [
+      el("th", {}, "Usuario"), el("th", {}, "Zona"), el("th", {}, "Plan"),
+      el("th", {}, "Última conexión"),
+      el("th", { title: "Reacciones que ha dado este usuario" }, "Dadas"),
+      el("th", { title: "Reacciones que ha recibido de otros" }, "Recibidas"),
+      el("th", {}, ""),
+    ])]));
+    const tb = el("tbody");
+    items.forEach((u) => {
+      const g = u.given || {}, r = u.received || {};
+      // Se muestra el desglose, no solo el total: el total a secas oculta que
+      // los "no me gusta" también cuentan como reacción dada.
+      const desglose = (o, total) => total
+        ? `${total}  (❤️${o.like || 0} ⭐${o.super || 0} ✖️${o.pass || 0})`
+        : "0";
+      const fila = el("tr", { style: "cursor:pointer" }, [
+        el("td", {}, [ el("div", { style: "display:flex;align-items:center;gap:8px" }, [
+          avatar(u.photo_url, 30),
+          el("div", { style: "min-width:0" }, [
+            el("div", { style: "font-weight:600" }, [
+              document.createTextNode(u.name || "—"),
+              u.online ? el("span", { style: "color:#4ade80;margin-left:6px;font-size:11px" }, "● en línea") : document.createTextNode(""),
+            ]),
+            el("small", { class: "muted" }, `#${u.id}${u.email ? " · " + u.email : ""}`),
+          ]),
+        ])]),
+        el("td", {}, zoneLabel(u.zone)),
+        el("td", {}, u.plan || "free"),
+        el("td", {}, u.last_login
+          ? el("span", { title: fmt.date(u.last_login) }, fmt.reldate(u.last_login))
+          : el("span", { class: "muted" }, "nunca")),
+        el("td", { title: "❤️ me gusta · ⭐ superlikes · ✖️ no me gusta" }, desglose(g, u.given_total)),
+        el("td", { title: "❤️ me gusta · ⭐ superlikes · ✖️ no me gusta" }, desglose(r, u.received_total)),
+        el("td", { class: "ta-right" }, [ btn("Ver actividad", "ghost xs", (ev) => { ev.stopPropagation(); load(u.id); }) ]),
+      ]);
+      fila.addEventListener("click", () => load(u.id));
+      tb.appendChild(fila);
+    });
+    t.appendChild(tb);
+    listaBox.appendChild(el("div", { class: "table-scroll" }, [ t ]));
+    if (typeof labelTables === "function") { try { labelTables(listaBox); } catch {} }
+  }
+
   async function load(uid) {
     results.innerHTML = "";
     results.appendChild(el("div", { class: "loading" }, "Cargando actividad…"));
+    results.scrollIntoView({ behavior: "smooth", block: "start" });
     let data;
     try { data = await api.get("/api/admin/users/" + uid + "/activity"); }
     catch (e) { results.innerHTML = ""; results.appendChild(el("div", { class: "error" }, "No se pudo cargar la actividad.")); return; }
@@ -7412,10 +7583,17 @@ async function viewUserActivity(root){
     });
     results.appendChild(panel("Herramientas · Restablecer", [], [
       el("p", { class: "muted small" }, "Marca qué quieres borrar de este usuario. Para que ESTE usuario vuelva a aparecer en el Explorar/Buscar de OTROS (p. ej. tras darle superlike sin querer), borra sus «Reacciones recibidas». Para que a ESTE usuario le vuelvan a salir otros, borra sus «dados»."),
+      // V918 · Aviso que faltaba. El historial de reacciones de esta misma
+      // pantalla se calcula de la tabla `likes`, que es la que borran estos
+      // botones: al restablecer, la actividad pasada desaparece del panel.
+      el("p", { class: "small", style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 10px;margin:0 0 10px" },
+        "⚠️ Ojo: el historial de reacciones que ves en esta pantalla se calcula de las mismas filas que borran estos botones. Al restablecer, esa actividad pasada deja de aparecer aquí y no se puede recuperar."),
       checksWrap,
       resetBtn,
     ]));
   }
+
+  loadLista();
 }
 
 async function viewPromos(root){
@@ -8548,14 +8726,27 @@ async function viewSettings(root){
   ttBody.appendChild(el("p", { class: "muted small" },
     "Restablece el usuario de prueba: borra los likes y matches que lo afectan " +
     "para que vuelva a aparecer en Explorar y en Buscar. No borra su cuenta."));
+  // V918 · Este botón borra TODAS las reacciones del usuario de prueba, dadas y
+  // recibidas (server.js: DELETE FROM likes WHERE from_user=? OR to_user=?). El
+  // aviso anterior no decía que con ello se pierde su historial de actividad,
+  // que se calcula de esa misma tabla.
+  ttBody.appendChild(el("p", { class: "small", style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 10px;margin:0 0 10px" },
+    "⚠️ Borra sus reacciones dadas Y recibidas. Como el historial de «Actividad por usuario» se calcula de esas mismas filas, después aparecerá vacío: los likes que había dado ya no se podrán consultar."));
+  ttBody.appendChild(el("p", { class: "muted small", style: "margin:0 0 10px" },
+    "Su zona no se toca: si lo has cambiado a Hetero, se queda en Hetero."));
   const resetBtn = el("button", { type: "button", class: "btn" }, "Restablecer usuario de prueba");
   resetBtn.addEventListener("click", async () => {
-    if (!confirm("Se borrarán los likes/superlikes/no-me-gusta y matches del usuario de prueba para que reaparezca en Explorar y Buscar. ¿Continuar?")) return;
+    if (!confirm("Se borrarán los likes/superlikes/no-me-gusta y matches del usuario de prueba (dados Y recibidos) para que reaparezca en Explorar y Buscar.\n\nSu historial de actividad quedará vacío y no se puede recuperar.\n\n¿Continuar?")) return;
     resetBtn.disabled = true; resetBtn.textContent = "Restableciendo…";
     try {
       const r = await api.post("/api/admin/test-user/reset", {});
       const c = r.cleared || {};
-      toast(`Usuario de prueba restablecido (likes: ${c.likes||0}, matches: ${c.matches||0}).`);
+      // V918 · Se dice en qué zona se ha quedado. Antes este botón la forzaba a
+      // LGTB sin avisar, así que si se le había cambiado a Hetero volvía atrás
+      // en silencio. Ahora la respeta y se confirma en el aviso.
+      const z = r.zone === "hetero" ? "Hetero" : r.zone === "lgtb" ? "LGTB+" : null;
+      toast(`Usuario de prueba restablecido (likes: ${c.likes||0}, matches: ${c.matches||0})`
+        + (z ? `. Sigue en zona ${z}.` : "."));
     } catch (e) {
       toast(e && e.status === 404 ? "No se encontró el usuario de prueba" : "Error al restablecer");
     }

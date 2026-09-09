@@ -269,6 +269,24 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+/* V918 · Email del superadmin EN VIGOR. Es el mismo cálculo que hace
+   /api/admin/login para decidir a quién deja entrar: si el panel ha guardado
+   admin.email en settings, ese manda; si no, ADMIN_EMAIL (variable de entorno o
+   manuguada19@gmail.com). Se centraliza aquí para que el candado y el login no
+   puedan discrepar: si mañana se añade un segundo administrador, el login
+   cambiará por un lado y el candado por otro si cada uno lleva su copia. */
+function activeAdminEmail() {
+  return ((getSetting("admin.email", "") || "").toLowerCase()) || ADMIN_EMAIL;
+}
+/* Ojo con lo que esto NO comprueba: requireAdmin valida que el token exista y no
+   haya caducado, nada más — no mira roles. Por eso el candado se pone sobre el
+   EMAIL del token (que sale de la tabla admin_tokens, no de una cabecera que se
+   pueda falsificar) y no sobre un rol de la fila de users. */
+function isSuperAdmin(req) {
+  const who = String(req.admin?.email || "").toLowerCase();
+  return !!who && who === activeAdminEmail();
+}
+
 /* ============================================================
    Sesión de usuario — token firmado HMAC (función 1)
    ------------------------------------------------------------
@@ -2350,6 +2368,15 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
   if ("role" in req.body && !VALID_ROLES.includes(String(req.body.role))) {
     return res.status(400).json({ error: "invalid_role" });
   }
+  // V918 · La zona se validaba... nunca. `zone` es ENUM('hetero','lgtb'): con
+  // MySQL en modo estricto un valor raro tumba la petición entera (no se guarda
+  // NINGÚN campo del formulario), y sin modo estricto lo guarda como cadena
+  // vacía y el usuario se queda sin zona, fuera de las dos. Se valida igual que
+  // el rol, que sí lo estaba.
+  const VALID_ZONES = ["hetero","lgtb"];
+  if ("zone" in req.body && !VALID_ZONES.includes(String(req.body.zone))) {
+    return res.status(400).json({ error: "invalid_zone" });
+  }
   const updates = [], params = [];
   // Fetch previous state for email/zone/status/role hooks
   let prev = null;
@@ -2358,6 +2385,16 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
       const [rr] = await pool.query("SELECT id, name, email, zone, status, role FROM users WHERE id=? LIMIT 1", [req.params.id]);
       if (rr.length) prev = rr[0];
     } catch {}
+  }
+  // V918 · Candado de zona: SOLO el superadmin puede mover a alguien de zona.
+  // Se comprueba después de leer el estado anterior para no bloquear un
+  // formulario que reenvía la misma zona sin tocarla (el panel manda todos los
+  // campos en cada guardado, así que sin esta comparación cualquier edición de
+  // nombre o de plan hecha por otro administrador daría 403).
+  if (prev && "zone" in req.body && String(req.body.zone) !== String(prev.zone || "") && !isSuperAdmin(req)) {
+    await logActivity("security",
+      `Cambio de zona DENEGADO: ${prev.name || prev.email || ("id " + prev.id)} (${prev.zone} → ${req.body.zone}) — lo intentó ${req.admin?.email || "desconocido"}`);
+    return res.status(403).json({ error: "zone_change_forbidden", detail: "Solo el administrador principal puede cambiar la zona de un usuario." });
   }
   for (const f of fields) if (f in req.body) { updates.push(`${f}=?`); params.push(req.body[f]); }
   // V776 · prompts (JSON): admite array o string JSON. Se sanea a [{q,a}].
@@ -2382,6 +2419,14 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
   if (prev && "role" in req.body && req.body.role !== prev.role) {
     const actor = req.admin?.email || req.session?.email || req.get("X-Admin-Email") || "admin";
     await logActivity("security", `Rol cambiado: ${prev.name || prev.email || ("id " + prev.id)} de "${prev.role}" a "${req.body.role}" (por ${actor})`);
+  }
+  // V918 · Traza dedicada del cambio de zona, con quién lo hizo. Antes solo
+  // quedaba el "Usuario actualizado (id N)" genérico de arriba, que no distingue
+  // entre corregir una errata en el nombre y mover a alguien de zona.
+  if (prev && "zone" in req.body && String(req.body.zone) !== String(prev.zone || "")) {
+    const actor = req.admin?.email || "admin";
+    await logActivity("security",
+      `Zona cambiada: ${prev.name || prev.email || ("id " + prev.id)} de "${prev.zone || "—"}" a "${req.body.zone}" (por ${actor}). Sus datos NO se han borrado.`);
   }
 
   // Enganches: cambio de email / zone
@@ -6751,7 +6796,7 @@ app.post("/api/admin/read-credits/:uid/reset-free", wrap(async (req, res) => {
 // reafirma su zona/orientación para que vuelva a aparecer limpio.
 app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT id, name, email FROM users
+    `SELECT id, name, email, zone FROM users
        WHERE email='prueba@aura.app'
           OR LOWER(name) LIKE '%usuario de prueba%'
           OR LOWER(name) LIKE '%usuario prueba%'
@@ -6763,10 +6808,20 @@ app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
   const cleared = {};
   try { const [r] = await pool.execute("DELETE FROM likes WHERE from_user=? OR to_user=?", [testId, testId]); cleared.likes = r.affectedRows || 0; } catch { cleared.likes = 0; }
   try { const [r] = await pool.execute("DELETE FROM matches WHERE user_a=? OR user_b=?", [testId, testId]); cleared.matches = r.affectedRows || 0; } catch { cleared.matches = 0; }
-  try { await pool.execute("UPDATE users SET zone='lgtb' WHERE id=?", [testId]); } catch {}
+  // V918 · Antes esto hacía "UPDATE users SET zone='lgtb'" a secas, sin condición:
+  // si desde el panel se movía al usuario de prueba a la zona hetero, el primer
+  // restablecimiento lo devolvía a lgtb sin decir nada, y parecía que el cambio de
+  // zona "no se guardaba". La zona no influye en que reaparezca en Explorar (el
+  // filtro que lo ocultaba es el de `likes`, ya borrado arriba), así que se
+  // respeta la que tenga puesta. Solo se rellena si está vacía o corrupta, que es
+  // lo único que sí rompería la aplicación.
+  let zone = rows[0].zone;
+  if (zone !== "hetero" && zone !== "lgtb") {
+    try { await pool.execute("UPDATE users SET zone='lgtb' WHERE id=?", [testId]); zone = "lgtb"; } catch {}
+  }
 
-  await logActivity("admin", `Restablecido usuario de prueba (id ${testId}) — likes:${cleared.likes} matches:${cleared.matches}`);
-  res.json({ ok: true, testId, name: rows[0].name, cleared });
+  await logActivity("admin", `Restablecido usuario de prueba (id ${testId}) — likes:${cleared.likes} matches:${cleared.matches} · zona respetada: ${zone}`);
+  res.json({ ok: true, testId, name: rows[0].name, zone, cleared });
 }));
 
 // V913/V916 · Restablecer CUALQUIER usuario por id de forma SELECTIVA. El panel
@@ -6824,6 +6879,95 @@ app.post("/api/admin/users/:uid/reset-reactions", requireAdmin, wrap(async (req,
   }
   await logActivity("admin", `Reset selectivo usuario ${uid} [${parts.join(",")}] — ${JSON.stringify(cleared)}`);
   res.json({ ok: true, uid, name: u[0].name, parts, cleared });
+}));
+
+// V918 · Listado de usuarios para la pantalla "Actividad por usuario". Antes
+// solo había un buscador: para ver la actividad de alguien había que saber su
+// nombre o su email de memoria. Ahora se listan por última conexión, con filtro
+// por periodo, y cada fila ya trae sus contadores de reacciones para no tener
+// que entrar uno por uno.
+//
+// Rendimiento: los contadores salen de DOS consultas agregadas sobre `likes`
+// (una para dadas y otra para recibidas) y se cruzan en memoria. La alternativa
+// obvia -- llamar a computeUsage por usuario, como hace /api/admin/zones/:zone/users
+// -- lanza una consulta por usuario y con 200 filas son 200 idas y vueltas.
+app.get("/api/admin/users/activity-list", requireAdmin, wrap(async (req, res) => {
+  const PERIODOS = {                        // días hacia atrás; 0 = sin límite
+    "24h": 1, "7d": 7, "30d": 30, "90d": 90, all: 0,
+  };
+  const periodo = Object.prototype.hasOwnProperty.call(PERIODOS, String(req.query.period))
+    ? String(req.query.period) : "30d";
+  const dias = PERIODOS[periodo];
+  const limit = Math.max(1, Math.min(500, parseInt(req.query.limit, 10) || 100));
+  const q = String(req.query.q || "").trim();
+  const zone = String(req.query.zone || "").trim();
+  const plan = String(req.query.plan || "").trim();
+  // "connected" ordena por última conexión; "created" por fecha de registro,
+  // que sirve para ver a los que se acaban de dar de alta.
+  const orden = req.query.sort === "created" ? "u.created_at" : "u.last_login";
+
+  const clauses = [], params = [];
+  // Con periodo, un usuario que nunca se ha conectado (last_login NULL) no debe
+  // aparecer: no "se conectó en los últimos 7 días".
+  if (dias > 0) { clauses.push("u.last_login IS NOT NULL AND u.last_login >= DATE_SUB(NOW(), INTERVAL ? DAY)"); params.push(dias); }
+  if (q) { clauses.push("(u.name LIKE ? OR u.email LIKE ?)"); params.push(`%${q}%`, `%${q}%`); }
+  if (zone) { clauses.push("u.zone=?"); params.push(zone); }
+  if (plan) { clauses.push("u.plan=?"); params.push(plan); }
+  const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+
+  const [rows] = await pool.query(
+    `SELECT u.id, u.name, u.email, u.zone, u.plan, u.status, u.role, u.online,
+            u.photo_url, u.last_login, u.created_at
+       FROM users u ${where}
+      ORDER BY ${orden} IS NULL, ${orden} DESC
+      LIMIT ?`, [...params, limit]);
+
+  // Contadores de reacciones solo para los usuarios listados.
+  const ids = rows.map((r) => r.id);
+  const dadas = new Map(), recibidas = new Map();
+  if (ids.length) {
+    const ph = ids.map(() => "?").join(",");
+    try {
+      const [g] = await pool.query(
+        `SELECT from_user uid, type, COUNT(*) c FROM likes
+          WHERE from_user IN (${ph}) GROUP BY from_user, type`, ids);
+      g.forEach((r) => {
+        const o = dadas.get(r.uid) || { like: 0, super: 0, pass: 0 };
+        if (o[r.type] != null) o[r.type] = Number(r.c);
+        dadas.set(r.uid, o);
+      });
+    } catch {}
+    try {
+      const [rc] = await pool.query(
+        `SELECT to_user uid, type, COUNT(*) c FROM likes
+          WHERE to_user IN (${ph}) GROUP BY to_user, type`, ids);
+      rc.forEach((r) => {
+        const o = recibidas.get(r.uid) || { like: 0, super: 0, pass: 0 };
+        if (o[r.type] != null) o[r.type] = Number(r.c);
+        recibidas.set(r.uid, o);
+      });
+    } catch {}
+  }
+
+  const vacio = { like: 0, super: 0, pass: 0 };
+  const items = rows.map((u) => {
+    const g = dadas.get(u.id) || vacio, r = recibidas.get(u.id) || vacio;
+    return {
+      ...u,
+      given: g, received: r,
+      given_total: g.like + g.super + g.pass,
+      received_total: r.like + r.super + r.pass,
+    };
+  });
+
+  // Total de usuarios que cumplen el filtro, para saber si la lista va cortada.
+  let total = items.length;
+  try {
+    const [[t]] = await pool.query(`SELECT COUNT(*) total FROM users u ${where}`, params);
+    total = Number(t.total || 0);
+  } catch {}
+
+  res.json({ ok: true, period: periodo, total, shown: items.length, items });
 }));
 
 // V913 · Actividad completa de un usuario para el panel: reacciones dadas y

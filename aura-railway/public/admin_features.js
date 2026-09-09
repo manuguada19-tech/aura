@@ -386,14 +386,26 @@
       const searchInput = toolbar.querySelector(".fx-search-input");
       searchInput.addEventListener("input", () => { state.search = searchInput.value.toLowerCase(); state.page = 1; refresh(); });
       const filtersDiv = toolbar.querySelector(".fx-filters");
+      // V918b · Los desplegables cuyas opciones son una funcion se rellenan
+      // cuando llegan los datos (ver rebuildSelects, llamado desde reload).
+      // Si options es un array se comporta igual que antes.
+      const dynSelects = [];
       (cfg.filters || []).forEach((f) => {
         const wrap = document.createElement("div"); wrap.className = "fx-filter";
         const lab = document.createElement("label"); lab.textContent = f.label;
         let sel;
         if (f.type === "select") {
           sel = document.createElement("select"); sel.className = "fx-input";
-          const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = "Todos"; sel.appendChild(optAll);
-          (f.options || []).forEach((o) => { const op = document.createElement("option"); op.value = o.value; op.textContent = o.label; sel.appendChild(op); });
+          const fill = (rows) => {
+            const previo = sel.value;                 // no perder lo elegido
+            sel.innerHTML = "";
+            const optAll = document.createElement("option"); optAll.value = ""; optAll.textContent = "Todos"; sel.appendChild(optAll);
+            const opts = typeof f.options === "function" ? (f.options(rows) || []) : (f.options || []);
+            opts.forEach((o) => { const op = document.createElement("option"); op.value = o.value; op.textContent = o.label; sel.appendChild(op); });
+            if (previo && opts.some((o) => String(o.value) === previo)) sel.value = previo;
+          };
+          fill(state.rows || []);
+          if (typeof f.options === "function") dynSelects.push(fill);
           sel.addEventListener("change", () => { state.filters[f.key] = sel.value; state.page = 1; refresh(); });
         } else {
           sel = document.createElement("input"); sel.type = f.type || "text"; sel.className = "fx-input"; sel.placeholder = f.placeholder || "";
@@ -421,7 +433,8 @@
             reload();
           } catch (e) { toast("Error borrando", "err"); }
         } }));
-        bulkActs.appendChild(btn("Borrar TODO", { variant: "danger-outline", icon: "&#x2620;", onClick: async () => {
+        // V918 · fx-btn-nuke lo separa visualmente de "Borrar seleccion" (ver CSS).
+        bulkActs.appendChild(btn("Borrar TODO", { variant: "danger-outline fx-btn-nuke", icon: "&#x2620;", title: "Borra TODOS los registros filtrados. Irreversible.", onClick: async () => {
           const ok = await confirmDialog({ title: "Borrar TODOS los registros", message: `Se eliminarán TODOS los ${state.filtered.length} registros filtrados y sus datos vinculados. Escribe SÍ para confirmar.`, danger: true, confirmLabel: "Borrar todo" });
           if (!ok) return;
           const typed = window.prompt('Escribe "SI" para confirmar:');
@@ -458,6 +471,7 @@
           state.rows = await cfg.fetch();
           state.selected.clear();
           state.page = 1;
+          dynSelects.forEach((fill) => fill(state.rows));   // V918b
           refresh();
         } catch (e) {
           console.error(e);
@@ -543,6 +557,10 @@
           tdCk.appendChild(ck); tr.appendChild(tdCk);
           cfg.columns.forEach((c) => {
             const td = document.createElement("td");
+            // V918 · data-label permite que en movil la tabla se muestre como
+            // tarjetas (cada celda con su titulo delante) en vez de recortarse.
+            // Mismo patron que labelTables() usa en admin.js para .data-table.
+            td.setAttribute("data-label", c.label || "");
             const v = c.render ? c.render(r) : (r[c.key] ?? "—");
             if (v instanceof Node) td.appendChild(v);
             else if (typeof v === "string" || typeof v === "number") td.textContent = String(v);
@@ -552,6 +570,7 @@
           });
           if (cfg.actions && cfg.actions.length) {
             const td = document.createElement("td"); td.className = "fx-td-actions";
+            td.setAttribute("data-label", "Acciones");
             cfg.actions.forEach((a) => {
               if (a.visible && !a.visible(r)) return;
               td.appendChild(btn(a.label || "", { variant: a.variant || "ghost", icon: a.icon, title: a.title, onClick: () => a.onClick(r, reload) }));
@@ -2523,13 +2542,25 @@
 
     // ---- Notificaciones enviadas (V587) ----------------------------
     async function view_notifications(container) {
+      // V918b · Faltaba like_received, que es el tipo mas frecuente: se escribe
+      // en server.js:8822 y al no estar en el mapa salia crudo ("like_received",
+      // con guion bajo y en gris). Cualquier tipo nuevo que no este aqui sigue
+      // saliendo legible gracias a prettyType(), no en bruto.
+      // Solo los seis tipos que el servidor escribe de verdad en la tabla
+      // notifications. No se anaden mas "por si acaso": el desplegable de
+      // filtro se construye con estas claves y una clave inventada seria una
+      // opcion que nunca devuelve resultados.
       const TYPE = {
-        reward_approved: { c: "green",  t: "🎉 Canje aprobado" },
-        reward_rejected: { c: "red",    t: "❌ Canje rechazado" },
-        reward_granted:  { c: "purple", t: "🎁 Recompensa concedida" },
-        admin_message:   { c: "blue",   t: "📣 Mensaje admin" },
-        new_match:       { c: "pink",   t: "💘 Nuevo match" }, // V591
+        like_received:   { c: "rose",   t: "❤️ Like recibido" },     // server.js:8822
+        new_match:       { c: "pink",   t: "💘 Nuevo match" },       // server.js:8878 y :14254
+        reward_approved: { c: "green",  t: "🎉 Canje aprobado" },    // phase7:563
+        reward_rejected: { c: "red",    t: "❌ Canje rechazado" },    // phase7:624
+        reward_granted:  { c: "purple", t: "🎁 Recompensa concedida" }, // phase7:653
+        admin_message:   { c: "teal",   t: "📣 Mensaje admin" },     // phase8:195 (por defecto)
       };
+      // Un tipo desconocido no debe mostrarse en crudo: "algo_raro" pasa a ser
+      // "Algo raro". Asi el panel nunca ensena nombres internos de la BD.
+      const prettyType = (t) => String(t || "—").replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase());
       DataView(container, {
         title: "Notificaciones enviadas",
         subtitle: "Historial de notificaciones in-app · lectura por usuario · envío manual",
@@ -2543,7 +2574,14 @@
           { label: "Usuarios alcanzados", value: new Set(rows.map((r) => r.user_id)).size, accent: "purple" },
         ],
         filters: [
-          { key: "type", label: "Tipo", type: "select", options: Object.keys(TYPE).map((k) => ({ value: k, label: TYPE[k].t })) },
+          // V918b · Las opciones salen de los tipos presentes en los datos, no
+          // de una lista fija: phase8:195 acepta cualquier cadena como tipo, y
+          // con la lista fija un tipo nuevo no se podia filtrar.
+          { key: "type", label: "Tipo", type: "select", options: (rows) => {
+              const vistos = [...new Set((rows || []).map((r) => r.type).filter(Boolean))];
+              vistos.sort((a, b) => (TYPE[a]?.t || a).localeCompare(TYPE[b]?.t || b));
+              return vistos.map((k) => ({ value: k, label: TYPE[k]?.t || prettyType(k) }));
+            } },
           { key: "read_at", label: "Lectura", type: "select", options: [ { value: "1", label: "Leídas" }, { value: "0", label: "Sin leer" } ], apply: (r, v) => (r.read_at ? "1" : "0") === v },
           { key: "user_email", label: "Email usuario", type: "text" },
         ],
@@ -2554,10 +2592,22 @@
               d.innerHTML = `<div style="font-weight:600">${escapeHtml(r.user_name || "—")} <span class="fx-muted">#${r.user_id}</span></div><div class="fx-muted" style="font-size:11px">${escapeHtml(r.user_email || "")}</div>`;
               return d;
             } },
-          { key: "type", label: "Tipo", render: (r) => { const it = TYPE[r.type] || { c: "off", t: r.type }; const b = document.createElement("span"); b.className = "fx-badge " + it.c; b.textContent = it.t; return b; } },
+          { key: "type", label: "Tipo", render: (r) => {
+              const it = TYPE[r.type] || { c: "off", t: prettyType(r.type) };
+              const b = document.createElement("span");
+              b.className = "fx-badge " + it.c;
+              b.textContent = it.t;
+              // Al pasar el raton se ve el nombre real del tipo en la BD, que
+              // hace falta para depurar aunque no se muestre en la etiqueta.
+              b.title = "Tipo en base de datos: " + (r.type || "—");
+              return b;
+            } },
           { key: "title", label: "Notificación", render: (r) => {
               const d = document.createElement("div");
-              d.innerHTML = `<div style="font-weight:600">${r.icon || "🔔"} ${escapeHtml(r.title || "")}</div><div class="fx-muted fx-text" style="font-size:11px;max-width:380px">${escapeHtml(r.body || "")}</div>`;
+              // V918 · El cuerpo iba en una sola linea recortada con "..." y un
+              // max-width fijo de 380px, asi que en movil no se leia nada. Ahora
+              // se muestra en dos lineas y el titulo no se corta.
+              d.innerHTML = `<div style="font-weight:600;min-width:150px">${r.icon || "🔔"} ${escapeHtml(r.title || "")}</div><div class="fx-muted" style="font-size:11px;max-width:340px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${escapeHtml(r.body || "")}</div>`;
               return d;
             } },
           { key: "read_at", label: "Leída", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.read_at ? "ok" : "amber"); b.textContent = r.read_at ? "✓ " + fmtDate(r.read_at) : "⏳ Sin leer"; return b; } },
@@ -3272,7 +3322,9 @@
   .fx-btn.danger:hover { background:#c92e42; }
   .fx-btn.danger-outline { background: transparent; color:#e53950; border: 1px solid rgba(229,57,80,0.55); }
   .fx-btn.danger-outline:hover { background: rgba(229,57,80,0.1); }
-  .fx-btn.danger-icon { background: transparent; color:#e53950; padding:6px 9px; }
+  /* V918 · min-height 32px: es un boton de borrado y media 27px, demasiado
+     pequeno para acertar con seguridad. En movil sube a 40px (ver @media). */
+  .fx-btn.danger-icon { background: transparent; color:#e53950; padding:6px 9px; min-height:32px; min-width:32px; justify-content:center; }
   .fx-btn.danger-icon:hover { background: rgba(229,57,80,0.1); }
   .fx-ico { display:inline-flex; align-items:center; }
 
@@ -3326,13 +3378,40 @@
   /* Aseguramos legibilidad tambien si el panel tiene tema claro */
   input.fx-input, textarea.fx-input { color-scheme: dark; }
 
-  .fx-bulk { display:flex; justify-content:space-between; align-items:center; background: linear-gradient(90deg, rgba(255,59,107,0.15), rgba(120,86,255,0.12)); padding:10px 16px; border-radius:12px; margin-bottom:10px; border:1px solid rgba(255,59,107,0.25); animation: fx-slidein 0.2s ease; }
+  .fx-bulk { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; background: linear-gradient(90deg, rgba(255,59,107,0.15), rgba(120,86,255,0.12)); padding:10px 16px; border-radius:12px; margin-bottom:10px; border:1px solid rgba(255,59,107,0.25); animation: fx-slidein 0.2s ease; }
   @keyframes fx-slidein { from { transform: translateY(-4px); opacity:0; } to { transform:none; opacity:1; } }
-  .fx-bulk-count { font-weight:600; }
-  .fx-bulk-actions { display:flex; gap:8px; }
+  .fx-bulk-count { font-weight:600; white-space:nowrap; }
+  /* V918 · "Borrar seleccion" y "Borrar TODO" estaban a 8px: en movil se pulsa
+     el irreversible por error. Separacion amplia + el destructivo al final. */
+  .fx-bulk-actions { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .fx-bulk-actions .fx-btn { min-height:40px; }
+  /* Empuja "Borrar TODO" lejos del boton de al lado y lo marca con un separador. */
+  .fx-bulk-actions .fx-btn-nuke { margin-left:26px; position:relative; }
+  .fx-bulk-actions .fx-btn-nuke::before {
+    content:""; position:absolute; left:-14px; top:50%; transform:translateY(-50%);
+    width:1px; height:24px; background: rgba(255,255,255,0.18);
+  }
+  @media (max-width: 640px) {
+    /* En pantalla estrecha, cada boton en su fila: imposible confundirlos. */
+    .fx-bulk { flex-direction:column; align-items:stretch; }
+    .fx-bulk-actions { flex-direction:column; align-items:stretch; gap:10px; }
+    .fx-bulk-actions .fx-btn { width:100%; justify-content:center; }
+    .fx-bulk-actions .fx-btn-nuke { margin-left:0; margin-top:8px; }
+    .fx-bulk-actions .fx-btn-nuke::before {
+      left:0; top:-8px; transform:none; width:100%; height:1px;
+    }
+  }
   .hidden { display:none !important; }
 
-  .fx-table-wrap { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; overflow:hidden; margin-bottom:12px; }
+  /* V918 · overflow-x:auto (antes hidden). Con "hidden" las columnas que no
+     caben se RECORTABAN sin posibilidad de verlas: en movil desaparecia el
+     contenido de la notificacion. Ahora la tabla se desplaza en horizontal.
+     -webkit-overflow-scrolling da inercia en iOS. */
+  .fx-table-wrap { background: rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch; margin-bottom:12px; }
+  /* Pista visual de que hay mas contenido a la derecha (solo si desborda). */
+  .fx-table-wrap::-webkit-scrollbar { height:8px; }
+  .fx-table-wrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius:4px; }
+  .fx-table-wrap::-webkit-scrollbar-track { background: transparent; }
   .fx-table-wrap.loading { opacity:0.5; pointer-events:none; }
   .fx-table { width:100%; border-collapse: collapse; font-size:13.5px; }
   .fx-table thead { background: rgba(255,255,255,0.04); }
@@ -3352,6 +3431,66 @@
   .fx-td-actions .fx-btn { padding:6px 10px; margin-left:4px; }
   .fx-text { display:inline-block; max-width:340px; overflow:hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+  /* V918 · En movil la tabla se convierte en tarjetas. Antes las columnas que no
+     cabian se recortaban (overflow:hidden) y el texto de la notificacion era
+     ilegible: solo se veia "NOT..." y "A Ma... much...". Con el scroll horizontal
+     era alcanzable pero incomodo. Cada fila pasa a ser una tarjeta y cada celda
+     lleva delante su titulo (atributo data-label). Nada se corta. */
+  @media (max-width: 760px) {
+    .fx-table-wrap { overflow:visible; background:transparent; border:0; }
+    .fx-table, .fx-table tbody, .fx-table tr, .fx-table td { display:block; width:auto; }
+    .fx-table thead { display:none; }              /* los titulos van en cada celda */
+    .fx-table { font-size:14px; }
+    .fx-table tbody tr {
+      background: rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08);
+      border-radius:14px; padding:8px 4px; margin-bottom:12px; position:relative;
+    }
+    .fx-table tbody tr:hover { background: rgba(255,255,255,0.06); }
+    .fx-table tbody tr.selected { background: rgba(255,59,107,0.12); border-color: rgba(255,59,107,0.35); }
+    /* V918b · display:block, NO flex. Con flex la etiqueta se comia el 38% del
+       ancho y el valor quedaba en una columna de seis caracteres: el titulo
+       "!Superlike recibido!" se leia "!Super / like / recibi / do!". Ahora la
+       etiqueta va ENCIMA y el texto dispone del ancho completo de la tarjeta. */
+    .fx-table td {
+      border-bottom:1px solid rgba(255,255,255,0.05);
+      padding:9px 14px; display:block;
+      text-align:left; white-space:normal;
+    }
+    .fx-table td:last-child { border-bottom:0; }
+    /* Titulo de la columna encima del valor, a todo lo ancho. */
+    .fx-table td::before {
+      content: attr(data-label); display:block; margin-bottom:4px;
+      font-size:10px; text-transform:uppercase; letter-spacing:0.5px;
+      font-weight:700; color: var(--fg-muted,#96a0b8);
+    }
+    /* La casilla de seleccion si cabe en linea con su etiqueta. */
+    .fx-table td.fx-td-check { border-bottom:1px solid rgba(255,255,255,0.05); width:auto !important; padding:9px 14px !important; }
+    .fx-table td.fx-td-check::before { content:"Seleccionar"; display:inline-block; margin:0 10px 0 0; vertical-align:middle; }
+    .fx-table td.fx-td-check input { vertical-align:middle; }
+    /* Los botones de accion a lo ancho, no apretados a la derecha. */
+    .fx-table td.fx-td-actions { white-space:normal; }
+    .fx-table td.fx-td-actions::before { content:"Acciones"; }
+    .fx-table td.fx-td-actions .fx-btn { margin:0 6px 0 0; min-height:40px; }
+    /* El texto largo ya no se recorta con puntos suspensivos ni por ancho fijo.
+       Parte palabras si hace falta, para que un email o una URL larga no
+       desborden la tarjeta. */
+    .fx-table td > * { min-width:0; max-width:100%; }
+    /* Las etiquetas de color se ajustan a su texto en vez de estirarse de lado
+       a lado de la tarjeta, que parecia una barra de progreso. */
+    .fx-table td .fx-badge { display:inline-flex; width:auto; max-width:100%; }
+    .fx-table td .fx-text { max-width:none !important; white-space:normal; overflow:visible; }
+    .fx-table td div, .fx-table td span { max-width:100% !important; }
+    .fx-table td > div[style*="line-clamp"],
+    .fx-table td div[style*="line-clamp"] {
+      -webkit-line-clamp:unset !important; display:block !important; overflow:visible !important;
+    }
+    .fx-table td, .fx-table td div, .fx-table td span {
+      overflow-wrap:anywhere; word-break:break-word;
+    }
+    /* min-width en linea (p.ej. 150px en el titulo) no debe forzar desborde. */
+    .fx-table td div[style*="min-width"] { min-width:0 !important; }
+  }
+
   .fx-pager { display:flex; gap:8px; align-items:center; justify-content:flex-end; padding: 4px 0 12px; }
   .fx-page-size { padding:4px 6px; font-size:12px; }
 
@@ -3362,6 +3501,14 @@
   .fx-badge.red { background: rgba(239,68,68,0.18); color:#f87171; }
   .fx-badge.blue { background: rgba(59,130,246,0.15); color:#60a5fa; }
   .fx-badge.purple { background: rgba(168,85,247,0.15); color:#c084fc; }
+  /* V918b · green y pink se usaban en el mapa de tipos de notificacion pero no
+     estaban definidos, asi que "Canje aprobado" y "Nuevo match" salian grises.
+     green es alias de ok para no romper los sitios que ya usan uno u otro. */
+  .fx-badge.green { background: rgba(34,197,94,0.15); color:#4ade80; }
+  .fx-badge.pink { background: rgba(236,72,153,0.16); color:#f472b6; }
+  .fx-badge.rose { background: rgba(255,59,107,0.16); color:#ff6b8f; }
+  .fx-badge.gold { background: rgba(250,204,21,0.16); color:#facc15; }
+  .fx-badge.teal { background: rgba(20,184,166,0.15); color:#2dd4bf; }
 
   .fx-plan { display:inline-block; padding:3px 9px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
   .fx-plan-free { background: rgba(148,163,184,0.15); color:#94a3b8; }
