@@ -1914,7 +1914,10 @@ async function seed() {
     ["El plan 'Gold anual' ha sido actualizado por admin@aura"],
     ["Intento de acceso desde IP inusual bloqueado (46.222.11.9)"],
     ["Se enviaron 2.418 notificaciones push (campaña 'weekend_boost')"],
-    ["Copia de seguridad automática completada (12.4 GB)"],
+    // V918 · Se ha quitado de aquí "Copia de seguridad automática completada
+    // (12.4 GB)". Era un mensaje de ejemplo, pero aparecía en el registro de
+    // actividad igual que los reales y hacía creer que existían copias
+    // automáticas de 12 GB. No existía ninguna copia y no había ningún GB.
   ];
   for (const [msg] of acts)
     await pool.execute("INSERT INTO activity (actor, action, target) VALUES (?,?,?)", ["system", msg, null]);
@@ -2036,7 +2039,11 @@ async function seed() {
     "security.rate_limit": "true",
     "security.log_ips": "true",
     "security.suspicious_detection": "true",
-    "security.daily_backups": "true",
+    // V918 · "security.daily_backups" ya no se define aquí. Era un interruptor
+    // activado por defecto que NO leía ningún código: daba a entender que había
+    // copias diarias automáticas y no había ninguna. Se ha quitado también del
+    // panel. Lo que sí existe es la descarga completa de datos
+    // (/api/admin/backup/full-export), que la lanza el administrador.
     "payments.stripe": "true",
     "payments.paypal": "true",
     "payments.apple_pay": "true",
@@ -6567,6 +6574,201 @@ app.get("/api/admin/backup/snapshot/:name", wrap(async (req, res) => {
   } catch {
     res.status(404).json({ error: "not_found" });
   }
+}));
+
+/* ============================================================
+   V918 · COPIA COMPLETA DE DATOS
+   ------------------------------------------------------------
+   Lo que había hasta ahora NO era una copia de seguridad de la aplicación:
+   /api/admin/backup/export y /snapshot guardan `settings` y `email_templates`,
+   es decir los textos, los colores y las plantillas de correo. Ni un usuario,
+   ni un mensaje, ni un like, ni un pago. Si se perdiera la base de datos, se
+   recuperaría el aspecto de la app y nada del contenido.
+
+   Además el snapshot se escribe en __dirname/backups, DENTRO del contenedor.
+   En Railway el disco del contenedor se rehace en cada despliegue, así que esos
+   ficheros no sobreviven a la siguiente subida de código. Por eso esta copia no
+   se guarda en el servidor: se envía al navegador para que se guarde fuera.
+
+   Detalle que condiciona todo el diseño: las FOTOS viven dentro de la base de
+   datos como data-URL en base64 (photos.url, photos.crop_url y users.photo_url
+   son LONGTEXT; se aceptan hasta 7 MB por foto). Por eso:
+     - hay dos modos, con fotos y sin fotos, porque la diferencia de tamaño es
+       de varios órdenes de magnitud;
+     - se envía en streaming por líneas (NDJSON) y no como un JSON gigante en
+       memoria, que tumbaría el servidor con una sola petición;
+     - se respeta la contrapresión del socket (esperar a 'drain'), porque si no
+       Node acumula en memoria todo lo que el navegador aún no ha recibido.
+
+   Formato NDJSON — una línea por objeto, para poder leerlo poco a poco:
+     1ª línea            cabecera con fecha, modo y lista de tablas
+     {"schema":..}       CREATE TABLE de cada tabla (para poder restaurar)
+     {"t":..,"r":{..}}   una fila
+     última línea        recuento por tabla, bytes y fotos omitidas
+   ============================================================ */
+
+// Columnas capaces de guardar una foto en base64. Se detectan por tipo, no por
+// una lista de nombres: si mañana se añade otra columna LONGTEXT con imágenes,
+// el modo "sin fotos" la tiene en cuenta sin tocar este código.
+const TIPOS_PESADOS = new Set(["longtext", "mediumtext", "longblob", "mediumblob", "blob", "text"]);
+const ES_DATA_URL = /^data:[a-z0-9.+-]+\/[a-z0-9.+-]+;base64,/i;
+
+async function listarTablas() {
+  const [rows] = await pool.query(
+    `SELECT TABLE_NAME AS t FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+      ORDER BY TABLE_NAME`);
+  return rows.map((r) => r.t || r.T || Object.values(r)[0]).filter(Boolean);
+}
+
+async function describirTabla(tabla) {
+  const [cols] = await pool.query(
+    `SELECT COLUMN_NAME AS nombre, DATA_TYPE AS tipo, COLUMN_KEY AS clave
+       FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
+      ORDER BY ORDINAL_POSITION`, [tabla]);
+  const pesadas = cols.filter((c) => TIPOS_PESADOS.has(String(c.tipo).toLowerCase())).map((c) => c.nombre);
+  // Para paginar sin OFFSET hace falta una clave numérica de una sola columna.
+  const pk = cols.find((c) => String(c.clave).toUpperCase() === "PRI");
+  const clave = pk && /int|decimal|bigint/i.test(String(pk.tipo)) ? pk.nombre : null;
+  return { columnas: cols.map((c) => c.nombre), pesadas, clave };
+}
+
+// Escribe respetando la contrapresión: si el socket va lleno, espera a 'drain'
+// en vez de seguir metiendo datos en la memoria del proceso.
+function escribir(res, texto) {
+  if (res.write(texto)) return Promise.resolve();
+  return new Promise((resolve) => res.once("drain", resolve));
+}
+
+// GET /api/admin/backup/full-size → cuánto pesaría la copia, antes de pedirla.
+// Sirve para avisar en el panel: con las fotos dentro de la base de datos la
+// diferencia entre los dos modos puede ser de megas a gigas.
+app.get("/api/admin/backup/full-size", requireAdmin, wrap(async (req, res) => {
+  if (!isSuperAdmin(req)) return res.status(403).json({ error: "forbidden", detail: "Solo el administrador principal puede descargar los datos." });
+  const tablas = await listarTablas();
+  const items = [];
+  let filas = 0, bytes = 0, bytesFotos = 0;
+  for (const t of tablas) {
+    let n = 0;
+    try { const [[c]] = await pool.query(`SELECT COUNT(*) n FROM \`${t}\``); n = Number(c.n) || 0; } catch { continue; }
+    const { pesadas } = await describirTabla(t);
+    // El tamaño real de las columnas pesadas se mide sumando su longitud. Es una
+    // consulta por tabla, no por fila, y solo sobre las columnas que pueden ser
+    // grandes: information_schema.DATA_LENGTH no vale porque en TiDB es una
+    // estimación y no separa las fotos del resto.
+    let pesoPesadas = 0;
+    if (pesadas.length && n) {
+      const suma = pesadas.map((c) => `COALESCE(SUM(LENGTH(\`${c}\`)),0)`).join(" + ");
+      try { const [[s]] = await pool.query(`SELECT ${suma} AS b FROM \`${t}\``); pesoPesadas = Number(s.b) || 0; } catch {}
+    }
+    let pesoTotal = pesoPesadas;
+    try {
+      const [[d]] = await pool.query(
+        `SELECT COALESCE(DATA_LENGTH,0) AS b FROM information_schema.TABLES
+          WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=?`, [t]);
+      pesoTotal = Math.max(pesoTotal, Number(d.b) || 0);
+    } catch {}
+    items.push({ table: t, rows: n, bytes: pesoTotal, heavy_bytes: pesoPesadas, heavy_columns: pesadas });
+    filas += n; bytes += pesoTotal; bytesFotos += pesoPesadas;
+  }
+  items.sort((a, b) => b.bytes - a.bytes);
+  res.json({
+    ok: true, tables: items.length, rows: filas,
+    bytes_with_photos: bytes,
+    bytes_without_photos: Math.max(0, bytes - bytesFotos),
+    bytes_photos: bytesFotos,
+    items,
+  });
+}));
+
+// GET /api/admin/backup/full-export?photos=0|1 → descarga TODOS los datos.
+app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => {
+  if (!isSuperAdmin(req)) return res.status(403).json({ error: "forbidden", detail: "Solo el administrador principal puede descargar los datos." });
+  const conFotos = String(req.query.photos ?? "1") !== "0";
+  const tablas = await listarTablas();
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const nombre = `aura-datos-${conFotos ? "completo" : "sin-fotos"}-${ts}.ndjson`;
+
+  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${nombre}"`);
+  // Sin Content-Length: el tamaño no se conoce hasta el final. Y sin buffering
+  // intermedio, para que la descarga empiece a bajar ya en vez de esperar.
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Accel-Buffering", "no");
+
+  const linea = (o) => JSON.stringify(o) + "\n";
+  let bytes = 0, totalFilas = 0, fotosOmitidas = 0;
+  const cuenta = {};
+  const salida = async (o) => { const s = linea(o); bytes += Buffer.byteLength(s); await escribir(res, s); };
+
+  await salida({
+    __aura_full_backup__: true, version: 1,
+    generated_at: new Date().toISOString(),
+    includes_photos: conFotos,
+    admin: req.admin?.email || "admin",
+    tables: tablas,
+    aviso: conFotos
+      ? "Copia completa: incluye las fotos (van dentro de la base de datos en base64)."
+      : "Copia SIN fotos: las columnas de imagen se sustituyen por una marca. Sirve para recuperar cuentas, mensajes y pagos, no las imágenes.",
+  });
+
+  try {
+    for (const t of tablas) {
+      const { columnas, pesadas, clave } = await describirTabla(t);
+      let crear = null;
+      try { const [[c]] = await pool.query(`SHOW CREATE TABLE \`${t}\``); crear = c["Create Table"] || c["Create View"] || null; } catch {}
+      await salida({ schema: t, columns: columnas, heavy_columns: pesadas, create: crear });
+
+      // Página pequeña si la tabla puede traer fotos de varios MB por fila.
+      const pagina = pesadas.length && conFotos ? 25 : 500;
+      let desde = 0, ultimo = null, n = 0;
+      for (;;) {
+        let filas = [];
+        try {
+          if (clave) {
+            const [r] = await pool.query(
+              `SELECT * FROM \`${t}\` ${ultimo === null ? "" : `WHERE \`${clave}\` > ?`} ORDER BY \`${clave}\` ASC LIMIT ?`,
+              ultimo === null ? [pagina] : [ultimo, pagina]);
+            filas = r;
+            if (filas.length) ultimo = filas[filas.length - 1][clave];
+          } else {
+            // Sin clave numérica no hay más remedio que OFFSET. Es más lento,
+            // pero estas tablas son las pequeñas (settings y similares).
+            const [r] = await pool.query(`SELECT * FROM \`${t}\` LIMIT ? OFFSET ?`, [pagina, desde]);
+            filas = r; desde += filas.length;
+          }
+        } catch (e) {
+          await salida({ error: "tabla_ilegible", table: t, detail: String(e.message || e).slice(0, 200) });
+          break;
+        }
+        if (!filas.length) break;
+        for (const fila of filas) {
+          if (!conFotos) {
+            for (const c of pesadas) {
+              const v = fila[c];
+              if (typeof v === "string" && ES_DATA_URL.test(v)) {
+                fila[c] = `[imagen omitida: ${v.length} bytes]`;
+                fotosOmitidas++;
+              }
+            }
+          }
+          await salida({ t, r: fila });
+          n++; totalFilas++;
+        }
+        if (filas.length < pagina) break;
+      }
+      cuenta[t] = n;
+    }
+    await salida({ __end__: true, rows: totalFilas, tables: Object.keys(cuenta).length, counts: cuenta, photos_omitted: fotosOmitidas, bytes });
+    await logActivity("admin",
+      `Copia completa de datos descargada (${conFotos ? "con" : "sin"} fotos): ${totalFilas} filas de ${Object.keys(cuenta).length} tablas, ${Math.round(bytes / 1048576)} MB`);
+  } catch (e) {
+    // La cabecera ya se ha enviado, así que no se puede devolver un 500: se
+    // marca el fallo en el propio fichero para que no pase por copia buena.
+    try { await salida({ __error__: true, detail: String(e.message || e).slice(0, 300) }); } catch {}
+  }
+  res.end();
 }));
 
 /* ---- Conversations (moderation view) ---- */

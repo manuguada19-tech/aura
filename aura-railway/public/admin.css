@@ -1631,6 +1631,35 @@ textarea.input { resize: vertical; min-height: 60px; }
 .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
 
+/* V918 · Estas clases se usaban en la pantalla de Backup desde el principio pero
+   NO existian en ninguna hoja de estilos: .grid, .grid-4, .gap-12, .stat-card,
+   .stat-label y .stat-value no estaban definidas en ningun sitio. El resultado
+   era que las cuatro cifras del resumen salian como ocho lineas de texto suelto
+   ("Tablas / 41 / Filas / 128.437 / ...") en vez de como cuatro recuadros.
+   Se definen aqui, que es lo que arregla las dos tablas de cifras de esa
+   pantalla sin tocar el JavaScript. Solo se usan ahi, asi que esto no cambia
+   el aspecto de ninguna otra pantalla.
+   auto-fit + minmax: en el movil bajan solas a dos columnas o a una, sin
+   necesidad de media queries. */
+.grid { display: grid; }
+.grid-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.gap-12 { gap: 12px; }
+.stat-card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  min-width: 0;                /* que el numero largo no ensanche la columna */
+}
+.stat-label {
+  font-size: 11.5px; font-weight: 600; letter-spacing: .02em;
+  color: var(--text-soft); margin-bottom: 3px;
+}
+.stat-value {
+  font-size: 19px; font-weight: 700; line-height: 1.2;
+  color: var(--text); overflow-wrap: anywhere;
+}
+
 /* Drawer improvements */
 .drawer-wrap { position: relative; }
 .drawer-close {

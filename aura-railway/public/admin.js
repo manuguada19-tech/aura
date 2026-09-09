@@ -8575,7 +8575,18 @@ async function viewSettings(root){
     toggleField("security.rate_limit", "Limitación de peticiones"),
     toggleField("security.log_ips", "Registrar IPs"),
     toggleField("security.suspicious_detection", "Detección de actividad sospechosa"),
-    toggleField("security.daily_backups", "Backups diarios automáticos"),
+    // V918 · Aquí había un interruptor «Backups diarios automáticos», activado
+    // por defecto y conectado a NADA: ningún código leía security.daily_backups.
+    // Se ha quitado en vez de dejarlo apagado, porque un interruptor que no hace
+    // nada es peor que no tenerlo: da por hecho que hay copias diarias.
+    el("div", { class: "small", style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:9px 11px;margin:8px 0;line-height:1.45" }, [
+      el("strong", {}, "Copias de seguridad: "),
+      el("span", {}, "no hay copias automáticas de la aplicación. Descarga los datos desde "),
+      // Se navega con route(), como el resto del panel: no es un router de
+      // enlaces, un href="#/backup" no llevaría a ningún sitio.
+      el("span", { style: "color:#60a5fa;text-decoration:underline;cursor:pointer", onclick: () => route("backup") }, "Backup"),
+      el("span", {}, " y guárdalos fuera del servidor. Las copias del propio servidor de base de datos (TiDB / Railway) sí existen y se gestionan en el panel de tu proveedor."),
+    ]),
     // V715 · Login con huella / Face ID (WebAuthn). Por defecto activo.
     (s["security.webauthn_enabled"] === undefined
       ? (() => { const f = toggleField("security.webauthn_enabled", "Login con huella / Face ID (WebAuthn)"); f.querySelector("input").checked = true; return f; })()
@@ -8783,13 +8794,115 @@ async function viewSettings(root){
   root.appendChild(dz);
 }
 /* ============================================================
+   V918 · Copia completa de DATOS (no de configuración)
+   ------------------------------------------------------------
+   La descarga se lanza con window.open y el token en la query (igual que las
+   exportaciones de usuarios y facturas que ya existían) en vez de con fetch +
+   Blob: las fotos van dentro de la base de datos en base64, así que el fichero
+   puede pesar cientos de megas o más, y un Blob lo cargaría entero en la memoria
+   del navegador antes de guardar nada. Así baja directo a disco.
+   ============================================================ */
+function fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n < 10 ? 1 : 0) + " " + u[i];
+}
+
+function fullDataPanel() {
+  const p = panel("Copia completa de datos", [], []);
+  const body = p.querySelector(".panel-body");
+
+  body.appendChild(el("p", { class: "small", style: "background:rgba(34,197,94,.10);border:1px solid rgba(34,197,94,.30);border-radius:8px;padding:9px 11px;margin:0 0 10px;line-height:1.45" }, [
+    el("strong", {}, "Esto sí es una copia de todo: "),
+    el("span", {}, "usuarios, mensajes, conversaciones, likes, matches, pagos, denuncias, notificaciones y fotos. Se descarga a tu dispositivo; no se queda en el servidor. Guárdala fuera (ordenador, disco externo o tu nube)."),
+  ]));
+
+  const aviso = el("p", { class: "muted small", style: "margin:0 0 10px;line-height:1.45" },
+    "Las fotos se guardan dentro de la base de datos, así que la copia con fotos puede ser muy grande. Calcula primero el tamaño para saber a qué te enfrentas.");
+  body.appendChild(aviso);
+
+  const resumen = el("div", { style: "margin:0 0 10px" });
+  const detalle = el("div", { style: "margin:0 0 10px" });
+
+  let tam = null;
+  const btnConFotos = btn("⬇️ Descargar TODO (con fotos)", "primary", () => descargar(true));
+  const btnSinFotos = btn("⬇️ Descargar sin fotos", "ghost", () => descargar(false));
+  btnConFotos.disabled = true; btnSinFotos.disabled = true;
+  btnConFotos.style.opacity = ".55"; btnSinFotos.style.opacity = ".55";
+
+  function descargar(conFotos) {
+    const tok = localStorage.getItem("adminToken") || "";
+    if (tam) {
+      const b = conFotos ? tam.bytes_with_photos : tam.bytes_without_photos;
+      if (!confirm(`Se van a descargar ${fmtBytes(b)} aproximadamente (${tam.rows.toLocaleString("es-ES")} filas de ${tam.tables} tablas).\n\n`
+        + (conFotos ? "Incluye las fotos.\n\n" : "SIN fotos: sirve para recuperar cuentas, mensajes y pagos, pero no las imágenes.\n\n")
+        + "No cierres la pestaña hasta que termine.\n\n¿Continuar?")) return;
+    }
+    window.open("/api/admin/backup/full-export?photos=" + (conFotos ? "1" : "0")
+      + "&adminToken=" + encodeURIComponent(tok), "_blank");
+    toast("Descarga iniciada. Puede tardar: no cierres la pestaña.");
+  }
+
+  const btnCalc = btn("📏 Calcular tamaño", "primary", async (ev) => {
+    const b = ev.target;
+    b.disabled = true; const antes = b.textContent; b.textContent = "Calculando…";
+    try {
+      tam = await api.get("/api/admin/backup/full-size?_=" + Date.now());
+      resumen.innerHTML = "";
+      resumen.appendChild(el("div", { class: "grid grid-4 gap-12" }, [
+        el("div", { class: "stat-card" }, [ el("div", { class: "stat-label" }, "Tablas"), el("div", { class: "stat-value" }, String(tam.tables)) ]),
+        el("div", { class: "stat-card" }, [ el("div", { class: "stat-label" }, "Filas"), el("div", { class: "stat-value" }, (tam.rows || 0).toLocaleString("es-ES")) ]),
+        el("div", { class: "stat-card" }, [ el("div", { class: "stat-label" }, "Con fotos"), el("div", { class: "stat-value" }, fmtBytes(tam.bytes_with_photos)) ]),
+        el("div", { class: "stat-card" }, [ el("div", { class: "stat-label" }, "Sin fotos"), el("div", { class: "stat-value" }, fmtBytes(tam.bytes_without_photos)) ]),
+      ]));
+      // Las cinco tablas más gordas: si un día la copia se dispara, esto dice
+      // por qué sin tener que entrar en la base de datos.
+      detalle.innerHTML = "";
+      const gordas = (tam.items || []).filter((i) => i.rows > 0).slice(0, 5);
+      if (gordas.length) {
+        detalle.appendChild(el("div", { class: "muted small", style: "margin-bottom:4px" }, "Lo que más pesa:"));
+        gordas.forEach((i) => detalle.appendChild(el("div", { class: "muted small" },
+          `· ${i.table}: ${i.rows.toLocaleString("es-ES")} filas, ${fmtBytes(i.bytes)}`
+          + (i.heavy_bytes > 0 ? ` (${fmtBytes(i.heavy_bytes)} en imágenes)` : ""))));
+      }
+      [btnConFotos, btnSinFotos].forEach((x) => { x.disabled = false; x.style.opacity = "1"; });
+      btnConFotos.textContent = `⬇️ Descargar TODO (${fmtBytes(tam.bytes_with_photos)})`;
+      btnSinFotos.textContent = `⬇️ Descargar sin fotos (${fmtBytes(tam.bytes_without_photos)})`;
+    } catch (e) {
+      const motivo = e?.data?.detail || (e?.status === 403 ? "Solo el administrador principal puede descargar los datos." : "");
+      toast(motivo || "No se ha podido calcular el tamaño");
+    }
+    b.disabled = false; b.textContent = antes;
+  });
+
+  body.appendChild(resumen);
+  body.appendChild(detalle);
+  body.appendChild(el("div", { style: "display:flex;flex-wrap:wrap;gap:10px" }, [btnCalc, btnConFotos, btnSinFotos]));
+  body.appendChild(el("p", { class: "muted small", style: "margin:10px 0 0;line-height:1.45" },
+    "El fichero es NDJSON: una línea por fila, con el CREATE TABLE de cada tabla al principio. Se puede leer con cualquier editor y volver a cargar por partes, sin necesidad de abrirlo entero."));
+  return p;
+}
+
+/* ============================================================
    Backup / restauración de configuración
    ============================================================ */
 async function viewBackup(root){
   root.appendChild(viewTitle(
-    "Backup de configuración",
-    "Exporta e importa la configuración de la plataforma en un único archivo JSON."
+    "Backup",
+    "Dos cosas distintas: la copia de la CONFIGURACIÓN (textos, diseño, plantillas) y la copia de los DATOS (usuarios, mensajes, likes, pagos, fotos)."
   ));
+
+  // V918 · Copia completa de datos. Lo de abajo (export/snapshot) solo guarda
+  // `settings` y `email_templates`: si se perdiera la base de datos se
+  // recuperaría el aspecto de la app y ni un usuario. Esto lo arregla.
+  root.appendChild(fullDataPanel());
+
+  root.appendChild(el("h3", { style: "margin:22px 0 2px" }, "Copia de la configuración"));
+  root.appendChild(el("p", { class: "muted small", style: "margin:0 0 10px" },
+    "Textos, diseño y plantillas de correo. NO incluye usuarios ni mensajes: para eso está la copia de datos de arriba."));
 
   root.appendChild(sectionLegend("¿Qué significa cada icono en Backup?", [
     ["📥", "Descargar un backup completo de la configuración."],
@@ -8851,6 +8964,12 @@ async function viewBackup(root){
     el("h3", { style: "margin:0 0 8px" }, "Crear / exportar configuración"),
     el("p", { class: "muted small", style: "margin:0 0 12px" },
       "Elige las secciones y crea un backup guardado en el servidor (sin descargar) o descárgalo como archivo JSON."),
+    // V918 · El snapshot se escribe en el disco del contenedor, y en Railway ese
+    // disco se rehace en cada despliegue. Decirlo aquí: hasta ahora la lista de
+    // snapshots aparecía vacía después de cada subida de código y no había forma
+    // de saber por qué.
+    el("p", { class: "small", style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 10px;margin:0 0 10px;line-height:1.45" },
+      "⚠️ Los snapshots «en el servidor» se borran al desplegar una versión nueva: viven en el disco del contenedor, que se rehace en cada subida. Si quieres conservar algo, descárgalo como archivo."),
     el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px" }, [
       chk("content", "Textos"),
       chk("design",  "Diseño"),
