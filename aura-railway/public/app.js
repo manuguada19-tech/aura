@@ -8926,7 +8926,10 @@ async function openNearbyMap() {
   // "Buscar"), no un carrusel horizontal. Debajo se mantiene el texto de "no hay
   // nadie cerca" cuando la búsqueda no arroja resultados.
   const peopleTitleMain = el("span", { class: "map-people-title-main" }, "Personas en esta zona");
-  const peopleTitleSub = el("small", {}, "Mueve o amplía el mapa para ver quién hay cerca");
+  // V922 · Estos textos decían "mueve el mapa para ver quién hay cerca", que era
+  // verdad mientras el mapa buscaba solo. Ahora hay que pulsar el botón, y el texto
+  // lo dice: prometer algo que ya no pasa deja al usuario esperando resultados.
+  const peopleTitleSub = el("small", {}, "Mueve el mapa y pulsa “Buscar cerca de aquí”");
   const peopleGrid = el("div", { class: "map-people-grid" });
   const peopleEmpty = el("div", { class: "map-people-empty", hidden: true });
   const peoplePanel = el("div", { class: "map-people" }, [
@@ -9320,12 +9323,12 @@ async function openNearbyMap() {
       ? (pinAway
           ? "Distancias respecto al pin"
           : (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora"))
-      : "Mueve o amplía el mapa a otra zona para ver a quién hay cerca";
+      : "Mueve el mapa a otra zona y pulsa “Buscar cerca de aquí”";
     peopleGrid.innerHTML = "";
     if (!list.length) {
       peopleGrid.hidden = true;
       peopleEmpty.hidden = false;
-      peopleEmpty.textContent = "No hay nadie por esta zona. Mueve o amplía el mapa a otro punto, o busca otra ciudad.";
+      peopleEmpty.textContent = "No hay nadie por esta zona. Mueve el mapa a otro punto y pulsa “Buscar cerca de aquí”, o busca otra ciudad.";
       return;
     }
     peopleGrid.hidden = false;
@@ -9446,28 +9449,24 @@ async function openNearbyMap() {
   }
 
   let searchSeq = 0; // descarta respuestas viejas si llega una nueva
-  // V854 · Exploración estilo mapa: al mover/ampliar el mapa se buscan solos los
-  // usuarios de la zona que estás mirando (sin pulsar botones). Estas banderas
-  // evitan bucles: el "moveend" que provoca un centrado PROGRAMÁTICO (setView) no
-  // debe buscar, y pinDragging salta la búsqueda mientras arrastras el pin (que ya
-  // busca al soltarlo). autoSearchTimer aplica un antirrebote.
-  //
-  // V921 · "El pin se mueve solo": esto era una bandera de un solo uso
-  // (suppressAutoSearch = true, y el primer "moveend" la ponía a false). Un
-  // centrado del programa NO manda un solo "moveend": setView manda el suyo y
-  // acto seguido map.invalidateSize() -- el de los 120 ms al abrir el mapa, y el
-  // de cada cambio de tamaño del panel -- manda OTRO. El primero gastaba la
-  // bandera y el segundo pasaba de largo, movía el pin al centro de la pantalla y
-  // lanzaba una búsqueda sin que el usuario hubiera tocado el mapa.
-  //
-  // Ahora es una VENTANA de tiempo: durante los 900 ms siguientes a un centrado
-  // programático se ignoran todos los "moveend", no solo el primero. Los 900 ms
-  // son los mismos que ya tenía la salvaguarda anterior, y cubren de sobra la
-  // animación de setView. El precio, dicho claro: si mueves el mapa con el dedo
-  // dentro de esa ventana, esa vez no se busca sola; el siguiente movimiento sí.
-  let suppressUntil = 0;
-  let pinDragging = false;
-  let autoSearchTimer = null;
+  /* V922 · EL PIN SOLO SE MUEVE SI TÚ LO MUEVES.
+     V854 buscaba la zona sola al arrastrar o ampliar el mapa, y para eso movía el
+     pin al centro de la pantalla. Eso es lo que se veía como "el pin rosa se mueve
+     solo". V921 tapó una parte del problema (un centrado del programa manda dos
+     "moveend" y el segundo se colaba), pero el resto era intencionado: cualquier
+     arrastre, incluso el que se te escapa con el dedo, movía el pin.
+
+     No valía congelar el pin y seguir buscando al mover, porque en esta pantalla
+     el pin ES el punto donde se buscó: las distancias del panel se cuentan desde
+     ahí y el propio texto dice "Distancias respecto al pin" (ver renderPeople y
+     peopleCard). Con el pin quieto y la búsqueda en otro sitio, ese texto
+     mentiría.
+
+     Así que el mapa ya no busca solo al moverlo. El pin se mueve al tocar el mapa,
+     al arrastrarlo, al pulsar "Buscar cerca de aquí" (que ahora busca en el centro
+     de lo que estás mirando), con "mi ubicación" y al buscar una ciudad. Todo son
+     cosas que haces tú. Se van con esto la bandera/ventana de los centrados, el
+     antirrebote y pinDragging: existían solo para la búsqueda automática. */
 
   // Devuelve el lat/lng que queda en el CENTRO de la franja visible del mapa
   // (entre el buscador de arriba y el panel de personas / botón de abajo). Es el
@@ -9563,13 +9562,9 @@ async function openNearbyMap() {
   // real del mapa para que el punto aparezca justo en medio de la franja que sí
   // se ve, con el pin y "Tú estás aquí" bien visibles.
   function centerOnVisible(lat, lng, zoom, animate) {
-    // V854 · Este centrado es PROGRAMÁTICO (setView): los "moveend" que provoque
-    // NO deben disparar una búsqueda automática (evita bucles/duplicados).
-    // V921 · Ventana de tiempo en vez de bandera de un solo uso: un centrado manda
-    // más de un "moveend" (el de setView y el de invalidateSize), y con la bandera
-    // el segundo se colaba y movía el pin solo. La ventana caduca por sí misma, así
-    // que tampoco hace falta reponer nada si el "moveend" no llega nunca.
-    suppressUntil = Date.now() + 900;
+    // V922 · Aquí ya no hace falta protegerse de nada: al no buscar sola la zona
+    // cuando el mapa se mueve, un centrado del programa no puede disparar ninguna
+    // búsqueda ni mover el pin por su cuenta.
     const z = Number.isFinite(zoom) ? zoom : (map.getZoom() || CLOSE_ZOOM);
     try {
       const cRect = mapEl.getBoundingClientRect();
@@ -9605,9 +9600,16 @@ async function openNearbyMap() {
     await searchAt(lat, lng);
   }
 
-  // V840 · Busca en la posición ACTUAL del pin (botón "Buscar cerca de aquí").
+  // V922 · Botón "Buscar cerca de aquí": busca en el CENTRO DE LO QUE ESTÁS
+  // MIRANDO y lleva el pin allí. Antes buscaba en el pin (V840), que con la
+  // búsqueda automática venía solo al centro; sin ella, buscar en el pin te
+  // devolvería resultados de un punto que a lo mejor ni se ve. Si por lo que sea no
+  // se puede calcular ese centro, se cae en el pin, que es el comportamiento viejo.
   async function searchHere() {
-    await searchAt(searchLatLng.lat, searchLatLng.lng);
+    const c = visibleCenterLatLng();
+    const lat = (c && Number.isFinite(c.lat)) ? c.lat : searchLatLng.lat;
+    const lng = (c && Number.isFinite(c.lng)) ? c.lng : searchLatLng.lng;
+    await searchAt(lat, lng);
   }
 
   // V764 · Geocodificación por ciudad/provincia (Nominatim / OpenStreetMap, sin
@@ -9747,42 +9749,27 @@ async function openNearbyMap() {
     searchAt(lat, lng);
   });
 
-  // V840 · El círculo rosa sigue al PIN mientras se arrastra; al soltarlo se
-  // busca en su nueva posición. pinDragging evita que el "moveend" del autopan
-  // que hace Leaflet al arrastrar el pin dispare una segunda búsqueda.
-  searchPin.on("dragstart", () => { pinDragging = true; });
+  // V840 · El pin se arrastra y, al soltarlo, se busca en su nueva posición.
   searchPin.on("drag", () => {
     const p = searchPin.getLatLng();
     searchLatLng = { lat: p.lat, lng: p.lng };
   });
   searchPin.on("dragend", () => {
     const p = searchPin.getLatLng();
-    pinDragging = false;
     searchAt(p.lat, p.lng);
   });
 
-  // V854 · BÚSQUEDA AUTOMÁTICA AL EXPLORAR (estilo mapa). Cuando el usuario
-  // arrastra o hace zoom en el mapa, tras un breve reposo (antirrebote) movemos
-  // el pin al centro de lo que está mirando y buscamos allí, SIN recentrar a casa
-  // aunque esté vacío (keepView). Los movimientos PROGRAMÁTICOS (centrar al
-  // abrir, "mi ubicación", ir a una ciudad) se ignoran durante la ventana que abre
-  // centerOnVisible (V921: antes era una bandera de un solo uso y el segundo
-  // "moveend" del centrado se colaba), y el arrastre del pin vía pinDragging (ese
-  // ya busca al soltar).
-  map.on("movestart", () => { if (autoSearchTimer) { clearTimeout(autoSearchTimer); autoSearchTimer = null; } });
-  map.on("moveend", () => {
-    if (Date.now() < suppressUntil) return;   // V921 · centrado del programa, no del dedo
-    if (pinDragging) return;
-    if (autoSearchTimer) clearTimeout(autoSearchTimer);
-    autoSearchTimer = setTimeout(() => {
-      const c = visibleCenterLatLng();
-      if (c && Number.isFinite(c.lat) && Number.isFinite(c.lng)) {
-        searchAt(c.lat, c.lng, { keepView: true });
-      }
-    }, 450);
-  });
+  /* V922 · Aquí estaba la búsqueda automática al mover el mapa, y con ella el
+     salto del pin al centro de la pantalla. Se quita: mover el mapa ahora solo
+     mueve el mapa. Para buscar en la zona que estás mirando está el botón, que es
+     un gesto tuyo y no una sorpresa. Deliberadamente NO queda ningún manejador de
+     "moveend" / "move" / "zoomend" que toque el pin ni lance búsquedas. */
 
-  // Botón "Buscar cerca de aquí": busca en la posición actual del pin.
+  // V922 · "Buscar cerca de aquí" busca en el centro de la franja que estás
+  // mirando, no en el pin. Antes buscaba en el pin, lo que con la búsqueda
+  // automática daba igual (el pin ya venía al centro solo); ahora, sin ella, el
+  // botón sería inútil al explorar: te buscaría donde dejaste el pin, a veces
+  // fuera de la pantalla. Al pulsarlo el pin va allí, porque lo has pedido tú.
   searchHereBtn.addEventListener("click", () => { searchHere(); });
 
   // V840 · Botón de tema dentro del mapa: cambia claro/oscuro globalmente,
