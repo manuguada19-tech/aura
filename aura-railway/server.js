@@ -16816,7 +16816,16 @@ app.use(express.static(path.join(__dirname, "public"), {
 // No cambia la navegación interna de la app (usa render() en cliente, sin HTTP).
 try {
   const seoPages = require("./features_seo_pages");
-  seoPages.register(app);
+  // V930b · Se le pasa isTrue para que los textos de la web salgan del MISMO
+  // ajuste que gobierna la app (app.review_mode / access_locked /
+  // registrations_open) y no puedan contradecirla: el rótulo del botón, la línea
+  // de estado de la portada y el párrafo "En qué punto está Aura" se rescriben
+  // solos al cambiar el interruptor en el panel, sin desplegar. Es seguro
+  // llamarlo aquí porque el middleware de ajustes (ensureFreshSettings) corre en
+  // CADA petición y antes de estas rutas, así que isTrue lee valores frescos.
+  // Sin este argumento el módulo no se rompe: se queda en el texto de "en
+  // revisión", que es el único que no promete registro.
+  seoPages.register(app, { isTrue });
 } catch (e) { console.error("SEO pages register error:", e && e.message); }
 
 // V930 · Esta ruta ya NO se ejecuta en condiciones normales: la portada la sirve

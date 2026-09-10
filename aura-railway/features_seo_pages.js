@@ -53,18 +53,84 @@ const TODAY = "2026-09-02";
 const APP_URL = "/explorar";
 const APP_ENTRADA = "/index.html";
 
-/* V930 · El reclamo de la app, en UN solo sitio.
+/* V930 · El reclamo de la app, en UN solo sitio Y ATADO AL ESTADO REAL.
    --------------------------------------------------------------------
    Las guías y "cómo funciona" decían "crea tu perfil en Aura y empieza a conocer
    gente hoy" y "menos de dos minutos para crear tu perfil". Con el acceso cerrado
    eso es falso: al pulsar, la app contesta con el aviso de revisión. Y son
    justamente las páginas con anuncios, las que lee el revisor de AdSense.
 
-   Cuando se abra el acceso hay que cambiar SOLO estas dos cosas: esta frase y el
-   párrafo "En qué punto está Aura" de la portada. Por eso está centralizado. */
-const APP_AVISO = "Aura está temporalmente en revisión mientras rodamos la moderación y la verificación. Si pulsas y ves ese aviso, con su botón de reintentar y un correo de contacto, es eso y no un fallo tuyo.";
-function ctaApp(titulo) {
-  return `<div class="cta"><h2>${esc(titulo)}</h2><p>${APP_AVISO}</p><a class="btn" href="${APP_URL}">Entrar en Aura</a></div>`;
+   V930b · Antes esto era una constante y había que editarla a mano al abrir el
+   registro. Ahora se decide EN CADA PETICIÓN con los MISMOS ajustes que usa la
+   app (app.review_mode, app.access_locked, app.registrations_open) y los MISMOS
+   valores por defecto que server.js, así que la web no puede contradecir a la
+   app: si cambias el interruptor en el panel, el texto cambia solo, sin desplegar
+   nada. Tarda lo que tardan las dos cachés que hay en medio: la de ajustes del
+   server (3 s) y la del propio HTML (Cache-Control, más abajo: 60 s en el
+   navegador de quien ya estuvo, 5 min en una caché compartida). Antes de V930b
+   esa segunda era de una hora, y ése fue el motivo de acortarla.
+
+   Los cuatro estados son de verdad distintos para quien pulsa el botón:
+     revision     → la app enseña "Estamos afinando Aura" (hoy es éste).
+     beta         → pruebas privadas: existe la app, pero sólo para invitados.
+     sinregistro  → la app funciona, pero no se pueden crear cuentas nuevas.
+     abierto      → todo abierto: aquí SÍ se puede prometer crear cuenta.
+
+   Sin accesores (las pruebas llaman register(app) a secas) se responde
+   "revision" a propósito: es la única versión que no promete nada. Prometer
+   registro donde no lo hay es el error caro; quedarse corto no engaña a nadie. */
+let ajustesDeLaApp = null;   // lo inyecta register(app, { isTrue })
+
+function estadoDelAcceso() {
+  if (!ajustesDeLaApp) return "revision";
+  const si = (k, fb) => ajustesDeLaApp.isTrue(k, fb);
+  if (si("app.review_mode", false)) return "revision";
+  if (si("app.access_locked", false)) return "beta";
+  return si("app.registrations_open", true) ? "abierto" : "sinregistro";
+}
+
+const AVISOS_DE_ACCESO = {
+  revision: "Aura está temporalmente en revisión mientras rodamos la moderación y la verificación. Si pulsas y ves ese aviso, con su botón de reintentar y un correo de contacto, es eso y no un fallo tuyo.",
+  beta: "Aura está en pruebas privadas: la app funciona, pero de momento sólo entran las personas invitadas. Si pulsas sin invitación verás un aviso explicándolo, y aquí se puede leer entero cómo funciona mientras tanto.",
+  sinregistro: "La app está en marcha y puedes entrar con tu cuenta. Las cuentas nuevas están pausadas ahora mismo, así que si todavía no tienes una tendrás que esperar a que reabramos el registro.",
+  abierto: "Crear el perfil lleva un par de minutos: verificas que eres tú con el documento, eliges qué buscas y ya puedes empezar. Es gratis, y lo que se paga está explicado en esta misma web.",
+};
+const BOTONES_DE_ACCESO = {
+  revision: "Entrar en Aura", beta: "Entrar en Aura",
+  sinregistro: "Entrar en Aura", abierto: "Crear cuenta gratis",
+};
+
+function avisoDeAcceso() { return AVISOS_DE_ACCESO[estadoDelAcceso()]; }
+function botonDeAcceso() { return BOTONES_DE_ACCESO[estadoDelAcceso()]; }
+
+/* La portada dice el estado en dos sitios más: la línea pequeña debajo del botón
+   de arriba y el párrafo "En qué punto está Aura". Las cuatro redacciones viven
+   aquí, al lado del aviso del CTA, para que un cambio de estado no pueda dejar
+   dos textos peleados entre sí en la misma página. */
+const LINEAS_DE_ESTADO = {
+  revision: 'El acceso está <b>en revisión</b> ahora mismo: si pulsas, la app te lo dirá. <a href="#en-que-punto">Qué significa eso</a>.',
+  beta: 'Aura está en <b>pruebas privadas</b>: de momento se entra por invitación. <a href="#en-que-punto">Qué significa eso</a>.',
+  sinregistro: 'La app funciona, pero las <b>cuentas nuevas están pausadas</b> ahora mismo. <a href="#en-que-punto">Qué significa eso</a>.',
+  abierto: 'El registro está <b>abierto</b>: crear el perfil lleva un par de minutos y es gratis. <a href="#en-que-punto">En qué punto está Aura</a>.',
+};
+
+const PARRAFOS_DE_ESTADO = {
+  revision: "Conviene decirlo antes de que pulses el botón: Aura está <b>temporalmente en revisión</b> mientras terminamos de rodar la moderación y la verificación. Si entras ahora, la app te enseñará ese aviso —«estamos afinando Aura»— con un botón para reintentar y una dirección de correo; no es un error tuyo ni un fallo del navegador, y el registro abierto tampoco está activo todavía. Todo lo que se explica en esta web está construido y aquí se puede leer entero; cuando el acceso vuelva a estar disponible, esta misma página lo dirá.",
+  beta: "Conviene decirlo antes de que pulses el botón: Aura está en <b>pruebas privadas</b>. La app funciona y es la que se describe en esta web, pero de momento sólo entran las personas invitadas; si pulsas sin invitación verás un aviso explicándotelo en vez de la pantalla de perfiles. No es un error tuyo ni un fallo del navegador. Todo lo que se cuenta aquí está construido y se puede leer entero mientras tanto; cuando el acceso se abra a todo el mundo, esta misma página lo dirá.",
+  sinregistro: "Conviene decirlo antes de que pulses el botón: la app está en marcha y, si ya tienes cuenta, entras con normalidad, pero <b>las cuentas nuevas están pausadas</b> ahora mismo. Si es tu primera vez, la app te lo dirá al intentar registrarte; no es un error tuyo ni un fallo del navegador. Todo lo que se cuenta en esta web está construido y se puede leer entero mientras tanto; cuando volvamos a abrir el registro, esta misma página lo dirá.",
+  abierto: "Aura está <b>abierta</b>: puedes crear tu perfil ahora mismo y es gratis. El camino es el que se cuenta en esta página, sin sorpresas: verificas que eres tú con el documento y una prueba de vida, eliges qué buscas y a quién quieres ver, y empiezas a pasar perfiles; el chat se abre cuando el interés es mutuo. Lo que se paga está explicado aquí mismo, con lo que cambia y lo que no, y nada de eso hace falta para usar la app.",
+};
+
+function lineaDeEstado() { return LINEAS_DE_ESTADO[estadoDelAcceso()]; }
+function parrafoDeEstado() { return PARRAFOS_DE_ESTADO[estadoDelAcceso()]; }
+
+/* El título va en dos versiones porque "Cuando abramos el acceso" no pega con el
+   registro abierto. Si no se pasa el segundo, se usa el primero. */
+function ctaApp(tituloCerrado, tituloAbierto) {
+  const abierto = estadoDelAcceso() === "abierto";
+  const titulo = abierto && tituloAbierto ? tituloAbierto : tituloCerrado;
+  return `<div class="cta"><h2>${esc(titulo)}</h2><p>${avisoDeAcceso()}</p>` +
+    `<a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a></div>`;
 }
 
 /* --------------------------------------------------------------------
@@ -1429,27 +1495,29 @@ function pagePortada() {
      en "/", que es justo la página que abre el revisor.
 
      1) La entrada de arriba: sin ese botón, el único de la página estaba al
-        final; en móvil, a 9600 px de scroll de donde aterrizas. El texto es
-        neutro a propósito mientras el registro esté cerrado y no promete crear
-        cuenta (ver el párrafo "En qué punto está Aura"). Debajo va una línea
-        pequeña con el estado y un enlace a ese párrafo: al botón de abajo lo
-        explica el texto que tiene justo encima, pero a ÉSTE se llega sin haber
-        leído nada, y quien pulsa merece saber por qué la app le contesta con un
-        aviso en vez de dejarle entrar. Sin esa línea, el revisor de AdSense se
-        lleva la impresión de un sitio a medio construir.
+        final; en móvil, a 9600 px de scroll de donde aterrizas. Debajo va una
+        línea pequeña con el estado del acceso y un enlace al párrafo que lo
+        explica: al botón de abajo lo explica el texto que tiene justo encima,
+        pero a ÉSTE se llega sin haber leído nada, y quien pulsa merece saber por
+        qué la app puede contestarle con un aviso en vez de dejarle entrar. Sin
+        esa línea, el revisor de AdSense se lleva la impresión de un sitio a
+        medio construir.
      2) El párrafo "En qué punto está Aura" cuenta lo que pasa AL PULSAR el
-        botón, comprobado en producción: la app responde con "En revisión ·
-        Estamos afinando Aura", con botón de reintentar y un correo. Se dice con
-        las mismas palabras que usa la app; antes hablaba de un grupo cerrado de
-        personas probándola, que es otra historia distinta de la que se encuentra
-        quien pulsa. Es la ÚNICA afirmación temporal de la página: cuando se
-        reabra el acceso, hay que actualizar ese párrafo y APP_AVISO. */
+        botón, con las mismas palabras que usa la app. Antes hablaba de un grupo
+        cerrado de personas probándola, que es otra historia distinta de la que
+        se encuentra quien pulsa.
+     Las tres frases del estado (el rótulo del botón, la línea de debajo y ese
+     párrafo) salen de estadoDelAcceso() y NO se editan a mano: las decide el
+     mismo ajuste que usa la app, en cada petición. Antes eran texto fijo y había
+     que acordarse de cambiarlas al abrir el registro -- exactamente la clase de
+     cosa de la que uno no se acuerda, y la web habría seguido diciendo "en
+     revisión" con la app abierta, o peor, al revés. */
   const body = `
-    <p style="font-size:18px;color:var(--soft);max-width:660px">Aura es una app de citas española para mayores de 18 años. La diferencia no está en un algoritmo secreto: está en que aquí se sabe con quién hablas y en que nadie te ordena la fila por detrás. Los perfiles se verifican con documento de identidad y una prueba de vida, el chat sólo se abre cuando el interés es mutuo, y quién aparece en tu pantalla lo deciden tus filtros y nada más.</p>
+    <p style="font-size:18px;color:var(--soft);max-width:660px">Aura es una app de citas española para mayores de 18 años. Esta página la cuenta entera antes de que entres: cómo se comprueba quién eres, cuándo se abre un chat, en qué orden aparece la gente y qué cuesta.</p>
 
-    <p style="margin:22px 0 4px"><a class="btn" href="${APP_URL}">Entrar en Aura</a>
-      <a href="#como-funciona" style="display:inline-block;margin-left:14px;color:var(--soft)">o mira antes cómo funciona</a></p>
-    <p style="margin:6px 0 0;font-size:14px;color:var(--soft)">El acceso está <b>en revisión</b> ahora mismo: si pulsas, la app te lo dirá. <a href="#en-que-punto">Qué significa eso</a>.</p>
+    <p style="margin:22px 0 4px;display:flex;flex-wrap:wrap;align-items:center;gap:14px"><a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a>
+      <a href="#como-funciona" style="color:var(--soft)">o mira antes cómo funciona</a></p>
+    <p style="margin:6px 0 0;font-size:14px;color:var(--soft)">${lineaDeEstado()}</p>
 
     <h2>Qué es Aura</h2>
     <p>Aura funciona como cabe esperar de una app de citas: creas un perfil con fotos y una descripción, dices qué buscas y a quién quieres ver, y vas pasando perfiles. Cuando dos personas se dan «me gusta», se abre un chat. Hasta ahí, nada nuevo.</p>
@@ -1502,12 +1570,12 @@ function pagePortada() {
     <p>Resolvemos las dudas más habituales sobre cuentas, matches, seguridad y pagos en la <a href="/faq">sección de preguntas frecuentes</a>. Si lo que necesitas es que te ayude una persona, escríbenos desde <a href="/contacto">contacto</a>: respondemos en menos de 24 horas laborables.</p>
 
     <h2 id="en-que-punto">En qué punto está Aura</h2>
-    <p>Conviene decirlo antes de que pulses el botón: Aura está <b>temporalmente en revisión</b> mientras terminamos de rodar la moderación y la verificación. Si entras ahora, la app te enseñará ese aviso —«estamos afinando Aura»— con un botón para reintentar y una dirección de correo; no es un error tuyo ni un fallo del navegador, y el registro abierto tampoco está activo todavía. Todo lo que se explica en esta web está construido y aquí se puede leer entero; cuando el acceso vuelva a estar disponible, esta misma página lo dirá.</p>
+    <p>${parrafoDeEstado()}</p>
 
     <div class="cta">
       <h2>Ir a la app</h2>
       <p>Hasta aquí lo que hacemos y cómo. Lo que hay al otro lado del botón es la app misma: tus filtros, la gente que los cumple y ningún orden que no te hayamos explicado en esta página.</p>
-      <a class="btn" href="${APP_URL}">Entrar en Aura</a>
+      <a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a>
     </div>`;
 
   return layout({
@@ -1795,7 +1863,7 @@ function pageComoFunciona() {
     <div class="card"><p>Puedes usar Aura gratis: crear tu perfil, explorar, hacer matches y chatear. La suscripción <b>Premium</b> añade extras como likes ilimitados, deshacer la última valoración y más visibilidad. Los precios exactos aparecen en la app y puedes cancelar cuando quieras. Consulta las <a href="/faq#pagos">preguntas sobre pagos</a>.</p></div>
     <h2>Seguridad desde el primer minuto</h2>
     <div class="card"><p>Todos los perfiles pasan por <a href="/verificacion">verificación de identidad</a>, las fotos del estado «Ahora mismo» pasan un prefiltro automático y una revisión humana antes de que las vea nadie, y puedes reportar o bloquear a cualquiera. Revisamos los reportes en menos de 24 horas. Lee también nuestros <a href="/guias/seguridad-en-citas-online">consejos de seguridad en citas online</a>.</p></div>
-    ${ctaApp("Cuando abramos el acceso")}`;
+    ${ctaApp("Cuando abramos el acceso", "Crear tu perfil en Aura")}`;
   return layout({
     title: "Cómo funciona Aura",
     description: "Cómo funciona Aura paso a paso: registro y verificación, perfil, matches, chat, planes gratis y Premium, y seguridad.",
@@ -1912,12 +1980,28 @@ function sitemapXml() {
 /* --------------------------------------------------------------------
    Registro de rutas (llamar antes del fallback SPA en server.js)
    -------------------------------------------------------------------- */
-function register(app) {
+function register(app, deps) {
+  /* Los accesores de ajustes los pasa server.js: register(app, { isTrue }). Se
+     guardan para estadoDelAcceso(), que decide en cada petición si la web puede
+     prometer registro. Si no vienen -- las pruebas montan el módulo a secas --
+     el módulo sigue funcionando y se queda en "revision", que no promete nada. */
+  if (deps && typeof deps.isTrue === "function") ajustesDeLaApp = deps;
+
   const html = (res, body, status) => {
     res.status(status || 200);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    // Cacheable por CDN pero revalidable; el contenido cambia poco.
-    res.setHeader("Cache-Control", "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400");
+    /* Cacheable, pero con la correa corta desde V930b. Antes era max-age=300 /
+       s-maxage=3600 / stale-while-revalidate=86400, y tenía sentido cuando este HTML
+       era el mismo para siempre. Ahora el rótulo del botón y el estado del acceso
+       salen de un ajuste que se cambia desde el panel: con esos números, al abrir el
+       registro la web habría seguido diciendo "en revisión" hasta una hora en
+       cualquier caché compartida (y hasta un día sirviendo copia vieja mientras
+       revalida), y al cerrarlo habría seguido prometiendo registro otra hora, que es
+       el lado que hace daño. Un minuto en el navegador y cinco en la caché
+       compartida siguen absorbiendo cualquier punta de tráfico. Esto salió de
+       mirarlo, no de pensarlo: en el navegador los cuatro estados se veían iguales
+       porque estaba leyendo su propia copia en caché y no la página nueva. */
+    res.setHeader("Cache-Control", "public, max-age=60, s-maxage=300, stale-while-revalidate=600");
     res.send(body);
   };
 
