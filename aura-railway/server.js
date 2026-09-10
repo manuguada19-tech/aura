@@ -17703,6 +17703,7 @@ const phaseZones = require("./features_zones"); // V613 · zonas: archivado + mo
 const adminExtra = require("./features_admin_extra"); // V712 · endpoints admin que faltaban
 const adminExtra2 = require("./features_admin_extra2"); // V713 · 2º lote endpoints admin (mod/tickets/pagos/stats/dispositivos)
 const webauthn = require("./features_webauthn"); // V714 · login con huella / Face ID (WebAuthn)
+const billing = require("./features_billing"); // V933 · factura en PDF + informe imprimible
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage, enforceKycGate }); // V591 · +notifyNewMessage · V731 · +enforceKycGate
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
@@ -17728,6 +17729,12 @@ adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin, emailIsAdmin
 // normal sí lo llama (/api/login); el de huella no, así que una cuenta baneada
 // con huella registrada se llevaba un token de sesión firmado.
 webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice, isTrue, logActivity, isReviewDeniedFor, isAccessLockedFor, enforceAccess }); // V714 · WebAuthn
+/* V933 · Facturación. Sólo necesita getSetting: los datos fiscales del emisor
+   viven en `settings` (se editan desde el panel) y NO se copian dentro del
+   módulo, para que no puedan discrepar. Las dos rutas que registra van bajo
+   /api/payments/ y /api/stats/, o sea que el candado de admin del gate global
+   las cubre igual que a invoices-export. */
+billing.register(app, pool, { wrap, getSetting }); // V933 · factura PDF + informe imprimible
 
 // V879 · El puerto se abre YA, antes de migrar. Railway comprueba /api/health
 // y el deploy queda verde en segundo(s); las migraciones siguen por detrás.
@@ -17765,6 +17772,7 @@ app.listen(PORT, "0.0.0.0", () => console.log("Aura backend on", PORT, "· migra
       await adminExtra.migrate(pool); // V712 · tablas config admin
       await adminExtra2.migrate(pool); // V713 · tablas mod-templates + device_incidents
       await webauthn.migrate(pool); // V714 · tabla webauthn_credentials
+      await billing.migrate(pool); // V933 · invoice_counters + payment_invoices
     } catch (e) {
       console.error("[phases] init error:", e);
     }

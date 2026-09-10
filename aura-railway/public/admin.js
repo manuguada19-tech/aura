@@ -7261,6 +7261,95 @@ async function viewSubscriptions(root){
   });
   root.appendChild(grid);
 }
+/* V933 · Datos fiscales del emisor — el único sitio donde se administra la
+   facturación. Vive en la tabla `settings` (claves billing.*), como el resto
+   de la configuración del panel, así que el servidor y este formulario leen
+   exactamente lo mismo y no pueden discrepar.
+
+   La regla que hay detrás, y que este formulario explica en pantalla: sin
+   nombre y NIF, el botón "Factura" de cada pago devuelve un JUSTIFICANTE DE
+   PAGO, no una factura, y no gasta número de serie. Un papel que dice
+   "Factura" sin numeración correlativa ni NIF no vale para nada. */
+async function openBillingIssuer() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:620px;width:100%;padding:20px;max-height:92vh;overflow:auto" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 4px" }, "⚙️ Datos de facturación"));
+  modal.appendChild(el("p", { style: "margin:0 0 14px;color:var(--text-muted);font-size:12.5px" },
+    "Con estos datos se emiten las facturas del botón 🧾 de cada pago. Mientras falten el nombre y el NIF, el documento sale como «justificante de pago» y no consume número de serie."));
+
+  const s = await api.get("/api/settings").catch(() => ({}));
+  const estado = await api.get("/api/billing/issuer-status").catch(() => null);
+
+  const campo = (etiqueta, clave, valorPorDefecto, ayuda, tipo) => {
+    const i = el("input", { class: "input", type: tipo || "text", value: s[clave] != null && s[clave] !== "" ? s[clave] : (valorPorDefecto || ""), style: "width:100%" });
+    modal.appendChild(el("label", { style: "display:block;margin-top:10px;font-size:12.5px" }, etiqueta));
+    modal.appendChild(i);
+    if (ayuda) modal.appendChild(el("small", { style: "display:block;color:var(--text-muted);margin-top:3px" }, ayuda));
+    return i;
+  };
+
+  const nombre = campo("Nombre o razón social *", "billing.issuer_name", "", "Tal y como figura en Hacienda.");
+  const nif = campo("NIF / CIF *", "billing.issuer_tax_id", "");
+  const dir = campo("Dirección", "billing.issuer_address", "");
+  const pob = campo("Código postal y población", "billing.issuer_city_zip", "");
+  const pais = campo("País", "billing.issuer_country", "España");
+  const mail = campo("Correo de facturación", "billing.issuer_email", "");
+  const serie = campo("Serie", "billing.series", "A", "Las facturas se numeran SERIE-AÑO-0001 de forma correlativa. Si cambias la serie, la numeración empieza de nuevo en esa serie: no lo hagas a mitad de un ejercicio.");
+  const iva = campo("Tipo de IVA (%)", "billing.tax_rate", "21", null, "number");
+
+  const incluido = el("input", { type: "checkbox" });
+  if (String(s["billing.prices_include_tax"] || "true") !== "false") incluido.checked = true;
+  modal.appendChild(el("label", { style: "display:flex;gap:8px;align-items:center;margin-top:12px;font-size:12.5px" },
+    [incluido, "Los precios ya incluyen IVA"]));
+  modal.appendChild(el("small", { style: "display:block;color:var(--text-muted);margin-top:3px" },
+    "Déjalo marcado si el importe que cobras por Stripe es lo que paga el cliente (lo normal vendiendo a consumidores). Si lo desmarcas, la factura sumará el IVA por encima del importe cobrado."));
+
+  const nota = campo("Nota sobre el IVA (opcional)", "billing.tax_note", "", "Se imprime al pie. Ej.: «IVA incluido en el precio».");
+  const pie = campo("Texto legal al pie (opcional)", "billing.legal_footer", "");
+
+  if (estado) {
+    const ok = !!estado.complete;
+    modal.appendChild(el("div", {
+      style: "margin-top:14px;padding:10px 12px;border-radius:8px;font-size:12.5px;"
+        + (ok ? "background:rgba(16,185,129,.12);border:1px solid rgba(16,185,129,.35)"
+              : "background:rgba(249,115,22,.12);border:1px solid rgba(249,115,22,.35)")
+    }, ok
+      ? `Datos completos. Emitidas este año: ${estado.issued_this_year}. La próxima factura será la ${estado.next_number}.`
+      : "Faltan el nombre o el NIF: hasta que los rellenes, el botón 🧾 devuelve un justificante de pago, no una factura."));
+  }
+
+  modal.appendChild(el("p", { style: "margin:14px 0 0;color:var(--text-muted);font-size:11.5px;line-height:1.5" },
+    "Lo que esto NO hace: no emite facturas rectificativas (un pago reembolsado sale marcado como REEMBOLSADO y la rectificativa la emite tu asesoría), no decide tu régimen de IVA, y no factura a nombre de la empresa del cliente porque la app no guarda su NIF ni su dirección."));
+
+  const guardar = btn("💾 Guardar", "primary sm", async () => {
+    if (!nombre.value.trim() || !nif.value.trim()) {
+      if (!(await askConfirm("Sin nombre y NIF no se emitirán facturas, sólo justificantes de pago. ¿Guardar así?", { okText: "Guardar igualmente" }))) return;
+    }
+    try {
+      await api.put("/api/settings", {
+        "billing.issuer_name": nombre.value.trim(),
+        "billing.issuer_tax_id": nif.value.trim(),
+        "billing.issuer_address": dir.value.trim(),
+        "billing.issuer_city_zip": pob.value.trim(),
+        "billing.issuer_country": pais.value.trim(),
+        "billing.issuer_email": mail.value.trim(),
+        "billing.series": (serie.value.trim() || "A").toUpperCase(),
+        "billing.tax_rate": String(parseFloat(iva.value) || 0),
+        "billing.prices_include_tax": incluido.checked ? "true" : "false",
+        "billing.tax_note": nota.value.trim(),
+        "billing.legal_footer": pie.value.trim(),
+      });
+      toast("Datos de facturación guardados");
+      overlay.remove();
+    } catch (e) { toast(e.message); }
+  });
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end" },
+    [btn("Cerrar", "ghost sm", () => overlay.remove()), guardar]));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
 async function viewPayments(root){
   root.appendChild(viewTitle("Pagos & Facturación",
     "Historial de transacciones con reembolsos.",
@@ -7274,6 +7363,7 @@ async function viewPayments(root){
         const y = new Date().getFullYear();
         window.open(`/api/payments/invoices-export?year=${y}&adminToken=` + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
       }),
+      btn("⚙️ Datos de facturación", "ghost sm", () => openBillingIssuer()), // V933
       btn("Exportar CSV", "ghost sm", () => downloadCSV("payments"))
     ]));
 
@@ -7427,8 +7517,17 @@ async function viewPayments(root){
       el("td", { class: "ta-right" }, [
         el("div", { class: "row" }, [
           btn("🧾 Factura", "ghost xs", () => {
-            // Abre factura en nueva pestaña (endpoint estándar).
-            window.open("/api/payments/" + p.id + "/invoice", "_blank");
+            /* V933 · Este botón estaba muerto por DOS motivos, y el segundo
+               tapaba al primero: la ruta /api/payments/:id/invoice no existía
+               en el servidor, y además se abría SIN ?adminToken, así que el
+               candado del gate contestaba 401 antes de llegar. Ahora la ruta
+               existe (features_billing.js) y el token va en la URL, igual que
+               en el CSV de movimientos y en la copia de seguridad.
+               Si aún no has rellenado tus datos fiscales, el PDF sale como
+               "justificante de pago" y lo dice dentro: no se emite una factura
+               con el nombre en blanco ni se gasta número de serie. */
+            window.open("/api/payments/" + p.id + "/invoice?adminToken="
+              + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
           }),
           p.status === "completed"
             ? btn("↩️ Reembolsar", "warn xs", async () => {
@@ -8189,7 +8288,15 @@ async function viewStats(root){
     [
       btn("📅 Informe programado", "ghost sm", () => openScheduledReport()),
       btn("📥 Descargar informe PDF", "ghost sm", () => {
-        window.open("/api/stats/report.pdf?adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
+        /* V933 · Antes apuntaba a /api/stats/report.pdf, que no existía en
+           ningún fichero del servidor: se abría una pestaña con un error.
+           Ahora abre un informe A4 ya maquetado que se guarda como PDF desde
+           el diálogo de impresión (se abre solo con print=1). Se sirve como
+           página y no como fichero PDF a propósito: así puede traer las
+           tablas y las barras, y sobre todo pide los datos a las MISMAS rutas
+           de estadísticas que ve el panel, sin copiar ninguna consulta. */
+        window.open("/api/stats/report?print=1&adminToken="
+          + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
       }),
       btn("📊 Comparar periodos", "ghost sm", () => openStatsCompare()),
       btn("🌍 Mapa de calor", "ghost sm", () => openHeatmap()),
