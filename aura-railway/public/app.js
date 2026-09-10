@@ -18346,7 +18346,12 @@ async function boot() {
         state.kyc = state.kyc || {};
         state.kyc.sessionToken = tk;
         state.kyc.provider     = "didit";
-        try { history.replaceState(null, "", "/"); } catch {}
+        // V930 · Antes ponía "/" en la barra. Ahora "/" es la PORTADA de
+        // contenido, así que si el usuario recargaba después de volver del KYC
+        // salía de la app y aterrizaba en la web. Se limpia sólo la query y se
+        // deja la ruta donde esté: esta rama hace render() y return, así que
+        // nadie la corrige después (routeTab → syncTabUrl sí corrige las otras).
+        try { history.replaceState(null, "", location.pathname); } catch {}
         render(screenVerifyDiditReturn);
         applyContent(); startLivePolling();
         try {

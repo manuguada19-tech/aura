@@ -16,7 +16,10 @@
      usuario dejó la app instalada, se registre su última zona.
 */
 
-const CACHE_VERSION = "aura-v92";
+// V930 · v93: cambia index.html (es CORE_ASSET) y hay que invalidar la copia
+// vieja. Coste real nulo: las navegaciones son red-primero y no se cachean, y
+// app.js se pide con ?v=<build>, que cambia en cada despliegue de todos modos.
+const CACHE_VERSION = "aura-v93";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

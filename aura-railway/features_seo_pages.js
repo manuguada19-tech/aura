@@ -13,6 +13,21 @@
    Nunca dentro de las pantallas de la app (swipe/chat), que Google prohíbe.
    Ver el bloque "AdSense" más abajo: la decisión no se declara a mano, se
    mide sobre el cuerpo de cada página.
+
+   V930 · Y LA PORTADA. Todo lo de arriba llevaba meses funcionando y AdSense
+   seguía diciendo "contenido de poco valor", porque la URL que abre el revisor
+   es `https://citasaura.es/` y ahí no había nada de esto: "/" lo resolvía
+   express.static con el índice del directorio (public/index.html), o sea el
+   cascarón de la app — una pantalla de carga de 201 palabras. El texto de
+   verdad estaba en el <noscript> de ese fichero, y Googlebot lo ignora porque
+   SÍ ejecuta JavaScript: ve la app, no el texto.
+
+   Desde V930 "/" la sirve este módulo (pagePortada), y el cascarón sigue
+   viviendo en /index.html y en las rutas de la app (/explorar, /chats…), que no
+   han cambiado. Quien ya tiene sesión no se queda en la portada: un script
+   diminuto la salta (ver scriptSesionHtml). Y los flujos que vuelven de fuera a
+   "/" con parámetros (Stripe, KYC, apelaciones) se redirigen en el servidor,
+   sin depender del JavaScript (ver register()).
    ===================================================================== */
 
 "use strict";
@@ -20,6 +35,37 @@
 const BASE = "https://citasaura.es";
 const SITE = "Aura";
 const TODAY = "2026-09-02";
+
+/* V930 · Dónde vive la app, ahora que "/" es contenido.
+   --------------------------------------------------------------------
+   APP_URL es el destino de los botones "Abrir Aura"/"Entrar": /explorar, que ya
+   está en SPA_ROUTES (server.js) y en DEEP_LINK_TABS (public/app.js), así que el
+   servidor la sirve y la app la entiende. Sin sesión enseña lo mismo que enseñaba
+   "/" hasta ahora, que HOY (comprobado en producción) es la pantalla de acceso
+   cerrado "Estamos afinando Aura", no la bienvenida con registro.
+
+   APP_ENTRADA es otra cosa y por eso son dos constantes: es el destino del
+   SALTO AUTOMÁTICO de quien ya tiene sesión. Tiene que ser /index.html y no
+   /explorar porque parseDeepLink() devuelve null para él, y entonces la app
+   restaura la última pestaña donde estabas (routeTab(state.currentTab)) en vez
+   de forzarte a Explorar. Es además el start_url del manifest, así que es la
+   misma puerta que usa la PWA instalada. */
+const APP_URL = "/explorar";
+const APP_ENTRADA = "/index.html";
+
+/* V930 · El reclamo de la app, en UN solo sitio.
+   --------------------------------------------------------------------
+   Las guías y "cómo funciona" decían "crea tu perfil en Aura y empieza a conocer
+   gente hoy" y "menos de dos minutos para crear tu perfil". Con el acceso cerrado
+   eso es falso: al pulsar, la app contesta con el aviso de revisión. Y son
+   justamente las páginas con anuncios, las que lee el revisor de AdSense.
+
+   Cuando se abra el acceso hay que cambiar SOLO estas dos cosas: esta frase y el
+   párrafo "En qué punto está Aura" de la portada. Por eso está centralizado. */
+const APP_AVISO = "Aura está temporalmente en revisión mientras rodamos la moderación y la verificación. Si pulsas y ves ese aviso, con su botón de reintentar y un correo de contacto, es eso y no un fallo tuyo.";
+function ctaApp(titulo) {
+  return `<div class="cta"><h2>${esc(titulo)}</h2><p>${APP_AVISO}</p><a class="btn" href="${APP_URL}">Entrar en Aura</a></div>`;
+}
 
 /* --------------------------------------------------------------------
    AdSense (SOLO en páginas de contenido rastreable, nunca en la app)
@@ -32,9 +78,10 @@ const TODAY = "2026-09-02";
    (cifras de prosaDeEditor, la misma función que decide más abajo)
 
      /guias          1629 de prosa, y es un ÍNDICE: casi todo son enlaces.
-     /como-funciona  1497 de prosa, promocional y flojo.
+     /como-funciona  1497 de prosa, promocional y flojo (V930: 4997, reescrita).
      /inicio         1884 de prosa, pero es la portada: su función es que te
                      registres ("Crear cuenta gratis", "Abrir Aura"), no informar.
+                     (V930: la portada es "/" y mide 9680, y SIGUE sin anuncios.)
 
    Como ADSENSE_SLOT_CONTENT viene vacío, además, no había ninguna unidad fija:
    colocaba los Auto Ads, o sea que decidía Google DÓNDE ponerlos dentro de esas
@@ -53,15 +100,18 @@ const ADSENSE_SLOT_CONTENT = process.env.ADSENSE_SLOT_CONTENT || "";
 
 // Mínimo de prosa (sin contar el texto de los enlaces) para que una página pueda
 // llevar anuncios. Medido con esta misma función sobre las páginas reales
-// (V926, vueltas a medir tras corregir el texto de la portada y del FAQ):
-//   con anuncios:  /faq 3236 · guía más corta 6462 · guía más larga 10246
-//   sin anuncios:  /ayuda 79 · /contacto 329 · /como-funciona 1497 ·
-//                  /guias 1629 (índice de enlaces) · /inicio 1884
-// 1800 deja fuera todo lo flojo y da 1436 de margen a la página con anuncios más
-// corta. Las legales (2315-7659) miden de sobra y tampoco llevan anuncios, y la
-// portada ya mide 1884 — por encima del mínimo — y tampoco los lleva: MEDIR NO
-// BASTA, hay que declararse contenido. Ésa es exactamente la razón de que la
-// puerta exija las dos condiciones.
+// (V930, vueltas a medir tras escribir la portada y rellenar lo que estaba flojo):
+//   con anuncios (7):  /faq 7018 · guía más corta 6600 · guía más larga 10384
+//   sin anuncios (10): /guias 1629 (índice de enlaces) · /normas 2315 ·
+//                      /contacto 2336 · /verificacion 2452 · /ayuda 3736 ·
+//                      /como-funciona 4997 · /privacidad 5723 · /terminos 7659 ·
+//                      / 9680 (la portada)
+// En V926 esta lista tenía /ayuda con 79 y /contacto con 329: eran rejillas de
+// enlaces con un título. Ya no hay ninguna página pública por debajo de 1600.
+// 1800 sigue dando 4800 de margen a la página con anuncios más corta. Y fíjate en
+// la portada: 9680, muy por encima del mínimo, y tampoco lleva anuncios — MEDIR
+// NO BASTA, hay que declararse contenido con `ads: true`. Ésa es exactamente la
+// razón de que la puerta exija las dos condiciones.
 const PROSA_MINIMA = 1800;
 
 // Texto de editor del cuerpo: se quitan scripts, estilos y el texto de los
@@ -318,6 +368,40 @@ function consentGoogleScriptHtml() {
 })();<\/script>`;
 }
 
+/* Salto a la app para quien ya tiene sesión (SÓLO en "/")
+   --------------------------------------------------------------------
+   V930. Al pasar "/" a ser contenido, alguien que ya está dentro de Aura y
+   escribe "citasaura.es" aterrizaría en una página de marketing en vez de en su
+   app. Este script lo evita, y hace falta que sea de cliente porque la sesión
+   vive en localStorage (`aura-auth-token`, y `aura-session` con los datos del
+   usuario): el servidor no puede saber si hay sesión — no hay cookie que mirar.
+
+   Tres frenos, y los tres importan:
+
+     1. Sólo actúa en "/" (la portada se sirve también en /inicio por
+        compatibilidad, y allí no debe saltar nada).
+     2. No actúa si el visitante viene de dentro del propio sitio: si no, un
+        usuario con sesión no podría leer su propia web pulsando "Inicio" en el
+        menú, porque cada clic lo devolvería a la app.
+     3. `?web=1` lo desactiva a mano, para poder ver la portada con sesión.
+
+   Googlebot no tiene sesión, así que para él este script no existe: ve el mismo
+   HTML que cualquier visitante nuevo. No es cloaking.
+
+   Va con location.replace (no deja entrada en el historial, así que el botón
+   "atrás" no rebota) y arrastra query y hash intactos. */
+function scriptSesionHtml() {
+  return `<script>(function(){try{`
+    + `if(location.pathname!=="/")return;`
+    + `if(new URLSearchParams(location.search||"").get("web")==="1")return;`
+    + `if(document.referrer){try{if(new URL(document.referrer).origin===location.origin)return;}catch(e){}}`
+    + `var t="";try{t=localStorage.getItem("aura-auth-token")||"";}catch(e){}`
+    + `var s=null;if(!t){try{s=JSON.parse(localStorage.getItem("aura-session")||"null");}catch(e){}}`
+    + `if(!t&&!(s&&s.id))return;`
+    + `location.replace("${APP_ENTRADA}"+location.search+location.hash);`
+    + `}catch(e){}})();<\/script>`;
+}
+
 /* --------------------------------------------------------------------
    Utilidades de escape / render
    -------------------------------------------------------------------- */
@@ -416,6 +500,7 @@ function layout(opts) {
   <meta property="og:image" content="${BASE}/assets/welcome-logo-light.png"/>
   <meta name="twitter:card" content="summary"/>
   <link rel="icon" href="/assets/welcome-logo-light.png"/>
+  ${o.saltoSesion ? scriptSesionHtml() : ""}
   ${cmpHead}
   ${adsHead}
   ${jsonLdHtml}
@@ -435,6 +520,9 @@ function layout(opts) {
     nav.site{margin-left:auto;display:flex;flex-wrap:wrap;gap:16px;font-size:14px}
     nav.site a{color:var(--soft)}
     nav.site a[aria-current=page]{color:var(--text);font-weight:700}
+    /* V930 · La cabecera va pegada arriba en escritorio: sin esto, el salto a
+       #como-funciona deja el titular escondido detrás de ella. */
+    h2[id],h3[id]{scroll-margin-top:80px}
     .hero{padding:56px 0 30px;border-bottom:1px solid var(--border);background:radial-gradient(900px 380px at 15% -20%,rgba(255,59,107,.16),transparent 60%),radial-gradient(700px 360px at 110% 0%,rgba(168,85,247,.16),transparent 60%)}
     .hero h1{font-size:clamp(30px,5vw,46px);line-height:1.12;margin:0 0 12px;font-weight:800;letter-spacing:-.02em}
     .hero p{font-size:18px;color:var(--soft);margin:0;max-width:620px}
@@ -448,9 +536,13 @@ function layout(opts) {
     .grid .card{margin:0}
     .card h3{margin-top:0}
     details.qa{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:2px 18px;margin:10px 0}
-    details.qa summary{cursor:pointer;font-weight:700;padding:14px 0;list-style:none;font-size:16px}
+    /* V930 · El "+" era un float:right sin separación: cuando la pregunta llenaba
+       la primera línea (en móvil, casi siempre) quedaba pegado a la última palabra.
+       Ahora se reserva sitio con padding y el signo se ancla a la derecha, así que
+       da igual cuántas líneas ocupe la pregunta. */
+    details.qa summary{cursor:pointer;font-weight:700;padding:14px 26px 14px 0;list-style:none;font-size:16px;position:relative}
     details.qa summary::-webkit-details-marker{display:none}
-    details.qa summary::after{content:"+";float:right;color:var(--soft);font-weight:700}
+    details.qa summary::after{content:"+";position:absolute;right:0;top:14px;color:var(--soft);font-weight:700}
     details.qa[open] summary::after{content:"–"}
     details.qa .a{color:var(--soft);padding:0 0 16px}
     .legal .item{border-bottom:1px solid var(--border);padding:16px 0}
@@ -480,13 +572,26 @@ function layout(opts) {
     footer.site .fine{color:#6b6f7b;font-size:13px}
     .ad-holder{margin:26px 0;padding:8px;border:1px solid var(--border);border-radius:14px;background:var(--card);min-height:90px}
     .ad-holder .ad-lbl{display:block;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#6b6f7b;margin:0 0 6px}
-    @media (max-width:560px){nav.site{display:none}.hero{padding:40px 0 24px}}
+    /* V930 · En móvil el menú de arriba estaba en display:none, y no hay botón de
+       hamburguesa que lo sustituya: el único modo de navegar era el pie, que en la
+       portada nueva queda a 9600 px de scroll. Ahora no se esconde: pasa a una
+       segunda línea y se desplaza en horizontal si no cabe, que es lo que funciona
+       sin JavaScript. */
+    @media (max-width:560px){
+      /* Con el menú en dos líneas la cabecera mide 108 px: pegada arriba se comería
+         una sexta parte de la pantalla en páginas que son para leer, así que en
+         móvil deja de ser sticky. */
+      header.site{position:static}
+      header.site .wrap{flex-wrap:wrap;height:auto;padding:10px 20px 8px;gap:6px 18px}
+      nav.site{margin:0;width:100%;gap:6px 14px;font-size:13px;flex-wrap:wrap}
+      .hero{padding:40px 0 24px}
+    }
   </style>
 </head>
 <body>
   <header class="site">
     <div class="wrap">
-      <a class="logo" href="/inicio"><img src="/assets/welcome-logo-light.png" alt="Aura"/> <span>Aura</span></a>
+      <a class="logo" href="/"><img src="/assets/welcome-logo-light.png" alt="Aura"/> <span>Aura</span></a>
       <nav class="site">${navHtml}</nav>
     </div>
   </header>
@@ -504,7 +609,7 @@ function layout(opts) {
   <footer class="site"><div class="wrap">
     <nav>${NAV.map((n) => `<a href="${n.path}">${esc(n.label)}</a>`).join("")}</nav>
     <div>Aura es una app de citas para mayores de 18 años. Perfiles verificados con documento y chat sólo cuando el interés es mutuo.</div>
-    <div class="fine">© 2026 Aura · Hecho con ♥ en España · <a href="/inicio">Volver al inicio</a> · <a href="/">Abrir la app</a>${consentPie}</div>
+    <div class="fine">© 2026 Aura · Hecho con ♥ en España · <a href="/">Volver al inicio</a> · <a href="${APP_URL}">Abrir la app</a>${consentPie}</div>
   </div></footer>
   ${consentUi}
 </body>
@@ -515,7 +620,7 @@ function layout(opts) {
    Datos de contenido (reutilizados del contenido real de la app)
    -------------------------------------------------------------------- */
 const NAV = [
-  { label: "Inicio", path: "/inicio" },
+  { label: "Inicio", path: "/" },
   { label: "Cómo funciona", path: "/como-funciona" },
   { label: "Guías", path: "/guias" },
   { label: "Preguntas frecuentes", path: "/faq" },
@@ -789,7 +894,7 @@ const GUIDES = [
   <li>Responde tres preguntas de perfil, una de ellas "Dos verdades y una mentira" (3 min).</li>
 </ol>
 <p>Y cuando esté terminado, verifica la cuenta. Impulsar con un Boost un perfil a medio hacer es pagar por que más gente vea algo que no está listo.</p>
-<p>¿Lo hacemos ahora? <a href="/">Abre Aura</a> y empieza por la foto principal.</p>`,
+<p>¿Lo hacemos ahora? <a href="${APP_URL}">Abre Aura</a> y empieza por la foto principal.</p>`,
   },
   {
     slug: "seguridad-en-citas-online",
@@ -1001,7 +1106,7 @@ const GUIDES = [
 <p>Cuando ya habéis intercambiado mensajes con sustancia (no dos frases), no alargues el chat semanas: la conversación se enfría y la cita nunca llega. Propón algo concreto, corto y en un sitio público —hay veinte ideas en la guía de <a href="/guias/ideas-para-una-primera-cita">planes para una primera cita</a>— o una videollamada breve si prefieres verle la cara antes.</p>
 <p>Una propuesta cerrada funciona mejor que una abierta: "¿Te apetece un café el jueves por la tarde por el centro?" recibe más síes que "a ver si quedamos algún día".</p>
 
-<p>Elige un match, busca el detalle y escribe dos líneas. <a href="/">Abre Aura</a> y prueba con el siguiente.</p>`,
+<p>Elige un match, busca el detalle y escribe dos líneas. <a href="${APP_URL}">Abre Aura</a> y prueba con el siguiente.</p>`,
   },
   {
     slug: "como-funciona-el-algoritmo-de-matches",
@@ -1094,7 +1199,7 @@ const GUIDES = [
 <h2>Decisiones automatizadas y derecho a revisión</h2>
 <p>El orden del feed no es una decisión sobre ti que afecte a tus derechos. Otras cosas sí lo son: la verificación biométrica del KYC y la moderación automática de contenido pueden restringir una cuenta. En esos casos tienes derecho a solicitar <strong>revisión humana</strong>, expresar tu punto de vista e impugnar la decisión (art. 22 del RGPD) escribiendo a seguridad@citasaura.es. En el proceso de verificación, además, dispones automáticamente de hasta dos revisiones manuales.</p>
 
-<p>¿Quieres verlo funcionando? <a href="/">Entra en Aura</a>, completa los campos de estilo de vida y compara tu feed antes y después.</p>`,
+<p>¿Quieres verlo funcionando? <a href="${APP_URL}">Entra en Aura</a>, completa los campos de estilo de vida y compara tu feed antes y después.</p>`,
   },
   {
     slug: "ideas-para-una-primera-cita",
@@ -1171,7 +1276,7 @@ const GUIDES = [
 </ul>
 <p>Si sí hubo química, la parte difícil no es la segunda cita: es distinguir el subidón inicial de una conexión con recorrido. De eso hablamos en la guía sobre <a href="/guias/senales-de-que-hay-conexion-real">señales de que hay conexión real</a>.</p>
 
-<p>¿Ya tienes con quién quedar? <a href="/">Abre Aura</a>, elige un plan de esta lista y propónlo con día y hora.</p>`,
+<p>¿Ya tienes con quién quedar? <a href="${APP_URL}">Abre Aura</a>, elige un plan de esta lista y propónlo con día y hora.</p>`,
   },
   {
     slug: "senales-de-que-hay-conexion-real",
@@ -1258,14 +1363,32 @@ const GUIDES = [
 <h2>Cuídate en el proceso</h2>
 <p>Ilusionarse está bien; poner todo tu bienestar en manos de alguien a quien acabas de conocer, no. Mantén tus rutinas, tus amigos y tus planes: además de protegerte, hace que sigas siendo la persona interesante de la que se enamoró alguien. Una conexión sana <strong>suma</strong> a tu vida; si la está vaciando, eso ya es información.</p>
 
-<p>Y la buena noticia de todo esto: cuando la conexión es real, no hay que forzarla ni convencer a nadie. Se nota en que las cosas son fáciles. <a href="/">Abre Aura</a> y dale la oportunidad de aparecer.</p>`,
+<p>Y la buena noticia de todo esto: cuando la conexión es real, no hay que forzarla ni convencer a nadie. Se nota en que las cosas son fáciles. <a href="${APP_URL}">Abre Aura</a> y dale la oportunidad de aparecer.</p>`,
   },
 ];
 
 /* --------------------------------------------------------------------
    Constructores de página (devuelven HTML string completo)
    -------------------------------------------------------------------- */
-function pageHub() {
+/* V930 · La portada. Antes vivía en /inicio y era un folleto: 1884 de prosa
+   repartida en tarjetas de tres líneas, dos botones de registro y poco más. Y
+   daba igual lo buena que fuese, porque el revisor de AdSense abre "/" y "/" no
+   la servía (ver la cabecera del fichero).
+
+   Ahora es "/" y tiene que sostener sola la respuesta a "¿esto qué es?": qué es
+   Aura, cómo se decide lo que ves, qué pasa con tus datos, qué es gratis y qué
+   no, y qué NO hacemos. Todo lo que se afirma aquí está comprobado contra el
+   código, no contra el folleto: el orden del feed sale de GET /api/discover, la
+   verificación de features_kyc, y lo que no está cifrado se dice que no lo está.
+
+   `path: "/"` hace que el canonical sea la raíz. /inicio sigue sirviendo ESTA
+   MISMA función, así que sale con canonical a "/" y consolida en ella sin
+   romperse ni perder lo que tenga indexado; el 301 se pondrá cuando Search
+   Console muestre "/" ya indexada.
+
+   Sin `ads: true` a propósito: mide de sobra, pero es la puerta de entrada, no
+   una página informativa, y la política de Google es explícita con eso. */
+function pagePortada() {
   const feats = [
     { ic: "✅", h: "Perfiles verificados", p: "Verificación con documento y selfie. Los perfiles reales llevan distintivo azul, para que sepas con quién hablas." },
     // V925 · Decía "filtros automáticos de contenido". No es cierto para el chat:
@@ -1290,24 +1413,85 @@ function pageHub() {
     { n: "2", h: "Descubre personas", p: "Explora los perfiles que dejan pasar tus filtros: edad, ciudad, intereses. Da like a quien te interese y salta al siguiente si no encaja." },
     { n: "3", h: "Haz match y habla", p: "Cuando el interés es mutuo, se abre el chat. A partir de ahí, la conversación es cosa vuestra." },
   ];
-  const guideCards = GUIDES.slice(0, 3).map((g) =>
-    `<a class="card" href="/guias/${g.slug}"><h3>${esc(g.title)}</h3><p>${esc(g.excerpt)}</p></a>`
-  ).join("");
+  // V930 · Con `<a class="card">` envolviendo la tarjeta entera, la regla global
+  // `a{color:var(--brand))}` pintaba de rosa TAMBIÉN el resumen: tres párrafos
+  // largos en color de enlace, que no se parecen a nada del resto del sitio. Se
+  // usa el mismo marcado que el índice de guías (.postlist): titular enlazado y
+  // resumen en --soft. Sin CSS nuevo y con el mismo aspecto en las dos páginas.
+  const guideCards = `<ul class="postlist">${GUIDES.slice(0, 3).map((g) =>
+    `<li><h3><a href="/guias/${g.slug}">${esc(g.title)}</a></h3><p>${esc(g.excerpt)}</p></li>`
+  ).join("")}</ul>`;
 
+  /* V930 · Dos notas sobre el cuerpo de la portada. Van AQUÍ, en el código, y no
+     como <!-- --> dentro de la plantilla: un comentario HTML viaja al navegador
+     y lo lee cualquiera que abra el código fuente -- incluido el revisor de
+     AdSense. Estos dos eran los únicos comentarios HTML del módulo y salían sólo
+     en "/", que es justo la página que abre el revisor.
+
+     1) La entrada de arriba: sin ese botón, el único de la página estaba al
+        final; en móvil, a 9600 px de scroll de donde aterrizas. El texto es
+        neutro a propósito mientras el registro esté cerrado y no promete crear
+        cuenta (ver el párrafo "En qué punto está Aura"). Debajo va una línea
+        pequeña con el estado y un enlace a ese párrafo: al botón de abajo lo
+        explica el texto que tiene justo encima, pero a ÉSTE se llega sin haber
+        leído nada, y quien pulsa merece saber por qué la app le contesta con un
+        aviso en vez de dejarle entrar. Sin esa línea, el revisor de AdSense se
+        lleva la impresión de un sitio a medio construir.
+     2) El párrafo "En qué punto está Aura" cuenta lo que pasa AL PULSAR el
+        botón, comprobado en producción: la app responde con "En revisión ·
+        Estamos afinando Aura", con botón de reintentar y un correo. Se dice con
+        las mismas palabras que usa la app; antes hablaba de un grupo cerrado de
+        personas probándola, que es otra historia distinta de la que se encuentra
+        quien pulsa. Es la ÚNICA afirmación temporal de la página: cuando se
+        reabra el acceso, hay que actualizar ese párrafo y APP_AVISO. */
   const body = `
-    <p style="font-size:18px;color:var(--soft);max-width:640px">Aura es la app de citas donde importa quién eres de verdad. Nos centramos en conexiones auténticas: perfiles verificados con documento, chat sólo cuando el interés es mutuo y un feed que decides tú con tus filtros, sin ningún algoritmo que te perfile. <a href="/guias/como-funciona-el-algoritmo-de-matches">Te contamos exactamente cómo se ordena</a>.</p>
-    <p><a class="btn" href="/">Crear cuenta gratis</a></p>
+    <p style="font-size:18px;color:var(--soft);max-width:660px">Aura es una app de citas española para mayores de 18 años. La diferencia no está en un algoritmo secreto: está en que aquí se sabe con quién hablas y en que nadie te ordena la fila por detrás. Los perfiles se verifican con documento de identidad y una prueba de vida, el chat sólo se abre cuando el interés es mutuo, y quién aparece en tu pantalla lo deciden tus filtros y nada más.</p>
+
+    <p style="margin:22px 0 4px"><a class="btn" href="${APP_URL}">Entrar en Aura</a>
+      <a href="#como-funciona" style="display:inline-block;margin-left:14px;color:var(--soft)">o mira antes cómo funciona</a></p>
+    <p style="margin:6px 0 0;font-size:14px;color:var(--soft)">El acceso está <b>en revisión</b> ahora mismo: si pulsas, la app te lo dirá. <a href="#en-que-punto">Qué significa eso</a>.</p>
+
+    <h2>Qué es Aura</h2>
+    <p>Aura funciona como cabe esperar de una app de citas: creas un perfil con fotos y una descripción, dices qué buscas y a quién quieres ver, y vas pasando perfiles. Cuando dos personas se dan «me gusta», se abre un chat. Hasta ahí, nada nuevo.</p>
+    <p>Lo que cambia son las tres reglas de la casa. La primera es que <b>verificar la identidad no es opcional para escribir</b>: puedes mirar sin verificarte, pero para mandar mensajes hay que haber pasado por el documento y la prueba de vida. La segunda es que <b>el chat no existe antes del match</b>: nadie te puede escribir porque le hayas gustado, hace falta que tú también hayas dicho sí. Y la tercera es que <b>no hay un sistema que decida por ti</b>: no calculamos una puntuación de afinidad, no aprendemos de tus «me gusta» y no vendemos posiciones en el orden salvo por el Boost, que se ve y se dice cuál es.</p>
+    <p>Aura tiene dos zonas, Hetero y LGTB, que se cambian desde los ajustes cuando quieras y que separan quién te ve y a quién ves. No es una app distinta ni un filtro escondido: es la misma app con el público que te corresponde.</p>
 
     <h2>Por qué Aura</h2>
     <div class="grid">
       ${feats.map((f) => `<div class="card"><h3>${f.ic} ${esc(f.h)}</h3><p>${esc(f.p)}</p></div>`).join("")}
     </div>
 
-    <h2>Cómo funciona, en 3 pasos</h2>
+    <h2 id="como-funciona">Cómo funciona, en 3 pasos</h2>
     <div class="grid">
       ${steps.map((s) => `<div class="card"><h3>${s.n}. ${esc(s.h)}</h3><p>${esc(s.p)}</p></div>`).join("")}
     </div>
     <p><a href="/como-funciona">Ver cómo funciona en detalle →</a></p>
+
+    <h2>Cómo se decide lo que ves</h2>
+    <p>Esta es la parte que casi ninguna app de citas cuenta, así que la contamos entera. Cuando abres la pantalla de explorar, el servidor hace dos cosas por separado.</p>
+    <p><b>Primero descarta.</b> Tus filtros son excluyentes, no preferencias: la edad, la distancia o la ciudad, el género, y los campos de estilo de vida que hayas activado (intereses, mascotas, tabaco, alcohol, estudios, ejercicio, qué buscas). Quien no cumple, no aparece. Y aquí hay una consecuencia que conviene saber antes de dejar el perfil a medias: si filtras por un campo, <b>los perfiles que lo tienen vacío también quedan fuera</b>. No es un castigo, es aritmética: el servidor no puede saber si alguien fuma cuando nadie lo ha dicho. Por eso completar tu perfil no «mejora tus recomendaciones» —eso sería mentira, no hay recomendaciones— sino que evita que te descarten las búsquedas de los demás.</p>
+    <p><b>Después ordena</b>, y el orden es siempre el mismo, para todo el mundo y en cada carga: quien tiene un Boost activo, después quien está conectado en ese momento, después los perfiles verificados, y el resto al azar. Cuatro reglas, en ese orden, sin ninguna puntuación por detrás. No se guarda a quién miras más rato, no se compara tu comportamiento con el de nadie y no hay un modelo que aprenda de tus «me gusta»: mañana, con los mismos filtros, verás lo mismo salvo por quién esté conectado y por el azar del final.</p>
+    <p>Que sea así tiene una ventaja práctica: puedes cambiar lo que ves, y sabes cómo. Si quieres más gente, ensancha los filtros. Si quieres aparecer más, verifícate y rellena los campos. Si quieres salir arriba un rato concreto, ése es el Boost y es la única cosa que se compra. <a href="/guias/como-funciona-el-algoritmo-de-matches">La guía del algoritmo lo explica campo por campo</a>.</p>
+
+    <h2>Seguridad: qué hacemos exactamente</h2>
+    <p>La verificación tiene dos pasos. Subes una foto de tu documento y un selfie, y el sistema comprueba que la cara del documento y la del selfie son la misma persona y que el documento no es una foto de una pantalla. Si la comprobación automática no está segura, el caso pasa a <b>revisión humana</b>, y si tampoco queda claro se pide una videoidentificación corta. Puedes reintentarlo si algo sale mal; lo que no se puede es saltarse el paso y escribir a alguien.</p>
+    <p>Las fotos del estado «Ahora mismo» —las que se publican al momento— pasan un prefiltro automático y luego <b>una revisión humana antes de que las vea nadie</b>. Los reportes se revisan en menos de 24 horas, y bloquear a alguien es inmediato y no le avisa. Si una cuenta se sanciona, la persona recibe un correo con el motivo y puede apelar; las apelaciones las lee una persona.</p>
+    <p>Y una precisión que casi nadie hace, porque es más fácil escribir «cifrado de extremo a extremo» y confiar en que nadie lo compruebe: <b>los mensajes de texto del chat no están cifrados de extremo a extremo</b>. Viajan por HTTPS y están guardados en una base de datos en la Unión Europea, con acceso restringido y registrado, pero un mensaje de texto es legible para quien administra el sistema —igual que en cualquier app que no sea de cifrado extremo a extremo—. Lo que sí va cifrado en reposo son las notas de voz y las grabaciones de llamada. Lo decimos porque afecta a lo que conviene escribir por un chat, y porque preferimos que lo sepas por nosotros.</p>
+    <p><a href="/verificacion">Cómo funciona la verificación</a> · <a href="/normas">Normas de la comunidad</a> · <a href="/guias/seguridad-en-citas-online">Consejos para una primera cita segura</a></p>
+
+    <h2>Tus datos</h2>
+    <p>Aura está operada desde España y cumple el RGPD. Los datos se alojan en la Unión Europea. No vendemos datos personales ni cedemos tu perfil a terceros para publicidad. Los documentos de identidad se usan para la verificación y se conservan el tiempo que exige la ley antifraude, no para nada más. Puedes descargar tus datos, corregirlos o borrar la cuenta desde los ajustes: el borrado es definitivo y se completa en un máximo de 30 días. En las páginas de contenido de esta web (guías y preguntas frecuentes) puede haber publicidad; si estás en la Unión Europea, se te pide permiso antes de usar cookies publicitarias y puedes retirarlo cuando quieras desde el enlace «Cookies» del pie. <a href="/privacidad">Política de privacidad</a> · <a href="/terminos">Términos</a></p>
+
+    <h2>Qué es gratis y qué se paga</h2>
+    <p>Crear el perfil, verificarte, explorar, hacer match y chatear es gratis, sin límite de tiempo y sin tarjeta. La versión gratuita tiene un tope diario de «me gusta», suficiente para un uso normal. La suscripción <b>Premium</b> quita ese tope, permite deshacer la última valoración y da más visibilidad; los <b>Boost</b> se compran por separado y suben tu perfil al principio de la fila durante un rato. Los precios están dentro de la app, en euros y con el IVA incluido, y se pueden cancelar cuando quieras desde los ajustes de tu tienda o desde tu perfil: no ponemos las cifras aquí porque cambian con las promociones y no queremos que esta página se quede desactualizada. <a href="/faq#pagos">Preguntas sobre pagos</a></p>
+
+    <h2>Qué no hacemos</h2>
+    <div class="grid">
+      <div class="card"><h3>No hay perfilado</h3><p>No hay puntuación de afinidad ni modelo que aprenda de tu actividad. El orden es fijo y público: Boost, conectados, verificados, azar.</p></div>
+      <div class="card"><h3>No hay perfiles falsos de adorno</h3><p>No creamos cuentas ni usamos bots para simular actividad. Si la app está tranquila, está tranquila.</p></div>
+      <div class="card"><h3>No hay mensajes sin match</h3><p>Nadie puede escribirte por haber pagado. El chat necesita que los dos hayáis dicho sí.</p></div>
+      <div class="card"><h3>No hay letra pequeña en el cobro</h3><p>Nada se cobra sin que lo hayas contratado, y la cancelación está en los ajustes, no escondida en un correo.</p></div>
+    </div>
 
     <h2>Guías para sacarle partido</h2>
     <p>Consejos prácticos para mejorar tu perfil, escribir mejores mensajes y tener citas seguras.</p>
@@ -1315,24 +1499,32 @@ function pageHub() {
     <p><a href="/guias">Ver todas las guías →</a></p>
 
     <h2>Preguntas frecuentes</h2>
-    <p>Resolvemos las dudas más habituales sobre cuentas, matches, seguridad y pagos en nuestra <a href="/faq">sección de preguntas frecuentes</a>. Y si necesitas ayuda personal, estamos en <a href="/contacto">contacto</a>.</p>
+    <p>Resolvemos las dudas más habituales sobre cuentas, matches, seguridad y pagos en la <a href="/faq">sección de preguntas frecuentes</a>. Si lo que necesitas es que te ayude una persona, escríbenos desde <a href="/contacto">contacto</a>: respondemos en menos de 24 horas laborables.</p>
+
+    <h2 id="en-que-punto">En qué punto está Aura</h2>
+    <p>Conviene decirlo antes de que pulses el botón: Aura está <b>temporalmente en revisión</b> mientras terminamos de rodar la moderación y la verificación. Si entras ahora, la app te enseñará ese aviso —«estamos afinando Aura»— con un botón para reintentar y una dirección de correo; no es un error tuyo ni un fallo del navegador, y el registro abierto tampoco está activo todavía. Todo lo que se explica en esta web está construido y aquí se puede leer entero; cuando el acceso vuelva a estar disponible, esta misma página lo dirá.</p>
 
     <div class="cta">
-      <h2>Empieza hoy en menos de dos minutos</h2>
-      <p>Perfiles verificados con documento y chat sólo cuando el interés es mutuo.</p>
-      <a class="btn" href="/">Abrir Aura</a>
+      <h2>Ir a la app</h2>
+      <p>Hasta aquí lo que hacemos y cómo. Lo que hay al otro lado del botón es la app misma: tus filtros, la gente que los cumple y ningún orden que no te hayamos explicado en esta página.</p>
+      <a class="btn" href="${APP_URL}">Entrar en Aura</a>
     </div>`;
 
   return layout({
     title: "Aura, la app de citas con perfiles verificados",
-    description: "Aura es la app de citas donde importa quién eres de verdad. Perfiles verificados con documento, chat sólo si hay match y un feed que decides tú con tus filtros. Regístrate gratis.",
-    path: "/inicio",
+    description: "Aura es la app de citas española con perfiles verificados por documento, chat sólo cuando hay match y un orden público: Boost, conectados, verificados y azar. Sin perfilado.",
+    path: "/",
     eyebrow: "✨ Conecta tu esencia",
-    h1: "Encuentra tu match en Aura",
-    sub: "Conexiones reales, momentos únicos. La app de citas con perfiles verificados y seguridad de verdad.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }],
-    // V924 · Sin anuncios: la portada existe para que te registres, no para
-    // informar. Bajo la política de Google no es contenido de editor.
+    h1: "La app de citas donde se sabe con quién hablas",
+    sub: "Perfiles verificados con documento, chat sólo cuando el interés es mutuo y un orden que te explicamos entero, sin algoritmo que te perfile.",
+    breadcrumb: [{ name: "Inicio", path: "/" }],
+    // V930 · Quien ya tiene sesión guardada y llega de fuera no se queda aquí:
+    // el script del <head> lo lleva a la app (ver scriptSesionHtml).
+    saltoSesion: true,
+    // V924/V930 · Sigue SIN anuncios, aunque ahora mida de sobra: es la puerta de
+    // entrada del sitio y la política de Google es explícita con las pantallas
+    // cuyo fin es que el visitante entre en el producto. Para ponerlos habría que
+    // añadir `ads: true` a mano, que es justo lo que la puerta exige.
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1344,16 +1536,38 @@ function pageHub() {
   });
 }
 
+/* V930 · El FAQ es LA página que lleva anuncios, y hasta ahora eran veinte
+   acordeones cerrados: 3236 de prosa que el visitante ve como una lista de
+   títulos. Pasa la puerta de PROSA_MINIMA, sí, pero medir no es lo mismo que
+   informar, y el reproche de Google fue justamente ese.
+
+   Lo que se añade son las ENTRADILLAS: texto abierto, visible sin pulsar nada,
+   que explica el tema antes de las preguntas concretas. Las respuestas del
+   acordeón NO se tocan, y es a propósito: son 1:1 con screenInfoFaq() de la app
+   (hay una comprobación que verifica que las dos digan lo mismo del orden del
+   feed), y si aquí se reescribieran, la web y la app empezarían a contar
+   versiones distintas de lo mismo. */
+const FAQ_ENTRADILLAS = {
+  Cuenta: "Una cuenta de Aura son tres cosas: un correo verificado, una identidad comprobada y un perfil. El correo se confirma con un código de seis dígitos y sirve para recuperar el acceso; la identidad se comprueba con documento y prueba de vida, y es lo que te habilita para escribir; el perfil es lo que ven los demás. Puedes mirar sin haber terminado la verificación, pero no mandar mensajes. Todo lo que has rellenado se puede cambiar después desde los ajustes, incluido el correo, y cerrar la cuenta no requiere hablar con nadie: está en Ajustes → Cuenta, el borrado es definitivo y se completa como máximo en 30 días.",
+  Matches: "En Aura no hay puntuación de compatibilidad ni nada que aprenda de lo que haces. Lo que ves sale de dos pasos separados: primero tus filtros descartan (edad, distancia, género y los campos de estilo de vida que hayas activado; ojo, quien tenga ese campo vacío también queda descartado), y después lo que queda se ordena siempre igual: Boost activo, gente conectada, perfiles verificados y el resto al azar. Un match es que los dos hayáis dicho «me gusta»; hasta ese momento nadie puede escribirte. La cuenta gratuita tiene un tope diario de «me gusta» y Premium lo quita.",
+  Chats: "El chat se abre con el match y vive mientras el match exista: si cualquiera de los dos deshace el match, la conversación desaparece para ambos. Para escribir hace falta tener la edad verificada — no es una recomendación, el servidor lo comprueba en cada mensaje. Hay dos cosas que conviene saber antes de usarlo: las imágenes que se envían por chat <b>no</b> pasan ningún filtro automático, así que si recibes algo inapropiado lo que funciona es denunciar la conversación (la revisa una persona en menos de 24 horas); y los mensajes de texto no están cifrados de extremo a extremo, van por HTTPS y se guardan en la Unión Europea.",
+  Seguridad: "La verificación es el cimiento de todo lo demás: documento oficial, selfie con comparación facial y, si el sistema no queda seguro, revisión humana y videoidentificación. Quien no la pasa no escribe. A partir de ahí, las herramientas están en tus manos: bloquear es inmediato y silencioso (la otra persona no recibe ningún aviso), denunciar abre un caso que se revisa en menos de 24 horas, y las sanciones siguen una escalera pública que va del aviso al baneo permanente con bloqueo de IP y de dispositivo. Si crees que una sanción es un error, se puede apelar y la lee una persona.",
+  Pagos: "Aura se usa gratis y sin tarjeta: perfil, verificación, explorar, match y chat. Lo que se paga son extras — la suscripción Premium (sin tope de «me gusta», deshacer la última valoración, más visibilidad) y los Boost, que suben tu perfil al principio de la fila un rato y se compran por separado. Los precios están dentro de la app, en euros con IVA incluido, y no se publican aquí porque cambian con las promociones. Nada se cobra sin que lo hayas contratado, y la cancelación está donde compraste: en los ajustes de la app o en la tienda de tu móvil.",
+};
+
 function pageFaq() {
   const cats = [...new Set(FAQ.map((f) => f.cat))];
   const catNav = `<div class="cats">${cats.map((c) => `<a href="#${encodeURIComponent(c.toLowerCase())}">${esc(c)}</a>`).join("")}</div>`;
-  let body = catNav;
+  let body = `<p style="font-size:18px;color:var(--soft);max-width:660px">Aquí están las dudas que nos llegan de verdad al correo de soporte, agrupadas por temas y con una explicación del tema antes de cada bloque. Si algo no cuadra con lo que ves en la app, escríbenos: preferimos corregir esta página a dejarla bonita.</p>${catNav}`;
   cats.forEach((c) => {
     body += `<h2 id="${encodeURIComponent(c.toLowerCase())}">${esc(c)}</h2>`;
+    if (FAQ_ENTRADILLAS[c]) body += `<p>${FAQ_ENTRADILLAS[c]}</p>`;
     FAQ.filter((f) => f.cat === c).forEach((f) => {
       body += `<details class="qa"><summary>${esc(f.q)}</summary><div class="a">${esc(f.a)}</div></details>`;
     });
   });
+  body += `<h2>Si algo sigue sin cuadrar</h2>
+    <p>Dos avisos para acabar, porque son los que más disgustos evitan. El primero: nadie de Aura te va a pedir nunca la contraseña, ni un código de verificación, ni dinero — si alguien lo hace, es una estafa, aunque el perfil parezca real y lleve distintivo. El segundo: las conversaciones que empiezan con mucha prisa por llevarte a otra aplicación, a una web de «verificación» o a una inversión son el patrón de fraude más habitual en cualquier app de citas; denunciar el perfil tarda diez segundos y nos ayuda a cerrar la cuenta antes de que le toque a alguien más.</p>`;
   body += `<div class="cta"><h2>¿No encuentras tu pregunta?</h2><p>Escríbenos y te ayudamos personalmente.</p><a class="btn" href="/contacto">Contactar</a></div>`;
 
   return layout({
@@ -1363,7 +1577,7 @@ function pageFaq() {
     eyebrow: "Ayuda",
     h1: "Preguntas frecuentes",
     sub: "Todo lo que necesitas saber, organizado por temas.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Preguntas frecuentes", path: "/faq" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Preguntas frecuentes", path: "/faq" }],
     ads: true,
     bodyHtml: body,
     jsonLd: {
@@ -1391,7 +1605,7 @@ function pageTerms() {
     eyebrow: "Legal",
     h1: "Términos y condiciones",
     sub: "Las reglas del juego, explicadas de forma clara. Última actualización: 13 de agosto de 2026.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Términos", path: "/terminos" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Términos", path: "/terminos" }],
     bodyHtml: legalListHtml(TERMS),
   });
 }
@@ -1404,7 +1618,7 @@ function pagePrivacy() {
     eyebrow: "Legal",
     h1: "Política de privacidad",
     sub: "Cómo protegemos, usamos y respetamos tus datos. Conforme al RGPD y la LOPD-GDD.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Privacidad", path: "/privacidad" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Privacidad", path: "/privacidad" }],
     bodyHtml: legalListHtml(PRIVACY),
   });
 }
@@ -1417,7 +1631,7 @@ function pageKyc() {
     eyebrow: "Seguridad",
     h1: "Verificación de identidad (KYC)",
     sub: "Solo mayores de 18 años. Así confirmamos que cada persona es real, protegiendo tus datos biométricos.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Verificación", path: "/verificacion" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Verificación", path: "/verificacion" }],
     bodyHtml: `<div class="card"><p>Aura sólo puede ser utilizada por personas mayores de 18 años. Para garantizarlo, y para prevenir la creación de perfiles falsos o la suplantación de identidad, aplicamos un proceso de <b>verificación de identidad</b> (KYC) que se completa antes de crear tu cuenta. Este documento explica por qué lo hacemos, cómo funciona y qué derechos tienes.</p></div>${legalListHtml(KYC)}`,
   });
 }
@@ -1441,7 +1655,7 @@ function pageRules() {
     eyebrow: "Comunidad",
     h1: "Normas de la comunidad",
     sub: "Un espacio seguro y respetuoso empieza por ti.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Normas", path: "/normas" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Normas", path: "/normas" }],
     bodyHtml: body,
   });
 }
@@ -1455,7 +1669,34 @@ function pageHelp() {
     { ic: "📸", h: "Perfil y fotos", p: "Requisitos, verificación de fotos y consejos.", to: "/guias/como-hacer-un-buen-perfil-de-citas" },
     { ic: "✉️", h: "Contactar soporte", p: "¿No encuentras lo que buscas? Escríbenos.", to: "/contacto" },
   ];
+  /* V930 · Esto era SOLO la rejilla de seis tarjetas de abajo: 79 caracteres de
+     prosa, o sea una pantalla de navegación con un título. Ahora lleva delante
+     los seis casos que de verdad llegan a soporte, resueltos. */
   const body = `
+    <p style="font-size:18px;color:var(--soft);max-width:660px">Esta página no es un índice: es lo que de verdad nos llega al correo de soporte, con la solución delante. Si tu caso es uno de estos seis, lo arreglas en un minuto sin escribirnos.</p>
+
+    <h2>No me llega el código de verificación</h2>
+    <p>El código de seis dígitos llega en menos de un minuto. Si no aparece: mira la carpeta de spam o de promociones, comprueba que el correo esté bien escrito (el fallo número uno es una letra de más en el dominio) y pide otro desde la misma pantalla. Si usas un alias o un correo corporativo con filtros estrictos, prueba con otra dirección: hay servidores que retienen varios minutos el correo automático. Usa siempre el último código que te haya llegado, no el de un intento anterior.</p>
+
+    <h2>La verificación de identidad me rechaza la foto</h2>
+    <p>Casi todos los rechazos son de foto, no de identidad. Lo que funciona: luz de frente y sin reflejos, el documento entero dentro del recuadro y sobre una superficie mate, sin funda de plástico, y quitarte las gafas para el selfie. Una foto del documento hecha a la pantalla de otro dispositivo se rechaza siempre: el sistema lo detecta, y es a propósito. Si la comprobación automática falla, el caso pasa a revisión humana y tienes hasta <b>dos revisiones manuales</b>; si aun así no queda claro, se pide una videoidentificación corta. Con esa parte hay que tener algo de paciencia, porque la hace una persona.</p>
+
+    <h2>No me aparecen perfiles nuevos</h2>
+    <p>Antes de pensar que la app está vacía, mira tus filtros: son excluyentes, y hay uno que sorprende a todo el mundo. Si filtras por un campo de estilo de vida (mascotas, tabaco, alcohol, estudios, ejercicio, qué buscas), <b>los perfiles que tienen ese campo sin rellenar también quedan fuera</b>, y mucha gente no lo rellena. Ensancha primero la distancia y el rango de edad, y después quita los filtros de estilo de vida de uno en uno. Y ten en cuenta lo otro: Aura acaba de empezar y está en revisión, así que si tu zona está tranquila, está tranquila — no la rellenamos con perfiles inventados.</p>
+
+    <h2>Tengo un match pero no puedo escribir</h2>
+    <p>Escribir exige tener la edad verificada, y eso se comprueba en cada mensaje, no sólo al registrarte. Si el campo de texto no te deja, la verificación está a medias o se quedó en revisión: termínala desde tu perfil y el chat se desbloquea solo. El match no se pierde por eso ni caduca, mientras ninguno de los dos lo deshaga.</p>
+
+    <h2>Quiero cancelar, o me han cobrado algo que no reconozco</h2>
+    <p>La cancelación está en Ajustes → Suscripción, y también en la tienda desde la que compraste (App Store o Google Play): basta con cancelar en un sitio, y conservas lo pagado hasta el final del periodo en curso. Si ves un cargo que no reconoces, escríbenos con la fecha y el importe exactos y lo rastreamos. Los reembolsos los gestiona la tienda donde se hizo la compra; si el problema es nuestro, lo resolvemos nosotros.</p>
+
+    <h2>Alguien me está molestando</h2>
+    <p>Bloquear es inmediato y no le llega ningún aviso a la otra persona. Denunciar abre un caso que revisa una persona en menos de 24 horas: si puedes, denuncia la conversación y no sólo el perfil, porque así vemos el contexto. No borres el chat antes de denunciar, que es la prueba. Y si hay amenazas, extorsión o dinero de por medio, denuncia también a la Policía: te damos por escrito lo que necesites para el trámite.</p>
+
+    <h2>Si nos escribes, dinos esto</h2>
+    <p>Con cuatro datos resolvemos casi todo a la primera: el <b>correo de tu cuenta</b>, qué esperabas que pasara y qué pasó, <b>cuándo</b> ocurrió, y una captura si es algo que se ve. Añade el modelo del móvil y el navegador si el problema es visual. Respondemos en menos de 24 horas laborables y siempre al correo asociado a la cuenta: es la única forma de saber que hablamos con su dueño.</p>
+
+    <h2>Por temas</h2>
     <div class="grid">${topics
       .map((t) => `<a class="card" href="${t.to}"><h3>${t.ic} ${esc(t.h)}</h3><p>${esc(t.p)}</p></a>`)
       .join("")}</div>
@@ -1467,7 +1708,7 @@ function pageHelp() {
     eyebrow: "Ayuda",
     h1: "Centro de ayuda",
     sub: "Resolvemos tus dudas para que Aura sea una experiencia sin fricciones.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Ayuda", path: "/ayuda" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Ayuda", path: "/ayuda" }],
     bodyHtml: body,
   });
 }
@@ -1479,15 +1720,28 @@ function pageContact() {
     { ic: "🔒", h: "Seguridad y RGPD", p: "seguridad@citasaura.es" },
     { ic: "💳", h: "Suscripciones", p: "suscripciones@citasaura.es" },
   ];
+  /* V930 · Eran cuatro tarjetas con cuatro direcciones de correo y el bloque de
+     la LSSI: 329 caracteres de prosa. Se explica para qué sirve cada canal, qué
+     hay que contar en el mensaje y qué NO se resuelve por correo. */
   const body = `
+    <p style="font-size:18px;color:var(--soft);max-width:660px">Escribimos poco y respondemos rápido: menos de 24 horas laborables, siempre al correo asociado a tu cuenta. Elige el canal por el asunto, porque cada uno va a una bandeja distinta y así no pierdes un día de rebote.</p>
     <div class="grid">${channels
       .map((c) => `<a class="card" href="mailto:${c.p}"><h3>${c.ic} ${esc(c.h)}</h3><p>${esc(c.p)}</p></a>`)
       .join("")}</div>
+
+    <h2>Qué canal para qué</h2>
+    <p><b>Soporte técnico</b> es para todo lo que no funciona: el código que no llega, la verificación que rechaza, una pantalla en blanco, un cargo raro. Cuéntanoslo con el correo de tu cuenta, qué hiciste, qué pasó, cuándo, y una captura si se ve; con eso normalmente basta y no hace falta una segunda vuelta de preguntas.</p>
+    <p><b>Seguridad y RGPD</b> es para tus derechos sobre tus datos —acceso, rectificación, portabilidad, supresión, oposición— y para avisarnos de un fallo de seguridad. Para ejercer un derecho no hace falta ningún formulario de pago ni justificar por qué: basta el correo de la cuenta y decir qué quieres. Respondemos en el plazo del RGPD, un mes como máximo, y casi siempre mucho antes. Si prefieres hacerlo tú mismo, descargar tus datos y borrar la cuenta están en los ajustes, sin pasar por nosotros.</p>
+    <p><b>Suscripciones</b> es para facturas, cancelaciones y reembolsos. Si compraste desde una tienda de móvil, el reembolso lo decide la tienda: dinos igual el caso y te acompañamos, pero no podemos revertir un cobro que no hemos hecho nosotros.</p>
+
+    <h2>Lo que no se resuelve por correo</h2>
+    <p>Dos cosas van mejor por dentro de la app. Para <b>denunciar a una persona</b>, hazlo desde la conversación o el perfil: eso abre un caso con el contexto y lo revisamos en menos de 24 horas; un correo contando lo que pasó nos deja sin la prueba. Y para <b>apelar una sanción</b>, usa el enlace del correo de notificación, porque lleva la referencia del caso. Las apelaciones las lee una persona, no un sistema automático, y se responden al correo de la cuenta.</p>
+    <p>Y un aviso que vale para siempre: nosotros no te vamos a pedir nunca la contraseña, ni un código de verificación, ni un pago por soporte. Si recibes un mensaje así con nuestro nombre, no es nuestro — mándanoslo a seguridad@citasaura.es y lo denunciamos.</p>
     <div class="card">
       <h3>Datos del prestador (LSSI-CE)</h3>
       <p>Aura es operado por <b>Manuel de Pedro</b>, NIF 03137923X, domicilio en Bulevar Clara Campoamor 9, España. Para cualquier cuestión legal o de protección de datos escríbenos a seguridad@citasaura.es.</p>
     </div>
-    <p>Respondemos en menos de 24 horas laborables. También puedes abrir un ticket desde tu perfil dentro de la <a href="/">app</a>.</p>`;
+    <p>Respondemos en menos de 24 horas laborables. También puedes abrir un ticket desde tu perfil dentro de la <a href="${APP_URL}">app</a>.</p>`;
   return layout({
     title: "Contacto",
     description: "Contacta con Aura: soporte técnico, seguridad y RGPD, suscripciones y consultas generales. Respondemos en menos de 24 h laborables.",
@@ -1495,7 +1749,7 @@ function pageContact() {
     eyebrow: "Contacto",
     h1: "Contacto",
     sub: "Estamos a un mensaje de distancia. Elige el canal que prefieras.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Contacto", path: "/contacto" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Contacto", path: "/contacto" }],
     bodyHtml: body,
     jsonLd: {
       "@context": "https://schema.org",
@@ -1518,13 +1772,30 @@ function pageComoFunciona() {
     { n: "4", h: "Haz match y chatea", p: "Cuando el interés es mutuo, se abre el chat. Rompe el hielo con un buen primer mensaje y, si hay sintonía, proponed una cita." },
   ];
   const body = `
-    <p style="font-size:18px;color:var(--soft)">Aura está diseñada para que conocer gente sea sencillo, seguro y con sentido. Así funciona de principio a fin.</p>
+    <p style="font-size:18px;color:var(--soft)">Aura está diseñada para que conocer gente sea sencillo, seguro y con sentido. Así funciona de principio a fin, con los detalles que normalmente no se cuentan.</p>
     ${steps.map((s) => `<div class="card"><h3>${s.n}. ${esc(s.h)}</h3><p>${esc(s.p)}</p></div>`).join("")}
+
+    <h2>El registro, paso a paso</h2>
+    <p>Introduces un correo y recibes un código de seis dígitos; ese correo será a partir de entonces la llave de la cuenta, así que conviene que sea uno al que entres. Después va la verificación de identidad, que tiene tres piezas: una foto de un documento oficial (DNI, NIE o pasaporte), un selfie que se compara con la cara del documento, y una videoidentificación corta sólo si las dos primeras no dejan las cosas claras. Si la comprobación automática falla, no te quedas fuera: hay hasta <b>dos revisiones manuales</b> hechas por una persona. Lo que no hay es forma de saltarse el paso, porque de eso depende que dentro sólo haya adultos reales.</p>
+    <p>La verificación trata datos biométricos, así que se pide tu consentimiento explícito y se explica en la <a href="/verificacion">política de verificación</a>: qué se guarda, cuánto tiempo y para qué. Si no la pasas, puedes seguir mirando la app, pero no escribir a nadie.</p>
+
+    <h2>El perfil: por qué los huecos importan</h2>
+    <p>Un perfil son fotos, una descripción y una lista de campos: intereses, qué buscas, mascotas, tabaco, alcohol, estudios, ejercicio, y los básicos de edad y ubicación. Los campos no sirven para que ningún sistema te entienda mejor —no hay ningún sistema haciendo eso— sino para pasar los filtros de los demás. Y ahí está el detalle que casi nadie sabe: cuando alguien filtra por un campo, <b>los perfiles que lo tienen vacío quedan excluidos</b>, porque el servidor no puede afirmar algo que nadie ha dicho. Dejar un campo en blanco no es neutral: es desaparecer de esas búsquedas.</p>
+    <p>Con las fotos, tres o cuatro con luz decente rinden más que diez. La principal es la que decide si alguien se detiene; que se te vea la cara sin gafas de sol es lo único que hace falta. <a href="/guias/como-hacer-un-buen-perfil-de-citas">La guía del perfil</a> lo desarrolla con ejemplos.</p>
+
+    <h2>Explorar: dos pasos separados</h2>
+    <p>Cuando abres la pantalla de explorar ocurren dos cosas seguidas y distintas. Primero se <b>descarta</b> a todo el que no cumple tus filtros —edad, distancia, género, estilo de vida— y eso es excluyente, no una preferencia. Después, lo que queda se <b>ordena</b> siempre igual: quien tiene un Boost activo, quien está conectado en ese momento, los perfiles verificados y el resto al azar. Cuatro reglas, ese orden, para todo el mundo.</p>
+    <p>No hay puntuación de afinidad, no se guarda cuánto tiempo miras una foto y no hay un modelo que aprenda de tus «me gusta»: con los mismos filtros, mañana verás prácticamente lo mismo. Eso significa que si quieres cambiar lo que ves, sabes exactamente qué mover. <a href="/guias/como-funciona-el-algoritmo-de-matches">La guía del algoritmo</a> lo cuenta campo por campo.</p>
+
+    <h2>El chat: qué se puede y qué no</h2>
+    <p>El chat aparece cuando los dos os habéis dado «me gusta», y no antes: nadie puede escribirte por haber pagado. Para enviar mensajes hay que tener la edad verificada, y eso se comprueba en cada envío. La conversación vive mientras viva el match — si cualquiera de los dos lo deshace, desaparece para ambos.</p>
+    <p>Dos precisiones honestas. Las <b>imágenes que se mandan por chat no pasan ningún filtro automático</b>: si recibes algo inapropiado, lo que funciona es denunciar la conversación, y la revisa una persona en menos de 24 horas. Y los mensajes de texto <b>no están cifrados de extremo a extremo</b>: viajan por HTTPS y se guardan en la Unión Europea con acceso restringido, pero no somos una app de cifrado extremo a extremo y no vamos a decir que lo somos. Las notas de voz y las grabaciones de llamada sí van cifradas en reposo.</p>
+
     <h2>Gratis vs. Premium</h2>
     <div class="card"><p>Puedes usar Aura gratis: crear tu perfil, explorar, hacer matches y chatear. La suscripción <b>Premium</b> añade extras como likes ilimitados, deshacer la última valoración y más visibilidad. Los precios exactos aparecen en la app y puedes cancelar cuando quieras. Consulta las <a href="/faq#pagos">preguntas sobre pagos</a>.</p></div>
     <h2>Seguridad desde el primer minuto</h2>
     <div class="card"><p>Todos los perfiles pasan por <a href="/verificacion">verificación de identidad</a>, las fotos del estado «Ahora mismo» pasan un prefiltro automático y una revisión humana antes de que las vea nadie, y puedes reportar o bloquear a cualquiera. Revisamos los reportes en menos de 24 horas. Lee también nuestros <a href="/guias/seguridad-en-citas-online">consejos de seguridad en citas online</a>.</p></div>
-    <div class="cta"><h2>¿Listo para empezar?</h2><p>Menos de dos minutos para crear tu perfil.</p><a class="btn" href="/">Crear cuenta</a></div>`;
+    ${ctaApp("Cuando abramos el acceso")}`;
   return layout({
     title: "Cómo funciona Aura",
     description: "Cómo funciona Aura paso a paso: registro y verificación, perfil, matches, chat, planes gratis y Premium, y seguridad.",
@@ -1532,10 +1803,11 @@ function pageComoFunciona() {
     eyebrow: "Guía rápida",
     h1: "Cómo funciona Aura",
     sub: "De crear tu perfil a tu primera cita, explicado paso a paso.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Cómo funciona", path: "/como-funciona" }],
-    // V924 · Sin anuncios: 1497 de prosa y promocional. Si algún día se
-    // convierte en una explicación de verdad, se le pone `ads: true` y la
-    // medida de PROSA_MINIMA decidirá sola.
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Cómo funciona", path: "/como-funciona" }],
+    // V924/V930 · Sin anuncios. Ya no es por la medida (con V930 pasa de 4800),
+    // sino por lo que es: una página que explica el producto para que lo uses.
+    // Ponerle anuncios exigiría añadir `ads: true` a mano, y no se hace: primero
+    // que Google reinstale la cuenta con lo que sí es contenido de editor.
     bodyHtml: body,
   });
 }
@@ -1552,7 +1824,7 @@ function pageGuidesIndex() {
     eyebrow: "Blog",
     h1: "Guías de citas",
     sub: "Consejos prácticos para conocer gente de forma segura y con sentido.",
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Guías", path: "/guias" }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Guías", path: "/guias" }],
     // V924 · Sin anuncios: es un índice, casi todo enlaces. Una pantalla de
     // navegación con un anuncio es exactamente lo que Google nos reprochó.
     bodyHtml: body,
@@ -1586,7 +1858,7 @@ function pageGuide(slug) {
     </article>
     ${adUnit()}
     ${relHtml}
-    <div class="cta"><h2>Ponlo en práctica</h2><p>Crea tu perfil en Aura y empieza a conocer gente hoy.</p><a class="btn" href="/">Abrir Aura</a></div>`;
+    ${ctaApp("Ponlo en práctica")}`;
   return layout({
     title: g.title,
     description: g.excerpt,
@@ -1594,7 +1866,7 @@ function pageGuide(slug) {
     eyebrow: "Guía",
     h1: g.title,
     sub: g.excerpt,
-    breadcrumb: [{ name: "Inicio", path: "/inicio" }, { name: "Guías", path: "/guias" }, { name: g.title, path: "/guias/" + g.slug }],
+    breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Guías", path: "/guias" }, { name: g.title, path: "/guias/" + g.slug }],
     ads: true,
     bodyHtml: body,
     jsonLd: {
@@ -1616,7 +1888,10 @@ function pageGuide(slug) {
 
 function sitemapXml() {
   const urls = [
-    { loc: "/inicio", pri: "1.0", freq: "weekly" },
+    // V930 · La portada es "/" y sólo se lista "/". /inicio sigue respondiendo
+    // 200 con la misma página, pero con canonical a "/": listar las dos sería
+    // pedirle a Google que indexe dos veces lo mismo.
+    { loc: "/", pri: "1.0", freq: "weekly" },
     { loc: "/como-funciona", pri: "0.9", freq: "monthly" },
     { loc: "/guias", pri: "0.8", freq: "weekly" },
     { loc: "/faq", pri: "0.8", freq: "monthly" },
@@ -1646,8 +1921,57 @@ function register(app) {
     res.send(body);
   };
 
+  /* V930 · LA PORTADA, en "/".
+     ------------------------------------------------------------------
+     Para que esta ruta se ejecute hace falta `index: false` en el
+     express.static de server.js: el índice del directorio (public/index.html)
+     se resuelve ANTES que cualquier ruta declarada después del static, y por eso
+     "/" servía el cascarón de la app. Si alguien devuelve el static a
+     `index: true`, esta ruta deja de verse (y la prueba de /tmp/portadatest.js
+     se pone roja, que es de lo que sirve).
+
+     PARÁMETROS DE FLUJO. Hay sitios de los que se vuelve a "/" con query: el
+     retorno de Stripe (?pago=ok&sid=…), el de la verificación de identidad
+     (?kyc=…), los enlaces de apelación de las plantillas de correo (?appeal=1),
+     los enlaces con token y las vistas previas del panel. Esa gente no viene a
+     leer: viene a terminar algo dentro de la app. Se redirige AQUÍ, en el
+     servidor, y no en JavaScript, por tres razones: funciona sin JS, cubre los
+     enlaces viejos y los Checkout creados antes de este despliegue (así no hay
+     que tocar ninguna URL de Stripe), y no depende de que haya sesión guardada.
+     Googlebot nunca trae estos parámetros, así que no es cloaking.
+
+     `utm_*` NO redirige a propósito: quien llega de una campaña tiene que ver la
+     portada, que es para lo que se hizo.
+
+     Los siete primeros son los que lee public/app.js de location.search (`pago`,
+     `sid`, `kyc`, `token`, `appeal`, `preview`, `code`); los satélites que van con
+     ellos (`theme`, `email`, `reason`, `kind`) no hace falta listarlos porque
+     nunca vienen solos y la query se pasa entera.
+
+     `invite` es el octavo y se añadió al repasar el repo: el enlace de
+     seguimiento de las invitaciones (server.js, /t/c/:token) redirige a
+     "/?invite=<código>", y con el registro cerrado una invitación es la única
+     forma de entrar. Quien pulsa ahí no viene a leer. */
+  const PARAMS_DE_FLUJO = ["pago", "sid", "kyc", "token", "appeal", "preview", "code", "invite"];
+  app.get("/", (req, res) => {
+    const q = req.query || {};
+    const esFlujo = PARAMS_DE_FLUJO.some((k) => typeof q[k] !== "undefined");
+    if (esFlujo) {
+      const qs = req.originalUrl.indexOf("?");
+      const cola = qs >= 0 ? req.originalUrl.slice(qs) : "";
+      res.setHeader("Cache-Control", "no-store");
+      return res.redirect(302, APP_ENTRADA + cola);
+    }
+    html(res, pagePortada());
+  });
+
   // Páginas de contenido (rastreables sin JS)
-  app.get("/inicio", (req, res) => html(res, pageHub()));
+  // /inicio: la portada vivió aquí hasta V930 y es la única URL que Search
+  // Console tiene indexada, así que sigue sirviendo LA MISMA página. Como
+  // pagePortada() declara `path: "/"`, sale con canonical a la raíz y consolida
+  // en ella. El 301 se pondrá cuando "/" aparezca indexada (semanas), porque un
+  // canonical se revierte en un día y un 301 más recrawl, no.
+  app.get("/inicio", (req, res) => html(res, pagePortada()));
   app.get("/como-funciona", (req, res) => html(res, pageComoFunciona()));
   app.get("/faq", (req, res) => html(res, pageFaq()));
   app.get("/preguntas", (req, res) => res.redirect(301, "/faq"));
@@ -1673,7 +1997,30 @@ function register(app) {
     res.send(sitemapXml());
   });
 
+  /* V930 · robots.txt. Hasta ahora daba 404: sin fichero estático y sin ruta.
+     Un 404 aquí no bloquea nada (Google asume "todo permitido"), pero tampoco
+     dice dónde está el sitemap ni evita que se pierda tiempo rastreando la API.
+     No se prohíbe el cascarón ni las rutas de la app: "/" TIENE que rastrearse,
+     y bloquear /explorar o /index.html haría que Google no pudiera comprobar que
+     el contenido y lo que ve el usuario coinciden. */
+  app.get("/robots.txt", (req, res) => {
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.send([
+      "User-agent: *",
+      "Allow: /",
+      "Disallow: /api/",
+      "Disallow: /admin",
+      "",
+      `Sitemap: ${BASE}/sitemap.xml`,
+      "",
+    ].join("\n"));
+  });
+
   // ads.txt (autorización de vendedor para AdSense; usa el mismo publisher)
+  // NOTA V930 · Esta ruta es código muerto: gana public/ads.txt, que sirve el
+  // express.static de más arriba con el MISMO contenido. Se deja porque es la red
+  // si algún día desaparece el fichero, y porque borrarla no arregla nada.
   app.get("/ads.txt", (req, res) => {
     res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "public, max-age=86400");

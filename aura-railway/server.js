@@ -16769,7 +16769,25 @@ app.get(/^\/(app\.js|features_ui\.js|styles\.css)$/, (req, res, next) => {
   res.sendFile(path.join(__dirname, "public", file), (err) => { if (err) next(); });
 });
 
+// V930 · `index: false` es la línea que hace posible la portada de contenido.
+// express.static resuelve "/" con el índice del directorio (public/index.html)
+// ANTES de que se registren las páginas públicas más abajo, así que hasta ahora
+// "/" servía el cascarón de la app: una pantalla de carga de 201 palabras. Eso
+// es exactamente lo que AdSense llamó "contenido de poco valor", porque es lo
+// que ve el revisor al abrir citasaura.es. Con el índice desactivado, "/" pasa
+// de largo y lo atiende features_seo_pages (ver register()).
+//   · El único índice de directorio de todo public/ es ese index.html, así que
+//     esto no afecta a ninguna otra ruta.
+//   · /index.html se sigue sirviendo igual (es una petición de fichero, no de
+//     directorio): la PWA arranca ahí (manifest start_url) y no se toca.
+//   · Interruptor de emergencia: BORRAR esta línea (el valor por defecto de
+//     serve-static ya es "index.html") devuelve exactamente el comportamiento
+//     anterior. Cuidado con "arreglarlo" poniendo `index: true`: serve-static
+//     sólo acepta un array de cadenas o false, así que `true` no restaura nada
+//     — lanza "index option must be array of strings or false" en CADA petición
+//     de fichero estático y tumba el sitio entero. Lo comprobé.
 app.use(express.static(path.join(__dirname, "public"), {
+  index: false,
   setHeaders: (res, filePath) => {
     // V634 · Cache diferenciada:
     //   - Recursos de /assets (imágenes, iconos, fuentes…): son estables y ya
@@ -16801,6 +16819,11 @@ try {
   seoPages.register(app);
 } catch (e) { console.error("SEO pages register error:", e && e.message); }
 
+// V930 · Esta ruta ya NO se ejecuta en condiciones normales: la portada la sirve
+// features_seo_pages en el register() de arriba. Se deja a propósito, y no es
+// código muerto inútil: es la RED. Ese require va dentro de un try/catch que sólo
+// escribe en el log, así que si el módulo fallara al cargarse, "/" caería aquí y
+// seguiría abriendo la app, en vez de dar un 404 en la puerta del sitio.
 app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
 
 // SPA fallback: rutas cliente (deep-links de emails y navegación interna)

@@ -2383,7 +2383,9 @@ async function viewDashboard(root){
       }
     );
     const rPreviewBtn = btn("Ver pantalla", "ghost sm", () => {
-      try { window.open("/?preview=review", "_blank", "noopener"); } catch {}
+      // V930 · "/" es la portada desde V930: la vista previa tiene que abrir el
+      // cascarón de la app, como ya hacían las otras dos previsualizaciones.
+      try { window.open("/index.html?preview=review", "_blank", "noopener"); } catch {}
     });
     rBanner.append(rIcon, rTxt, rToggleBtn, rPreviewBtn);
     root.appendChild(rBanner);
