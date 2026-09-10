@@ -154,7 +154,33 @@ function register(app, pool, helpers) {
     const [byPlan] = await pool.query(
       "SELECT plan, COUNT(*) n FROM users WHERE plan<>'free' AND status='active' AND role='user' GROUP BY plan"
     );
-    res.json({ ok: true, total, mrr: Number(mrr) || 0, by_plan: byPlan });
+    /* V932 · Serie de 12 meses para la gráfica de la vista Suscripciones.
+       Hasta ahora esta ruta NO devolvía ninguna serie y el panel la dibujaba
+       con Math.random() sobre el MRR actual (public/admin.js): doce meses de
+       ingresos inventados, cada vez distintos, en la vista donde se mira el
+       dinero. Aquí van los cobros REALES por mes (payments completados), que es
+       la misma fuente que ya usa la tendencia de MRR del cuadro de mando
+       (server.js, /api/stats/dashboard). Si la tabla no existe, doce ceros. */
+    let mrr_series = Array.from({ length: 12 }, () => 0);
+    try {
+      const [rows] = await pool.query(
+        `SELECT DATE_FORMAT(created_at, '%Y-%m') ym,
+                COALESCE(SUM(CASE WHEN status='completed' THEN amount ELSE 0 END), 0) v
+           FROM payments
+          WHERE created_at >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 11 MONTH)
+          GROUP BY ym`
+      );
+      const porMes = {};
+      rows.forEach((r) => { porMes[String(r.ym)] = Number(r.v) || 0; });
+      const hoy = new Date();
+      mrr_series = [];
+      for (let i = 11; i >= 0; i--) {
+        const dt = new Date(hoy.getFullYear(), hoy.getMonth() - i, 1);
+        const clave = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+        mrr_series.push(Math.round((porMes[clave] || 0) * 100) / 100);
+      }
+    } catch (e) { /* sin tabla payments: se quedan los ceros */ }
+    res.json({ ok: true, total, mrr: Number(mrr) || 0, by_plan: byPlan, mrr_series });
   }));
 
   app.get("/api/subscriptions/churn", wrap(async (req, res) => {

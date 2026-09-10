@@ -98,6 +98,79 @@ async function migrate(pool) {
   await addCol("device_incident_actions", "detail VARCHAR(500) NULL");
   await addCol("device_incident_actions", "admin_email VARCHAR(190) NULL");
   await addCol("device_incident_actions", "hash CHAR(64) NULL");
+
+  /* ==================================================================
+     V932 · Lo que le falta al esquema para que el LADO DEL USUARIO del
+     flujo "Dispositivo perdido o robado" pueda existir. Hasta ahora sólo
+     había mitad de administración: la pantalla del móvil llamaba a nueve
+     rutas que no existían. Todo aditivo e idempotente, como arriba.
+     ================================================================== */
+
+  // 1) El selfie de verificación llega como data URI (el cliente captura de la
+  //    cámara y hace canvas.toDataURL, public/app.js). VARCHAR(500) no cabe:
+  //    truncaría la imagen. Mismo patrón que photos.url (server.js).
+  try { await pool.query("ALTER TABLE device_incidents MODIFY COLUMN verify_selfie_url LONGTEXT NULL"); } catch (e) {}
+
+  // 2) `status` pasa de ENUM a VARCHAR(32). Motivo: en producción esta tabla
+  //    viene de un backend anterior y NO sabemos qué valores admite su ENUM
+  //    (ver la nota de reconciliación de arriba). Un `MODIFY … ENUM(...)` con
+  //    mi propia lista podría rechazar la migración o dejar filas fuera; a
+  //    VARCHAR la conversión es sin pérdida (cada valor pasa a su etiqueta) y
+  //    deja de ser un campo de minas para cada estado nuevo. El cliente pinta
+  //    `pending_selfie` (app.js) y ese es el estado en que nace un caso.
+  try { await pool.query("ALTER TABLE device_incidents MODIFY COLUMN status VARCHAR(32) NOT NULL DEFAULT 'pending_admin'"); } catch (e) {}
+
+  // 3) Campos que manda el formulario del usuario y la confirmación
+  //    "soy yo / no soy yo", que antes no tenían dónde guardarse.
+  await addCol("device_incidents", "emergency_contact_email VARCHAR(190) NULL");
+  await addCol("device_incidents", "emergency_contact_phone VARCHAR(40) NULL");
+  await addCol("device_incidents", "user_confirmed_at TIMESTAMP NULL");
+  await addCol("device_incidents", "user_confirm_type VARCHAR(20) NULL");
+  // Precisión del GPS en vivo: sin ella, "está en este punto" no dice si el
+  // radio es de 20 m o de 5 km, que es justo lo que importa para buscarlo.
+  await addCol("device_incidents", "frozen_last_accuracy INT NULL");
+
+  // 4) Contactos de emergencia por defecto. La pantalla los precarga con
+  //    GET /api/my/emergency-contacts y los guarda con PUT; no existía nada.
+  await pool.query(`CREATE TABLE IF NOT EXISTS user_emergency_contacts (
+    user_id INT NOT NULL PRIMARY KEY,
+    emergency_email VARCHAR(190) NULL,
+    emergency_phone VARCHAR(40) NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // 5) Plantillas de mensaje del panel (GET /api/admin/device-incident-templates).
+  //    El panel las pide con los nombres `kind`, `title`, `body` y usa dos
+  //    tipos: "message" (mensaje al dispositivo) y "lock" (pantalla de
+  //    bloqueo). admin_mod_templates NO sirve: sus columnas son name/action y
+  //    sus valores son de moderación de usuarios, no de dispositivos.
+  await pool.query(`CREATE TABLE IF NOT EXISTS device_incident_templates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    kind VARCHAR(20) NOT NULL DEFAULT 'message',
+    title VARCHAR(160) NOT NULL,
+    body TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_kind (kind)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  // Semilla SOLO si está vacía (así no se pisan las que edite el admin a mano).
+  try {
+    const [[{ n }]] = await pool.query("SELECT COUNT(*) n FROM device_incident_templates");
+    if (!n) {
+      await pool.query(
+        "INSERT INTO device_incident_templates (kind, title, body) VALUES (?,?,?),(?,?,?),(?,?,?),(?,?,?)",
+        [
+          "message", "Devolución con recompensa",
+          "Este teléfono está reportado como perdido. Su propietario ofrece una recompensa por su devolución. Escribe a la dirección de contacto que aparece en pantalla.",
+          "message", "Aviso de reporte activo",
+          "Este dispositivo tiene un reporte de pérdida o robo activo. La actividad de la cuenta está siendo registrada.",
+          "lock", "Bloqueo por robo con denuncia",
+          "Cuenta bloqueada a petición de su propietario, con denuncia policial presentada. Devuelve el dispositivo para desbloquearla.",
+          "lock", "Bloqueo por pérdida",
+          "Cuenta bloqueada temporalmente porque el dispositivo se ha declarado perdido. Si eres el propietario, entra desde otro dispositivo y cierra el caso.",
+        ]
+      );
+    }
+  } catch (e) { /* tabla recién creada en una réplica sin permisos: se ignora */ }
 }
 
 function register(app, pool, helpers) {
@@ -107,7 +180,7 @@ function register(app, pool, helpers) {
   registerPayments(app, pool, wrap, helpers);
   registerStats(app, pool, wrap);
   registerUsersBulk(app, pool, wrap);
-  registerDeviceIncidents(app, pool, wrap);
+  registerDeviceIncidents(app, pool, wrap, helpers);
 }
 
 // ==================== MODERACIÓN ====================
@@ -385,9 +458,21 @@ function registerUsersBulk(app, pool, wrap) {
   }));
 }
 // ==================== DISPOSITIVOS PERDIDOS ====================
-function registerDeviceIncidents(app, pool, wrap) {
+function registerDeviceIncidents(app, pool, wrap, helpers = {}) {
   const crypto = require("crypto");
   const idOf = (req) => parseInt(req.params.id, 10) || 0;
+  /* V932 · Dos ayudas que llegan de server.js:
+       · emailIsAdminListed — para no dejar bloquear a un administrador.
+       · refreshDeviceLocks — el bloqueo lo aplica un middleware de server.js
+         que lleva la lista de cuentas bloqueadas en memoria; tras cambiarla en
+         la base de datos hay que avisarle o tardaría hasta un minuto.
+     Si algún día no se pasan, esto NO deja el bloqueo sin efecto: el guardián
+     de verdad vive en server.js y allí la comprobación del administrador se
+     hace otra vez, con la lista a mano. Aquí es un aviso temprano y claro. */
+  const emailIsAdminListed = typeof helpers.emailIsAdminListed === "function"
+    ? helpers.emailIsAdminListed : () => false;
+  const refreshDeviceLocks = typeof helpers.refreshDeviceLocks === "function"
+    ? helpers.refreshDeviceLocks : async () => {};
 
   async function logAction(incidentId, action, detail, adminEmail) {
     const payload = `${incidentId}|${action}|${detail || ""}|${Date.now()}`;
@@ -451,15 +536,35 @@ function registerDeviceIncidents(app, pool, wrap) {
   }));
 
   // Trail GPS (best-effort: solo la última ubicación congelada)
+  // V932 · Esa última ubicación ya la escribe alguien: POST
+  // /api/my/device-incidents/:id/gps-live (server.js), que actualiza
+  // frozen_last_lat/lng/accuracy en esta misma fila. Sigue siendo UN punto, no
+  // un rastro — se devuelve la precisión para que el admin sepa el radio.
   app.get("/api/admin/device-incidents/:id/gps-trail", wrap(async (req, res) => {
     const [[inc]] = await pool.query(
-      "SELECT frozen_last_lat lat, frozen_last_lng lng, requested_at FROM device_incidents WHERE id=? LIMIT 1",
+      "SELECT frozen_last_lat lat, frozen_last_lng lng, frozen_last_accuracy acc, requested_at FROM device_incidents WHERE id=? LIMIT 1",
       [idOf(req)]
     );
     const points = inc && inc.lat != null
-      ? [{ lat: Number(inc.lat), lng: Number(inc.lng), at: inc.requested_at }]
+      ? [{ lat: Number(inc.lat), lng: Number(inc.lng), accuracy: inc.acc == null ? null : Number(inc.acc), at: inc.requested_at }]
       : [];
     res.json({ ok: true, points });
+  }));
+
+  // Plantillas de mensaje del panel (kind: "message" | "lock").
+  // V932 · El panel la pedía (pickMessageOrTemplate, public/admin.js) y no
+  // existía; su catch caía a un prompt() pelado, así que las plantillas eran
+  // una promesa vacía. La tabla y sus semillas se crean en migrate().
+  app.get("/api/admin/device-incident-templates", wrap(async (req, res) => {
+    const kind = String(req.query.kind || "").trim();
+    const args = [];
+    let where = "";
+    if (kind) { where = " WHERE kind=?"; args.push(kind); }
+    const [rows] = await pool.query(
+      `SELECT id, kind, title, body FROM device_incident_templates${where} ORDER BY kind ASC, id ASC LIMIT 200`,
+      args
+    );
+    res.json({ ok: true, items: rows });
   }));
 
   // Exportación de auditoría (JSON con firma hash por acción)
@@ -494,17 +599,30 @@ function registerDeviceIncidents(app, pool, wrap) {
     const id = idOf(req);
     const reason = String(req.body?.reason || "").slice(0, 255);
     const message = String(req.body?.message || "").slice(0, 500);
+    // V932 · Hasta ahora esto escribía locked_at y nada más: NINGÚN sitio del
+    // servidor rechazaba a esa cuenta, así que "Bloquear" no bloqueaba. Ahora
+    // sí (middleware de server.js). Y por eso mismo hay que impedir bloquear a
+    // un administrador de la lista: sería dejarse fuera de la propia app.
+    const [[inc]] = await pool.query(
+      "SELECT di.user_id, u.email FROM device_incidents di LEFT JOIN users u ON u.id=di.user_id WHERE di.id=? LIMIT 1",
+      [id]
+    );
+    if (inc && emailIsAdminListed(inc.email)) {
+      return res.status(400).json({ error: "admin_cannot_be_locked", email: inc.email });
+    }
     await pool.execute(
       "UPDATE device_incidents SET status='active', locked_at=NOW(), lock_reason=?, lock_message=? WHERE id=?",
       [reason, message, id]
     );
     await logAction(id, "lock", reason, admEmail(req));
+    await refreshDeviceLocks(); // que surta efecto ya, no en el próximo minuto
     res.json({ ok: true });
   }));
   app.post("/api/admin/device-incidents/:id/unlock", wrap(async (req, res) => {
     const id = idOf(req);
     await pool.execute("UPDATE device_incidents SET locked_at=NULL, scheduled_lock_at=NULL WHERE id=?", [id]);
     await logAction(id, "unlock", null, admEmail(req));
+    await refreshDeviceLocks(); // V932 · devolver el acceso también es inmediato
     res.json({ ok: true });
   }));
   app.post("/api/admin/device-incidents/:id/schedule-lock", wrap(async (req, res) => {

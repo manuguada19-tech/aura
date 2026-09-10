@@ -985,6 +985,87 @@ app.use((req, res, next) => {
   return requireAdmin(req, res, next);
 });
 
+/* ================================================================
+   V932 · Bloqueo remoto de dispositivo — el guardián que faltaba
+   ----------------------------------------------------------------
+   El panel tenía "🔒 Bloquear" desde V500 y la app promete al usuario que el
+   dispositivo "se bloqueará automáticamente". Lo único que ocurría era un
+   UPDATE de device_incidents.locked_at: NINGUNA ruta del servidor rechazaba a
+   esa cuenta. El bloqueo era una pantalla que la app se dibujaba a sí misma
+   leyendo /api/my/device-status, o sea: quien tuviera el móvil la esquivaba
+   con un cliente viejo, con la API a pelo o sin conexión.
+
+   Aquí se aplica de verdad, delante de TODAS las rutas /api/my/*, con 423
+   (el mismo código que las restricciones de cuenta) y error "device_locked".
+
+   Tres cosas pensadas a propósito:
+    · La lista de bloqueados vive en memoria y se refresca cada minuto, así que
+      el caso normal (nadie bloqueado) no cuesta ni una consulta por petición.
+      Bloquear y desbloquear desde el panel llaman a refreshDeviceLocks() y
+      surten efecto en el acto.
+    · Una cuenta de app.access_admin_emails NUNCA entra en la lista. Es la
+      salvaguarda para no dejarse fuera de su propia app; el panel además lo
+      rechaza antes (features_admin_extra2.js), pero la decisión de verdad se
+      toma aquí, donde la lista de administradores está a mano.
+    · GET /api/my/device-status queda fuera del bloqueo: es justo la ruta que
+      el cliente usa para saber que está bloqueado y pintar la pantalla.
+   ================================================================ */
+const _deviceLocks = new Map(); // uid -> { reason, message }
+
+async function refreshDeviceLocks() {
+  if (!BOOT_READY) return; // sin esquema ni ajustes cargados no se bloquea a nadie
+  try {
+    const [rows] = await pool.query(
+      `SELECT di.user_id, di.lock_reason, di.lock_message, u.email
+         FROM device_incidents di
+         LEFT JOIN users u ON u.id = di.user_id
+        WHERE di.user_id IS NOT NULL
+          AND di.status IN ('active','approved')
+          AND (di.locked_at IS NOT NULL
+               OR (di.scheduled_lock_at IS NOT NULL AND di.scheduled_lock_at <= NOW()))`
+    );
+    const next = new Map();
+    for (const r of rows) {
+      if (emailIsAdminListed(r.email)) continue; // salvaguarda de administrador
+      next.set(Number(r.user_id), {
+        reason: r.lock_reason || "Dispositivo reportado como perdido o robado.",
+        message: r.lock_message || null,
+      });
+    }
+    _deviceLocks.clear();
+    for (const [k, v] of next) _deviceLocks.set(k, v);
+  } catch (e) {
+    // Tabla sin migrar todavía o consulta imposible: mejor no bloquear a nadie
+    // que bloquear a todos. Se reintenta al minuto siguiente.
+    console.warn("device locks refresh failed:", e.message);
+  }
+}
+setInterval(refreshDeviceLocks, 60 * 1000);
+setTimeout(refreshDeviceLocks, 20 * 1000);
+
+function deviceLockFor(uid) {
+  const n = Number(uid);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return _deviceLocks.get(n) || null;
+}
+
+const DEVICE_LOCK_EXEMPT = new Set(["GET /api/my/device-status"]);
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/my/")) return next();
+  if (!_deviceLocks.size) return next(); // caso normal, coste cero
+  if (DEVICE_LOCK_EXEMPT.has(`${req.method} ${req.path}`)) return next();
+  let uid = null;
+  try { uid = readMyUserId(req); } catch { uid = null; }
+  if (!uid) return next(); // sin sesión: que el handler dé su 401 como siempre
+  const lock = deviceLockFor(uid);
+  if (!lock) return next();
+  return res.status(423).json({
+    error: "device_locked",
+    reason: lock.reason,
+    message: lock.message || lock.reason,
+  });
+});
+
 // V824 · Auditoría de acciones de admin. Registra SOLO las peticiones que
 // modifican estado (POST/PUT/PATCH/DELETE) hechas por un admin autenticado.
 // Se engancha al final de la respuesta para conocer el código de estado y no
@@ -2722,6 +2803,93 @@ app.get("/api/stats/orientation", wrap(async (req, res) => {
     FROM users GROUP BY orientation ORDER BY c DESC
   `);
   res.json(rows);
+}));
+
+/* ================================================================
+   V932 · Tres tarjetas del panel que pedían rutas inexistentes
+   ----------------------------------------------------------------
+   Las encontró la comprobación genérica de V931 (cada fetch del cliente tiene
+   que resolver a una ruta real). Dos fallaban en silencio —llevan .catch y la
+   tarjeta se quedaba a cero— y "Comparar periodos" rompía a la vista.
+   ================================================================ */
+
+// Resumen de chats (public/admin.js, cabecera de la vista Chats).
+// "Activos ahora" = conversaciones con algún mensaje en los últimos 15 min;
+// "Reportados" = conversaciones marcadas (conversations.flagged), que es lo que
+// el panel usa para filtrar. Cada consulta cae a 0 por su cuenta si la tabla
+// no existe en una instancia antigua, en vez de tumbar la vista entera.
+app.get("/api/chats/summary", wrap(async (req, res) => {
+  const uno = async (sql) => {
+    try { const [[r]] = await pool.query(sql); return Number(r && r.n) || 0; }
+    catch { return 0; }
+  };
+  const [total, active_now, messages_today, flagged] = await Promise.all([
+    uno("SELECT COUNT(*) n FROM conversations"),
+    uno("SELECT COUNT(*) n FROM conversations WHERE last_message_at >= NOW() - INTERVAL 15 MINUTE"),
+    uno("SELECT COUNT(*) n FROM messages WHERE created_at >= CURDATE()"),
+    uno("SELECT COUNT(*) n FROM conversations WHERE flagged=1"),
+  ]);
+  res.json({ ok: true, total, active_now, messages_today, flagged });
+}));
+
+/* Comparar dos periodos (modal "📊 Comparar periodos" del panel).
+   Devuelve { metrics: { <nombre>: { a, b, delta_pct } } }, que es lo que el
+   cliente recorre. Las cuatro fechas son obligatorias y se validan: sin eso,
+   un "2026" suelto se colaría en el SQL como parámetro y devolvería basura. */
+app.get("/api/stats/compare", wrap(async (req, res) => {
+  const esFecha = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")) && !Number.isNaN(Date.parse(s));
+  const { a1, a2, b1, b2 } = req.query;
+  if (![a1, a2, b1, b2].every(esFecha)) return res.status(400).json({ error: "bad_dates" });
+  if (String(a1) > String(a2) || String(b1) > String(b2)) return res.status(400).json({ error: "bad_range" });
+
+  // Suma de un periodo [d1, d2] con los dos extremos incluidos.
+  const suma = async (tabla, expr, d1, d2) => {
+    try {
+      const [[r]] = await pool.query(
+        `SELECT COALESCE(${expr}, 0) v FROM ${tabla}
+          WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 DAY)`,
+        [d1, d2]
+      );
+      return Number(r.v) || 0;
+    } catch { return 0; }
+  };
+  const pagos = "SUM(CASE WHEN status='completed' THEN amount ELSE 0 END)";
+  const definicion = [
+    ["Altas",     "users",    "COUNT(*)"],
+    ["Matches",   "matches",  "COUNT(*)"],
+    ["Mensajes",  "messages", "COUNT(*)"],
+    ["Reportes",  "reports",  "COUNT(*)"],
+    ["Ingresos €","payments", pagos],
+  ];
+  const metrics = {};
+  for (const [nombre, tabla, expr] of definicion) {
+    const [a, b] = await Promise.all([suma(tabla, expr, a1, a2), suma(tabla, expr, b1, b2)]);
+    const delta = a === 0 ? (b > 0 ? 100 : 0) : Math.round(((b - a) / a) * 100);
+    metrics[nombre] = { a: Math.round(a * 100) / 100, b: Math.round(b * 100) / 100, delta_pct: delta };
+  }
+  res.json({ ok: true, range_a: [a1, a2], range_b: [b1, b2], metrics });
+}));
+
+/* Estadísticas de anuncios. Devuelve CEROS, y eso es la respuesta correcta:
+   no se sirve ni un anuncio todavía (ads.enabled) y no existe ninguna tabla de
+   impresiones en todo el proyecto — lo comprobé antes de escribir esto. El
+   panel se las inventaba con Math.random() para dibujar la gráfica; eso se ha
+   quitado de public/admin.js. Cuando AdSense empiece a servir, los informes
+   reales están en su panel; llevar aquí una contabilidad paralela sería otra
+   fuente de números que no cuadran. Si algún día se registran impresiones
+   propias, este es el sitio donde sumarlas. */
+app.get("/api/ads/stats", wrap(async (req, res) => {
+  const catorceCeros = Array.from({ length: 14 }, () => 0);
+  res.json({
+    ok: true,
+    source: isTrue("ads.enabled", false) ? "adsense_sin_contabilidad_propia" : "anuncios_apagados",
+    impressions_30d: 0,
+    clicks_30d: 0,
+    revenue_30d: 0,
+    impressions_series: catorceCeros,
+    revenue_series: catorceCeros,
+    note: "El servidor no cuenta impresiones ni ingresos: los informes reales están en el panel de la red de anuncios.",
+  });
 }));
 
 // Activity feed
@@ -5363,6 +5531,53 @@ async function activityStreamCleanup() {
 setInterval(activityStreamCleanup, 12 * 60 * 60 * 1000); // cada 12 h
 setTimeout(activityStreamCleanup, 60 * 1000);
 
+/* ---- Cleanup cron: purga de la tabla `logs` > 90 días ----------------
+   V931 · La purga de arriba borra activity_stream, NO la tabla `logs`, que
+   hasta ahora no tenía retención ninguna: crecía para siempre. La vista de
+   Registros del panel ya le dice al admin que los registros se limpian
+   automáticamente, así que esto convierte esa frase en verdad en vez de
+   cambiarle el texto. Mismo patrón y mismo ajuste que activity_stream:
+   logs.retention_days, 0 o vacío desactiva la purga. */
+async function logsCleanup() {
+  try {
+    const days = parseInt(getSetting("logs.retention_days", "90"), 10);
+    if (!Number.isFinite(days) || days <= 0) return; // desactivado
+    await pool.execute(
+      "DELETE FROM logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+      [days]
+    );
+  } catch (e) { console.warn("logs cleanup failed:", e.message); }
+}
+setInterval(logsCleanup, 12 * 60 * 60 * 1000); // cada 12 h
+setTimeout(logsCleanup, 60 * 1000);
+
+/* ---- Cleanup cron: selfie y GPS de casos de dispositivo ya cerrados ---
+   V932 · Un caso de "dispositivo perdido" guarda dos datos especialmente
+   delicados: un selfie —que retrata a quien tenga el móvil en ese momento, y
+   puede ser un tercero que no ha hecho nada— y la última posición GPS con su
+   IP. Una vez el caso está cerrado, denegado o archivado, conservarlos no
+   protege a nadie: sólo es un archivo de caras y ubicaciones esperando una
+   filtración. Se borran esos campos pasados N días (device.retention_days, 90
+   por defecto; 0 o vacío desactiva la purga) y se conserva el resto del caso
+   —tipo, motivo, fechas, auditoría— que es lo que da valor a un histórico. */
+async function deviceIncidentsCleanup() {
+  try {
+    const days = parseInt(getSetting("device.retention_days", "90"), 10);
+    if (!Number.isFinite(days) || days <= 0) return; // desactivado
+    await pool.execute(
+      `UPDATE device_incidents
+          SET verify_selfie_url=NULL, frozen_last_lat=NULL, frozen_last_lng=NULL,
+              frozen_last_accuracy=NULL, frozen_last_ip=NULL
+        WHERE status IN ('closed','denied','archived')
+          AND (verify_selfie_url IS NOT NULL OR frozen_last_lat IS NOT NULL OR frozen_last_ip IS NOT NULL)
+          AND COALESCE(reviewed_at, requested_at) < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [days]
+    );
+  } catch (e) { console.warn("device incidents cleanup failed:", e.message); }
+}
+setInterval(deviceIncidentsCleanup, 12 * 60 * 60 * 1000); // cada 12 h
+setTimeout(deviceIncidentsCleanup, 90 * 1000);
+
 app.get("/api/admin/waitlist", wrap(async (req, res) => {
   const q = String(req.query.q || "").trim().toLowerCase();
   const limit = Math.min(500, parseInt(req.query.limit || 100, 10) || 100);
@@ -5537,6 +5752,52 @@ app.get("/api/admin/maintenance/recipients", wrap(async (req, res) => {
     last_sent_at: lastRun.length ? lastRun[0].last_at : null,
     last_template: lastRun.length ? lastRun[0].template_id : null,
   });
+}));
+
+/* ================================================================
+   V932 · Borrado del historial de avisos de mantenimiento
+   ----------------------------------------------------------------
+   El panel tenía tres botones —"Borrar seleccionados", "Borrar TODO el
+   historial" y la papelera de cada fila— y ninguna de las tres rutas existía:
+   los dos primeros mostraban "Error borrando" y el tercero "Error eliminando".
+
+   El filtro `template_id IN ('maintenance_notice','maintenance_ended')` NO es
+   decorativo y se repite en las tres: la tabla email_outbox guarda TODO el
+   correo saliente (bienvenidas, recuperación de contraseña, avisos de
+   moderación…). Sin ese filtro, "Borrar TODO el historial" desde la vista de
+   mantenimiento vaciaría el registro de todos los envíos de la plataforma.
+   ================================================================ */
+const MAINTENANCE_TEMPLATES = "template_id IN ('maintenance_notice','maintenance_ended')";
+
+app.post("/api/admin/maintenance/recipients/bulk-delete", wrap(async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const limpios = ids.map((v) => parseInt(v, 10)).filter((n) => Number.isFinite(n) && n > 0).slice(0, 1000);
+  if (!limpios.length) return res.status(400).json({ error: "ids_required" });
+  const [r] = await pool.query(
+    `DELETE FROM email_outbox WHERE ${MAINTENANCE_TEMPLATES} AND id IN (${limpios.map(() => "?").join(",")})`,
+    limpios
+  );
+  try { await logActivity("admin", `${r.affectedRows} registro(s) del historial de mantenimiento borrados por ${req.admin?.email || "admin"}`); } catch {}
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+// "Borrar TODO el historial". Ojo: esta ruta la pedía el panel como DELETE
+// sobre la MISMA dirección que el GET de la lista, así que una comprobación
+// que sólo mire caminos (sin método) la da por existente. No existía.
+app.delete("/api/admin/maintenance/recipients", wrap(async (req, res) => {
+  const [r] = await pool.query(`DELETE FROM email_outbox WHERE ${MAINTENANCE_TEMPLATES}`);
+  try { await logActivity("admin", `Historial de mantenimiento vaciado (${r.affectedRows} registros) por ${req.admin?.email || "admin"}`); } catch {}
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+app.delete("/api/admin/maintenance/recipients/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [r] = await pool.execute(
+    `DELETE FROM email_outbox WHERE ${MAINTENANCE_TEMPLATES} AND id=?`, [id]
+  );
+  if (!r.affectedRows) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true, deleted: r.affectedRows });
 }));
 
 app.get("/api/admin/waitlist/export.csv", wrap(async (req, res) => {
@@ -6956,6 +7217,24 @@ app.get("/api/logs", wrap(async (req, res) => {
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const [rows] = await pool.query(`SELECT * FROM logs ${where} ORDER BY created_at DESC LIMIT ?`, [...params, Number(limit)]);
   res.json(rows);
+}));
+
+/* V931 · Purga manual de la tabla `logs`. El botón "🧹 Limpiar > 30 días" de la
+   vista de Registros del panel llamaba a esta ruta y NO existía: el fetch
+   fallaba y el admin veía "Error al limpiar".
+   No hace falta comprobar el admin aquí: al ir bajo /api/admin/ la puerta de
+   /api/* (arriba, ~970) ya le aplica requireAdmin.
+   `days` se exige >= 1 para que no haya manera de vaciar la tabla entera. */
+app.delete("/api/admin/logs/purge", wrap(async (req, res) => {
+  const days = parseInt(req.query.days, 10);
+  if (!Number.isFinite(days) || days < 1) return res.status(400).json({ error: "invalid_days" });
+  const [r] = await pool.execute(
+    "DELETE FROM logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
+    [days]
+  );
+  const borradas = r.affectedRows || 0;
+  try { await logActivity("system", `Purga manual de logs anteriores a ${days} días: ${borradas} filas`); } catch {}
+  res.json({ ok: true, deleted: borradas, days });
 }));
 
 // Settings
@@ -10421,6 +10700,254 @@ app.post("/api/my/photos/:id/primary", wrap(async (req, res) => {
   await pool.execute("UPDATE photos SET is_primary=1, crop_url=? WHERE id=? AND user_id=?", [cropVal, id, me]);
   const url = await syncPrimaryPhoto(me);
   res.json({ ok: true, photo_url: url });
+}));
+
+/* ============================================================
+   V932 · "Dispositivo perdido o robado" — LADO DEL USUARIO
+   ------------------------------------------------------------
+   La mitad de administración existe desde V713 (15 rutas en
+   features_admin_extra2.js: aprobar, denegar, bloquear, hacer sonar, mensaje,
+   rastro GPS, auditoría). La pantalla del móvil existe desde V500. Lo que no
+   existía era el puente: ocho rutas que el cliente llamaba y devolvían 404,
+   por eso V931 retiró la entrada del menú.
+
+   Contrato tomado del cliente publicado (public/app.js), con sus nombres tal
+   cual — incluidas las incoherencias, que NO se "arreglan" porque romperían la
+   pantalla: el formulario manda `lock_screen_message` (la columna se llama
+   lock_message) y `emergency_contact_email/phone`, mientras los contactos por
+   defecto se leen y escriben como `emergency_email/phone`.
+
+     GET  /api/my/device-incidents              → mis casos (sólo los míos)
+     POST /api/my/device-incidents              → abrir caso
+     POST /api/my/device-incidents/:id/selfie   → selfie de verificación
+     POST /api/my/device-incidents/:id/gps-live → última posición
+     POST /api/my/device-incidents/:id/confirm  → "soy yo" / "no soy yo"
+     GET  /api/my/device-status                 → ¿bloqueado?
+     GET  /api/my/emergency-contacts            → contactos por defecto
+     PUT  /api/my/emergency-contacts            → guardarlos
+
+   Dos cuidados que no son opcionales:
+    · police_report_url lo escribe el usuario y el PANEL lo pinta como href
+      directo (public/admin.js). Sin validar el esquema, un "javascript:…"
+      sería XSS almacenado contra el panel del administrador. Se exige http(s).
+    · El selfie retrata a quien tenga el móvil, que puede ser un tercero
+      inocente. Pasa por validPhotoData y se borra por retención
+      (deviceIncidentsCleanup).
+   ============================================================ */
+// Estados en los que un caso se considera abierto (los cerrados son
+// closed/denied/archived). `pending_evidence` es el nombre viejo del ENUM de
+// V713; `pending_selfie` es el que pinta el cliente y con el que nacen los
+// casos nuevos. Se aceptan los dos para no dejar tuerta a la instancia vieja.
+const DEVICE_OPEN_STATUSES = ["pending_selfie", "pending_evidence", "pending_admin", "approved", "active"];
+const DEVICE_TYPES = new Set(["lost", "stolen", "suspicious", "other"]);
+const MAX_OPEN_DEVICE_CASES = 3;
+
+// URL de la denuncia: sólo http(s). Nada de javascript:, data:, file: ni
+// esquemas raros. La longitud, a la de la columna.
+function validPoliceReportUrl(s) {
+  const v = String(s == null ? "" : s).trim();
+  if (!v || v.length > 500) return false;
+  if (!/^https?:\/\/[^\s]+$/i.test(v)) return false;
+  try { const u = new URL(v); return u.protocol === "http:" || u.protocol === "https:"; }
+  catch { return false; }
+}
+
+/* Sesión para las acciones que pueden BLOQUEAR una cuenta. Aquí no vale el
+   X-User-Id de compatibilidad que acepta readMyUserId: por defecto
+   security.require_auth_token está en false, así que cualquiera podría mandar
+   la cabecera de otro y bloquearle la cuenta. Se exige token firmado. */
+function readMyUserIdSigned(req) {
+  return verifyUserToken(readUserToken(req));
+}
+
+app.get("/api/my/device-incidents", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT id, type, status, reason, police_report_url, lock_message,
+            locked_at, requested_at, reviewed_at, user_confirm_type
+       FROM device_incidents WHERE user_id=? ORDER BY id DESC LIMIT 50`,
+    [me]
+  );
+  res.json({ ok: true, items: rows });
+}));
+
+app.post("/api/my/device-incidents", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const b = req.body || {};
+  const type = String(b.type || "lost").trim();
+  if (!DEVICE_TYPES.has(type)) return res.status(400).json({ error: "bad_type" });
+  const url = String(b.police_report_url || "").trim();
+  if (!url) return res.status(400).json({ error: "police_report_url_required" });
+  if (!validPoliceReportUrl(url)) return res.status(400).json({ error: "invalid_police_report_url" });
+  const email = b.emergency_contact_email == null ? null : String(b.emergency_contact_email).trim().slice(0, 190);
+  if (email && !email.includes("@")) return res.status(400).json({ error: "invalid_emergency_email" });
+  const phone = b.emergency_contact_phone == null ? null : String(b.emergency_contact_phone).trim().slice(0, 40);
+  const reason = b.reason == null ? null : String(b.reason).trim().slice(0, 2000);
+  const lockMsg = b.lock_screen_message == null ? null : String(b.lock_screen_message).trim().slice(0, 500);
+
+  // Un caso abierto es trabajo para el administrador y una alarma para el
+  // usuario: no puede ser un grifo abierto.
+  const [[{ abiertos }]] = await pool.query(
+    `SELECT COUNT(*) abiertos FROM device_incidents
+      WHERE user_id=? AND status IN (${DEVICE_OPEN_STATUSES.map(() => "?").join(",")})`,
+    [me, ...DEVICE_OPEN_STATUSES]
+  );
+  if (abiertos >= MAX_OPEN_DEVICE_CASES) {
+    return res.status(429).json({ error: "too_many_open_cases", max: MAX_OPEN_DEVICE_CASES });
+  }
+
+  const [ins] = await pool.execute(
+    `INSERT INTO device_incidents
+       (user_id, type, status, reason, police_report_url, lock_message,
+        emergency_contact_email, emergency_contact_phone, frozen_last_ip)
+     VALUES (?,?,'pending_selfie',?,?,?,?,?,?)`,
+    [me, type, reason, url, lockMsg, email || null, phone || null, clientIp(req)]
+  );
+  try { await logActivity("dispositivo", `Caso #${ins.insertId} (${type}) abierto por el usuario ${me}`); } catch {}
+  try { await logStream(me, "device_incident_open", { detail: `#${ins.insertId} ${type}`, req }); } catch {}
+  res.json({ ok: true, incident_id: ins.insertId, status: "pending_selfie" });
+}));
+
+app.post("/api/my/device-incidents/:id/selfie", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const selfie = req.body?.selfie_url;
+  if (!validPhotoData(selfie)) return res.status(400).json({ error: "invalid_image" });
+  // El caso tiene que ser SUYO. Si no lo es, 404: ni se confirma que exista.
+  const [[own]] = await pool.query(
+    "SELECT id, status FROM device_incidents WHERE id=? AND user_id=? LIMIT 1", [id, me]
+  );
+  if (!own) return res.status(404).json({ error: "not_found" });
+  // El selfie es lo que hace pasar el caso a la bandeja del panel. Si el
+  // administrador ya lo revisó, se guarda el nuevo pero no se reabre el estado.
+  const pasaAPendiente = own.status === "pending_selfie" || own.status === "pending_evidence";
+  await pool.execute(
+    pasaAPendiente
+      ? "UPDATE device_incidents SET verify_selfie_url=?, status='pending_admin' WHERE id=? AND user_id=?"
+      : "UPDATE device_incidents SET verify_selfie_url=? WHERE id=? AND user_id=?",
+    [selfie, id, me]
+  );
+  res.json({ ok: true, status: pasaAPendiente ? "pending_admin" : own.status });
+}));
+
+app.post("/api/my/device-incidents/:id/gps-live", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const lat = Number(req.body?.lat), lng = Number(req.body?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return res.status(400).json({ error: "bad_coords" });
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return res.status(400).json({ error: "bad_coords" });
+  const accRaw = Number(req.body?.accuracy);
+  const acc = Number.isFinite(accRaw) && accRaw >= 0 ? Math.min(1000000, Math.round(accRaw)) : null;
+  // Sólo el dueño del caso y sólo mientras el caso esté abierto: un caso
+  // cerrado no debe seguir recogiendo la ubicación de nadie.
+  const [r] = await pool.execute(
+    `UPDATE device_incidents
+        SET frozen_last_lat=?, frozen_last_lng=?, frozen_last_accuracy=?, frozen_last_ip=?
+      WHERE id=? AND user_id=? AND status IN (${DEVICE_OPEN_STATUSES.map(() => "?").join(",")})`,
+    [lat, lng, acc, clientIp(req), id, me, ...DEVICE_OPEN_STATUSES]
+  );
+  if (!r.affectedRows) return res.status(404).json({ error: "not_found" });
+  res.json({ ok: true });
+}));
+
+/* "Soy yo" / "No soy yo". Acción destructiva: `not_me` BLOQUEA la cuenta de
+   verdad (el guardián de /api/my/* de más arriba), así que exige token firmado.
+
+   Y un detalle incómodo que conviene tener escrito: este modal lo ve quien
+   tenga el móvil en la mano, que es exactamente la persona de la que
+   sospechamos. Por eso "soy yo" NO cierra un caso que el administrador ya
+   aprobó o bloqueó — sólo deja constancia y se lo pasa a él. Si el caso todavía
+   está pendiente, cerrarlo es lo razonable: nadie ha actuado aún. */
+app.post("/api/my/device-incidents/:id/confirm", wrap(async (req, res) => {
+  const me = readMyUserIdSigned(req);
+  if (!me) return res.status(401).json({ error: "token_required" });
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const tipo = String(req.body?.confirm_type || "").trim();
+  if (tipo !== "its_me" && tipo !== "not_me") return res.status(400).json({ error: "bad_confirm_type" });
+  const [[own]] = await pool.query(
+    "SELECT id, status, locked_at, lock_message FROM device_incidents WHERE id=? AND user_id=? LIMIT 1", [id, me]
+  );
+  if (!own) return res.status(404).json({ error: "not_found" });
+
+  if (tipo === "its_me") {
+    const revisado = own.status === "approved" || own.status === "active" || own.locked_at != null;
+    await pool.execute(
+      revisado
+        ? "UPDATE device_incidents SET user_confirmed_at=NOW(), user_confirm_type='its_me' WHERE id=? AND user_id=?"
+        : "UPDATE device_incidents SET user_confirmed_at=NOW(), user_confirm_type='its_me', status='closed' WHERE id=? AND user_id=?",
+      [id, me]
+    );
+    try { await logActivity("dispositivo", `Caso #${id}: el usuario ${me} confirma que es él${revisado ? " (ya revisado: decide el administrador)" : " → cerrado"}`); } catch {}
+    return res.json({ ok: true, closed: !revisado, needs_admin: revisado });
+  }
+
+  // not_me → bloqueo real. Salvaguarda: nunca a una cuenta de administrador.
+  const [[u]] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [me]);
+  if (u && emailIsAdminListed(u.email)) {
+    return res.status(400).json({ error: "admin_cannot_be_locked" });
+  }
+  await pool.execute(
+    `UPDATE device_incidents
+        SET status='active', locked_at=NOW(), user_confirmed_at=NOW(), user_confirm_type='not_me',
+            lock_reason='El usuario confirmó que no es él quien tiene el dispositivo',
+            lock_message=COALESCE(NULLIF(lock_message,''), 'Este dispositivo ha sido bloqueado por su propietario.')
+      WHERE id=? AND user_id=?`,
+    [id, me]
+  );
+  // Que el bloqueo surta efecto en la siguiente petición, no al minuto.
+  // (No se revocan las sesiones a propósito: el 423 ya cierra la puerta y el
+  //  "Desbloquear" del panel devuelve el acceso sin obligar a volver a entrar.)
+  await refreshDeviceLocks();
+  try { await logActivity("dispositivo", `Caso #${id}: BLOQUEO por confirmación del usuario ${me} (no soy yo)`); } catch {}
+  res.json({ ok: true, locked: true });
+}));
+
+app.get("/api/my/device-status", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  // Se responde con lo MISMO que aplica el guardián (la lista en memoria), para
+  // que no pueda decir "bloqueado" mientras las peticiones pasan, ni al revés.
+  const lock = deviceLockFor(me);
+  res.json({
+    ok: true,
+    locked: !!lock,
+    reason: lock ? (lock.message || lock.reason) : null,
+  });
+}));
+
+app.get("/api/my/emergency-contacts", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[row]] = await pool.query(
+    "SELECT emergency_email, emergency_phone FROM user_emergency_contacts WHERE user_id=? LIMIT 1", [me]
+  );
+  res.json({
+    ok: true,
+    emergency_email: row ? row.emergency_email : null,
+    emergency_phone: row ? row.emergency_phone : null,
+  });
+}));
+
+app.put("/api/my/emergency-contacts", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const email = req.body?.emergency_email == null ? null : String(req.body.emergency_email).trim().slice(0, 190);
+  if (email && !email.includes("@")) return res.status(400).json({ error: "invalid_emergency_email" });
+  const phone = req.body?.emergency_phone == null ? null : String(req.body.emergency_phone).trim().slice(0, 40);
+  await pool.execute(
+    `INSERT INTO user_emergency_contacts (user_id, emergency_email, emergency_phone)
+     VALUES (?,?,?)
+     ON DUPLICATE KEY UPDATE emergency_email=VALUES(emergency_email), emergency_phone=VALUES(emergency_phone)`,
+    [me, email || null, phone || null]
+  );
+  res.json({ ok: true });
 }));
 
 /* ============================================================
@@ -17186,8 +17713,21 @@ phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notif
 phase8.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592
 phaseZones.register(app, pool, { readMyUserId, wrap, requireAdmin, logActivity }); // V613 · zonas
 adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 · endpoints admin faltantes
-adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V713 · 2º lote endpoints admin
-webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice, isTrue, logActivity }); // V714 · WebAuthn
+// V932 · emailIsAdminListed y refreshDeviceLocks son para el bloqueo remoto de
+// dispositivo: el panel ya podía escribir locked_at, pero ahora el bloqueo se
+// aplica de verdad (guardián de /api/my/*), así que hay que impedir bloquear a
+// un administrador y avisar al guardián en cuanto cambia el estado.
+adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin, emailIsAdminListed, refreshDeviceLocks }); // V713 · 2º lote endpoints admin
+// V931 · isReviewDeniedFor / isAccessLockedFor van aquí porque el login por
+// huella (POST /api/webauthn/login/verify) es pre-sesión y firma un token de
+// sesión válido: sin los candados dejaba entrar en una app cerrada a cualquiera
+// con una credencial ya registrada. Se pasan las funciones en vez de duplicar la
+// lista de administradores dentro del módulo.
+// V932 · Y enforceAccess, que es lo que faltaba: los candados de V931 miran si la
+// APP está cerrada, no si esta CUENTA está baneada o su IP bloqueada. El login
+// normal sí lo llama (/api/login); el de huella no, así que una cuenta baneada
+// con huella registrada se llevaba un token de sesión firmado.
+webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, touchUserDevice, isTrue, logActivity, isReviewDeniedFor, isAccessLockedFor, enforceAccess }); // V714 · WebAuthn
 
 // V879 · El puerto se abre YA, antes de migrar. Railway comprueba /api/health
 // y el deploy queda verde en segundo(s); las migraciones siguen por detrás.

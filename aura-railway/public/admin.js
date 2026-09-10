@@ -528,105 +528,6 @@ document.addEventListener("click", async (e) => {
   });
 });
 
-/* Render 2FA status box inside admin profile drawer. */
-function renderTwoFaBox(box, enabled) {
-  box.innerHTML = "";
-  const statusLine = el("div", { style: "display:flex;align-items:center;gap:10px;margin-bottom:8px" }, [
-    el("div", { style: `width:36px;height:36px;border-radius:10px;display:grid;place-items:center;background:${enabled?"#22c55e":"#f59e0b"};color:#fff;font-size:18px` }, enabled ? "✓" : "!"),
-    el("div", { style: "flex:1" }, [
-      el("div", { style: "font-weight:700;font-size:14px" }, enabled ? "2FA activado" : "2FA no activado"),
-      el("div", { class: "muted", style: "font-size:12px" }, enabled ? "Tu cuenta está protegida con verificación en dos pasos." : "Recomendado: añade una capa extra de seguridad con Google Authenticator o Authy."),
-    ]),
-  ]);
-  box.appendChild(statusLine);
-  if (enabled) {
-    box.appendChild(btn("Desactivar 2FA", "ghost sm", () => openTwoFaDisable(box)));
-  } else {
-    box.appendChild(btn("Activar 2FA", "primary sm", () => openTwoFaSetup(box)));
-  }
-}
-
-/* Open 2FA setup modal: fetch QR + secret, ask user to scan and enter code. */
-async function openTwoFaSetup(box) {
-  let data;
-  try { data = await api.post("/api/admin/2fa/setup", {}); }
-  catch(e){ return toast("Error iniciando 2FA"); }
-  const overlay = document.createElement("div");
-  overlay.className = "ac-overlay";
-  overlay.innerHTML = `
-    <div class="ac-scrim"></div>
-    <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:440px">
-      <h3 style="margin:0 0 8px">🔐 Activar 2FA</h3>
-      <p class="muted" style="margin:0 0 14px;font-size:13px">Escanea el código QR con <b>Google Authenticator</b>, <b>Authy</b> o <b>1Password</b>, luego introduce el código de 6 dígitos que aparece.</p>
-      <div style="text-align:center;margin:10px 0"><img src="${data.qr}" alt="QR 2FA" style="width:220px;height:220px;border-radius:12px;background:#fff;padding:8px" /></div>
-      <details style="margin:6px 0 14px"><summary style="cursor:pointer;font-size:12px;color:#888">¿No puedes escanear? Introducir clave manual</summary>
-        <div style="font-family:monospace;font-size:13px;background:#0f0f14;padding:10px;border-radius:8px;margin-top:6px;word-break:break-all;user-select:all">${data.secret}</div>
-      </details>
-      <label class="field"><span>Introduce el código de tu app de autenticación</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" placeholder="123456" style="text-align:center;font-size:28px;letter-spacing:10px;font-weight:700" /></label>
-      <p class="muted" style="font-size:12px;text-align:center;margin:6px 0 0">¿Problemas? <a href="mailto:soporte@citasaura.es?subject=Ayuda%20con%202FA" style="color:#ff8a3b;text-decoration:none">Contactar soporte</a></p>
-      <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
-      <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-        <button type="button" class="btn ghost ac-cancel">Cancelar</button>
-        <button type="button" class="btn primary ac-ok">Activar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const cleanup = () => overlay.remove();
-  overlay.querySelector(".ac-scrim").addEventListener("click", cleanup);
-  overlay.querySelector(".ac-cancel").addEventListener("click", cleanup);
-  overlay.querySelector(".ac-ok").addEventListener("click", async () => {
-    const code = overlay.querySelector("#twofaCode").value.trim();
-    const err = overlay.querySelector("#twofaErr");
-    if (!/^\d{6}$/.test(code)) { err.textContent = "Introduce un código de 6 dígitos"; return; }
-    try {
-      await api.post("/api/admin/2fa/enable", { code });
-      cleanup();
-      toast("2FA activado correctamente");
-      renderTwoFaBox(box, true);
-    } catch(e){ err.textContent = "Código incorrecto. Prueba de nuevo."; }
-  });
-  setTimeout(() => overlay.querySelector("#twofaCode").focus(), 100);
-}
-
-/* Open 2FA disable modal: requires password + current code. */
-function openTwoFaDisable(box) {
-  const overlay = document.createElement("div");
-  overlay.className = "ac-overlay";
-  overlay.innerHTML = `
-    <div class="ac-scrim"></div>
-    <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:400px">
-      <h3 style="margin:0 0 8px">Desactivar 2FA</h3>
-      <p class="muted" style="margin:0 0 14px;font-size:13px">Confirma tu contraseña y el código actual para desactivar 2FA.</p>
-      <label class="field"><span>Contraseña</span><input class="input" id="twofaPass" type="password" autocomplete="current-password" /></label>
-      <label class="field"><span>Código actual (6 dígitos)</span><input class="input" id="twofaCode" type="text" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" style="text-align:center;font-size:20px;letter-spacing:5px" /></label>
-      <p class="err" id="twofaErr" style="color:#ff6b6b;font-size:13px;min-height:18px;text-align:center;margin:6px 0"></p>
-      <div class="ac-actions" style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
-        <button type="button" class="btn ghost ac-cancel">Cancelar</button>
-        <button type="button" class="btn danger ac-ok">Desactivar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-  const cleanup = () => overlay.remove();
-  overlay.querySelector(".ac-scrim").addEventListener("click", cleanup);
-  overlay.querySelector(".ac-cancel").addEventListener("click", cleanup);
-  overlay.querySelector(".ac-ok").addEventListener("click", async () => {
-    const password = overlay.querySelector("#twofaPass").value;
-    const code = overlay.querySelector("#twofaCode").value.trim();
-    const err = overlay.querySelector("#twofaErr");
-    try {
-      await api.post("/api/admin/2fa/disable", { password, code });
-      cleanup();
-      toast("2FA desactivado");
-      renderTwoFaBox(box, false);
-    } catch(e){
-      const m = e && e.data && e.data.error;
-      if (m === "wrong_password") err.textContent = "Contraseña incorrecta";
-      else if (m === "invalid_code") err.textContent = "Código 2FA incorrecto";
-      else err.textContent = "Error al desactivar";
-    }
-  });
-}
-
 /* Admin profile drawer — opened by clicking the avatar (top bar or sidebar).
    Lets the admin set display name, role, email, avatar image and password. */
 async function openAdminProfile() {
@@ -732,24 +633,22 @@ async function openAdminProfile() {
       el("small", { class: "help" }, "Lo cambia solo el administrador principal, desde Staff & Permisos."),
     ]));
   }
-  /* El recuadro de 2FA solo se le pinta al dueño, y hay que decir por qué:
-     llama a /api/admin/2fa/status, que NO EXISTE en el servidor. La petición
-     falla, el catch dibuja "desactivado" y no hay manera de activarlo. Con una
-     sola persona era una caja inútil; con un equipo entero sería peor, porque
-     cada uno vería un candado que no cierra nada y se quedaría tranquilo.
-     El 2FA de verdad (/api/2fa/*) es el de los usuarios de la app, no el del
-     panel. No lo arreglo aquí porque no es este trabajo, pero no lo repito. */
-  if (esDueno) {
-    node.appendChild(el("h3", { class: "ap-h3" }, "🔐 Verificación en dos pasos (2FA)"));
-    const twoFaBox = el("div", { class: "twofa-box", style: "background:rgba(124,58,237,.08);border:1px solid rgba(124,58,237,.25);border-radius:12px;padding:14px;margin-bottom:12px" });
-    node.appendChild(twoFaBox);
-    (async () => {
-      try {
-        const st = await fetch("/api/admin/2fa/status", { headers: authHeaders() }).then(r => r.json());
-        renderTwoFaBox(twoFaBox, !!st.enabled);
-      } catch { renderTwoFaBox(twoFaBox, false); }
-    })();
-  }
+  /* V931 · Aquí había un recuadro "🔐 Verificación en dos pasos (2FA)" y se ha
+     quitado, junto con sus tres funciones (renderTwoFaBox, openTwoFaSetup y
+     openTwoFaDisable, que estaban justo encima de openAdminProfile).
+     Motivo: las CUATRO rutas que usaba no existen en el servidor —
+     /api/admin/2fa/{status,setup,enable,disable}— y la tabla `staff` no tiene
+     columnas de TOTP. Al abrir el cajón, el fetch de status fallaba, el catch
+     pintaba "2FA no activado", y el botón "Activar 2FA" moría en "Error
+     iniciando 2FA". Es decir: enseñaba un candado que no cerraba nada, que es
+     peor que no enseñar ninguno, porque invita a quedarse tranquilo.
+     Ojo: el 2FA que SÍ funciona (/api/2fa/*) es el de los usuarios de la app.
+     No tiene nada que ver con la entrada al panel.
+     Para hacerlo de verdad hace falta: tabla staff_2fa, las tres rutas, y
+     exigir el código en /api/admin/login reaprovechando el TOTP nativo que ya
+     hay en el servidor. Se deja pendiente a propósito: al ser hoy un único
+     administrador, perder el móvil y los códigos de recuperación significaría
+     quedarse fuera del propio panel. Mejor cuando haya equipo. */
 
   node.appendChild(el("h3", { class: "ap-h3" }, "Cambiar contraseña"));
   node.appendChild(el("p", { class: "help" }, esDueno
@@ -6979,7 +6878,11 @@ async function viewSubscriptions(root){
     const arpu = totalSubs ? mrr / totalSubs : 0;
     const churnRate = churn.rate != null ? churn.rate : 0;
     const retention = Math.max(0, 100 - Number(churnRate));
-    const spark = active.mrr_series || Array.from({length: 12}, (_, i) => Math.round(mrr * (0.7 + Math.random() * 0.4)));
+    // V932 · Otro Math.random(), y este era de dinero: la gráfica de MRR de
+    // esta vista se inventaba doce meses a partir del MRR actual, distintos en
+    // cada carga, porque /api/subscriptions/summary no devolvía ninguna serie.
+    // Ahora la devuelve con los cobros reales por mes (features_admin_extra.js).
+    const spark = active.mrr_series || Array.from({length: 12}, () => 0);
 
     root.appendChild(proHero({
       icon: "⭐",
@@ -9495,7 +9398,13 @@ async function viewLogs(root){
         try {
           const r = await fetch("/api/admin/logs/purge?days=30", { method: "DELETE", headers: authHeaders() });
           if (!r.ok) throw new Error();
-          toast("Logs antiguos limpiados"); refresh();
+          // V931 · La ruta ya existe (antes no) y devuelve cuántas filas borró:
+          // decirlo evita la duda de "¿ha hecho algo o no?" cuando no había nada
+          // que borrar, que es el caso normal si la purga automática va bien.
+          const d = await r.json().catch(() => ({}));
+          const n = Number(d.deleted);
+          toast(Number.isFinite(n) ? (n ? `Borrados ${n} logs de más de 30 días` : "No había logs de más de 30 días") : "Logs antiguos limpiados");
+          refresh();
         } catch { toast("Error al limpiar"); }
       }),
     ]));
@@ -14073,8 +13982,15 @@ async function viewAdsAdmin(root){
     const revenue = adStats.revenue_30d || 0;
     const ctr = impressions ? ((clicks / impressions) * 100).toFixed(2) : "0.00";
     const cpm = impressions ? ((revenue / impressions) * 1000).toFixed(2) : "0.00";
-    const sparkImp = adStats.impressions_series || Array.from({length: 14}, () => Math.round(impressions * (0.6 + Math.random() * 0.8) / 14));
-    const sparkRev = adStats.revenue_series || Array.from({length: 14}, () => (revenue * (0.6 + Math.random() * 0.8) / 14));
+    // V932 · Aquí había dos Math.random(): si el servidor no daba series (y no
+    // las daba, /api/ads/stats no existía), el panel DIBUJABA la gráfica de
+    // impresiones e ingresos con números al azar. Eso no es un hueco de datos,
+    // es ficción presentada como rendimiento real, y sobre ella se toman
+    // decisiones. La ruta ya existe y devuelve series de verdad —hoy ceros,
+    // porque no se sirve ni un anuncio y no hay contabilidad de impresiones—.
+    // Si algún día no llegaran, la gráfica se queda plana: mejor vacía que falsa.
+    const sparkImp = adStats.impressions_series || Array.from({length: 14}, () => 0);
+    const sparkRev = adStats.revenue_series || Array.from({length: 14}, () => 0);
 
     root.appendChild(proHero({
       icon: "📢",

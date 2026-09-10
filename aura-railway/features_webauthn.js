@@ -173,6 +173,59 @@ function register(app, pool, helpers) {
   // Interruptor global controlable desde Admin → Configuración → Seguridad.
   const featureOn = () => (typeof helpers.isTrue === "function" ? helpers.isTrue("security.webauthn_enabled", true) : true);
 
+  /* V931 · Los candados de acceso, también aquí.
+     El login por huella / Face ID es PRE-SESIÓN y firma un token de sesión
+     válido, así que sin esto era una puerta abierta: con la app en revisión o en
+     pruebas privadas, cualquiera con una credencial ya registrada entraba en una
+     app supuestamente cerrada. Las dos comprobaciones son las MISMAS funciones
+     de server.js (isReviewDeniedFor / isAccessLockedFor) recibidas como helpers
+     —la lista de administradores no se reimplementa aquí— y devuelven los mismos
+     códigos que el cliente ya sabe interpretar (public/app.js:5458-5465).
+     Si los helpers no llegaran (error de cableado en server.js) se cierra en vez
+     de abrirse: es mejor que el login por huella deje de funcionar y se note en
+     el momento, que dejar entrar a alguien en silencio. */
+  const accesoDenegado = (email, res) => {
+    const enRevision = helpers.isReviewDeniedFor;
+    const bloqueado = helpers.isAccessLockedFor;
+    if (typeof enRevision !== "function" || typeof bloqueado !== "function") {
+      console.warn("[webauthn] faltan los helpers de acceso: se bloquea el login por huella");
+      res.status(403).json({ error: "access_locked" });
+      return true;
+    }
+    if (enRevision(email)) { res.status(403).json({ error: "review_mode" }); return true; }
+    if (bloqueado(email)) { res.status(403).json({ error: "access_locked" }); return true; }
+    return false;
+  };
+
+  /* V932 · El candado que V931 NO puso, y hacía falta.
+     accesoDenegado (arriba) mira si la app está cerrada. No mira el estado de
+     ESTA cuenta ni de esta IP: eso lo hace enforceAccess (server.js), que es lo
+     que el login normal llama en server.js:15343 y que rechaza cuentas
+     baneadas o suspendidas y direcciones IP bloqueadas.
+
+     El login por huella no lo llamaba. Consecuencia real, sin exagerarla: una
+     cuenta baneada con huella registrada recibía un token de sesión válido en
+     vez de un 403 en la puerta. Después se topaba con el 423 de la restricción
+     sintética account_ban en descubrir y en chat, así que no era acceso libre;
+     pero cualquier ruta que no pase por enforceRestriction le respondía, y una
+     IP bloqueada no se comprobaba en absoluto por esta vía.
+
+     Va en una función aparte, y no dentro de accesoDenegado, por dos razones:
+     enforceAccess es asíncrono (consulta la base de datos) y las dos puertas
+     responden cosas distintas —«la app está cerrada» frente a «tu cuenta está
+     baneada»—, que el cliente ya distingue porque el login normal las devuelve.
+
+     Misma regla que arriba: si el helper no llegara, se CIERRA. Un fallo de
+     cableado tiene que notarse dejando de funcionar, no dejando entrar. */
+  const estadoDenegado = async (req, email, res) => {
+    if (typeof helpers.enforceAccess !== "function") {
+      console.warn("[webauthn] falta enforceAccess: se bloquea el login por huella");
+      res.status(403).json({ error: "access_locked" });
+      return true;
+    }
+    return await helpers.enforceAccess(req, res, { email });
+  };
+
   // === REGISTRO (usuario autenticado) ==============================
   app.post("/api/my/webauthn/register/options", wrap(async (req, res) => {
     if (!featureOn()) return res.status(403).json({ error: "feature_disabled" });
@@ -264,6 +317,10 @@ function register(app, pool, helpers) {
     if (!featureOn()) return res.status(403).json({ error: "feature_disabled" });
     const email = String(req.body?.email || "").trim().toLowerCase();
     if (!email.includes("@")) return res.status(400).json({ error: "email_required" });
+    if (accesoDenegado(email, res)) return;
+    // V932 · Antes de listar credenciales: a una cuenta baneada no se le dice
+    // ni cuántas huellas tiene registradas.
+    if (await estadoDenegado(req, email, res)) return;
     const [uRows] = await pool.query("SELECT id FROM users WHERE email=? LIMIT 1", [email]);
     if (!uRows.length) return res.status(404).json({ error: "not_found" });
     const [creds] = await pool.query("SELECT credential_id FROM webauthn_credentials WHERE user_id=?", [uRows[0].id]);
@@ -285,6 +342,8 @@ function register(app, pool, helpers) {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const cr = req.body?.credential || {};
     if (!email.includes("@")) return res.status(400).json({ error: "email_required" });
+    if (accesoDenegado(email, res)) return;
+    if (await estadoDenegado(req, email, res)) return; // V932 · cuenta baneada / IP bloqueada
     const challenge = takeChallenge(`login:${email}`);
     if (!challenge) return res.status(400).json({ error: "challenge_expired" });
     const rawId = cr.rawId || cr.id;

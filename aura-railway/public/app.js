@@ -353,6 +353,14 @@ const contentFallback = {
   "content.me.devices_error": "No se pudieron cargar los dispositivos",
   "content.me.item_data": "Descargar mis datos",
   "content.me.item_data_sub": "Exporta un ZIP con toda tu información",
+  // V932 · Las dos filas del menú de perfil que seguían en español fijo. Iban sin
+  // clave de traducción mientras las otras trece sí la tenían, así que un usuario
+  // con la app en otro idioma veía dos renglones en español. Los textos son
+  // exactamente los que había, para no cambiar nada de lo que ya se veía.
+  "content.me.item_device": "Dispositivo perdido o robado",
+  "content.me.item_device_sub": "Alarma, mensaje o bloqueo remoto con denuncia",
+  "content.me.item_ticket": "Abrir un ticket",
+  "content.me.item_ticket_sub": "Soporte personalizado en <24 h",
   "content.me.item_help": "Centro de ayuda",
   "content.me.item_faq": "Preguntas frecuentes",
   "content.me.item_contact": "Contacto",
@@ -662,6 +670,10 @@ const translations = {
     "content.me.item_devices": "Active devices",
     "content.me.item_data": "Download my data",
     "content.me.item_data_sub": "Export a ZIP with all your info",
+    "content.me.item_device": "Lost or stolen device",
+    "content.me.item_device_sub": "Alarm, message or remote lock with a police report",
+    "content.me.item_ticket": "Open a ticket",
+    "content.me.item_ticket_sub": "Personal support in under 24 h",
     "content.me.item_help": "Help center",
     "content.me.item_faq": "FAQ",
     "content.me.item_contact": "Contact",
@@ -827,6 +839,10 @@ const translations = {
     "content.me.item_blocked": "Utilisateurs bloqués",
     "content.me.item_devices": "Appareils actifs",
     "content.me.item_data": "Télécharger mes données",
+    "content.me.item_device": "Appareil perdu ou volé",
+    "content.me.item_device_sub": "Alarme, message ou verrouillage à distance avec plainte",
+    "content.me.item_ticket": "Ouvrir un ticket",
+    "content.me.item_ticket_sub": "Assistance personnalisée en moins de 24 h",
     "content.me.item_help": "Centre d'aide",
     "content.me.item_faq": "FAQ",
     "content.me.item_contact": "Contact",
@@ -987,6 +1003,10 @@ const translations = {
     "content.me.item_blocked": "Blockierte Nutzer",
     "content.me.item_devices": "Aktive Geräte",
     "content.me.item_data": "Meine Daten herunterladen",
+    "content.me.item_device": "Verlorenes oder gestohlenes Gerät",
+    "content.me.item_device_sub": "Alarm, Nachricht oder Fernsperre mit Anzeige",
+    "content.me.item_ticket": "Ticket eröffnen",
+    "content.me.item_ticket_sub": "Persönlicher Support in unter 24 Std.",
     "content.me.item_help": "Hilfe-Center",
     "content.me.item_faq": "FAQ",
     "content.me.item_contact": "Kontakt",
@@ -1142,6 +1162,10 @@ const translations = {
     "content.me.item_blocked": "Utenti bloccati",
     "content.me.item_devices": "Dispositivi attivi",
     "content.me.item_data": "Scarica i miei dati",
+    "content.me.item_device": "Dispositivo perso o rubato",
+    "content.me.item_device_sub": "Allarme, messaggio o blocco remoto con denuncia",
+    "content.me.item_ticket": "Apri un ticket",
+    "content.me.item_ticket_sub": "Assistenza personalizzata in meno di 24 h",
     "content.me.item_help": "Centro assistenza",
     "content.me.item_contact": "Contatto",
     "content.me.item_terms": "Termini e privacy",
@@ -1296,6 +1320,10 @@ const translations = {
     "content.me.item_blocked": "Utilizadores bloqueados",
     "content.me.item_devices": "Dispositivos ativos",
     "content.me.item_data": "Descarregar os meus dados",
+    "content.me.item_device": "Dispositivo perdido ou roubado",
+    "content.me.item_device_sub": "Alarme, mensagem ou bloqueio remoto com queixa",
+    "content.me.item_ticket": "Abrir um ticket",
+    "content.me.item_ticket_sub": "Apoio personalizado em menos de 24 h",
     "content.me.item_help": "Centro de ajuda",
     "content.me.item_contact": "Contacto",
     "content.me.item_terms": "Termos e privacidade",
@@ -1962,6 +1990,17 @@ const WebAuthn = {
     if (!vr.ok || !vd.ok) throw new Error(vd.error || "verify_failed");
     return vd;
   },
+  /* V932 · Un fallo aquí llevaba SÓLO el código de error en el mensaje, así que
+     el motivo real (baneo, suspensión, app en revisión) se perdía por el camino
+     y el botón acababa diciendo "no se pudo iniciar sesión con huella" para
+     cinco situaciones distintas. Ahora el error se lleva consigo el estado HTTP
+     y el cuerpo de la respuesta, que es donde vienen el motivo y la fecha. */
+  _falloDeAcceso(res, data, porDefecto) {
+    const e = new Error((data && data.error) || porDefecto);
+    e.status = res.status;
+    e.data = data || {};
+    return e;
+  },
   // Login biométrico a partir de un email ya introducido.
   async login(email) {
     const or = await fetch("/api/webauthn/login/options", {
@@ -1969,7 +2008,7 @@ const WebAuthn = {
       body: JSON.stringify({ email }),
     });
     const opt = await or.json();
-    if (!or.ok || !opt.ok) throw new Error(opt.error || "options_failed");
+    if (!or.ok || !opt.ok) throw this._falloDeAcceso(or, opt, "options_failed");
     const publicKey = {
       challenge: this._b64uToBuf(opt.challenge),
       rpId: opt.rpId,
@@ -1999,7 +2038,7 @@ const WebAuthn = {
       body: JSON.stringify(payload),
     });
     const vd = await vr.json();
-    if (!vr.ok || !vd.ok) throw new Error(vd.error || "verify_failed");
+    if (!vr.ok || !vd.ok) throw this._falloDeAcceso(vr, vd, "verify_failed");
     return vd;
   },
 };
@@ -3401,6 +3440,16 @@ function showRestrictionModal() {
       if (r.status === 423) {
         const clone = r.clone();
         const data = await clone.json().catch(() => ({}));
+        // V932 · El comentario del handler "No soy yo, bloquear" prometía que
+        // "el middleware 423 activará showLockScreen". No era verdad: aquí sólo
+        // se mostraba un aviso de restricciones, que es otra cosa. Ahora el
+        // servidor sí bloquea de verdad (guardián de /api/my/*) y responde
+        // 423 con error:"device_locked"; esa rama tiene que pintar la pantalla
+        // de bloqueo, no un toast que se va en tres segundos.
+        if (data && data.error === "device_locked") {
+          try { showLockScreen(data.message || data.reason || "Este dispositivo ha sido bloqueado."); } catch {}
+          return r;
+        }
         if (data && data.restrictions) {
           state.restrictions = data.restrictions;
           renderRestrictionBanner();
@@ -4346,23 +4395,35 @@ function applyDeepLink(dl) {
   } catch {}
   routeTab(dl.tab);
   // Sub-secciones concretas dentro de "me"
+  /* V931 · Estas entradas nombraban tres pantallas que NO EXISTEN en ningún
+     public/*.js: screenSubscription (en singular; la real es screenSubscriptions),
+     screenBilling y screenNotifications. El typeof las convertía en null, el null
+     se ignoraba abajo, y el usuario que abría /facturas o /notificaciones acababa
+     en la pestaña "Yo" sin ninguna explicación. Doce alias muertos en total.
+     Destinos reales: la app no tiene pantalla de facturación aparte — planes,
+     renovación y facturas viven en screenSubscriptions (es donde llevan todos los
+     botones de suscripción, p. ej. la fila "Suscripción y pagos" de screenInfoHelp).
+     Y las notificaciones de verdad (push, correo, qué tipos recibes) son
+     screenNotificationSettings, la misma que abre el menú de "Yo"; screenInfoPreferences
+     es sólo la página informativa sobre correos, que se queda en preferencias/preferences.
+     "settings"/"ajustes" ya no necesitan entrada: la pestaña "me" a la que van por
+     DEEP_LINK_TABS es literalmente la lista de ajustes (screenMe), y routeTab() de
+     arriba ya la ha pintado; volver a renderizarla sólo causaría un doble pintado. */
   const subViews = {
     // Inglés (legacy)
-    subscription: typeof screenSubscription === "function" ? screenSubscription : null,
-    billing:     typeof screenBilling      === "function" ? screenBilling      : null,
-    invoices:    typeof screenBilling      === "function" ? screenBilling      : null,
-    settings:    typeof screenSettings     === "function" ? screenSettings     : null,
+    subscription: typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    billing:     typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    invoices:    typeof screenSubscriptions === "function" ? screenSubscriptions : null,
     help:        typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
     support:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
     safety:      typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
-    notifications: typeof screenNotifications === "function" ? screenNotifications : null,
-    premium:     typeof screenSubscription === "function" ? screenSubscription : null,
-    boost:       typeof screenSubscription === "function" ? screenSubscription : null,
+    notifications: typeof screenNotificationSettings === "function" ? screenNotificationSettings : null,
+    premium:     typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    boost:       typeof screenSubscriptions === "function" ? screenSubscriptions : null,
     // Español (canónico)
-    suscripcion: typeof screenSubscription === "function" ? screenSubscription : null,
-    facturacion: typeof screenBilling      === "function" ? screenBilling      : null,
-    facturas:    typeof screenBilling      === "function" ? screenBilling      : null,
-    ajustes:     typeof screenSettings     === "function" ? screenSettings     : null,
+    suscripcion: typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    facturacion: typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    facturas:    typeof screenSubscriptions === "function" ? screenSubscriptions : null,
     ayuda:       typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
     soporte:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
     privacidad:  typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
@@ -4381,9 +4442,9 @@ function applyDeepLink(dl) {
     contact:     typeof screenInfoContact  === "function" ? screenInfoContact  : null,
     faq:         typeof screenInfoFaq      === "function" ? screenInfoFaq      : null,
     preguntas:   typeof screenInfoFaq      === "function" ? screenInfoFaq      : null,
-    preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
-    preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotifications === "function" ? screenNotifications : null),
-    notificaciones: typeof screenNotifications === "function" ? screenNotifications : null,
+    preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotificationSettings === "function" ? screenNotificationSettings : null),
+    preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotificationSettings === "function" ? screenNotificationSettings : null),
+    notificaciones: typeof screenNotificationSettings === "function" ? screenNotificationSettings : null,
     seguridad:      typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
     security:       typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
     dispositivo:    typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
@@ -7549,9 +7610,44 @@ function screenLogin(root) {
         setTimeout(() => showApp(), 400);
       } catch (err) {
         const m = String(err && err.message || "");
+        const d = (err && err.data) || {};
+        /* V932 · Las mismas pantallas que el login por email (más arriba, en el
+           submit de este formulario). Antes esto no hacía falta porque el
+           servidor no devolvía ninguno de estos casos por esta vía: el login por
+           huella no miraba ni si la app estaba cerrada (V931) ni si la cuenta
+           estaba baneada (V932). Ahora los devuelve, y decirle "no se pudo
+           iniciar sesión con huella" a alguien baneado sería esconderle el
+           motivo que el login normal sí le da. */
+        if (err && err.status === 403 && (d.status === "banned" || d.status === "suspended" || d.status === "restricted")) {
+          if (d.user_id) {
+            state.user = { id: d.user_id, name: d.user_name || (d.user_email || email).split("@")[0], email: d.user_email || email, photo: "" };
+            try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+          }
+          showBlockedAccount(d.reason || "Tu cuenta no puede iniciar sesión.", {
+            keepSession: !!d.user_id, kind: d.status, reason: d.reason || "", email,
+            untilDate: d.expires_at || null,
+            until: d.expires_at ? ("Hasta el " + new Date(d.expires_at).toLocaleString()) : "",
+          });
+          return;
+        }
+        if (err && err.status === 403 && m === "review_mode") {
+          try { showReviewScreen({ email }); } catch { toast("Aura está en revisión. Vuelve pronto 🔧", 4200); }
+          return;
+        }
+        if (err && err.status === 403 && m === "access_locked") {
+          try { showPrivateBetaScreen({ email }); } catch { toast("La app está en pruebas privadas. Vuelve más tarde 🔒", 4200); }
+          return;
+        }
+        // IP baneada o suspendida: el motivo lo escribe el administrador.
+        if (err && err.status === 403 && (m === "ip_ban" || m === "ip_suspend")) {
+          toast(d.reason || "El acceso desde tu conexión está bloqueado.", 4600);
+          bioBtn.disabled = false;
+          return;
+        }
         if (m === "no_credentials") toast("No tienes huella configurada. Entra con email y actívala en Seguridad.", 4200);
         else if (m === "not_found") toast("Cuenta no encontrada. Regístrate primero.");
         else if (err && err.name === "NotAllowedError") toast("Autenticación cancelada");
+        else if (m === "feature_disabled") toast("El acceso con huella está desactivado. Entra con tu email.", 4200);
         else toast("No se pudo iniciar sesión con huella");
         bioBtn.disabled = false;
       }
@@ -14298,7 +14394,27 @@ function screenMe(root) {
     ]},
     { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
       { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: (INVISIBLE_PLANS.has(getUserPlan()) ? "Incluido en tu plan" : (T("content.me.item_invisible_sub") || "Solo Premium")), onClick: () => render(screenInvisibleMode) },
-      { icon: "🛡", title: "Dispositivo perdido o robado", sub: "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
+      /* V932 · Vuelve. V931 la había retirado porque la pantalla prometía un flujo
+         que el servidor no tenía: ninguna de las 8 rutas existía y todo moría en un
+         error nada más abrirlo. Ya están construidas (server.js, bloque
+         "Dispositivo perdido o robado"), con lo que faltaba de verdad:
+           · verify_selfie_url pasó a LONGTEXT, así que el selfie cabe;
+           · el bloqueo lo aplica AHORA el servidor (guardián de /api/my/* → 423),
+             no una pantalla que la app se dibujaba a sí misma y que quien tuviera
+             el móvil esquivaba sin conexión;
+           · confirmar "no soy yo" exige token firmado, no la cabecera X-User-Id;
+           · una cuenta de app.access_admin_emails no puede quedar bloqueada;
+           · el selfie y el rastro GPS se borran a los 90 días de cerrarse el caso.
+         La regla que trajo esto sigue en pie: si mañana algo de este flujo se queda
+         a medias, la fila se retira otra vez antes de prometerlo.
+
+         Sobre el idioma: esta fila y la de «Abrir un ticket» eran las dos únicas
+         del menú (de ~15) que seguían en español fijo, sin clave de traducción,
+         mientras las otras trece sí la tenían. Ya la tienen: content.me.item_device
+         e item_ticket, en los SEIS idiomas del proyecto (es, en, fr, de, it, pt).
+         Los textos en español son idénticos a los que había, así que nada de lo que
+         ya se veía ha cambiado. */
+      { icon: "🛡", title: T("content.me.item_device") || "Dispositivo perdido o robado", sub: T("content.me.item_device_sub") || "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
       { icon: "🔒", title: T("content.me.item_security") || "Contraseña y 2FA", onClick: () => render(screenSecurity) },
       { icon: "🚫", title: T("content.me.item_blocked") || "Usuarios bloqueados", onClick: () => render(screenBlockedUsers) },
       { icon: "📱", title: T("content.me.item_devices") || "Dispositivos activos", onClick: () => openDevicesSheet() },
@@ -14313,7 +14429,7 @@ function screenMe(root) {
       { icon: "📥", title: T("content.me.item_data") || "Descargar mis datos", sub: T("content.me.item_data_sub") || "Exporta un ZIP con toda tu información", onClick: () => render(screenDataExport) },
     ]},
     { title: T("content.me.group_support") || "Soporte", items: [
-      { icon: "🎫", title: "Abrir un ticket", sub: "Soporte personalizado en <24 h", onClick: () => render(screenSupportTicket) },
+      { icon: "🎫", title: T("content.me.item_ticket") || "Abrir un ticket", sub: T("content.me.item_ticket_sub") || "Soporte personalizado en <24 h", onClick: () => render(screenSupportTicket) },
       { icon: "❓", title: T("content.me.item_help") || "Centro de ayuda", onClick: () => render(screenInfoHelp) },
       { icon: "💬", title: T("content.me.item_faq") || "Preguntas frecuentes", onClick: () => render(screenInfoFaq) },
       { icon: "✉️", title: T("content.me.item_contact") || "Contacto", onClick: () => render(screenInfoContact) },
@@ -19499,8 +19615,20 @@ async function screenDeviceSecurity(container) {
           lock_screen_message: lockMsg.value.trim() || null,
         }),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || "Error");
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        // V932 · El servidor valida de verdad (esquema de la URL, tope de casos
+        // abiertos). Aquí se mostraba el código crudo: se traduce.
+        const msgs = {
+          invalid_police_report_url: "El enlace de la denuncia no vale: tiene que empezar por http:// o https://.",
+          police_report_url_required: "La URL de la denuncia es obligatoria.",
+          invalid_emergency_email: "Revisa el email de emergencia.",
+          too_many_open_cases: `Ya tienes ${j.max || 3} casos abiertos. Espera a que se revisen antes de abrir otro.`,
+          unauthorized: "Inicia sesión para abrir un caso.",
+          bad_type: "Elige un tipo de incidencia válido.",
+        };
+        throw new Error(msgs[j.error] || "No se pudo enviar la solicitud. Inténtalo de nuevo.");
+      }
       // Guardar contactos por defecto si el checkbox está marcado
       const chk = document.getElementById("saveEmergencyDefault");
       if (chk && chk.checked) {
@@ -19539,12 +19667,22 @@ async function screenDeviceSecurity(container) {
       const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
       stream.getTracks().forEach(t => t.stop());
       modal.remove();
-      // Se envía como URL data — en producción sube a S3/Cloudinary
-      await fetch(`/api/my/device-incidents/${incidentId}/selfie`, {
+      // V932 · El selfie viaja como data URI y se guarda así: la columna
+      // verify_selfie_url pasó a LONGTEXT, igual que photos.url. Y se comprueba
+      // la respuesta antes de decir "enviado": el servidor lo valida con
+      // validPhotoData y puede rechazarlo.
+      const sr = await fetch(`/api/my/device-incidents/${incidentId}/selfie`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ selfie_url: dataUrl }),
       });
+      const sj = await sr.json().catch(() => ({}));
+      if (!sr.ok) {
+        alert(sj.error === "invalid_image"
+          ? "No pudimos aceptar esa imagen. Vuelve a intentarlo con buena luz."
+          : "No se pudo enviar el selfie. Puedes reintentarlo desde esta pantalla.");
+        return;
+      }
       alert("Selfie enviado. El administrador revisará tu caso.");
     } catch(e) { alert("No se pudo abrir la cámara: " + e.message); }
   }
@@ -19556,6 +19694,18 @@ async function screenDeviceSecurity(container) {
 /* ============================================================
    V500 · Recepción de alarmas remotas (sound / message / lock)
    ============================================================ */
+/* V932 · Este sondeo estaba MUERTO: sus tres rutas no existían, todas caían en
+   el catch cada 15 segundos y no pasaba nada. Ahora existen, así que se ha
+   convertido en tráfico de verdad: 12 peticiones por minuto y por usuario
+   conectado, dos de ellas con consulta a la base de datos, para un caso que la
+   inmensa mayoría no tendrá nunca. Se reparte por turnos:
+     · el estado del dispositivo, cada 15 s — lo pide el mapa en memoria del
+       servidor, no cuesta una consulta, y es lo único urgente;
+     · las alarmas y los casos abiertos, una vez por minuto (un turno de cada
+       cuatro). Una alarma remota puede tardar hasta un minuto en sonar; a cambio
+       se ahorra el 75 % de las consultas. El bloqueo no depende de esto: lo
+       aplica el servidor en cada petición. */
+let __devicePollTick = 0;
 async function pollDeviceAlerts() {
   try {
     if (!state.user || !state.user.id) return;
@@ -19565,6 +19715,7 @@ async function pollDeviceAlerts() {
       showLockScreen(j.reason || "Este dispositivo ha sido bloqueado.");
       return;
     }
+    if (++__devicePollTick % 4 !== 1) return; // sólo un turno de cada cuatro
     // Buscar notificaciones tipo device_alert
     const nr = await fetch("/api/my/notifications?type=device_alert&limit=5", { headers: authHeaders() });
     if (nr.ok) {
@@ -19615,24 +19766,50 @@ function showUserConfirmationModal(caseId) {
   const yes = el("button", { style: "padding:14px 24px;background:#10b981;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "✅ Soy yo, estoy a salvo");
   yes.addEventListener("click", async () => {
     try {
-      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+      // V932 · Antes se daba el caso por cerrado sin mirar la respuesta. No se
+      // puede: esta ventana la ve quien tenga el móvil en la mano, que es
+      // precisamente lo que el caso pone en duda. El servidor cierra el caso
+      // sólo si el administrador aún no lo ha revisado; si ya lo revisó, deja
+      // constancia de la afirmación y decide una persona. Se dice lo que pasó.
+      const r = await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
         method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ confirm_type: "its_me" })
       });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401 || (j && j.error === "token_required")) {
+        alert("Por seguridad, esta acción necesita que vuelvas a iniciar sesión en este dispositivo.");
+        return;
+      }
+      if (!r.ok) { alert(j.error === "not_found" ? "No encontramos ese caso." : "No se pudo enviar tu confirmación. Inténtalo de nuevo."); return; }
       modal.remove();
-      alert("Caso cerrado. Bienvenido de vuelta.");
+      if (j.closed) alert("Caso cerrado. Bienvenido de vuelta.");
+      else alert("Hemos registrado que eres tú. Como el caso ya está en revisión, un administrador lo confirmará antes de cerrarlo.");
     } catch(e) { alert(e.message); }
   });
   const no = el("button", { style: "padding:14px 24px;background:#dc2626;color:#fff;border:none;border-radius:10px;font-weight:600;cursor:pointer;font-size:14px" }, "🚨 No soy yo, bloquear");
   no.addEventListener("click", async () => {
     if (!confirm("Esto bloqueará la cuenta inmediatamente. ¿Confirmas?")) return;
     try {
-      await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
+      const r = await fetch(`/api/my/device-incidents/${caseId}/confirm`, {
         method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ confirm_type: "not_me" })
       });
-      // Se recargará → middleware 423 activará showLockScreen
-      location.reload();
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401 || (j && j.error === "token_required")) {
+        alert("Por seguridad, esta acción necesita que vuelvas a iniciar sesión en este dispositivo.");
+        return;
+      }
+      if (j && j.error === "admin_cannot_be_locked") {
+        alert("Esta cuenta es de administración y no puede bloquearse desde la app.");
+        return;
+      }
+      if (!r.ok || !j.locked) { alert("No se pudo bloquear. Inténtalo de nuevo o escribe a soporte@citasaura.es."); return; }
+      // V932 · Ahora sí: el bloqueo lo aplica el servidor, así que al recargar
+      // cualquier llamada a /api/my/* responde 423 device_locked y el
+      // interceptor pinta la pantalla de bloqueo.
+      modal.remove();
+      showLockScreen("Has bloqueado este dispositivo. Escribe a soporte@citasaura.es para recuperarlo.");
+      setTimeout(() => { try { location.reload(); } catch {} }, 1200);
     } catch(e) { alert(e.message); }
   });
   btns.appendChild(yes); btns.appendChild(no);
@@ -19711,7 +19888,12 @@ function showLockScreen(reason) {
   overlay.appendChild(el("p", { style: "max-width:80%;font-size:17px;line-height:1.5;background:rgba(0,0,0,.4);padding:16px 20px;border-radius:12px;border:1px solid rgba(255,255,255,.1)" }, reason));
   const box = el("div", { style: "margin-top:32px;background:rgba(255,255,255,.05);padding:16px 20px;border-radius:12px;font-size:13px;color:#fca5a5;max-width:400px" });
   box.appendChild(el("div", { style: "font-weight:600;margin-bottom:6px" }, "¿Es un error?"));
-  box.appendChild(el("div", {}, "Contacta con soporte@citasaura.es o al 900 000 000 desde otro dispositivo indicando el ID de tu cuenta."));
+  // V932 · Aquí se prometía un teléfono, "900 000 000", que no existe ni ha
+  // existido nunca: no hay un solo número de atención en todo el proyecto. En
+  // una pantalla de bloqueo, donde la persona necesita justamente saber a quién
+  // acudir, dar un número inventado es lo peor que se puede hacer. Se deja el
+  // canal que sí existe (soporte@citasaura.es, con su buzón configurado).
+  box.appendChild(el("div", {}, "Escribe a soporte@citasaura.es desde otro dispositivo indicando el ID de tu cuenta. Te responderemos por correo."));
   overlay.appendChild(box);
   document.body.appendChild(overlay);
 }
