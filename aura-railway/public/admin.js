@@ -7296,6 +7296,7 @@ async function openBillingIssuer() {
   const pais = campo("País", "billing.issuer_country", "España");
   const mail = campo("Correo de facturación", "billing.issuer_email", "");
   const serie = campo("Serie", "billing.series", "A", "Las facturas se numeran SERIE-AÑO-0001 de forma correlativa. Si cambias la serie, la numeración empieza de nuevo en esa serie: no lo hagas a mitad de un ejercicio.");
+  const serieRect = campo("Serie de las rectificativas", "billing.series_rect", "R", "V934 · Las correcciones se numeran en su propia serie (R-2026-0001) para no mover el correlativo de las facturas normales.");
   const iva = campo("Tipo de IVA (%)", "billing.tax_rate", "21", null, "number");
 
   const incluido = el("input", { type: "checkbox" });
@@ -7320,7 +7321,25 @@ async function openBillingIssuer() {
   }
 
   modal.appendChild(el("p", { style: "margin:14px 0 0;color:var(--text-muted);font-size:11.5px;line-height:1.5" },
-    "Lo que esto NO hace: no emite facturas rectificativas (un pago reembolsado sale marcado como REEMBOLSADO y la rectificativa la emite tu asesoría), no decide tu régimen de IVA, y no factura a nombre de la empresa del cliente porque la app no guarda su NIF ni su dirección."));
+    "Lo que esto NO hace: no decide tu régimen de IVA (el tipo lo pones tú), no factura a nombre de la empresa del cliente porque la app no guarda su NIF ni su dirección, y no presenta impuestos. "
+    + "Sí emite rectificativas: son el botón «Rectificar» de cada pago ya facturado, porque una factura emitida no se puede editar."));
+
+  /* V934 · «Previsualizar antes de guardarla»: se abre un PDF de ejemplo con
+     lo que hay escrito AHORA en estos campos, sin guardar ningún ajuste y sin
+     tocar el contador de numeración. Los valores viajan en la URL porque el
+     PDF se abre en una pestaña nueva, y esta ruta ya está detrás del candado
+     de admin igual que el resto. */
+  const verEjemplo = btn("👁 Ver ejemplo", "ghost sm", () => {
+    const p = new URLSearchParams({
+      nombre: nombre.value.trim(), nif: nif.value.trim(), direccion: dir.value.trim(),
+      poblacion: pob.value.trim(), pais: pais.value.trim(), email: mail.value.trim(),
+      serie: (serie.value.trim() || "A"), iva: String(parseFloat(iva.value) || 0),
+      incluido: incluido.checked ? "true" : "false",
+      nota: nota.value.trim(), pie: pie.value.trim(),
+      adminToken: localStorage.getItem("adminToken") || "",
+    });
+    window.open("/api/billing/preview?" + p.toString(), "_blank");
+  });
 
   const guardar = btn("💾 Guardar", "primary sm", async () => {
     if (!nombre.value.trim() || !nif.value.trim()) {
@@ -7335,6 +7354,7 @@ async function openBillingIssuer() {
         "billing.issuer_country": pais.value.trim(),
         "billing.issuer_email": mail.value.trim(),
         "billing.series": (serie.value.trim() || "A").toUpperCase(),
+        "billing.series_rect": (serieRect.value.trim() || "R").toUpperCase(),
         "billing.tax_rate": String(parseFloat(iva.value) || 0),
         "billing.prices_include_tax": incluido.checked ? "true" : "false",
         "billing.tax_note": nota.value.trim(),
@@ -7345,7 +7365,147 @@ async function openBillingIssuer() {
     } catch (e) { toast(e.message); }
   });
   modal.appendChild(el("div", { style: "text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end" },
-    [btn("Cerrar", "ghost sm", () => overlay.remove()), guardar]));
+    [btn("Cerrar", "ghost sm", () => overlay.remove()), verEjemplo, guardar]));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+/* V934 · Rectificar una factura ya emitida.
+   No es una edición y el formulario lo dice: la factura original se queda como
+   está y lo que se emite es un documento nuevo, con su propio número, que dice
+   a cuál se refiere y por qué. Antes de ofrecer nada se pregunta al servidor
+   el estado fiscal del pago (invoice-state), porque si no hay factura emitida
+   no hay nada que rectificar y hay que explicarlo, no ofrecer un botón que
+   luego dará error. */
+async function openRectify(paymentId) {
+  let est;
+  try { est = await api.get("/api/payments/" + paymentId + "/invoice-state"); }
+  catch (e) { toast(e.message || "No se pudo leer el estado del pago"); return; }
+
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:600px;width:100%;padding:20px;max-height:92vh;overflow:auto" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  const cerrar = () => overlay.remove();
+
+  modal.appendChild(el("h3", { style: "margin:0 0 10px" }, "✏️ Rectificar factura"));
+
+  if (!est.issued) {
+    modal.appendChild(el("p", { style: "margin:0 0 14px;font-size:13px;line-height:1.55" },
+      est.demo
+        ? "Este cobro es un dato de demostración: no se le emite factura, así que no hay nada que rectificar."
+        : "Este pago no tiene factura emitida, así que no hay nada que rectificar. Si lo que descargaste fue un «justificante de pago», ése no lleva número ni deja rastro fiscal: corrige los datos y vuelve a descargarlo."));
+    modal.appendChild(el("div", { style: "text-align:right" }, [btn("Entendido", "ghost sm", cerrar)]));
+    overlay.appendChild(modal); document.body.appendChild(overlay); return;
+  }
+
+  modal.appendChild(el("p", { style: "margin:0 0 14px;color:var(--text-muted);font-size:12.5px;line-height:1.55" },
+    `Factura emitida: ${est.issued.number}. Una factura emitida NO se modifica: se emite una rectificativa `
+    + "con su propio número, que dice a qué factura se refiere. La original seguirá existiendo y podrás descargarla, "
+    + "marcada como rectificada."));
+
+  if (est.rectifications && est.rectifications.length) {
+    const lista = el("div", { style: "margin:0 0 12px;font-size:12px;color:var(--text-muted)" },
+      [el("strong", {}, "Ya rectificada por: ")]);
+    est.rectifications.forEach(r => {
+      lista.appendChild(el("div", {}, `${r.number} · ${r.mode === "anulacion" ? "anulación" : "sustitución"} · ${r.reason}`));
+    });
+    modal.appendChild(lista);
+  }
+
+  const modo = el("select", { class: "input", style: "width:100%" }, [
+    el("option", { value: "anulacion" }, "Anulación — dejar sin efecto la factura entera"),
+    el("option", { value: "sustitucion" }, "Sustitución — misma operación con datos corregidos"),
+  ]);
+  modal.appendChild(el("label", { style: "display:block;font-size:12.5px;margin-bottom:4px" }, "Tipo de rectificación"));
+  modal.appendChild(modo);
+  modal.appendChild(el("small", { style: "display:block;color:var(--text-muted);margin:4px 0 10px" },
+    "Anulación: los importes salen en negativo, que es lo que permite que el ejercicio cuadre sin borrar la factura original. Sustitución: se emite con los datos corregidos."));
+
+  const motivo = el("textarea", { class: "input", rows: "2", style: "width:100%", placeholder: "Ej.: error en el nombre del cliente" });
+  modal.appendChild(el("label", { style: "display:block;font-size:12.5px;margin-bottom:4px" }, "Motivo *"));
+  modal.appendChild(motivo);
+  modal.appendChild(el("small", { style: "display:block;color:var(--text-muted);margin:4px 0 10px" },
+    "Obligatorio: se imprime en el documento. Sin motivo, una rectificativa no vale."));
+
+  const extra = el("div", { style: "display:none" });
+  const cNombre = el("input", { class: "input", style: "width:100%", placeholder: "Nombre corregido del cliente (opcional)" });
+  const cConcepto = el("input", { class: "input", style: "width:100%", placeholder: "Concepto corregido (opcional)" });
+  const cTotal = el("input", { class: "input", type: "number", step: "0.01", style: "width:100%", placeholder: "Total corregido en € (opcional)" });
+  extra.appendChild(el("label", { style: "display:block;font-size:12.5px;margin:10px 0 4px" }, "Datos corregidos (deja en blanco lo que no cambie)"));
+  extra.appendChild(cNombre); extra.appendChild(cConcepto); extra.appendChild(cTotal);
+  modal.appendChild(extra);
+  modo.addEventListener("change", () => { extra.style.display = modo.value === "sustitucion" ? "block" : "none"; });
+
+  const emitir = btn("Emitir rectificativa", "primary sm", async () => {
+    if (motivo.value.trim().length < 3) { toast("Escribe el motivo"); return; }
+    if (!(await askConfirm(
+      "Se va a emitir una factura rectificativa con número propio. Esto NO se puede deshacer: "
+      + "los números fiscales no se reutilizan. ¿Emitirla?", { okText: "Emitir" }))) return;
+    const cuerpo = { mode: modo.value, reason: motivo.value.trim() };
+    if (modo.value === "sustitucion") {
+      if (cNombre.value.trim()) cuerpo.cliente_nombre = cNombre.value.trim();
+      if (cConcepto.value.trim()) cuerpo.concepto = cConcepto.value.trim();
+      if (cTotal.value !== "" && !isNaN(parseFloat(cTotal.value))) cuerpo.total_cent = Math.round(parseFloat(cTotal.value) * 100);
+    }
+    try {
+      const r = await api.post("/api/payments/" + paymentId + "/invoice/rectify", cuerpo);
+      toast("Rectificativa " + r.number + " emitida");
+      cerrar();
+      window.open("/api/payments/" + paymentId + "/rectification/" + encodeURIComponent(r.number)
+        + "?adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
+    } catch (e) { toast(e.message || "No se pudo emitir"); }
+  });
+
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end" },
+    [btn("Cancelar", "ghost sm", cerrar), emitir]));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+}
+
+/* V934 · Cobro manual: para lo que no pasa por Stripe (una transferencia, un
+   cobro en mano). Registra el cobro y desde ahí ya se factura como cualquier
+   otro. No se emite una factura suelta a propósito: un documento fiscal sale
+   de una operación registrada, no al revés. */
+async function openManualPayment() {
+  const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto" });
+  const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border);border-radius:14px;max-width:560px;width:100%;padding:20px;max-height:92vh;overflow:auto" });
+  overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+  modal.appendChild(el("h3", { style: "margin:0 0 4px" }, "➕ Registrar cobro manual"));
+  modal.appendChild(el("p", { style: "margin:0 0 14px;color:var(--text-muted);font-size:12.5px;line-height:1.5" },
+    "Para cobros que no pasan por Stripe. Queda en el historial como un pago más, y desde su fila podrás previsualizar y emitir la factura."));
+
+  const linea = (etiqueta, input, ayuda) => {
+    modal.appendChild(el("label", { style: "display:block;margin-top:10px;font-size:12.5px" }, etiqueta));
+    modal.appendChild(input);
+    if (ayuda) modal.appendChild(el("small", { style: "display:block;color:var(--text-muted);margin-top:3px" }, ayuda));
+    return input;
+  };
+  const usuario = linea("Usuario *", el("input", { class: "input", style: "width:100%", placeholder: "id o email" }),
+    "El id numérico o el correo del usuario, tal como aparece en Usuarios.");
+  const concepto = linea("Concepto *", el("input", { class: "input", style: "width:100%", placeholder: "Ej.: Suscripción anual (transferencia)" }),
+    "Es lo que se leerá en la factura.");
+  const importe = linea("Importe *", el("input", { class: "input", type: "number", step: "0.01", style: "width:100%", placeholder: "0.00" }),
+    "El total cobrado. El desglose de IVA se calcula con tus datos de facturación.");
+  const moneda = linea("Moneda", el("input", { class: "input", style: "width:100%", value: "EUR" }));
+  const metodo = linea("Forma de cobro", el("input", { class: "input", style: "width:100%", value: "transferencia" }));
+  const fecha = linea("Fecha del cobro", el("input", { class: "input", type: "date", style: "width:100%" }),
+    "En blanco = hoy. No se admiten fechas futuras.");
+
+  const guardar = btn("Registrar cobro", "primary sm", async () => {
+    if (!usuario.value.trim() || !concepto.value.trim() || !importe.value) { toast("Faltan campos obligatorios"); return; }
+    try {
+      const r = await api.post("/api/payments/manual", {
+        user: usuario.value.trim(), concept: concepto.value.trim(),
+        amount: parseFloat(importe.value), currency: (moneda.value.trim() || "EUR").toUpperCase(),
+        method: metodo.value.trim() || "manual", date: fecha.value || null,
+      });
+      toast("Cobro registrado (" + r.invoice_no + ")");
+      overlay.remove();
+      route("payments");
+    } catch (e) { toast(e.message || "No se pudo registrar"); }
+  });
+  modal.appendChild(el("div", { style: "text-align:right;margin-top:16px;display:flex;gap:8px;justify-content:flex-end" },
+    [btn("Cancelar", "ghost sm", () => overlay.remove()), guardar]));
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 }
@@ -7364,6 +7524,7 @@ async function viewPayments(root){
         window.open(`/api/payments/invoices-export?year=${y}&adminToken=` + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
       }),
       btn("⚙️ Datos de facturación", "ghost sm", () => openBillingIssuer()), // V933
+      btn("➕ Cobro manual", "ghost sm", () => openManualPayment()), // V934
       btn("Exportar CSV", "ghost sm", () => downloadCSV("payments"))
     ]));
 
@@ -7529,6 +7690,14 @@ async function viewPayments(root){
             window.open("/api/payments/" + p.id + "/invoice?adminToken="
               + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
           }),
+          /* V934 · Borrador. Abre EXACTAMENTE el mismo documento con marca de
+             agua «BORRADOR», sin emitir nada y sin gastar número. Va antes que
+             el botón de emitir porque es el paso que debería hacerse primero. */
+          btn("👁 Borrador", "ghost xs", () => {
+            window.open("/api/payments/" + p.id + "/invoice?preview=1&adminToken="
+              + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
+          }),
+          btn("✏️ Rectificar", "ghost xs", () => openRectify(p.id)),
           p.status === "completed"
             ? btn("↩️ Reembolsar", "warn xs", async () => {
                 if (!confirm("¿Reembolsar este pago?")) return;
