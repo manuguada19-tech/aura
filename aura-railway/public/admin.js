@@ -20142,15 +20142,26 @@ async function viewBroadcasts(root) {
       ".bcast-section:first-of-type{border-top:0;margin-top:0;padding-top:0}" +
       ".bcast-section h4{margin:0 0 10px;font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:6px}" +
       ".bcast-label{display:block;font-size:12px;font-weight:700;margin:0 0 4px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em}" +
-      ".bcast-tpl-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding:4px 2px 12px;margin:0 -2px 4px}" +
-      ".bcast-tpl{text-align:left;padding:12px;border:1px solid var(--border,#2a2f3a);border-radius:12px;background:rgba(255,255,255,.02);cursor:pointer;color:inherit;transition:transform .12s,border-color .12s,background .12s;font:inherit;width:auto}" +
+      ".bcast-tpl-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(160px,100%),1fr));gap:10px;padding:4px 0 12px;margin:0 0 4px;box-sizing:border-box;max-width:100%;width:100%}" +
+      ".bcast-tpl{min-width:0;text-align:left;padding:12px;border:1px solid var(--border,#2a2f3a);border-radius:12px;background:rgba(255,255,255,.02);cursor:pointer;color:inherit;transition:transform .12s,border-color .12s,background .12s;font:inherit;width:auto;overflow:hidden}" +
       ".bcast-tpl:hover{border-color:#e63a67;background:rgba(230,58,103,.08);transform:translateY(-2px)}" +
       ".bcast-tpl-icon{font-size:22px;margin-bottom:6px;line-height:1}" +
-      ".bcast-tpl-title{font-weight:700;font-size:13px;margin-bottom:4px;line-height:1.3}" +
-      ".bcast-tpl-body{font-size:11.5px;color:var(--text-muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}" +
-      ".bcast-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}" +
-      ".bcast-chip{padding:5px 10px;border-radius:999px;border:1px solid var(--border,#2a2f3a);background:rgba(255,255,255,.03);color:inherit;font-size:11.5px;font-weight:600;cursor:pointer;transition:all .12s;font-family:inherit}" +
-      ".bcast-chip:hover{border-color:#e63a67;background:rgba(230,58,103,.12);color:#fff}" +
+      ".bcast-tpl-title{font-weight:700;font-size:13px;margin-bottom:4px;line-height:1.3;word-break:break-word;overflow-wrap:break-word;hyphens:auto}" +
+      ".bcast-tpl-body{font-size:11.5px;color:var(--text-muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;overflow-wrap:break-word}" +
+      ".bcast-chips-label{font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;font-weight:700;margin:8px 0 6px}" +
+      ".bcast-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px;max-width:100%}" +
+      ".bcast-chip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:999px;border:1px solid transparent;font-size:12px;font-weight:700;cursor:pointer;transition:all .12s;font-family:inherit;line-height:1;white-space:nowrap;max-width:100%}" +
+      ".bcast-chip .ico{font-size:13px;line-height:1}" +
+      ".bcast-chip .lbl{overflow:hidden;text-overflow:ellipsis}" +
+      ".bcast-chip.primary{background:linear-gradient(135deg,#e63a67,#ff6b3b);color:#fff}" +
+      ".bcast-chip.primary:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(230,58,103,.35)}" +
+      ".bcast-chip.secondary{background:rgba(255,255,255,.08);color:inherit;border-color:var(--border,#2a2f3a)}" +
+      ".bcast-chip.secondary:hover{background:rgba(255,255,255,.14);border-color:rgba(230,58,103,.5)}" +
+      ".bcast-chip.dismiss{background:transparent;color:var(--text-muted);border-color:var(--border,#2a2f3a);border-style:dashed}" +
+      ".bcast-chip.dismiss:hover{color:inherit;background:rgba(255,255,255,.04)}" +
+      ".bcast-chip.time{background:transparent;border-color:var(--border,#2a2f3a);color:inherit;font-weight:600}" +
+      ".bcast-chip.time:hover{border-color:#e63a67}" +
+      ".bcast-chip-hint{font-size:10.5px;color:var(--text-muted);margin:0 0 8px;padding-left:2px}" +
       ".bcast-counter{font-size:11px;color:var(--text-muted);text-align:right;margin-top:-4px;margin-bottom:8px}" +
       ".bcast-preview-panel{position:sticky;top:12px}" +
       ".bcast-phone{background:linear-gradient(180deg,#0f1117,#161821);border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:16px;color:#f4f4f7;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35)}" +
@@ -20270,26 +20281,26 @@ async function viewBroadcasts(root) {
   ];
 
   const BUTTON_PRESETS = [
-    { label: "Verificarme", link: "aura://verificar" },
-    { label: "Ver Premium", link: "aura://premium" },
-    { label: "Ver oferta", link: "aura://premium" },
-    { label: "Activar prueba", link: "aura://premium" },
-    { label: "Abrir Explorar", link: "aura://explorar" },
-    { label: "Zona LGTB+", link: "aura://explorar?zone=lgtb" },
-    { label: "Zona Hetero", link: "aura://explorar?zone=hetero" },
-    { label: "Modo Ahora", link: "aura://ahora" },
-    { label: "Mis mensajes", link: "aura://mensajes" },
-    { label: "Mi perfil", link: "aura://perfil" },
-    { label: "Editar bio", link: "aura://perfil" },
-    { label: "Subir fotos", link: "aura://perfil" },
-    { label: "Ajustes", link: "aura://ajustes" },
-    { label: "Ajustes notif.", link: "aura://ajustes/notificaciones" },
-    { label: "Ajustes de zona", link: "aura://ajustes/zona" },
-    { label: "Abrir canal", link: "aura://open-channel" },
-    { label: "Entendido", link: "" },
-    { label: "Aceptar", link: "" },
-    { label: "Más tarde", link: "" },
-    { label: "Recordármelo", link: "" },
+    { icon: "✅", label: "Verificarme",     link: "aura://verificar",                  hint: "Abre la pantalla de verificación con selfie" },
+    { icon: "⭐", label: "Ver Premium",     link: "aura://premium",                    hint: "Abre el paywall de Premium" },
+    { icon: "🎯", label: "Ver oferta",      link: "aura://premium",                    hint: "Abre el paywall con la oferta actual" },
+    { icon: "🎁", label: "Activar prueba",  link: "aura://premium",                    hint: "Abre el paywall con la prueba gratuita" },
+    { icon: "🔍", label: "Abrir Explorar",  link: "aura://explorar",                   hint: "Lleva a la pantalla Explorar" },
+    { icon: "🌈", label: "Zona LGTB+",      link: "aura://explorar?zone=lgtb",         hint: "Activa la zona LGTB+ en Explorar" },
+    { icon: "💑", label: "Zona Hetero",     link: "aura://explorar?zone=hetero",       hint: "Activa la zona Hetero en Explorar" },
+    { icon: "⚡", label: "Modo Ahora",      link: "aura://ahora",                      hint: "Abre el Modo Ahora" },
+    { icon: "💬", label: "Mis mensajes",    link: "aura://mensajes",                   hint: "Abre la lista de chats" },
+    { icon: "👤", label: "Mi perfil",       link: "aura://perfil",                     hint: "Abre el perfil del usuario" },
+    { icon: "✍️", label: "Editar bio",      link: "aura://perfil",                     hint: "Abre el perfil para editar la biografía" },
+    { icon: "📸", label: "Subir fotos",     link: "aura://perfil",                     hint: "Abre el perfil para añadir fotos" },
+    { icon: "⚙️", label: "Ajustes",         link: "aura://ajustes",                    hint: "Abre la pantalla de Ajustes" },
+    { icon: "🔔", label: "Ajustes notif.",  link: "aura://ajustes/notificaciones",     hint: "Abre las preferencias de notificaciones" },
+    { icon: "🗺️", label: "Ajustes de zona",link: "aura://ajustes/zona",               hint: "Abre los ajustes de zona" },
+    { icon: "📢", label: "Abrir canal",     link: "aura://open-channel",               hint: "Vuelve a abrir este canal" },
+    { icon: "✓",  label: "Entendido",       link: "",                                  hint: "Cierra el mensaje sin ir a ninguna pantalla" },
+    { icon: "✓",  label: "Aceptar",         link: "",                                  hint: "Cierra el mensaje sin ir a ninguna pantalla" },
+    { icon: "🕒", label: "Más tarde",       link: "",                                  hint: "Cierra el mensaje sin ir a ninguna pantalla" },
+    { icon: "🔁", label: "Recordármelo",    link: "",                                  hint: "Cierra el mensaje sin ir a ninguna pantalla" },
   ];
 
   // ==== Fila de plantillas ====
@@ -20342,9 +20353,14 @@ async function viewBroadcasts(root) {
   secButtons.appendChild(el("label", { class: "bcast-label" }, "Botón 1 (resaltado)"));
   secButtons.appendChild(b1l);
   secButtons.appendChild(b1d);
+  secButtons.appendChild(el("div", { class: "bcast-chips-label" }, "🎨 Elige un botón (se verá así)"));
   const b1chips = el("div", { class: "bcast-chips" });
   BUTTON_PRESETS.forEach(p => {
-    const c = el("button", { type: "button", class: "bcast-chip" }, p.label);
+    const variant = p.link ? "primary" : "dismiss";
+    const c = el("button", { type: "button", class: "bcast-chip " + variant, title: p.hint }, [
+      el("span", { class: "ico" }, p.icon),
+      el("span", { class: "lbl" }, p.label),
+    ]);
     c.addEventListener("click", () => {
       b1l.value = p.label; b1d.value = p.link;
       schedulePreview(); syncCounters();
@@ -20352,15 +20368,21 @@ async function viewBroadcasts(root) {
     b1chips.appendChild(c);
   });
   secButtons.appendChild(b1chips);
+  secButtons.appendChild(el("div", { class: "bcast-chip-hint" }, "El botón primario aparece resaltado con el color de marca."));
 
   const b2l = el("input", { class: "input", placeholder: "Etiqueta del botón secundario", maxlength: "40", style: "width:100%;margin-bottom:6px" });
   const b2d = el("input", { class: "input", placeholder: "aura://premium · https://…", maxlength: "200", style: "width:100%" });
   secButtons.appendChild(el("label", { class: "bcast-label", style: "margin-top:10px" }, "Botón 2 (secundario)"));
   secButtons.appendChild(b2l);
   secButtons.appendChild(b2d);
+  secButtons.appendChild(el("div", { class: "bcast-chips-label" }, "🎨 Elige un botón (se verá así)"));
   const b2chips = el("div", { class: "bcast-chips" });
   BUTTON_PRESETS.forEach(p => {
-    const c = el("button", { type: "button", class: "bcast-chip" }, p.label);
+    const variant = p.link ? "secondary" : "dismiss";
+    const c = el("button", { type: "button", class: "bcast-chip " + variant, title: p.hint }, [
+      el("span", { class: "ico" }, p.icon),
+      el("span", { class: "lbl" }, p.label),
+    ]);
     c.addEventListener("click", () => {
       b2l.value = p.label; b2d.value = p.link;
       schedulePreview(); syncCounters();
@@ -20368,6 +20390,7 @@ async function viewBroadcasts(root) {
     b2chips.appendChild(c);
   });
   secButtons.appendChild(b2chips);
+  secButtons.appendChild(el("div", { class: "bcast-chip-hint" }, "El botón secundario aparece con estilo más discreto."));
   ed.appendChild(secButtons);
 
   // Sección: Audiencia
@@ -20461,7 +20484,10 @@ async function viewBroadcasts(root) {
     { txt: "Mañana 18:00", fn: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); return d; } },
     { txt: "En 1 semana", ms: 7 * 24 * 3600e3 },
   ].forEach(p => {
-    const c = el("button", { type: "button", class: "bcast-chip" }, p.txt);
+    const c = el("button", { type: "button", class: "bcast-chip time" }, [
+      el("span", { class: "ico" }, "🕒"),
+      el("span", { class: "lbl" }, p.txt),
+    ]);
     c.addEventListener("click", () => {
       const d = p.fn ? p.fn() : new Date(Date.now() + p.ms);
       const pad = n => String(n).padStart(2, "0");
