@@ -3004,6 +3004,14 @@ body.account-suspended .restriction-banner .rb-close {
   transition: transform .35s cubic-bezier(.2,.9,.2,1);
 }
 .toast.show { transform: translate(-50%, 0); }
+/* V938 · Cuando la tabbar inferior está visible, bottom:32px cae ENCIMA del
+   menú y tapa los botones (el aviso «Notificaciones activas» era el caso más
+   visible). Lo subimos por encima de la barra usando la misma condición que
+   ya usa .theme-toggle. En pantallas sin tabbar (welcome/onboarding/modales
+   a pantalla completa) sigue en 32px como antes. */
+body:has(#tabbar:not([hidden])) .toast {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tab-height, 62px) + 16px);
+}
 
 /* Modal / bottom sheet */
 .modal {
