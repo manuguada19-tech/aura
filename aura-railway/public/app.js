@@ -12976,48 +12976,45 @@ function handleDeeplink(raw) {
 }
 
 function openBroadcastChannelMenu() {
-  if (typeof modal !== "object" || !modal.open) {
-    // Fallback: menú simple.
-    const sheet = document.createElement("div");
-    sheet.className = "bcast-menu-fallback";
-    sheet.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center;padding:16px";
-    sheet.innerHTML = `<div style="background:var(--bg-elev,#161821);color:#f4f4f7;border-radius:16px;padding:16px;width:min(360px,100%)">
-      <button data-a="mute" style="display:block;width:100%;text-align:left;padding:12px;background:none;border:0;color:inherit;font:inherit">Silenciar canal</button>
-      <button data-a="hide-all" style="display:block;width:100%;text-align:left;padding:12px;background:none;border:0;color:inherit;font:inherit">Borrar todo el hilo</button>
-      <button data-a="close" style="display:block;width:100%;text-align:left;padding:12px;background:none;border:0;color:#e63a67;font:inherit">Cancelar</button>
-    </div>`;
-    document.body.appendChild(sheet);
-    sheet.addEventListener("click", async (e) => {
-      const b = e.target.closest("button[data-a]");
-      if (!b) { sheet.remove(); return; }
-      const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
-      if (b.dataset.a === "mute") {
-        await fetch("/api/my/channel/mute", { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ muted: true }) });
-      } else if (b.dataset.a === "hide-all") {
-        await fetch("/api/my/channel/hide-all", { method: "POST", headers: h });
-      }
-      sheet.remove();
-      if (b.dataset.a === "hide-all") openBroadcastChannel();
+  // Lee el estado silenciado para pintar la etiqueta correcta.
+  const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
+  fetch("/api/my/channel/prefs", { headers: h, cache: "no-store" })
+    .then(r => r.ok ? r.json() : { muted: false })
+    .catch(() => ({ muted: false }))
+    .then(prefs => {
+      const muted = !!(prefs && prefs.muted);
+      const sheet = el("div", {}, [
+        el("div", { class: "sheet-title" }, "Equipo de Aura"),
+        el("div", { class: "sheet-actions" }, [
+          el("button", {
+            class: "btn btn-outline btn-block",
+            onclick: async () => {
+              modal.close();
+              try {
+                await fetch("/api/my/channel/mute", {
+                  method: "POST",
+                  headers: { ...h, "Content-Type": "application/json" },
+                  body: JSON.stringify({ muted: !muted }),
+                });
+                try { toast(muted ? "Canal reactivado" : "Canal silenciado"); } catch {}
+              } catch { try { toast("No se pudo cambiar el estado"); } catch {} }
+            },
+          }, muted ? "Reactivar notificaciones" : "Silenciar notificaciones"),
+          el("button", {
+            class: "btn btn-danger btn-block",
+            onclick: async () => {
+              modal.close();
+              try {
+                await fetch("/api/my/channel/hide-all", { method: "POST", headers: h });
+                openBroadcastChannel();
+              } catch { try { toast("No se pudo borrar"); } catch {} }
+            },
+          }, "Borrar todo el hilo"),
+          el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
+        ]),
+      ]);
+      modal.open(sheet);
     });
-    return;
-  }
-  modal.open({
-    title: "Opciones del canal",
-    body: el("div", { style: "display:flex;flex-direction:column;gap:8px" }, [
-      el("button", { class: "btn secondary", onclick: async () => {
-        const h = chatApi.headers();
-        await fetch("/api/my/channel/mute", { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ muted: true }) });
-        modal.close();
-        toast("Canal silenciado");
-      } }, "Silenciar canal"),
-      el("button", { class: "btn secondary", onclick: async () => {
-        const h = chatApi.headers();
-        await fetch("/api/my/channel/hide-all", { method: "POST", headers: h });
-        modal.close();
-        openBroadcastChannel();
-      } }, "Borrar todo el hilo"),
-    ]),
-  });
 }
 
 /* ---- Nearby filters modal (Chats screen) ---- */
