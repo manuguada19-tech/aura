@@ -40,10 +40,13 @@
       números (un hueco en la serie es un problema, no un detalle).
 
    LO QUE ESTE MÓDULO NO HACE, y hay que decirlo:
-     · No emite facturas rectificativas. Un pago reembolsado sale marcado
-       como REEMBOLSADO, y si ya tenía factura emitida se muestra su
-       número; la rectificativa la tiene que emitir tu asesoría, con su
-       serie propia. Automatizarlo sin saber tu régimen sería inventar.
+     · [Corregido en V934] Sí emite facturas rectificativas, en serie propia
+       (billing.series_rect, «R» por defecto) y con dos modos: anulación (los
+       importes en negativo) y sustitución (los datos corregidos). Este párrafo
+       decía lo contrario y se quedó sin actualizar al añadirlas: era una
+       descripción falsa del propio módulo, que es de las peores que hay. Lo que
+       sigue siendo tuyo es el criterio fiscal: el módulo no decide cuándo toca
+       rectificar, sólo lo hace bien cuando tú lo pides.
      · No decide tu tipo de IVA ni tu régimen (OSS, exenciones,
        inversión del sujeto pasivo). Lee lo que configures en el panel.
      · No factura a nombre de empresa del cliente: la app no guarda NIF ni
@@ -197,6 +200,65 @@ function conceptoDe(pago) {
   if (k === "manual") return "Servicio Aura";
   if (k) return `Servicio Aura · ${k}`;
   return "Servicio Aura";
+}
+
+/* ---------------------------------------------------------------- */
+/* V935 · Formas de cobro                                           */
+/* ---------------------------------------------------------------- */
+/* El cobro manual pedía la forma de cobro en un campo de texto vacío, y lo que
+   se escribiera ahí se imprimía tal cual en la factura. Dos consecuencias: una
+   errata acaba en un documento fiscal, y los códigos internos («stripe»,
+   «apple_pay») salen en minúsculas y con guion bajo dentro de la casilla
+   «Forma de cobro».
+
+   La tabla se parte en dos a propósito:
+     · las que NO pasan por la plataforma (transferencia, efectivo) están
+       siempre, porque no dependen de ningún ajuste: el dinero no entra por aquí;
+     · las de la plataforma (`ajuste`) sólo se ofrecen si están activas en
+       Ajustes → Pagos, que es lo que el panel presenta como disponible.
+   «Otra» lleva su propia casilla de texto: si cobras por una vía que no está en
+   la lista se puede escribir, pero deja de ser lo normal.
+
+   `oculto` es para valores que existen en la base y hay que saber ETIQUETAR,
+   pero que no se ofrecen: «manual» es lo que guardaban los cobros de V934. */
+const FORMAS_COBRO = [
+  { code: "transferencia", label: "Transferencia bancaria" },
+  { code: "efectivo", label: "Efectivo (en mano)" },
+  { code: "bizum", label: "Bizum", ajuste: "payments.bizum", defecto: "false" },
+  { code: "stripe", label: "Tarjeta (Stripe)", ajuste: "payments.stripe", defecto: "true" },
+  { code: "paypal", label: "PayPal", ajuste: "payments.paypal", defecto: "true" },
+  { code: "apple_pay", label: "Apple Pay", ajuste: "payments.apple_pay", defecto: "true" },
+  { code: "google_pay", label: "Google Pay", ajuste: "payments.google_pay", defecto: "true" },
+  { code: "otro", label: "Otra forma de cobro", libre: true },
+  { code: "manual", label: "Cobro manual", oculto: true },
+];
+
+/* Las que ofrece el desplegable, en este orden. Un ajuste ausente cuenta como
+   su valor por defecto (Bizum apagado, el resto encendidos), igual que hace
+   /api/config en server.js. */
+function formasCobro(getSetting) {
+  return FORMAS_COBRO
+    .filter((f) => !f.oculto)
+    .filter((f) => {
+      if (!f.ajuste) return true;
+      const v = getSetting(f.ajuste, f.defecto);
+      return String(v == null ? f.defecto : v).trim() !== "false";
+    })
+    .map((f) => ({
+      code: f.code, label: f.label,
+      // El panel usa las dos banderas: `libre` abre la casilla de texto y
+      // `plataforma` explica por qué esa opción puede desaparecer de la lista.
+      libre: !!f.libre, plataforma: !!f.ajuste,
+    }));
+}
+
+/* Etiqueta para el documento. Lo que no esté en la tabla se imprime tal cual:
+   las filas antiguas guardan cosas como «Visa ****4231» y eso ya se lee bien. */
+function etiquetaForma(metodo) {
+  const v = String(metodo == null ? "" : metodo).trim();
+  if (!v) return "";
+  const f = FORMAS_COBRO.find((x) => x.code === v.toLowerCase());
+  return f ? f.label : v;
 }
 
 /* ---------------------------------------------------------------- */
@@ -693,7 +755,8 @@ function register(app, pool, helpers) {
       base: eur(usa.base, usa.moneda || moneda),
       iva: eur(usa.iva, usa.moneda || moneda),
       total: eur(usa.total, usa.moneda || moneda),
-      formaPago: pago.method || "",
+      // V935 · antes salía el valor crudo de la columna («stripe», «apple_pay»).
+      formaPago: etiquetaForma(pago.method),
       referencia: usa.referencia || pago.invoice_no || "",
       notaIva: (usa.emisor && usa.emisor.notaIva) || "",
       pieLegal: (usa.emisor && usa.emisor.pie) || "",
@@ -919,7 +982,7 @@ function register(app, pool, helpers) {
       concepto: "Suscripción Aura · plan premium (mensual)",
       tipoIva: emisor.tipoIva,
       base: eur(d.base, "EUR"), iva: eur(d.iva, "EUR"), total: eur(d.total, "EUR"),
-      formaPago: "stripe",
+      formaPago: etiquetaForma("stripe"),   // V935 · «Tarjeta (Stripe)»
       referencia: "",
       notaIva: emisor.notaIva || "",
       pieLegal: emisor.pie || "",
@@ -944,12 +1007,29 @@ function register(app, pool, helpers) {
      La referencia interna se construye con el id de la fila (MAN-AÑOMES-000123)
      y no con bytes al azar: es legible, ordenada y no mete aleatoriedad en un
      módulo cuyo trabajo es justamente no numerar al azar. */
+  /* V935 · Las formas de cobro que ofrece el desplegable del cobro manual.
+     Ruta aparte y no dentro de /api/config porque esto es del panel: /api/config
+     lo lee la app de cualquier usuario y no tiene por qué saber cómo cobras a
+     mano. El nombre lleva guion («manual-methods») para no chocar con
+     /api/payments/:id/invoice, que también tiene tres tramos. */
+  app.get("/api/payments/manual-methods", wrap(async (req, res) => {
+    res.json({ items: formasCobro(getSetting), default: "transferencia" });
+  }));
+
   app.post("/api/payments/manual", wrap(async (req, res) => {
     const quien = String(req.body?.user || "").trim().slice(0, 190);
     const concepto = String(req.body?.concept || "").trim().slice(0, 190);
     const importe = Number(req.body?.amount);
     const moneda = String(req.body?.currency || "EUR").toUpperCase().slice(0, 3);
-    const metodo = String(req.body?.method || "manual").trim().slice(0, 40) || "manual";
+    /* V935 · El desplegable manda un código de FORMAS_COBRO. Con «otro» viene el
+       texto en method_other; se guarda ese texto, no la palabra «otro», para que
+       la factura diga la forma de cobro de verdad. Lo que llegue sin ser un
+       código conocido se acepta recortado: esta ruta sólo la usa el panel, y
+       negarlo rompería a quien la llame con «Visa ****4231». */
+    let metodo = String(req.body?.method || "manual").trim().slice(0, 40) || "manual";
+    if (metodo.toLowerCase() === "otro") {
+      metodo = String(req.body?.method_other || "").trim().slice(0, 40) || "otro";
+    }
     const fecha = req.body?.date ? String(req.body.date).slice(0, 30) : null;
 
     if (!quien) return res.status(400).json({ error: "user_required", detail: "Indica el usuario por id o por email." });
@@ -1223,5 +1303,7 @@ module.exports = {
     datosEmisor, emisorCompleto, desglosa, conceptoDe, eur, construyePdf, asignaNumero, informeHtml,
     // V934
     esPagoDeDemostracion, siguienteSeq, facturaEmitida, numeroPrevisto, emiteRectificativa, rectificativasDe,
+    // V935
+    FORMAS_COBRO, formasCobro, etiquetaForma,
   },
 };

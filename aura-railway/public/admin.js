@@ -7487,17 +7487,49 @@ async function openManualPayment() {
   const importe = linea("Importe *", el("input", { class: "input", type: "number", step: "0.01", style: "width:100%", placeholder: "0.00" }),
     "El total cobrado. El desglose de IVA se calcula con tus datos de facturación.");
   const moneda = linea("Moneda", el("input", { class: "input", style: "width:100%", value: "EUR" }));
-  const metodo = linea("Forma de cobro", el("input", { class: "input", style: "width:100%", value: "transferencia" }));
+
+  /* V935 · La forma de cobro era un campo de texto que había que escribir en cada
+     cobro, y lo escrito salía impreso en la factura (una errata incluida). Ahora
+     es un desplegable que pide al servidor las formas ACTIVAS: las de Ajustes →
+     Pagos que estén encendidas, más transferencia y efectivo, que no dependen de
+     ningún ajuste porque ese dinero no pasa por la plataforma.
+     Si la ruta falla (servidor viejo, red caída) se cae al campo de texto de
+     antes: es mejor que un diálogo que no abre. */
+  let formas = [];
+  try { formas = (await api.get("/api/payments/manual-methods")).items || []; } catch {}
+  const metodo = formas.length
+    ? el("select", { class: "input", style: "width:100%" },
+        formas.map(f => el("option", { value: f.code }, f.label)))
+    : el("input", { class: "input", style: "width:100%", value: "transferencia" });
+  linea("Forma de cobro", metodo, formas.length
+    ? "Se listan las que tienes activas en Ajustes → Pagos, más transferencia y efectivo."
+    : "No se pudo leer la lista del servidor: escríbela a mano.");
+  if (formas.length) metodo.value = formas.some(f => f.code === "transferencia") ? "transferencia" : formas[0].code;
+
+  // La casilla de «Otra forma de cobro», oculta hasta que se elige esa opción.
+  const otra = el("input", { class: "input", style: "width:100%;margin-top:6px;display:none",
+    placeholder: "Escribe la forma de cobro" });
+  modal.appendChild(otra);
+  if (metodo.tagName === "SELECT") metodo.addEventListener("change", () => {
+    const libre = (formas.find(f => f.code === metodo.value) || {}).libre;
+    otra.style.display = libre ? "block" : "none";
+    if (libre) otra.focus();
+  });
+
   const fecha = linea("Fecha del cobro", el("input", { class: "input", type: "date", style: "width:100%" }),
     "En blanco = hoy. No se admiten fechas futuras.");
 
   const guardar = btn("Registrar cobro", "primary sm", async () => {
     if (!usuario.value.trim() || !concepto.value.trim() || !importe.value) { toast("Faltan campos obligatorios"); return; }
+    // V935 · Si se elige «Otra», la casilla de texto pasa a ser obligatoria: sin
+    // ella la factura diría «otro» en la casilla de la forma de cobro.
+    if (metodo.value === "otro" && !otra.value.trim()) { toast("Escribe la forma de cobro"); return; }
     try {
       const r = await api.post("/api/payments/manual", {
         user: usuario.value.trim(), concept: concepto.value.trim(),
         amount: parseFloat(importe.value), currency: (moneda.value.trim() || "EUR").toUpperCase(),
-        method: metodo.value.trim() || "manual", date: fecha.value || null,
+        method: metodo.value.trim() || "manual", method_other: otra.value.trim(),
+        date: fecha.value || null,
       });
       toast("Cobro registrado (" + r.invoice_no + ")");
       overlay.remove();
