@@ -20608,10 +20608,17 @@ async function viewBroadcasts(root) {
 
   let previewTimer = null;
   async function refreshPreview() {
+    /* V945 · El contador de «Alcance estimado» pintaba «?» porque este fetch
+       no enviaba la cabecera Authorization: Bearer, y /api/admin/* devuelve 401
+       sin ella. El resto de fetches de este editor tenía el mismo despiste
+       (btnDraft, btnSendNow, btnConfirmSchedule, reloadList, resendBroadcast,
+       retirarBroadcast, openBroadcastStats): quedaban silenciosamente rotos
+       para cualquier admin real, sólo funcionaba en un navegador que aún
+       tuviera cookie válida por otro motivo. Todos usan ahora authHeaders(). */
     try {
       const r = await fetch("/api/admin/broadcasts/preview-audience", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ audience: currentAudience() }),
       });
       const j = await r.json();
@@ -20703,7 +20710,7 @@ async function viewBroadcasts(root) {
     if (!payload.title || !payload.body) return toast("Título y cuerpo son obligatorios");
     const r = await fetch("/api/admin/broadcasts", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
     const j = await r.json();
@@ -20719,7 +20726,7 @@ async function viewBroadcasts(root) {
     try {
       const r = await fetch("/api/admin/broadcasts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       const j = await r.json();
@@ -20742,7 +20749,7 @@ async function viewBroadcasts(root) {
     if (!confirm("¿Programar el envío para " + new Date(schI.value).toLocaleString() + "?")) return;
     const r = await fetch("/api/admin/broadcasts", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(payload),
     });
     const j = await r.json();
@@ -20763,7 +20770,7 @@ async function viewBroadcasts(root) {
   async function reloadList() {
     listWrap.innerHTML = "";
     try {
-      const r = await fetch("/api/admin/broadcasts?limit=50", { cache: "no-store" });
+      const r = await fetch("/api/admin/broadcasts?limit=50", { headers: authHeaders(), cache: "no-store" });
       const j = await r.json();
       const items = (j && j.items) || [];
       if (!items.length) {
@@ -20813,21 +20820,21 @@ async function viewBroadcasts(root) {
 
   async function resendBroadcast(id) {
     if (!confirm("¿Reenviar a la audiencia actual? Los usuarios ya alcanzados no recibirán duplicado, solo los nuevos.")) return;
-    const r = await fetch("/api/admin/broadcasts/" + id + "/send", { method: "POST" });
+    const r = await fetch("/api/admin/broadcasts/" + id + "/send", { method: "POST", headers: authHeaders() });
     const j = await r.json();
     if (j.ok) { toast("Reenviado · nuevos: " + j.delivered + ", push: " + j.pushed); reloadList(); }
     else toast("Error: " + (j.error || "?"));
   }
   async function retirarBroadcast(id) {
     if (!confirm("¿Retirar este mensaje? Desaparecerá del hilo de todos los usuarios.")) return;
-    const r = await fetch("/api/admin/broadcasts/" + id, { method: "DELETE" });
+    const r = await fetch("/api/admin/broadcasts/" + id, { method: "DELETE", headers: authHeaders() });
     const j = await r.json();
     if (j.ok) { toast("Retirado"); reloadList(); }
     else toast("Error: " + (j.error || "?"));
   }
   async function openBroadcastStats(id) {
     try {
-      const r = await fetch("/api/admin/broadcasts/" + id);
+      const r = await fetch("/api/admin/broadcasts/" + id, { headers: authHeaders() });
       const j = await r.json();
       if (!j.ok) return toast("No se pudo cargar");
       const b = j.broadcast, s = j.stats;
