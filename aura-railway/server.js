@@ -406,10 +406,35 @@ async function issueAdminToken(email, role = "superadmin", mustChangePw = false)
     );
   } catch (e) {
     console.warn("[admin] INSERT con rango falló, reintento sin él:", e.message);
-    await pool.execute(
-      "INSERT INTO admin_tokens (token, email, expires_at) VALUES (?,?,?)",
-      [tok, email, exp]
-    );
+    /* V944 · Si el reintento «sin rango» también reventaba (tabla borrada,
+       conexión perdida a mitad, columna `expires_at` renombrada, etc.), el error
+       subía a wrap() y el panel enseñaba «El servidor ha fallado al iniciar la
+       sesión». No debería pasar nunca, pero cuando pasa deja al dueño fuera de
+       su propio panel y sin pista en los logs. Ahora:
+         · se registra con `console.error` (y no `warn`) para que salga alto en
+           Railway;
+         · se sigue devolviendo el token sin escribirlo en la BD. La caché en
+           memoria lo cubre durante 5 s por defecto, pero en este camino de
+           emergencia lo subimos a la vida completa del token — con eso el dueño
+           entra y puede diagnosticar la BD desde dentro, en vez de mirar una
+           pantalla en blanco. Cuando el proceso se reinicie, el token se pierde
+           y hay que volver a entrar; es el precio correcto por no caerse. */
+    try {
+      await pool.execute(
+        "INSERT INTO admin_tokens (token, email, expires_at) VALUES (?,?,?)",
+        [tok, email, exp]
+      );
+    } catch (e2) {
+      console.error("[admin] AMBOS INSERTs a admin_tokens fallaron:", e2 && e2.message);
+      adminTokenCache.set(tok, {
+        email, role, must_change_pw: mcp, exp: exp.getTime(),
+        cachedAt: Date.now(),
+        /* Bandera para que verifyAdminToken no consulte la BD en este token —
+           la fila no existe, iría a 401 en cuanto expirase la caché normal. */
+        memoryOnly: true,
+      });
+      return tok;
+    }
   }
   adminTokenCache.set(tok, { email, role, must_change_pw: mcp, exp: exp.getTime(), cachedAt: Date.now() });
   return tok;
@@ -433,6 +458,15 @@ async function revokeAdminSessionsFor(email) {
 async function verifyAdminToken(tok) {
   if (!tok) return null;
   const cached = adminTokenCache.get(tok);
+  /* V944 · Un token con `memoryOnly` es el del camino de emergencia de
+     issueAdminToken: no se pudo escribir en `admin_tokens`, así que consultar la
+     BD siempre daría null. Se acepta hasta su expiración real, en memoria, con
+     la vida útil del proceso como límite. */
+  if (cached && cached.memoryOnly) {
+    if (cached.exp < Date.now()) { adminTokenCache.delete(tok); return null; }
+    return { email: cached.email, role: cached.role || "superadmin",
+             must_change_pw: cached.must_change_pw ? 1 : 0, exp: cached.exp };
+  }
   if (cached && Date.now() - cached.cachedAt < ADMIN_TOKEN_CACHE_TTL) {
     if (cached.exp < Date.now()) { adminTokenCache.delete(tok); return null; }
     return { email: cached.email, role: cached.role || "superadmin",
@@ -18013,7 +18047,19 @@ app.get(/^\/([^./]+)(?:\/.*)?$/, (req, res, next) => {
 
 // error handler
 app.use((err, req, res, next) => {
-  console.error("ERR", err);
+  /* V944 · Diagnóstico de 5xx bien etiquetado.
+     Antes salía sólo `ERR <objeto>`. Cuando el panel enseñaba «El servidor ha
+     fallado al iniciar la sesión», había que rebuscar en los logs para saber
+     qué endpoint había reventado y con qué parámetros. Ahora se etiqueta el
+     endpoint, el método y —si es login del admin— el correo que se intentó
+     (nunca la contraseña). Con eso se ve en un vistazo. */
+  const isAdminLogin = req.method === "POST" && req.path === "/api/admin/login";
+  if (isAdminLogin) {
+    const em = req.body && req.body.email;
+    console.error("[FATAL admin/login]", em ? "email=" + String(em).toLowerCase() : "(sin email)", "·", err && err.message, err && err.stack);
+  } else {
+    console.error("ERR", req.method, req.path, "·", err && err.message);
+  }
   res.status(500).json({ error: err.message });
 });
 
