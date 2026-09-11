@@ -20130,81 +20130,383 @@ async function viewBroadcasts(root) {
     el("div", {}, "El mensaje aparece como chat fijado arriba (\"Equipo de Aura\", con tick azul) en la lista de Mensajes de los usuarios que entren en la audiencia. Además, si NO han silenciado el canal, les llega un push con el texto que elijas. No hay respuestas: es un canal solo de lectura."),
   ]));
 
-  // ---- EDITOR ----
-  const ed = el("div", { class: "bcast-editor",
-    style: "background:rgba(255,255,255,.02);border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:16px;margin-bottom:16px" });
-  ed.appendChild(el("h3", { style: "margin:0 0 12px;font-size:16px" }, "Nuevo mensaje"));
+  // Inject responsive CSS once
+  if (!document.getElementById("bcastEditorCss")) {
+    const st = document.createElement("style");
+    st.id = "bcastEditorCss";
+    st.textContent =
+      ".bcast-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-bottom:16px}" +
+      "@media (min-width:960px){.bcast-grid{grid-template-columns:minmax(0,1.35fr) minmax(0,1fr)}}" +
+      ".bcast-card{background:rgba(255,255,255,.02);border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:16px}" +
+      ".bcast-section{border-top:1px solid var(--border,#2a2f3a);margin-top:14px;padding-top:14px}" +
+      ".bcast-section:first-of-type{border-top:0;margin-top:0;padding-top:0}" +
+      ".bcast-section h4{margin:0 0 10px;font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:6px}" +
+      ".bcast-label{display:block;font-size:12px;font-weight:700;margin:0 0 4px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em}" +
+      ".bcast-tpl-row{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 12px;margin:0 -2px 4px}" +
+      ".bcast-tpl-row::-webkit-scrollbar{height:6px}.bcast-tpl-row::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}" +
+      ".bcast-tpl{flex:0 0 auto;width:200px;text-align:left;padding:12px;border:1px solid var(--border,#2a2f3a);border-radius:12px;background:rgba(255,255,255,.02);cursor:pointer;color:inherit;transition:transform .12s,border-color .12s,background .12s;font:inherit}" +
+      ".bcast-tpl:hover{border-color:#e63a67;background:rgba(230,58,103,.08);transform:translateY(-2px)}" +
+      ".bcast-tpl-icon{font-size:22px;margin-bottom:6px;line-height:1}" +
+      ".bcast-tpl-title{font-weight:700;font-size:13px;margin-bottom:4px;line-height:1.3}" +
+      ".bcast-tpl-body{font-size:11.5px;color:var(--text-muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}" +
+      ".bcast-chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}" +
+      ".bcast-chip{padding:5px 10px;border-radius:999px;border:1px solid var(--border,#2a2f3a);background:rgba(255,255,255,.03);color:inherit;font-size:11.5px;font-weight:600;cursor:pointer;transition:all .12s;font-family:inherit}" +
+      ".bcast-chip:hover{border-color:#e63a67;background:rgba(230,58,103,.12);color:#fff}" +
+      ".bcast-counter{font-size:11px;color:var(--text-muted);text-align:right;margin-top:-4px;margin-bottom:8px}" +
+      ".bcast-preview-panel{position:sticky;top:12px}" +
+      ".bcast-phone{background:linear-gradient(180deg,#0f1117,#161821);border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:16px;color:#f4f4f7;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35)}" +
+      ".bcast-phone-hd{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:12px}" +
+      ".bcast-phone-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#ff3b6b,#ff8a3b);flex:0 0 auto}" +
+      ".bcast-phone-title{font-weight:700;font-size:14px}" +
+      ".bcast-phone-title span.tick{color:#3b82f6;margin-left:2px}" +
+      ".bcast-phone-sub{font-size:11px;opacity:.6}" +
+      ".bcast-phone-msg{background:rgba(255,255,255,.04);border-radius:12px;padding:12px}" +
+      ".bcast-phone-img{width:100%;border-radius:8px;margin-bottom:8px;max-height:180px;object-fit:cover;background:rgba(255,255,255,.05)}" +
+      ".bcast-phone-t{font-weight:700;font-size:14px;margin-bottom:4px;line-height:1.3}" +
+      ".bcast-phone-b{font-size:13px;line-height:1.45;opacity:.9;white-space:pre-wrap;word-break:break-word}" +
+      ".bcast-phone-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}" +
+      ".bcast-phone-btn{padding:8px 14px;border-radius:999px;border:0;background:rgba(255,255,255,.1);color:#fff;font-size:12.5px;font-weight:600}" +
+      ".bcast-phone-btn.primary{background:#e63a67}" +
+      ".bcast-phone-ts{font-size:10.5px;opacity:.5;margin-top:8px;text-align:right}" +
+      ".bcast-reach{background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:10px;padding:10px 12px;margin-top:12px;font-size:12.5px;text-align:center}" +
+      ".bcast-actions{display:grid;grid-template-columns:1fr;gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid var(--border,#2a2f3a)}" +
+      "@media (min-width:520px){.bcast-actions{grid-template-columns:1fr 1fr}}" +
+      ".bcast-send-now{background:linear-gradient(135deg,#e63a67,#ff6b3b);color:#fff;border:0;padding:14px 18px;border-radius:12px;font-weight:700;font-size:14.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;transition:transform .12s,box-shadow .12s}" +
+      ".bcast-send-now:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(230,58,103,.35)}" +
+      ".bcast-send-now:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}" +
+      ".bcast-send-later{background:rgba(255,255,255,.04);border:1px solid var(--border,#2a2f3a);color:inherit;padding:14px 18px;border-radius:12px;font-weight:600;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}" +
+      ".bcast-send-later:hover{background:rgba(255,255,255,.08)}" +
+      ".bcast-secondary-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}" +
+      ".bcast-schedule-box{display:none;margin-top:10px;padding:14px;background:rgba(234,179,8,.06);border:1px solid rgba(234,179,8,.3);border-radius:10px}" +
+      ".bcast-schedule-box.open{display:block}" +
+      ".bcast-schedule-presets{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}";
+    document.head.appendChild(st);
+  }
 
-  const titleI = el("input", { class: "input", placeholder: "Título (obligatorio, máx 160)", maxlength: "160", style: "width:100%;margin-bottom:8px" });
-  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Título"));
-  ed.appendChild(titleI);
+  // ==== Plantillas de mensaje ====
+  const TEMPLATES = [
+    { id: "verify", icon: "✅", title: "Verifica tu perfil",
+      body: "Los perfiles verificados reciben hasta 3× más likes. Verifícate con una selfie en segundos, es rápido y ayuda a mantener la comunidad segura.",
+      button1: { label: "Verificarme", link: "aura://verificar" },
+      button2: { label: "Más tarde", link: "" },
+      audience: { all: false, verified: false } },
+    { id: "premium50", icon: "⭐", title: "-50% en Premium esta semana",
+      body: "Consigue Likes ilimitados, ve quién te ha dado like y destaca en tu zona. Solo hasta el domingo.",
+      button1: { label: "Ver oferta", link: "aura://premium" },
+      audience: { all: false, plan: "free" } },
+    { id: "lgtb", icon: "🌈", title: "Nueva zona LGTB+",
+      body: "Hemos abierto una zona específica para conocer gente LGTB+ cerca de ti. Actívala en Explorar cuando quieras.",
+      button1: { label: "Ir a la zona", link: "aura://explorar?zone=lgtb" },
+      audience: { all: true } },
+    { id: "welcome", icon: "🎉", title: "Bienvenido/a a Aura Premium",
+      body: "Ya puedes ver quién te ha dado like, mandar mensajes sin match y usar Likes ilimitados. ¡Disfruta!",
+      button1: { label: "Ver mis likes", link: "aura://premium" },
+      audience: { all: false, plan: "premium" } },
+    { id: "ahora", icon: "⚡", title: "Nueva función: Modo Ahora",
+      body: "Muéstrate disponible para quedar en las próximas horas. Los perfiles con Ahora activo aparecen primero.",
+      button1: { label: "Probar Ahora", link: "aura://ahora" },
+      audience: { all: true } },
+    { id: "maint", icon: "🛠", title: "Mantenimiento programado",
+      body: "Esta noche entre las 03:00 y las 04:00 haremos una mejora del servicio. Puede que notes lentitud durante unos minutos. Gracias por tu paciencia.",
+      audience: { all: true } },
+    { id: "notifs", icon: "🔔", title: "Activa las notificaciones",
+      body: "Sin notificaciones te pierdes los matches y mensajes. Actívalas en un toque desde Ajustes.",
+      button1: { label: "Activar", link: "aura://ajustes/notificaciones" },
+      audience: { all: true } },
+    { id: "survey", icon: "💬", title: "¿Nos das un minuto?",
+      body: "Estamos mejorando Aura y tu opinión pesa. Cuéntanos qué te gustaría ver a continuación.",
+      button1: { label: "Responder", link: "https://" },
+      audience: { all: true } },
+    { id: "safety", icon: "🛡", title: "Recordatorio de seguridad",
+      body: "Nunca compartas datos bancarios ni códigos por chat. Si alguien te lo pide, repórtalo desde su perfil.",
+      audience: { all: true } },
+  ];
 
-  const bodyI = el("textarea", { class: "input", rows: "3", placeholder: "Cuerpo del mensaje (obligatorio, máx 2000)", maxlength: "2000", style: "width:100%;margin-bottom:8px" });
-  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Cuerpo"));
-  ed.appendChild(bodyI);
+  const BUTTON_PRESETS = [
+    { label: "Verificarme", link: "aura://verificar" },
+    { label: "Ver Premium", link: "aura://premium" },
+    { label: "Abrir Explorar", link: "aura://explorar" },
+    { label: "Zona LGTB+", link: "aura://explorar?zone=lgtb" },
+    { label: "Modo Ahora", link: "aura://ahora" },
+    { label: "Ajustes notif.", link: "aura://ajustes/notificaciones" },
+    { label: "Mi perfil", link: "aura://perfil" },
+    { label: "Más tarde", link: "" },
+  ];
 
-  const imgI = el("input", { class: "input", placeholder: "URL de imagen opcional (https:// o /assets/…)", style: "width:100%;margin-bottom:8px" });
-  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Imagen (opcional)"));
-  ed.appendChild(imgI);
+  // ==== Fila de plantillas ====
+  root.appendChild(el("div", { style: "font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin:6px 0 8px" }, "📋 Empieza con una plantilla"));
+  const tplRow = el("div", { class: "bcast-tpl-row" });
+  TEMPLATES.forEach(t => {
+    const card = el("button", { type: "button", class: "bcast-tpl", title: "Rellenar el editor con esta plantilla" }, [
+      el("div", { class: "bcast-tpl-icon" }, t.icon),
+      el("div", { class: "bcast-tpl-title" }, t.title),
+      el("div", { class: "bcast-tpl-body" }, t.body),
+    ]);
+    card.addEventListener("click", () => applyTemplate(t));
+    tplRow.appendChild(card);
+  });
+  root.appendChild(tplRow);
 
-  // Botones
-  const b1l = el("input", { class: "input", placeholder: "Etiqueta botón 1", maxlength: "40", style: "width:100%;margin-bottom:6px" });
-  const b1d = el("input", { class: "input", placeholder: "aura://verificar · /premium · https://…", maxlength: "200", style: "width:100%;margin-bottom:10px" });
-  const b2l = el("input", { class: "input", placeholder: "Etiqueta botón 2", maxlength: "40", style: "width:100%;margin-bottom:6px" });
-  const b2d = el("input", { class: "input", placeholder: "aura://premium · https://…", maxlength: "200", style: "width:100%;margin-bottom:14px" });
-  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Botón 1 (opcional, aparece resaltado)"));
-  ed.appendChild(b1l); ed.appendChild(b1d);
-  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Botón 2 (opcional, secundario)"));
-  ed.appendChild(b2l); ed.appendChild(b2d);
+  // ==== Rejilla editor + preview ====
+  const grid = el("div", { class: "bcast-grid" });
 
-  ed.appendChild(el("div", {
-    style: "font-size:11.5px;color:var(--text-muted);margin:0 0 12px;line-height:1.5"
-  }, "Enlaces profundos: aura://verificar · aura://premium · aura://explorar?zone=lgtb · aura://ahora · aura://ajustes/notificaciones · aura://open-channel"));
+  // --- COLUMNA A: editor ---
+  const ed = el("div", { class: "bcast-card" });
 
-  // ---- Audiencia ----
-  ed.appendChild(el("h4", { style: "margin:12px 0 8px;font-size:14px" }, "Audiencia"));
-  const audAll = el("input", { type: "checkbox", checked: true });
-  const audPlan = el("select", { class: "input", style: "margin-left:8px" }, [
+  // Sección: Contenido
+  const secContent = el("div", { class: "bcast-section" });
+  secContent.appendChild(el("h4", {}, [ el("span", {}, "✏️"), document.createTextNode(" Contenido") ]));
+
+  secContent.appendChild(el("label", { class: "bcast-label" }, "Título"));
+  const titleI = el("input", { class: "input", placeholder: "p. ej. Verifica tu perfil", maxlength: "160", style: "width:100%" });
+  secContent.appendChild(titleI);
+  const titleCount = el("div", { class: "bcast-counter" }, "0 / 160");
+  secContent.appendChild(titleCount);
+
+  secContent.appendChild(el("label", { class: "bcast-label" }, "Cuerpo"));
+  const bodyI = el("textarea", { class: "input", rows: "4", placeholder: "Escribe el mensaje que verán los usuarios…", maxlength: "2000", style: "width:100%;resize:vertical;min-height:100px" });
+  secContent.appendChild(bodyI);
+  const bodyCount = el("div", { class: "bcast-counter" }, "0 / 2000");
+  secContent.appendChild(bodyCount);
+
+  secContent.appendChild(el("label", { class: "bcast-label" }, "Imagen (opcional)"));
+  const imgI = el("input", { class: "input", placeholder: "https:// o /assets/…", style: "width:100%;margin-bottom:4px" });
+  secContent.appendChild(imgI);
+  ed.appendChild(secContent);
+
+  // Sección: Botones
+  const secButtons = el("div", { class: "bcast-section" });
+  secButtons.appendChild(el("h4", {}, [ el("span", {}, "🔘"), document.createTextNode(" Botones (opcional)") ]));
+
+  const b1l = el("input", { class: "input", placeholder: "Etiqueta del botón principal", maxlength: "40", style: "width:100%;margin-bottom:6px" });
+  const b1d = el("input", { class: "input", placeholder: "aura://verificar · /premium · https://…", maxlength: "200", style: "width:100%" });
+  secButtons.appendChild(el("label", { class: "bcast-label" }, "Botón 1 (resaltado)"));
+  secButtons.appendChild(b1l);
+  secButtons.appendChild(b1d);
+  const b1chips = el("div", { class: "bcast-chips" });
+  BUTTON_PRESETS.forEach(p => {
+    const c = el("button", { type: "button", class: "bcast-chip" }, p.label);
+    c.addEventListener("click", () => {
+      b1l.value = p.label; b1d.value = p.link;
+      schedulePreview(); syncCounters();
+    });
+    b1chips.appendChild(c);
+  });
+  secButtons.appendChild(b1chips);
+
+  const b2l = el("input", { class: "input", placeholder: "Etiqueta del botón secundario", maxlength: "40", style: "width:100%;margin-bottom:6px" });
+  const b2d = el("input", { class: "input", placeholder: "aura://premium · https://…", maxlength: "200", style: "width:100%" });
+  secButtons.appendChild(el("label", { class: "bcast-label", style: "margin-top:10px" }, "Botón 2 (secundario)"));
+  secButtons.appendChild(b2l);
+  secButtons.appendChild(b2d);
+  const b2chips = el("div", { class: "bcast-chips" });
+  BUTTON_PRESETS.forEach(p => {
+    const c = el("button", { type: "button", class: "bcast-chip" }, p.label);
+    c.addEventListener("click", () => {
+      b2l.value = p.label; b2d.value = p.link;
+      schedulePreview(); syncCounters();
+    });
+    b2chips.appendChild(c);
+  });
+  secButtons.appendChild(b2chips);
+  ed.appendChild(secButtons);
+
+  // Sección: Audiencia
+  const secAud = el("div", { class: "bcast-section" });
+  secAud.appendChild(el("h4", {}, [ el("span", {}, "🎯"), document.createTextNode(" Audiencia") ]));
+
+  const audAll = el("input", { type: "checkbox", checked: true, id: "bcastAudAll" });
+  const audPlan = el("select", { class: "input" }, [
     el("option", { value: "any" }, "Cualquier plan"),
     el("option", { value: "free" }, "Solo Free"),
     el("option", { value: "premium" }, "Solo Premium"),
     el("option", { value: "gold" }, "Solo Gold"),
     el("option", { value: "platinum" }, "Solo Platinum"),
   ]);
-  const audVerified = el("select", { class: "input", style: "margin-left:8px" }, [
+  const audVerified = el("select", { class: "input" }, [
     el("option", { value: "" }, "Cualquiera"),
     el("option", { value: "true" }, "Solo verificados"),
     el("option", { value: "false" }, "Solo NO verificados"),
   ]);
-  const audZone = el("select", { class: "input", style: "margin-left:8px" }, [
+  const audZone = el("select", { class: "input" }, [
     el("option", { value: "" }, "Cualquier zona"),
     el("option", { value: "hetero" }, "Zona Hetero"),
     el("option", { value: "lgtb" }, "Zona LGTB+"),
   ]);
-  const audCity = el("input", { class: "input", placeholder: "Ciudad (opcional)", style: "margin-left:8px;width:180px" });
-  const audMinAge = el("input", { class: "input", type: "number", min: "18", max: "99", placeholder: "Edad mín.", style: "margin-left:8px;width:110px" });
-  const audMaxAge = el("input", { class: "input", type: "number", min: "18", max: "99", placeholder: "Edad máx.", style: "margin-left:8px;width:110px" });
+  const audCity = el("input", { class: "input", placeholder: "Ciudad (opcional)", style: "width:100%" });
+  const audMinAge = el("input", { class: "input", type: "number", min: "18", max: "99", placeholder: "18", style: "width:80px" });
+  const audMaxAge = el("input", { class: "input", type: "number", min: "18", max: "99", placeholder: "99", style: "width:80px" });
 
-  const audRow = (labelTxt, node) => el("div", { style: "display:flex;align-items:center;margin-bottom:6px;font-size:13px" }, [
-    el("span", { style: "min-width:130px;color:var(--text-muted)" }, labelTxt),
-    node,
-  ]);
-  ed.appendChild(el("div", { style: "display:flex;align-items:center;margin-bottom:8px;font-size:13px" }, [
-    audAll, el("span", { style: "margin-left:8px" }, "Enviar a TODOS los usuarios activos"),
+  secAud.appendChild(el("label", { for: "bcastAudAll", style: "display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;margin-bottom:10px;cursor:pointer" }, [
+    audAll, el("span", {}, "Enviar a TODOS los usuarios activos"),
   ]));
-  const audDetail = el("div", { style: "opacity:0.55;pointer-events:none" }, [
-    audRow("Plan:", audPlan),
-    audRow("Verificado:", audVerified),
-    audRow("Zona:", audZone),
-    audRow("Ciudad:", audCity),
-    audRow("Edad:", el("div", {}, [ audMinAge, audMaxAge ])),
-  ]);
-  ed.appendChild(audDetail);
+
+  const audDetail = el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px;opacity:0.5;pointer-events:none;transition:opacity .15s" });
+  const audField = (labelTxt, node, span2) => {
+    const wrap = el("div", { style: span2 ? "grid-column:span 2" : "" });
+    wrap.appendChild(el("label", { class: "bcast-label" }, labelTxt));
+    wrap.appendChild(node);
+    return wrap;
+  };
+  audDetail.appendChild(audField("Plan", audPlan));
+  audDetail.appendChild(audField("Verificado", audVerified));
+  audDetail.appendChild(audField("Zona", audZone));
+  audDetail.appendChild(audField("Ciudad", audCity));
+  audDetail.appendChild(audField("Edad", el("div", { style: "display:flex;gap:6px;align-items:center" }, [
+    audMinAge, el("span", { style: "color:var(--text-muted)" }, "–"), audMaxAge,
+  ]), true));
+  secAud.appendChild(audDetail);
   audAll.addEventListener("change", () => {
-    audDetail.style.opacity = audAll.checked ? "0.55" : "1";
+    audDetail.style.opacity = audAll.checked ? "0.5" : "1";
     audDetail.style.pointerEvents = audAll.checked ? "none" : "auto";
     schedulePreview();
   });
+  ed.appendChild(secAud);
+
+  // Sección: Push
+  const secPush = el("div", { class: "bcast-section" });
+  secPush.appendChild(el("h4", {}, [ el("span", {}, "🔔"), document.createTextNode(" Notificación push") ]));
+  const pushEnabled = el("input", { type: "checkbox", checked: true, id: "bcastPushEn" });
+  secPush.appendChild(el("label", { for: "bcastPushEn", style: "display:flex;align-items:center;gap:8px;font-size:13.5px;font-weight:600;margin-bottom:8px;cursor:pointer" }, [
+    pushEnabled, el("span", {}, "Enviar push con el mensaje"),
+  ]));
+  secPush.appendChild(el("div", { style: "font-size:11.5px;color:var(--text-muted);margin-bottom:10px;line-height:1.5" },
+    "Respetará el silencio del canal por usuario. Si dejas los campos vacíos, se usa \"Equipo de Aura\" como título y el título del mensaje como texto."));
+  secPush.appendChild(el("label", { class: "bcast-label" }, "Título del push (opcional)"));
+  const pushTitleI = el("input", { class: "input", placeholder: "Equipo de Aura", maxlength: "120", style: "width:100%;margin-bottom:8px" });
+  secPush.appendChild(pushTitleI);
+  secPush.appendChild(el("label", { class: "bcast-label" }, "Texto del push (opcional)"));
+  const pushBodyI = el("input", { class: "input", placeholder: "Se usa el título del mensaje si lo dejas vacío", maxlength: "240", style: "width:100%" });
+  secPush.appendChild(pushBodyI);
+  ed.appendChild(secPush);
+
+  // Acciones (dos botones claros)
+  const btnSendNow = el("button", { type: "button", class: "bcast-send-now" }, [
+    el("span", { style: "font-size:16px" }, "🚀"),
+    document.createTextNode("Enviar ahora"),
+  ]);
+  const btnSchedule = el("button", { type: "button", class: "bcast-send-later" }, [
+    el("span", { style: "font-size:16px" }, "🕒"),
+    document.createTextNode("Programar…"),
+  ]);
+  ed.appendChild(el("div", { class: "bcast-actions" }, [ btnSendNow, btnSchedule ]));
+
+  // Caja de programación (colapsable)
+  const schBox = el("div", { class: "bcast-schedule-box" });
+  schBox.appendChild(el("label", { class: "bcast-label" }, "Cuándo enviar"));
+  const schPresets = el("div", { class: "bcast-schedule-presets" });
+  [
+    { txt: "En 1 h", ms: 3600e3 },
+    { txt: "En 3 h", ms: 3 * 3600e3 },
+    { txt: "Mañana 09:00", fn: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; } },
+    { txt: "Mañana 18:00", fn: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); return d; } },
+    { txt: "En 1 semana", ms: 7 * 24 * 3600e3 },
+  ].forEach(p => {
+    const c = el("button", { type: "button", class: "bcast-chip" }, p.txt);
+    c.addEventListener("click", () => {
+      const d = p.fn ? p.fn() : new Date(Date.now() + p.ms);
+      const pad = n => String(n).padStart(2, "0");
+      schI.value = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+    });
+    schPresets.appendChild(c);
+  });
+  schBox.appendChild(schPresets);
+  const schI = el("input", { class: "input", type: "datetime-local", style: "width:100%;margin-bottom:10px" });
+  schBox.appendChild(schI);
+  const btnConfirmSchedule = el("button", { type: "button", class: "btn primary", style: "width:100%" }, "Programar envío");
+  schBox.appendChild(btnConfirmSchedule);
+  ed.appendChild(schBox);
+
+  btnSchedule.addEventListener("click", () => {
+    schBox.classList.toggle("open");
+    if (schBox.classList.contains("open") && !schI.value) {
+      const d = new Date(Date.now() + 3600e3);
+      const pad = n => String(n).padStart(2, "0");
+      schI.value = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes());
+    }
+  });
+
+  // Acciones secundarias
+  const btnPreview = el("button", { type: "button", class: "btn ghost xs" }, "Vista previa grande");
+  const btnDraft = el("button", { type: "button", class: "btn ghost xs" }, "Guardar borrador");
+  const btnClear = el("button", { type: "button", class: "btn ghost xs" }, "Limpiar");
+  ed.appendChild(el("div", { class: "bcast-secondary-actions" }, [ btnPreview, btnDraft, btnClear ]));
+
+  grid.appendChild(ed);
+
+  // --- COLUMNA B: preview en vivo ---
+  const previewCol = el("div", { class: "bcast-preview-panel" });
+  const previewCard = el("div", { class: "bcast-card", style: "padding:14px" });
+  previewCard.appendChild(el("div", { style: "font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px" }, "👀 Vista previa en vivo"));
+
+  const phone = el("div", { class: "bcast-phone" });
+  phone.appendChild(el("div", { class: "bcast-phone-hd" }, [
+    el("div", { class: "bcast-phone-av" }),
+    el("div", {}, [
+      el("div", { class: "bcast-phone-title" }, [ document.createTextNode("Equipo de Aura"), el("span", { class: "tick" }, "✓") ]),
+      el("div", { class: "bcast-phone-sub" }, "Cuenta oficial · no se puede responder"),
+    ]),
+  ]));
+  const phoneMsg = el("div", { class: "bcast-phone-msg" });
+  const phImg = el("img", { class: "bcast-phone-img", alt: "", style: "display:none" });
+  const phTitle = el("div", { class: "bcast-phone-t" }, "(sin título)");
+  const phBody = el("div", { class: "bcast-phone-b" }, "Escribe algo para verlo aquí en vivo.");
+  const phBtns = el("div", { class: "bcast-phone-btns" });
+  const phTs = el("div", { class: "bcast-phone-ts" }, "ahora");
+  phoneMsg.appendChild(phImg);
+  phoneMsg.appendChild(phTitle);
+  phoneMsg.appendChild(phBody);
+  phoneMsg.appendChild(phBtns);
+  phoneMsg.appendChild(phTs);
+  phone.appendChild(phoneMsg);
+  previewCard.appendChild(phone);
+
+  const previewCountEl = el("strong", { style: "font-size:16px;color:#3b82f6" }, "…");
+  const reachBox = el("div", { class: "bcast-reach" }, [
+    el("div", { style: "font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px" }, "Alcance estimado"),
+    previewCountEl,
+    document.createTextNode(" usuarios activos"),
+  ]);
+  previewCard.appendChild(reachBox);
+
+  const pushHint = el("div", { style: "font-size:11.5px;color:var(--text-muted);margin-top:10px;padding:8px 10px;background:rgba(255,255,255,.03);border-radius:8px;line-height:1.5" });
+  previewCard.appendChild(pushHint);
+
+  previewCol.appendChild(previewCard);
+  grid.appendChild(previewCol);
+  root.appendChild(grid);
+
+  function renderLivePreview() {
+    const title = titleI.value.trim() || "(sin título)";
+    const body = bodyI.value.trim() || "Escribe algo para verlo aquí en vivo.";
+    const img = imgI.value.trim();
+    phTitle.textContent = title;
+    phBody.textContent = body;
+    if (img) { phImg.src = img; phImg.style.display = ""; }
+    else { phImg.style.display = "none"; phImg.removeAttribute("src"); }
+    phBtns.innerHTML = "";
+    if (b1l.value.trim()) {
+      phBtns.appendChild(el("button", { type: "button", class: "bcast-phone-btn primary" }, b1l.value.trim()));
+    }
+    if (b2l.value.trim()) {
+      phBtns.appendChild(el("button", { type: "button", class: "bcast-phone-btn" }, b2l.value.trim()));
+    }
+    const pTitle = pushTitleI.value.trim() || "Equipo de Aura";
+    const pBody = pushBodyI.value.trim() || (titleI.value.trim() || "(sin título)");
+    if (pushEnabled.checked) {
+      pushHint.innerHTML = "";
+      pushHint.appendChild(el("div", { style: "font-weight:700;margin-bottom:2px" }, "🔔 Push: " + pTitle));
+      pushHint.appendChild(el("div", {}, pBody));
+    } else {
+      pushHint.textContent = "🔕 Sin push. Solo aparecerá en el hilo cuando el usuario abra la app.";
+    }
+  }
+
+  function syncCounters() {
+    titleCount.textContent = titleI.value.length + " / 160";
+    bodyCount.textContent = bodyI.value.length + " / 2000";
+    renderLivePreview();
+  }
 
   function currentAudience() {
     if (audAll.checked) return { all: true };
@@ -20218,16 +20520,6 @@ async function viewBroadcasts(root) {
     if (audMaxAge.value) f.max_age = parseInt(audMaxAge.value, 10);
     return f;
   }
-
-  const previewCountEl = el("span", { style: "font-weight:700" }, "…");
-  const previewRow = el("div", {
-    style: "background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:10px 12px;margin:10px 0;font-size:13px",
-  }, [
-    document.createTextNode("Alcance estimado: "),
-    previewCountEl,
-    document.createTextNode(" usuarios activos"),
-  ]);
-  ed.appendChild(previewRow);
 
   let previewTimer = null;
   async function refreshPreview() {
@@ -20244,37 +20536,46 @@ async function viewBroadcasts(root) {
   function schedulePreview() {
     clearTimeout(previewTimer);
     previewTimer = setTimeout(refreshPreview, 250);
+    renderLivePreview();
   }
+
+  [titleI, bodyI, imgI, b1l, b1d, b2l, b2d, pushTitleI, pushBodyI].forEach(n => {
+    n.addEventListener("input", syncCounters);
+  });
+  pushEnabled.addEventListener("change", renderLivePreview);
   [audPlan, audVerified, audZone, audCity, audMinAge, audMaxAge].forEach(n => {
     n.addEventListener("change", schedulePreview);
     n.addEventListener("input", schedulePreview);
   });
+
+  function applyTemplate(t) {
+    titleI.value = t.title || "";
+    bodyI.value = t.body || "";
+    imgI.value = "";
+    b1l.value = t.button1 ? t.button1.label : "";
+    b1d.value = t.button1 ? t.button1.link : "";
+    b2l.value = t.button2 ? t.button2.label : "";
+    b2d.value = t.button2 ? t.button2.link : "";
+    if (t.audience) {
+      if (t.audience.all) {
+        audAll.checked = true;
+      } else {
+        audAll.checked = false;
+        audPlan.value = t.audience.plan || "any";
+        audVerified.value = t.audience.verified === true ? "true" : (t.audience.verified === false ? "false" : "");
+        audZone.value = t.audience.zone || "";
+      }
+      audDetail.style.opacity = audAll.checked ? "0.5" : "1";
+      audDetail.style.pointerEvents = audAll.checked ? "none" : "auto";
+    }
+    syncCounters();
+    schedulePreview();
+    toast("Plantilla aplicada: " + t.title);
+    ed.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  syncCounters();
   refreshPreview();
-
-  // ---- Push ----
-  ed.appendChild(el("h4", { style: "margin:12px 0 8px;font-size:14px" }, "Push (notificación con app cerrada)"));
-  const pushEnabled = el("input", { type: "checkbox", checked: true });
-  const pushTitleI = el("input", { class: "input", placeholder: "Título del push (por defecto: \"Equipo de Aura\")", maxlength: "120", style: "width:100%;margin:6px 0" });
-  const pushBodyI  = el("input", { class: "input", placeholder: "Texto del push (por defecto: el título del mensaje)", maxlength: "240", style: "width:100%;margin-bottom:6px" });
-  ed.appendChild(el("div", { style: "display:flex;align-items:center;font-size:13px;margin-bottom:6px" }, [
-    pushEnabled, el("span", { style: "margin-left:8px" }, "Enviar push (respetará el silencio del canal por usuario)"),
-  ]));
-  ed.appendChild(pushTitleI);
-  ed.appendChild(pushBodyI);
-
-  // ---- Programar ----
-  ed.appendChild(el("h4", { style: "margin:12px 0 8px;font-size:14px" }, "Cuándo enviar"));
-  const schI = el("input", { class: "input", type: "datetime-local", style: "width:auto" });
-  ed.appendChild(el("div", { style: "font-size:12.5px;color:var(--text-muted);margin-bottom:6px" },
-    "Deja vacío para enviarlo ahora al pulsar «Enviar»."));
-  ed.appendChild(schI);
-
-  // ---- Acciones ----
-  const btnPreview = el("button", { class: "btn secondary" }, "Vista previa");
-  const btnDraft   = el("button", { class: "btn secondary" }, "Guardar borrador");
-  const btnSend    = el("button", { class: "btn primary" }, "Enviar");
-  const acts = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:14px" }, [ btnPreview, btnDraft, btnSend ]);
-  ed.appendChild(acts);
 
   function collect(sendNow, scheduleAt) {
     return {
@@ -20294,6 +20595,19 @@ async function viewBroadcasts(root) {
     };
   }
 
+  function clearForm() {
+    titleI.value = ""; bodyI.value = ""; imgI.value = "";
+    b1l.value = ""; b1d.value = ""; b2l.value = ""; b2d.value = "";
+    pushTitleI.value = ""; pushBodyI.value = ""; schI.value = "";
+    schBox.classList.remove("open");
+    syncCounters();
+  }
+
+  btnClear.addEventListener("click", () => {
+    if (!titleI.value && !bodyI.value) return;
+    if (confirm("¿Vaciar el editor?")) clearForm();
+  });
+
   btnPreview.addEventListener("click", () => {
     const payload = collect(false, null);
     openBroadcastPreview(payload);
@@ -20312,13 +20626,35 @@ async function viewBroadcasts(root) {
     else toast("Error: " + (j.error || "desconocido"));
   });
 
-  btnSend.addEventListener("click", async () => {
-    const payload = collect(!schI.value, schI.value || null);
+  btnSendNow.addEventListener("click", async () => {
+    const payload = collect(true, null);
     if (!payload.title || !payload.body) return toast("Título y cuerpo son obligatorios");
-    const conf = payload.send_now
-      ? "¿Enviar ahora a " + previewCountEl.textContent + " usuarios?"
-      : "¿Programar el envío para " + payload.schedule_at + "?";
-    if (!confirm(conf)) return;
+    if (!confirm("¿Enviar AHORA a " + previewCountEl.textContent + " usuarios?")) return;
+    btnSendNow.disabled = true;
+    try {
+      const r = await fetch("/api/admin/broadcasts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (j.ok) {
+        toast("Enviado a " + j.delivered + " · push " + j.pushed);
+        clearForm();
+        reloadList();
+      } else {
+        toast("Error: " + (j.error || "desconocido"));
+      }
+    } finally {
+      btnSendNow.disabled = false;
+    }
+  });
+
+  btnConfirmSchedule.addEventListener("click", async () => {
+    if (!schI.value) return toast("Elige fecha y hora");
+    const payload = collect(false, schI.value);
+    if (!payload.title || !payload.body) return toast("Título y cuerpo son obligatorios");
+    if (!confirm("¿Programar el envío para " + new Date(schI.value).toLocaleString() + "?")) return;
     const r = await fetch("/api/admin/broadcasts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -20326,19 +20662,13 @@ async function viewBroadcasts(root) {
     });
     const j = await r.json();
     if (j.ok) {
-      toast(payload.send_now
-        ? "Enviado a " + j.delivered + " · push " + j.pushed
-        : "Programado (id " + j.id + ")");
-      titleI.value = ""; bodyI.value = ""; imgI.value = "";
-      b1l.value = ""; b1d.value = ""; b2l.value = ""; b2d.value = "";
-      pushTitleI.value = ""; pushBodyI.value = ""; schI.value = "";
+      toast("Programado (id " + j.id + ")");
+      clearForm();
       reloadList();
     } else {
       toast("Error: " + (j.error || "desconocido"));
     }
   });
-
-  root.appendChild(ed);
 
   // ---- LISTADO ----
   root.appendChild(el("h3", { style: "margin:16px 0 8px;font-size:16px" }, "Enviados y programados"));
