@@ -20166,7 +20166,9 @@ async function viewBroadcasts(root) {
       ".bcast-preview-panel{position:sticky;top:12px}" +
       ".bcast-phone{background:linear-gradient(180deg,#0f1117,#161821);border:1px solid rgba(255,255,255,.08);border-radius:22px;padding:16px;color:#f4f4f7;font-family:system-ui,-apple-system,sans-serif;box-shadow:0 8px 30px rgba(0,0,0,.35)}" +
       ".bcast-phone-hd{display:flex;align-items:center;gap:10px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:12px}" +
-      ".bcast-phone-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#ff3b6b,#ff8a3b);flex:0 0 auto}" +
+      ".bcast-phone-av{width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#ff3b6b,#ff8a3b);flex:0 0 auto;overflow:hidden;display:flex;align-items:center;justify-content:center}" +
+      ".bcast-push-ic{width:22px;height:22px;border-radius:6px;background:linear-gradient(135deg,#ff3b6b,#ff8a3b);overflow:hidden;flex:0 0 auto;display:flex;align-items:center;justify-content:center}" +
+      ".bcast-push-ic img{width:100%;height:100%;object-fit:contain}" +
       ".bcast-phone-title{font-weight:700;font-size:14px}" +
       ".bcast-phone-title span.tick{color:#3b82f6;margin-left:2px}" +
       ".bcast-phone-sub{font-size:11px;opacity:.6}" +
@@ -20355,6 +20357,18 @@ async function viewBroadcasts(root) {
   secButtons.appendChild(b1d);
   secButtons.appendChild(el("div", { class: "bcast-chips-label" }, "🎨 Elige un botón (se verá así)"));
   const b1chips = el("div", { class: "bcast-chips" });
+  /* V946 · Un preset elegido por error se quitaba sólo abriendo la consola y
+     borrando los campos a mano. Un chip «Quitar» al principio de cada fila
+     limpia etiqueta y enlace del botón correspondiente, sin tocar el otro. */
+  const b1Clear = el("button", { type: "button", class: "bcast-chip dismiss", title: "Quitar el botón 1" }, [
+    el("span", { class: "ico" }, "✕"),
+    el("span", { class: "lbl" }, "Quitar"),
+  ]);
+  b1Clear.addEventListener("click", () => {
+    b1l.value = ""; b1d.value = "";
+    schedulePreview(); syncCounters();
+  });
+  b1chips.appendChild(b1Clear);
   BUTTON_PRESETS.forEach(p => {
     const variant = p.link ? "primary" : "dismiss";
     const c = el("button", { type: "button", class: "bcast-chip " + variant, title: p.hint }, [
@@ -20377,6 +20391,15 @@ async function viewBroadcasts(root) {
   secButtons.appendChild(b2d);
   secButtons.appendChild(el("div", { class: "bcast-chips-label" }, "🎨 Elige un botón (se verá así)"));
   const b2chips = el("div", { class: "bcast-chips" });
+  const b2Clear = el("button", { type: "button", class: "bcast-chip dismiss", title: "Quitar el botón 2" }, [
+    el("span", { class: "ico" }, "✕"),
+    el("span", { class: "lbl" }, "Quitar"),
+  ]);
+  b2Clear.addEventListener("click", () => {
+    b2l.value = ""; b2d.value = "";
+    schedulePreview(); syncCounters();
+  });
+  b2chips.appendChild(b2Clear);
   BUTTON_PRESETS.forEach(p => {
     const variant = p.link ? "secondary" : "dismiss";
     const c = el("button", { type: "button", class: "bcast-chip " + variant, title: p.hint }, [
@@ -20525,8 +20548,9 @@ async function viewBroadcasts(root) {
   previewCard.appendChild(el("div", { style: "font-size:12px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px" }, "👀 Vista previa en vivo"));
 
   const phone = el("div", { class: "bcast-phone" });
+  const phoneAv = el("div", { class: "bcast-phone-av" });
   phone.appendChild(el("div", { class: "bcast-phone-hd" }, [
-    el("div", { class: "bcast-phone-av" }),
+    phoneAv,
     el("div", {}, [
       el("div", { class: "bcast-phone-title" }, [ document.createTextNode("Equipo de Aura"), el("span", { class: "tick" }, "✓") ]),
       el("div", { class: "bcast-phone-sub" }, "Cuenta oficial · no se puede responder"),
@@ -20561,6 +20585,35 @@ async function viewBroadcasts(root) {
   grid.appendChild(previewCol);
   root.appendChild(grid);
 
+  /* V946 · La cabecera del móvil de vista previa y el bloque de push mostraban
+     un círculo con degradado en vez del logo real de Aura, y no era el mismo
+     avatar que el usuario ve en el hilo. applyAdminBranding() ya guarda la
+     marca en window.__adminBranding, la reutilizamos. Si aún no ha llegado la
+     respuesta cuando este editor se pinta, pedimos la marca aquí mismo y
+     repintamos: sin logo mostramos el mismo corazón SVG que la sidebar. */
+  function paintBrandIcon(node) {
+    const apply = (b) => {
+      b = b || {};
+      const theme = document.documentElement.dataset.theme || "light";
+      const url = (theme === "light" && b.logo_light) ? b.logo_light : (b.logo || "");
+      if (url) {
+        node.style.background = "#fff";
+        node.innerHTML = '<img src="' + url + '" alt="Aura" style="width:100%;height:100%;object-fit:contain"/>';
+      } else {
+        node.innerHTML = '<svg viewBox="0 0 24 24" width="60%" height="60%" fill="#fff"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>';
+      }
+    };
+    if (window.__adminBranding) apply(window.__adminBranding);
+    else {
+      apply({});
+      fetch("/api/admin-branding", { cache: "no-store" })
+        .then(r => r.ok ? r.json() : {})
+        .then(b => { window.__adminBranding = b || {}; apply(b || {}); })
+        .catch(() => {});
+    }
+  }
+  paintBrandIcon(phoneAv);
+
   function renderLivePreview() {
     const title = titleI.value.trim() || "(sin título)";
     const body = bodyI.value.trim() || "Escribe algo para verlo aquí en vivo.";
@@ -20580,8 +20633,12 @@ async function viewBroadcasts(root) {
     const pBody = pushBodyI.value.trim() || (titleI.value.trim() || "(sin título)");
     if (pushEnabled.checked) {
       pushHint.innerHTML = "";
-      pushHint.appendChild(el("div", { style: "font-weight:700;margin-bottom:2px" }, "🔔 Push: " + pTitle));
-      pushHint.appendChild(el("div", {}, pBody));
+      const pushIc = el("span", { class: "bcast-push-ic" });
+      paintBrandIcon(pushIc);
+      pushHint.appendChild(el("div", { style: "display:flex;align-items:center;gap:8px;font-weight:700;margin-bottom:4px" }, [
+        pushIc, document.createTextNode("Push: " + pTitle),
+      ]));
+      pushHint.appendChild(el("div", { style: "padding-left:30px" }, pBody));
     } else {
       pushHint.textContent = "🔕 Sin push. Solo aparecerá en el hilo cuando el usuario abra la app.";
     }
