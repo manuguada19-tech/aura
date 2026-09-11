@@ -20142,9 +20142,8 @@ async function viewBroadcasts(root) {
       ".bcast-section:first-of-type{border-top:0;margin-top:0;padding-top:0}" +
       ".bcast-section h4{margin:0 0 10px;font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:6px}" +
       ".bcast-label{display:block;font-size:12px;font-weight:700;margin:0 0 4px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.03em}" +
-      ".bcast-tpl-row{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 12px;margin:0 -2px 4px}" +
-      ".bcast-tpl-row::-webkit-scrollbar{height:6px}.bcast-tpl-row::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:3px}" +
-      ".bcast-tpl{flex:0 0 auto;width:200px;text-align:left;padding:12px;border:1px solid var(--border,#2a2f3a);border-radius:12px;background:rgba(255,255,255,.02);cursor:pointer;color:inherit;transition:transform .12s,border-color .12s,background .12s;font:inherit}" +
+      ".bcast-tpl-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;padding:4px 2px 12px;margin:0 -2px 4px}" +
+      ".bcast-tpl{text-align:left;padding:12px;border:1px solid var(--border,#2a2f3a);border-radius:12px;background:rgba(255,255,255,.02);cursor:pointer;color:inherit;transition:transform .12s,border-color .12s,background .12s;font:inherit;width:auto}" +
       ".bcast-tpl:hover{border-color:#e63a67;background:rgba(230,58,103,.08);transform:translateY(-2px)}" +
       ".bcast-tpl-icon{font-size:22px;margin-bottom:6px;line-height:1}" +
       ".bcast-tpl-title{font-weight:700;font-size:13px;margin-bottom:4px;line-height:1.3}" +
@@ -20198,6 +20197,10 @@ async function viewBroadcasts(root) {
       body: "Hemos abierto una zona específica para conocer gente LGTB+ cerca de ti. Actívala en Explorar cuando quieras.",
       button1: { label: "Ir a la zona", link: "aura://explorar?zone=lgtb" },
       audience: { all: true } },
+    { id: "hetero", icon: "💑", title: "Zona Hetero mejorada",
+      body: "Hemos añadido más filtros a la Zona Hetero: edad, distancia, intereses… Pruébala.",
+      button1: { label: "Explorar", link: "aura://explorar?zone=hetero" },
+      audience: { all: true } },
     { id: "welcome", icon: "🎉", title: "Bienvenido/a a Aura Premium",
       body: "Ya puedes ver quién te ha dado like, mandar mensajes sin match y usar Likes ilimitados. ¡Disfruta!",
       button1: { label: "Ver mis likes", link: "aura://premium" },
@@ -20220,17 +20223,73 @@ async function viewBroadcasts(root) {
     { id: "safety", icon: "🛡", title: "Recordatorio de seguridad",
       body: "Nunca compartas datos bancarios ni códigos por chat. Si alguien te lo pide, repórtalo desde su perfil.",
       audience: { all: true } },
+    { id: "photos", icon: "📸", title: "Sube más fotos",
+      body: "Los perfiles con 3 o más fotos consiguen el doble de matches. Añade una foto sonriendo y otra de cuerpo entero.",
+      button1: { label: "Subir fotos", link: "aura://perfil" },
+      audience: { all: true } },
+    { id: "bio", icon: "✍️", title: "Completa tu bio",
+      body: "Una biografía corta ayuda a romper el hielo. Cuéntanos a qué te dedicas, qué te gusta hacer los fines de semana o qué buscas.",
+      button1: { label: "Editar perfil", link: "aura://perfil" },
+      audience: { all: true } },
+    { id: "reactivate", icon: "💌", title: "Te echábamos de menos",
+      body: "Hay caras nuevas cerca de ti desde la última vez que entraste. Vuelve y descúbrelas.",
+      button1: { label: "Ver quién hay", link: "aura://explorar" },
+      audience: { all: true } },
+    { id: "tip", icon: "💡", title: "Consejo: cómo empezar una conversación",
+      body: "Un «hola» funciona menos que una pregunta sobre algo del perfil. Fíjate en las fotos y comenta lo que te llame la atención.",
+      audience: { all: true } },
+    { id: "birthday", icon: "🎂", title: "¡Feliz cumpleaños!",
+      body: "Todo el equipo de Aura te desea un día increíble. Como regalo, disfruta una semana de Premium por nuestra cuenta.",
+      button1: { label: "Activar regalo", link: "aura://premium" },
+      audience: { all: true } },
+    { id: "gift", icon: "🎁", title: "Un regalo para ti",
+      body: "Prueba Aura Premium gratis durante 3 días. Sin compromiso, se desactiva solo al terminar.",
+      button1: { label: "Activar prueba", link: "aura://premium" },
+      audience: { all: false, plan: "free" } },
+    { id: "matches", icon: "👋", title: "Tienes matches sin abrir",
+      body: "Algunas personas te dieron like y aún no habéis hablado. Rompe el hielo antes de que se enfríe.",
+      button1: { label: "Ver mensajes", link: "aura://mensajes" },
+      audience: { all: true } },
+    { id: "streak", icon: "🔥", title: "Estás en racha",
+      body: "Llevas varios días activo/a. Los perfiles con actividad reciente aparecen antes en Explorar. Sigue así.",
+      audience: { all: true } },
+    { id: "legal", icon: "📜", title: "Actualización de nuestras normas",
+      body: "Hemos actualizado la política de privacidad y las normas de la comunidad para explicarlas mejor. Nada cambia en cómo usas Aura.",
+      audience: { all: true } },
+    { id: "update", icon: "🆕", title: "Nueva versión disponible",
+      body: "Hay una versión nueva de la app con mejoras de rendimiento y correcciones. Cierra y vuelve a abrir Aura para actualizar.",
+      audience: { all: true } },
+    { id: "settings", icon: "⚙️", title: "Revisa tus ajustes",
+      body: "Puedes cambiar tu zona, tus preferencias de notificaciones y quién puede verte desde Ajustes.",
+      button1: { label: "Abrir Ajustes", link: "aura://ajustes" },
+      audience: { all: true } },
+    { id: "channel", icon: "📢", title: "Sobre este canal",
+      body: "Este es el canal oficial de Aura. Aquí recibirás avisos importantes, novedades y ofertas. Puedes silenciarlo en el menú ⋯.",
+      button1: { label: "Entendido", link: "" },
+      audience: { all: true } },
   ];
 
   const BUTTON_PRESETS = [
     { label: "Verificarme", link: "aura://verificar" },
     { label: "Ver Premium", link: "aura://premium" },
+    { label: "Ver oferta", link: "aura://premium" },
+    { label: "Activar prueba", link: "aura://premium" },
     { label: "Abrir Explorar", link: "aura://explorar" },
     { label: "Zona LGTB+", link: "aura://explorar?zone=lgtb" },
+    { label: "Zona Hetero", link: "aura://explorar?zone=hetero" },
     { label: "Modo Ahora", link: "aura://ahora" },
-    { label: "Ajustes notif.", link: "aura://ajustes/notificaciones" },
+    { label: "Mis mensajes", link: "aura://mensajes" },
     { label: "Mi perfil", link: "aura://perfil" },
+    { label: "Editar bio", link: "aura://perfil" },
+    { label: "Subir fotos", link: "aura://perfil" },
+    { label: "Ajustes", link: "aura://ajustes" },
+    { label: "Ajustes notif.", link: "aura://ajustes/notificaciones" },
+    { label: "Ajustes de zona", link: "aura://ajustes/zona" },
+    { label: "Abrir canal", link: "aura://open-channel" },
+    { label: "Entendido", link: "" },
+    { label: "Aceptar", link: "" },
     { label: "Más tarde", link: "" },
+    { label: "Recordármelo", link: "" },
   ];
 
   // ==== Fila de plantillas ====
