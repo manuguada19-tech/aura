@@ -324,6 +324,20 @@
     <div class="modal-sheet" role="dialog" aria-modal="true" id="modalSheet"></div>
   </div>
 
+  <!-- V937 · Aviso de auto-actualización. Se muestra cuando /api/version detecta
+       un build nuevo, justo antes de purgar cachés y recargar la app (web y PWA).
+       Estilos en línea para que funcione aunque styles.css sea de una versión
+       antigua o aún no se haya cargado. -->
+  <div id="updateOverlay" hidden aria-hidden="true" role="alertdialog" aria-live="polite"
+       style="position:fixed;inset:0;z-index:2147483647;display:none;align-items:center;justify-content:center;background:rgba(10,10,14,0.72);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;">
+    <div style="max-width:320px;padding:26px 24px;border-radius:18px;background:#161821;color:#f4f4f7;box-shadow:0 20px 60px rgba(0,0,0,0.4);text-align:center;">
+      <div style="width:44px;height:44px;margin:0 auto 14px;border-radius:50%;border:3px solid rgba(255,255,255,0.18);border-top-color:#e63a67;animation:auraUpdSpin 0.9s linear infinite;"></div>
+      <div style="font-size:16px;font-weight:600;margin-bottom:6px;">Actualizando app…</div>
+      <div style="font-size:13px;opacity:0.75;line-height:1.4;">Espera unos segundos.</div>
+    </div>
+  </div>
+  <style>@keyframes auraUpdSpin { to { transform: rotate(360deg); } }</style>
+
   <button id="themeToggle" class="theme-toggle" aria-label="Cambiar tema">
     <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z"/></svg>
   </button>
@@ -680,7 +694,36 @@
     // 1) Registrar Service Worker (necesario para push notifications)
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("/sw.js").catch(() => {});
+        navigator.serviceWorker.register("/sw.js").then((reg) => {
+          if (!reg) return;
+          // V937 · Si el navegador detecta un SW nuevo esperando (típico al
+          // reabrir la PWA tras un despliegue), enseñamos el aviso y recargamos
+          // sin esperar al poll de /api/version. En primer arranque no hay
+          // controller previo, así que solo actuamos cuando ya había uno.
+          try {
+            reg.addEventListener("updatefound", () => {
+              const nw = reg.installing;
+              if (!nw) return;
+              nw.addEventListener("statechange", () => {
+                if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                  try { window.__auraTriggerUpdate && window.__auraTriggerUpdate(); } catch(e){}
+                }
+              });
+            });
+          } catch(e){}
+        }).catch(() => {});
+        // Cuando el SW nuevo toma el control (por skip-waiting), recargamos por
+        // si el poll de versión aún no había disparado. Guardia contra bucles:
+        // solo si ya habíamos visto un controller previo.
+        try {
+          let had = !!navigator.serviceWorker.controller;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (had && !window.__auraReloading) {
+              window.__auraReloading = true;
+              try { window.__auraTriggerUpdate && window.__auraTriggerUpdate(); } catch(e){}
+            }
+          });
+        } catch(e){}
       });
     }
 
@@ -701,14 +744,40 @@
           return (d && d.build) ? String(d.build) : null;
         } catch(e){ return null; }
       }
+      function showUpdateOverlay(){
+        try {
+          var el = document.getElementById("updateOverlay");
+          if (!el) return;
+          el.hidden = false;
+          el.style.display = "flex";
+          el.setAttribute("aria-hidden", "false");
+        } catch(e){}
+      }
       async function purgeAndReload(){
         if (reloading) return; reloading = true;
+        // V937 · Enseñar el aviso ANTES de purgar/recargar, para que en web y en
+        // PWA (instalada) el usuario vea «Actualizando app…» durante el proceso.
+        showUpdateOverlay();
+        // Pequeña pausa para que el overlay se pinte antes de bloquear el hilo
+        // con la purga de cachés y la navegación.
+        await new Promise(function(res){ setTimeout(res, 120); });
+        // Además, decirle al SW en espera (si lo hay) que tome el control ya,
+        // así el reload se sirve con los assets del build nuevo sin esperar a
+        // que se cierren todas las pestañas.
+        try {
+          if (navigator.serviceWorker) {
+            var reg = await navigator.serviceWorker.getRegistration();
+            if (reg && reg.waiting) reg.waiting.postMessage({ type: "skip-waiting" });
+          }
+        } catch(e){}
         try {
           if (window.caches && caches.keys) {
             var keys = await caches.keys();
             await Promise.all(keys.map(function(k){ return caches.delete(k); }));
           }
         } catch(e){}
+        // Dar tiempo a que el usuario lea el aviso (mín. 900 ms total).
+        await new Promise(function(res){ setTimeout(res, 800); });
         location.reload();
       }
       async function check(){
@@ -722,6 +791,10 @@
       document.addEventListener("visibilitychange", function(){
         if (document.visibilityState === "visible") check();
       });
+      // V937 · Punto único para disparar el mismo flujo desde otros sitios
+      // (por ejemplo, cuando el SW detecta un update). Así el aviso siempre
+      // pasa por la misma función y no aparece dos veces.
+      window.__auraTriggerUpdate = purgeAndReload;
     })();
 
     // 2) Suscripción a Web Push (registrada o anónima)
