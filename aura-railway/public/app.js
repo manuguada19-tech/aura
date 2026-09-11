@@ -8877,6 +8877,10 @@ async function openNearbyMap() {
     interests: [], education: [], pets: [], exercise: [], smoke: [], drink: [],
     // V887 · Nuevos filtros del buscador (paridad con "Buscar").
     tribe: [], bodyType: [], meetAt: [], healthPractices: [], nsfwOnly: false,
+    // V936 · Paridad con Explorar: ubicación (multi ciudad), etnia (multi) y
+    // «solo verificados». Se aplican en cliente sobre los pines/tarjetas del
+    // mapa (matchesMapFilters), igual que el resto de filtros avanzados.
+    cities: [], ethnicities: [], onlyVerified: false,
   };
   // V852 · ¿Cuenta recién registrada? (account_age_h dentro de la ventana).
   const isNewUser = (u) => u && u.account_age_h != null && Number.isFinite(+u.account_age_h) && +u.account_age_h <= NEW_USER_HOURS;
@@ -9302,6 +9306,22 @@ async function openNearbyMap() {
     }
     // V887 · Solo quien acepta fotos NSFW.
     if (f.nsfwOnly && !u.nsfw_ok) return false;
+    // V936 · Paridad con Explorar. Comparación case-insensitive y con trim para
+    // que «Sevilla » y «sevilla» se traten como el mismo valor (así viene a veces
+    // de facetas antiguas del backend).
+    if (f.cities && f.cities.length) {
+      const c = String(u.city || "").trim().toLowerCase();
+      if (!c) return false;
+      const sel = f.cities.map(x => String(x).trim().toLowerCase());
+      if (!sel.includes(c)) return false;
+    }
+    if (f.ethnicities && f.ethnicities.length) {
+      const e = String(u.ethnicity || "").trim().toLowerCase();
+      if (!e) return false;
+      const sel = f.ethnicities.map(x => String(x).trim().toLowerCase());
+      if (!sel.includes(e)) return false;
+    }
+    if (f.onlyVerified && !u.verified) return false;
     return true;
   }
 
@@ -9329,6 +9349,10 @@ async function openNearbyMap() {
     if (f.meetAt && f.meetAt.length) n++;
     if (f.healthPractices && f.healthPractices.length) n++;
     if (f.nsfwOnly) n++;
+    // V936 · Nuevos: ubicación, etnia, solo verificados.
+    if (f.cities && f.cities.length) n++;
+    if (f.ethnicities && f.ethnicities.length) n++;
+    if (f.onlyVerified) n++;
     return n;
   }
 
@@ -12923,6 +12947,115 @@ function openMapFilters(mf, onApply) {
     weightCtl.node,
   ]));
 
+  // V936 · Ubicación (multi-ciudad) y etnia: mismo comportamiento y misma fuente
+  // de datos que la hoja de Explorar (openFilters). Facets desde
+  // /api/discover/facets?zone=..., con la red de seguridad de la cuenta demo
+  // fusionada si el backend no la trae (misma lógica que en Explorar).
+  const cityGroup = el("div", { class: "filter-group" });
+  cityGroup.appendChild(el("h5", {}, "Ubicación"));
+  const citySelected = new Set((mf.cities || []).map(String));
+  const citySelWrap = el("div", { class: "chip-row", style: "margin-bottom:8px" });
+  const citySearch = el("input", { class: "filter-search", type: "search", inputmode: "search", placeholder: "Busca provincia o ciudad…", "aria-label": "Buscar ubicación" });
+  const cityResults = el("div", { class: "filter-search-list" }, el("div", { class: "muted", style: "padding:8px 4px" }, "Cargando ubicaciones…"));
+  cityGroup.appendChild(citySelWrap);
+  cityGroup.appendChild(citySearch);
+  cityGroup.appendChild(cityResults);
+  sheet.appendChild(cityGroup);
+  function renderMapCitySelected() {
+    citySelWrap.innerHTML = "";
+    if (!citySelected.size) { citySelWrap.style.display = "none"; return; }
+    citySelWrap.style.display = "";
+    citySelected.forEach(c => {
+      const chip = el("button", { class: "chip active", type: "button", title: "Quitar" }, [ c + "  ✕" ]);
+      chip.addEventListener("click", () => { citySelected.delete(c); renderMapCitySelected(); renderMapCityResults(); });
+      citySelWrap.appendChild(chip);
+    });
+  }
+  const ethGroup = el("div", { class: "filter-group" });
+  ethGroup.appendChild(el("h5", {}, "Etnia"));
+  const ethSelected = new Set((mf.ethnicities || []).map(String));
+  const ethRow = el("div", { class: "chip-row" }, el("div", { class: "muted", style: "padding:4px" }, "Cargando…"));
+  ethGroup.appendChild(ethRow);
+  sheet.appendChild(ethGroup);
+  let mapFacetCities = [], mapFacetEth = [], mapFacetsLoaded = false;
+  function renderMapCityResults() {
+    const q = (citySearch.value || "").trim().toLowerCase();
+    cityResults.innerHTML = "";
+    if (!mapFacetsLoaded) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px" }, "Cargando ubicaciones…"));
+      return;
+    }
+    if (!q) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px;line-height:1.4" }, "Escribe una ciudad o provincia para filtrar."));
+      return;
+    }
+    const matches = mapFacetCities.filter(c => c.value.toLowerCase().includes(q)).slice(0, 40);
+    if (!matches.length) {
+      cityResults.appendChild(el("div", { class: "muted", style: "padding:8px 4px;line-height:1.4" }, "No hay usuarios registrados en esa ubicación."));
+      return;
+    }
+    matches.forEach(c => {
+      const on = citySelected.has(c.value);
+      const item = el("button", { class: "filter-search-item" + (on ? " active" : ""), type: "button" }, [
+        el("span", {}, c.value),
+        el("small", { class: "muted" }, String(c.count)),
+      ]);
+      item.addEventListener("click", () => {
+        if (citySelected.has(c.value)) citySelected.delete(c.value); else citySelected.add(c.value);
+        renderMapCitySelected(); renderMapCityResults();
+      });
+      cityResults.appendChild(item);
+    });
+  }
+  function renderMapEth() {
+    ethRow.innerHTML = "";
+    if (!mapFacetsLoaded) {
+      ethRow.appendChild(el("div", { class: "muted", style: "padding:4px" }, "Cargando…"));
+      return;
+    }
+    if (!mapFacetEth.length) {
+      ethRow.appendChild(el("div", { class: "muted", style: "padding:4px;line-height:1.4" }, "Aún no hay etnias registradas para filtrar."));
+      return;
+    }
+    mapFacetEth.forEach(e => {
+      const on = ethSelected.has(e.value);
+      const chip = el("button", { class: "chip selectable" + (on ? " active" : ""), type: "button" }, `${e.value} · ${e.count}`);
+      chip.addEventListener("click", () => {
+        if (ethSelected.has(e.value)) ethSelected.delete(e.value); else ethSelected.add(e.value);
+        chip.classList.toggle("active");
+      });
+      ethRow.appendChild(chip);
+    });
+  }
+  citySearch.addEventListener("input", renderMapCityResults);
+  renderMapCitySelected();
+  (async () => {
+    try {
+      const z = state.zone || "hetero";
+      const r = await fetch(`/api/discover/facets?zone=${encodeURIComponent(z)}`, { headers: datingApi.headers(), cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      mapFacetCities = (d && d.cities) || [];
+      mapFacetEth = (d && d.ethnicities) || [];
+    } catch {}
+    try {
+      const demo = await fetchDemoProfile();
+      const demoZone = (demo && demo.zone === "lgtb") ? "lgtb" : "hetero";
+      if (demo && demoZone === (state.zone === "lgtb" ? "lgtb" : "hetero")) {
+        const dCity = String(demo.city || "").trim();
+        const dEth = String(demo.ethnicity || "").trim();
+        if (dCity && !mapFacetCities.some(c => String(c.value).toLowerCase() === dCity.toLowerCase())) {
+          mapFacetCities.unshift({ value: dCity, count: 1 });
+        }
+        if (dEth && !mapFacetEth.some(e => String(e.value).toLowerCase() === dEth.toLowerCase())) {
+          mapFacetEth.unshift({ value: dEth, count: 1 });
+        }
+      }
+    } catch {}
+    mapFacetsLoaded = true;
+    renderMapCityResults();
+    renderMapEth();
+  })();
+
   // Qué busca (selección única).
   const lookingRef = { id: mf.looking_for || "any" };
   const lookingRow = el("div", { class: "chip-row" });
@@ -12977,13 +13110,54 @@ function openMapFilters(mf, onApply) {
   const selHealth = buildLifestyle("Prácticas de salud", HEALTH_PRACTICES_OPTIONS, mf.healthPractices);
   const nsfwInp = el("input", { type: "checkbox", checked: mf.nsfwOnly || undefined });
   nsfwInp.addEventListener("change", () => { mf.nsfwOnly = nsfwInp.checked; });
-  sheet.appendChild(el("div", { class: "filter-group" }, [
+  // V936 · Solo verificados (paridad con Explorar). Bloqueado para cuentas NO
+  // verificadas, con el mismo texto y el mismo enlace «Verificar ahora →» que
+  // usa openFilters (para chatear solo con verificados, hay que estarlo).
+  const verInp = el("input", { type: "checkbox", checked: mf.onlyVerified || undefined });
+  const verRow = el("div", { class: "switch-row" }, [
+    el("span", { style: "font-size:14px" }, "Solo verificados"),
+    el("label", { class: "switch" }, [ verInp, el("span") ]),
+  ]);
+  const verHint = el("small", { class: "filter-hint", style: "display:none;color:var(--text-muted);margin-top:2px;line-height:1.4" });
+  let _mfIAmVerified = null;
+  verInp.addEventListener("change", () => {
+    if (verInp.checked && _mfIAmVerified === false) {
+      verInp.checked = false;
+      mf.onlyVerified = false;
+      toast("Verifícate para chatear solo con perfiles verificados");
+      return;
+    }
+    mf.onlyVerified = verInp.checked;
+  });
+  const prefGroup = el("div", { class: "filter-group" }, [
     el("h5", {}, "Preferencias"),
     el("div", { class: "switch-row" }, [
       el("span", { style: "font-size:14px" }, "Solo quien acepta fotos NSFW"),
       el("label", { class: "switch" }, [ nsfwInp, el("span") ]),
     ]),
-  ]));
+    verRow,
+    verHint,
+  ]);
+  sheet.appendChild(prefGroup);
+  (async () => {
+    try {
+      const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
+      const d = await r.json().catch(() => ({}));
+      _mfIAmVerified = !!d && d.kyc_status === "verified";
+    } catch { _mfIAmVerified = false; }
+    if (_mfIAmVerified === false) {
+      verRow.classList.add("gated");
+      if (verInp.checked) { verInp.checked = false; mf.onlyVerified = false; }
+      verHint.textContent = "Verifícate para poder usar este filtro y chatear solo con perfiles verificados.";
+      verHint.style.display = "block";
+      const goBtn = el("button", {
+        class: "filter-verify-link", type: "button",
+        style: "display:block;margin-top:4px;background:none;border:0;color:var(--brand);font-size:12px;font-weight:600;padding:0;cursor:pointer;text-align:left",
+        onclick: () => { try { modal.close(); } catch {} startVerifyFlow(); },
+      }, "Verificar ahora →");
+      prefGroup.appendChild(goBtn);
+    }
+  })();
 
   // Acciones.
   sheet.appendChild(el("div", { class: "sheet-actions" }, [
@@ -13013,6 +13187,10 @@ function openMapFilters(mf, onApply) {
       mf.meetAt = Array.from(selMeet);
       mf.healthPractices = Array.from(selHealth);
       mf.nsfwOnly = !!nsfwInp.checked;
+      // V936 · Ubicación, etnia y solo verificados (paridad con Explorar).
+      mf.cities = Array.from(citySelected);
+      mf.ethnicities = Array.from(ethSelected);
+      mf.onlyVerified = !!verInp.checked && _mfIAmVerified !== false;
       modal.close();
       onApply && onApply();
       toast("Filtros aplicados");
@@ -13026,6 +13204,8 @@ function openMapFilters(mf, onApply) {
       mf.interests = []; mf.education = []; mf.pets = []; mf.exercise = []; mf.smoke = []; mf.drink = [];
       // V887 · Reset de los nuevos filtros.
       mf.tribe = []; mf.bodyType = []; mf.meetAt = []; mf.healthPractices = []; mf.nsfwOnly = false;
+      // V936 · Reset de ubicación, etnia y solo verificados.
+      mf.cities = []; mf.ethnicities = []; mf.onlyVerified = false;
       modal.close();
       onApply && onApply();
       toast("Filtros restablecidos");
