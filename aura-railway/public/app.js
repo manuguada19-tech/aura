@@ -4351,6 +4351,18 @@ function showApp() {
     try { history.replaceState(null, "", "/"); } catch {}
     try { applyDeepLink(dl); return; } catch { /* fallback abajo */ }
   }
+  // V939 · ?bcast=<id> (llega desde el click de un push del canal): aterriza en
+  // Mensajes y abre el hilo del canal directamente.
+  try {
+    const bp = new URLSearchParams(location.search || "");
+    if (bp.get("bcast")) {
+      try { history.replaceState(null, "", "/"); } catch {}
+      state.currentTab = "chats";
+      try { $$(".tab", tabbar).forEach(b => b.classList.toggle("active", b.dataset.tab === "chats")); } catch {}
+      openBroadcastChannel();
+      return;
+    }
+  } catch {}
   routeTab(state.currentTab);
 }
 
@@ -12705,6 +12717,62 @@ function screenChats(root) {
   const list = el("div", { class: "chat-list" });
   root.appendChild(list);
 
+  // V939 · Canal "Equipo de Aura" fijado arriba de la lista. Aparece siempre,
+  // incluso sin conversaciones. Al abrirlo se pinta el hilo con los broadcasts.
+  const channelItem = el("div", {
+    class: "chat-item chat-item-channel",
+    role: "button",
+    tabindex: "0",
+    "aria-label": "Canal oficial: Equipo de Aura",
+  }, [
+    el("div", { class: "avatar channel-avatar",
+                style: "background-image:url('/assets/aura-icon-192.png')" }),
+    el("div", { class: "txt" }, [
+      el("strong", {}, [
+        document.createTextNode("Equipo de Aura "),
+        el("span", {
+          class: "verified-tick",
+          title: "Cuenta oficial verificada",
+          "aria-label": "Verificado",
+          html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="#3b82f6" aria-hidden="true"><path d="M12 2l2.5 2.5L18 4l.5 3.5L22 9l-1.5 3L22 15l-3.5 1.5L18 20l-3.5-.5L12 22l-2.5-2.5L6 20l-.5-3.5L2 15l1.5-3L2 9l3.5-1.5L6 4l3.5.5z"/><path d="M9.5 12.5l2 2 4-4.5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        }),
+      ]),
+      el("small", { id: "channelPreview" }, "Novedades y avisos del equipo"),
+    ]),
+    el("div", { class: "meta" }, [
+      el("time", { id: "channelTime" }, ""),
+      el("span", { class: "unread", id: "channelUnread", style: "display:none" }, "0"),
+    ]),
+  ]);
+  channelItem.addEventListener("click", () => openBroadcastChannel());
+  channelItem.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openBroadcastChannel(); }
+  });
+  list.appendChild(channelItem);
+
+  // Refresca preview + contador de no leídos del canal.
+  (async () => {
+    try {
+      const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
+      const r = await fetch("/api/my/channel/messages", { headers: h, cache: "no-store" });
+      if (!r.ok) return;
+      const s = await r.json();
+      const msgs = (s && s.messages) || [];
+      if (msgs.length) {
+        const last = msgs[msgs.length - 1];
+        const prev = document.getElementById("channelPreview");
+        if (prev) prev.textContent = (last.title || last.body || "").slice(0, 60);
+        const t = document.getElementById("channelTime");
+        if (t) t.textContent = fmtChatTime(last.sent_at);
+      }
+      const un = document.getElementById("channelUnread");
+      if (un && s.unread > 0) {
+        un.textContent = String(s.unread);
+        un.style.display = "";
+      }
+    } catch {}
+  })();
+
   const empty = el("div", { style: "padding:24px;text-align:center;color:var(--text-muted)" }, "No tienes conversaciones todavía. Toca un match para empezar a chatear.");
 
   (async () => {
@@ -12728,6 +12796,228 @@ function screenChats(root) {
       list.appendChild(item);
     });
   })();
+}
+
+/* ============================================================
+   V939 · Canal "Equipo de Aura" — vista del usuario
+   ------------------------------------------------------------
+   Al pulsar el chat fijado se abre este hilo. Cabecera igual que
+   la de un chat (foto + nombre + tick verificado), sin composer,
+   solo lectura y botones por mensaje. Menú de la esquina permite
+   silenciar el canal o borrar todo el hilo. Cada mensaje tiene su
+   propia "papelera" para ocultarlo suelto.
+   ============================================================ */
+function openBroadcastChannel() {
+  render(screenBroadcastChannel);
+}
+function screenBroadcastChannel(root) {
+  document.body.classList.add("chat-open");
+  const goBack = () => {
+    document.body.classList.remove("chat-open");
+    routeTab("chats");
+  };
+  root.appendChild(el("div", { class: "chat-header" }, [
+    el("button", { class: "icon-btn", onclick: goBack,
+      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }),
+    el("div", { class: "avatar channel-avatar", style: "background-image:url('/assets/aura-icon-192.png')" }),
+    el("div", { class: "name" }, [
+      el("strong", {}, [
+        document.createTextNode("Equipo de Aura "),
+        el("span", { class: "verified-tick", "aria-label": "Verificado",
+          html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="#3b82f6" aria-hidden="true"><path d="M12 2l2.5 2.5L18 4l.5 3.5L22 9l-1.5 3L22 15l-3.5 1.5L18 20l-3.5-.5L12 22l-2.5-2.5L6 20l-.5-3.5L2 15l1.5-3L2 9l3.5-1.5L6 4l3.5.5z"/><path d="M9.5 12.5l2 2 4-4.5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        }),
+      ]),
+      el("small", { class: "status-online" }, "Cuenta oficial"),
+    ]),
+    el("button", { class: "icon-btn", title: "Más",
+      onclick: () => openBroadcastChannelMenu(),
+      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>` }),
+  ]));
+
+  const msgs = el("div", { class: "messages", id: "bcastMsgs" });
+  msgs.appendChild(el("div", { class: "message-day" }, "Mensajes oficiales"));
+  root.appendChild(msgs);
+
+  // Aviso al pie: no se puede responder a este canal.
+  root.appendChild(el("div", { class: "channel-noreply" },
+    "No puedes responder a este canal. Aquí solo llegan avisos del Equipo de Aura."));
+
+  (async () => {
+    try {
+      const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
+      const r = await fetch("/api/my/channel/messages", { headers: h, cache: "no-store" });
+      if (!r.ok) throw new Error("no");
+      const s = await r.json();
+      const list = (s && s.messages) || [];
+      if (!list.length) {
+        msgs.appendChild(el("div", { style: "padding:24px;text-align:center;color:var(--text-muted)" },
+          "Aún no hay mensajes del equipo. Cuando publiquemos avisos, aparecerán aquí."));
+        return;
+      }
+      list.forEach(m => msgs.appendChild(renderBroadcastMessage(m)));
+      // Marca como visto los que aún no lo estén (best-effort).
+      const unseen = list.filter(m => !m.seen);
+      for (const m of unseen) {
+        fetch(`/api/my/channel/${m.id}/seen`, { method: "POST", headers: h }).catch(() => {});
+      }
+    } catch {
+      msgs.appendChild(el("div", { style: "padding:24px;text-align:center;color:var(--text-muted)" },
+        "No hemos podido cargar los mensajes. Prueba en un momento."));
+    }
+  })();
+}
+
+function renderBroadcastMessage(m) {
+  const card = el("div", { class: "message bcast-card", "data-bcast-id": String(m.id) });
+  const head = el("div", { class: "bcast-head" }, [
+    el("strong", {}, m.title || ""),
+    el("button", {
+      class: "bcast-trash", title: "Ocultar este mensaje",
+      "aria-label": "Ocultar este mensaje",
+      onclick: (e) => { e.stopPropagation(); hideBroadcast(m.id, card); },
+      html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 3h6v2h5v2H4V5h5V3zm-3 6h12l-1 12H7L6 9zm3 2v8h2v-8H9zm4 0v8h2v-8h-2z"/></svg>`,
+    }),
+  ]);
+  card.appendChild(head);
+  if (m.image_url) {
+    const img = el("img", { class: "bcast-image", src: m.image_url, alt: "", loading: "lazy" });
+    card.appendChild(img);
+  }
+  card.appendChild(el("div", { class: "bcast-body" }, m.body || ""));
+  const btns = (m.buttons || []).slice(0, 2);
+  if (btns.length) {
+    const wrap = el("div", { class: "bcast-buttons" }, btns.map((b, i) =>
+      el("button", {
+        class: "bcast-btn " + (i === 0 ? "primary" : "secondary"),
+        onclick: () => onBroadcastButton(m.id, i + 1, b.deeplink),
+      }, b.label || "Abrir")
+    ));
+    card.appendChild(wrap);
+  }
+  card.appendChild(el("div", { class: "bcast-time" }, fmtChatTime(m.sent_at)));
+  return card;
+}
+
+async function hideBroadcast(id, cardEl) {
+  const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
+  try {
+    await fetch(`/api/my/channel/${id}/hide`, { method: "POST", headers: h });
+    if (cardEl && cardEl.parentNode) cardEl.parentNode.removeChild(cardEl);
+  } catch {}
+}
+
+async function onBroadcastButton(id, buttonIndex, deeplink) {
+  const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
+  try {
+    await fetch(`/api/my/channel/${id}/click`, {
+      method: "POST",
+      headers: { ...h, "Content-Type": "application/json" },
+      body: JSON.stringify({ button: buttonIndex }),
+    });
+  } catch {}
+  handleDeeplink(deeplink);
+}
+
+// Enrutamiento del esquema aura:// hacia pantallas internas de la app.
+// URLs externas (https:// o rutas /faq, /premium…) se abren normal.
+function handleDeeplink(raw) {
+  if (!raw) return;
+  const s = String(raw).trim();
+  if (/^aura:\/\//i.test(s)) {
+    const rest = s.replace(/^aura:\/\//i, "");
+    const [pathAndQuery] = rest.split("#");
+    const [pth, qs] = pathAndQuery.split("?");
+    const parts = pth.split("/").filter(Boolean);
+    const q = new URLSearchParams(qs || "");
+    try {
+      switch (parts[0]) {
+        case "verificar":
+        case "verify":
+          if (typeof openVerification === "function") return openVerification();
+          if (typeof openIdVerification === "function") return openIdVerification();
+          return routeTab("profile");
+        case "premium":
+        case "paywall":
+          if (typeof openPaywall === "function") return openPaywall();
+          if (typeof openPremiumPaywall === "function") return openPremiumPaywall();
+          return routeTab("profile");
+        case "ajustes":
+        case "settings":
+          if (parts[1] === "notificaciones" && typeof openNotifPrefs === "function") return openNotifPrefs();
+          if (parts[1] === "zona" && typeof openZoneSettings === "function") return openZoneSettings();
+          if (typeof openSettings === "function") return openSettings();
+          return routeTab("profile");
+        case "explorar":
+        case "discover":
+          if (q.get("zone") === "lgtb" || q.get("zone") === "hetero") {
+            try { state.zone = q.get("zone"); } catch {}
+          }
+          return routeTab("discover");
+        case "ahora":
+        case "now":
+          if (typeof openNowStatus === "function") return openNowStatus();
+          return routeTab("discover");
+        case "perfil":
+        case "profile":
+          return routeTab("profile");
+        case "mensajes":
+        case "chats":
+          return routeTab("chats");
+        case "open-channel":
+        case "canal":
+          return openBroadcastChannel();
+      }
+    } catch {}
+    return;
+  }
+  // https:// o rutas internas
+  if (/^https?:\/\//i.test(s)) { window.open(s, "_blank", "noopener"); return; }
+  if (s.startsWith("/")) { location.assign(s); return; }
+}
+
+function openBroadcastChannelMenu() {
+  if (typeof modal !== "object" || !modal.open) {
+    // Fallback: menú simple.
+    const sheet = document.createElement("div");
+    sheet.className = "bcast-menu-fallback";
+    sheet.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;justify-content:center;padding:16px";
+    sheet.innerHTML = `<div style="background:var(--bg-elev,#161821);color:#f4f4f7;border-radius:16px;padding:16px;width:min(360px,100%)">
+      <button data-a="mute" style="display:block;width:100%;text-align:left;padding:12px;background:none;border:0;color:inherit;font:inherit">Silenciar canal</button>
+      <button data-a="hide-all" style="display:block;width:100%;text-align:left;padding:12px;background:none;border:0;color:inherit;font:inherit">Borrar todo el hilo</button>
+      <button data-a="close" style="display:block;width:100%;text-align:left;padding:12px;background:none;border:0;color:#e63a67;font:inherit">Cancelar</button>
+    </div>`;
+    document.body.appendChild(sheet);
+    sheet.addEventListener("click", async (e) => {
+      const b = e.target.closest("button[data-a]");
+      if (!b) { sheet.remove(); return; }
+      const h = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
+      if (b.dataset.a === "mute") {
+        await fetch("/api/my/channel/mute", { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ muted: true }) });
+      } else if (b.dataset.a === "hide-all") {
+        await fetch("/api/my/channel/hide-all", { method: "POST", headers: h });
+      }
+      sheet.remove();
+      if (b.dataset.a === "hide-all") openBroadcastChannel();
+    });
+    return;
+  }
+  modal.open({
+    title: "Opciones del canal",
+    body: el("div", { style: "display:flex;flex-direction:column;gap:8px" }, [
+      el("button", { class: "btn secondary", onclick: async () => {
+        const h = chatApi.headers();
+        await fetch("/api/my/channel/mute", { method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ muted: true }) });
+        modal.close();
+        toast("Canal silenciado");
+      } }, "Silenciar canal"),
+      el("button", { class: "btn secondary", onclick: async () => {
+        const h = chatApi.headers();
+        await fetch("/api/my/channel/hide-all", { method: "POST", headers: h });
+        modal.close();
+        openBroadcastChannel();
+      } }, "Borrar todo el hilo"),
+    ]),
+  });
 }
 
 /* ---- Nearby filters modal (Chats screen) ---- */

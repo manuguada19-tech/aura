@@ -1522,7 +1522,7 @@ function route(view) {
     subscriptions: viewSubscriptions,
     payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, boost: viewBoostAdmin, stats: viewStats,
     user_activity: viewUserActivity,
-    notifications: viewNotifications, emails: viewEmails, settings: viewSettings, logs: viewLogs,
+    notifications: viewNotifications, broadcasts: viewBroadcasts, emails: viewEmails, settings: viewSettings, logs: viewLogs,
     content: viewContent, design: viewDesign, match_celebrate: viewMatchCelebrate, ads: viewAdsAdmin, backup: viewBackup,
     waitlist: viewWaitlist,
     maintenance_emails: viewMaintenanceEmails,
@@ -20104,6 +20104,383 @@ async function viewDeviceIncidents(root) {
 
   await loadKpis();
   await load();
+}
+
+/* ================================================================
+   V939 · Canal "Equipo de Aura" — vista admin
+   ----------------------------------------------------------------
+   Editor de broadcasts: título, cuerpo, imagen opcional, dos botones
+   con enlace profundo aura:// o URL segura. Filtros de audiencia
+   (todos, plan, verificados, zona, ciudad, edad). Preview de
+   audiencia en tiempo real. Enviar ya, programar, o guardar borrador.
+   Listado inferior con métricas por broadcast (enviados, vistos,
+   clicks por botón, ocultados). Botón de retirada (status='canceled')
+   que hace desaparecer el mensaje del hilo de los usuarios.
+   ================================================================ */
+async function viewBroadcasts(root) {
+  root.appendChild(viewTitle("Canal Equipo de Aura",
+    "Mensajes de difusión con botones a segmentos concretos"));
+
+  // Aviso: qué es y qué no es
+  root.appendChild(el("div", {
+    style: "background:rgba(230,58,103,.09);border:1px solid rgba(230,58,103,.35);" +
+           "border-radius:10px;padding:12px 14px;margin:0 0 14px;line-height:1.5;font-size:13px",
+  }, [
+    el("div", { style: "font-weight:700;margin-bottom:4px" }, "📢 Cómo funciona"),
+    el("div", {}, "El mensaje aparece como chat fijado arriba (\"Equipo de Aura\", con tick azul) en la lista de Mensajes de los usuarios que entren en la audiencia. Además, si NO han silenciado el canal, les llega un push con el texto que elijas. No hay respuestas: es un canal solo de lectura."),
+  ]));
+
+  // ---- EDITOR ----
+  const ed = el("div", { class: "bcast-editor",
+    style: "background:rgba(255,255,255,.02);border:1px solid var(--border,#2a2f3a);border-radius:14px;padding:16px;margin-bottom:16px" });
+  ed.appendChild(el("h3", { style: "margin:0 0 12px;font-size:16px" }, "Nuevo mensaje"));
+
+  const titleI = el("input", { class: "input", placeholder: "Título (obligatorio, máx 160)", maxlength: "160", style: "width:100%;margin-bottom:8px" });
+  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Título"));
+  ed.appendChild(titleI);
+
+  const bodyI = el("textarea", { class: "input", rows: "3", placeholder: "Cuerpo del mensaje (obligatorio, máx 2000)", maxlength: "2000", style: "width:100%;margin-bottom:8px" });
+  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Cuerpo"));
+  ed.appendChild(bodyI);
+
+  const imgI = el("input", { class: "input", placeholder: "URL de imagen opcional (https:// o /assets/…)", style: "width:100%;margin-bottom:8px" });
+  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Imagen (opcional)"));
+  ed.appendChild(imgI);
+
+  // Botones
+  const b1l = el("input", { class: "input", placeholder: "Etiqueta botón 1", maxlength: "40", style: "width:100%;margin-bottom:6px" });
+  const b1d = el("input", { class: "input", placeholder: "aura://verificar · /premium · https://…", maxlength: "200", style: "width:100%;margin-bottom:10px" });
+  const b2l = el("input", { class: "input", placeholder: "Etiqueta botón 2", maxlength: "40", style: "width:100%;margin-bottom:6px" });
+  const b2d = el("input", { class: "input", placeholder: "aura://premium · https://…", maxlength: "200", style: "width:100%;margin-bottom:14px" });
+  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Botón 1 (opcional, aparece resaltado)"));
+  ed.appendChild(b1l); ed.appendChild(b1d);
+  ed.appendChild(el("label", { style: "display:block;font-size:12.5px;font-weight:700;margin:0 0 4px" }, "Botón 2 (opcional, secundario)"));
+  ed.appendChild(b2l); ed.appendChild(b2d);
+
+  ed.appendChild(el("div", {
+    style: "font-size:11.5px;color:var(--text-muted);margin:0 0 12px;line-height:1.5"
+  }, "Enlaces profundos: aura://verificar · aura://premium · aura://explorar?zone=lgtb · aura://ahora · aura://ajustes/notificaciones · aura://open-channel"));
+
+  // ---- Audiencia ----
+  ed.appendChild(el("h4", { style: "margin:12px 0 8px;font-size:14px" }, "Audiencia"));
+  const audAll = el("input", { type: "checkbox", checked: true });
+  const audPlan = el("select", { class: "input", style: "margin-left:8px" }, [
+    el("option", { value: "any" }, "Cualquier plan"),
+    el("option", { value: "free" }, "Solo Free"),
+    el("option", { value: "premium" }, "Solo Premium"),
+    el("option", { value: "gold" }, "Solo Gold"),
+    el("option", { value: "platinum" }, "Solo Platinum"),
+  ]);
+  const audVerified = el("select", { class: "input", style: "margin-left:8px" }, [
+    el("option", { value: "" }, "Cualquiera"),
+    el("option", { value: "true" }, "Solo verificados"),
+    el("option", { value: "false" }, "Solo NO verificados"),
+  ]);
+  const audZone = el("select", { class: "input", style: "margin-left:8px" }, [
+    el("option", { value: "" }, "Cualquier zona"),
+    el("option", { value: "hetero" }, "Zona Hetero"),
+    el("option", { value: "lgtb" }, "Zona LGTB+"),
+  ]);
+  const audCity = el("input", { class: "input", placeholder: "Ciudad (opcional)", style: "margin-left:8px;width:180px" });
+  const audMinAge = el("input", { class: "input", type: "number", min: "18", max: "99", placeholder: "Edad mín.", style: "margin-left:8px;width:110px" });
+  const audMaxAge = el("input", { class: "input", type: "number", min: "18", max: "99", placeholder: "Edad máx.", style: "margin-left:8px;width:110px" });
+
+  const audRow = (labelTxt, node) => el("div", { style: "display:flex;align-items:center;margin-bottom:6px;font-size:13px" }, [
+    el("span", { style: "min-width:130px;color:var(--text-muted)" }, labelTxt),
+    node,
+  ]);
+  ed.appendChild(el("div", { style: "display:flex;align-items:center;margin-bottom:8px;font-size:13px" }, [
+    audAll, el("span", { style: "margin-left:8px" }, "Enviar a TODOS los usuarios activos"),
+  ]));
+  const audDetail = el("div", { style: "opacity:0.55;pointer-events:none" }, [
+    audRow("Plan:", audPlan),
+    audRow("Verificado:", audVerified),
+    audRow("Zona:", audZone),
+    audRow("Ciudad:", audCity),
+    audRow("Edad:", el("div", {}, [ audMinAge, audMaxAge ])),
+  ]);
+  ed.appendChild(audDetail);
+  audAll.addEventListener("change", () => {
+    audDetail.style.opacity = audAll.checked ? "0.55" : "1";
+    audDetail.style.pointerEvents = audAll.checked ? "none" : "auto";
+    schedulePreview();
+  });
+
+  function currentAudience() {
+    if (audAll.checked) return { all: true };
+    const f = {};
+    if (audPlan.value && audPlan.value !== "any") f.plan = audPlan.value;
+    if (audVerified.value === "true")  f.verified = true;
+    if (audVerified.value === "false") f.verified = false;
+    if (audZone.value) f.zone = audZone.value;
+    if (audCity.value.trim()) f.city = audCity.value.trim();
+    if (audMinAge.value) f.min_age = parseInt(audMinAge.value, 10);
+    if (audMaxAge.value) f.max_age = parseInt(audMaxAge.value, 10);
+    return f;
+  }
+
+  const previewCountEl = el("span", { style: "font-weight:700" }, "…");
+  const previewRow = el("div", {
+    style: "background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.3);border-radius:8px;padding:10px 12px;margin:10px 0;font-size:13px",
+  }, [
+    document.createTextNode("Alcance estimado: "),
+    previewCountEl,
+    document.createTextNode(" usuarios activos"),
+  ]);
+  ed.appendChild(previewRow);
+
+  let previewTimer = null;
+  async function refreshPreview() {
+    try {
+      const r = await fetch("/api/admin/broadcasts/preview-audience", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audience: currentAudience() }),
+      });
+      const j = await r.json();
+      previewCountEl.textContent = j.ok ? String(j.count) : "?";
+    } catch { previewCountEl.textContent = "?"; }
+  }
+  function schedulePreview() {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(refreshPreview, 250);
+  }
+  [audPlan, audVerified, audZone, audCity, audMinAge, audMaxAge].forEach(n => {
+    n.addEventListener("change", schedulePreview);
+    n.addEventListener("input", schedulePreview);
+  });
+  refreshPreview();
+
+  // ---- Push ----
+  ed.appendChild(el("h4", { style: "margin:12px 0 8px;font-size:14px" }, "Push (notificación con app cerrada)"));
+  const pushEnabled = el("input", { type: "checkbox", checked: true });
+  const pushTitleI = el("input", { class: "input", placeholder: "Título del push (por defecto: \"Equipo de Aura\")", maxlength: "120", style: "width:100%;margin:6px 0" });
+  const pushBodyI  = el("input", { class: "input", placeholder: "Texto del push (por defecto: el título del mensaje)", maxlength: "240", style: "width:100%;margin-bottom:6px" });
+  ed.appendChild(el("div", { style: "display:flex;align-items:center;font-size:13px;margin-bottom:6px" }, [
+    pushEnabled, el("span", { style: "margin-left:8px" }, "Enviar push (respetará el silencio del canal por usuario)"),
+  ]));
+  ed.appendChild(pushTitleI);
+  ed.appendChild(pushBodyI);
+
+  // ---- Programar ----
+  ed.appendChild(el("h4", { style: "margin:12px 0 8px;font-size:14px" }, "Cuándo enviar"));
+  const schI = el("input", { class: "input", type: "datetime-local", style: "width:auto" });
+  ed.appendChild(el("div", { style: "font-size:12.5px;color:var(--text-muted);margin-bottom:6px" },
+    "Deja vacío para enviarlo ahora al pulsar «Enviar»."));
+  ed.appendChild(schI);
+
+  // ---- Acciones ----
+  const btnPreview = el("button", { class: "btn secondary" }, "Vista previa");
+  const btnDraft   = el("button", { class: "btn secondary" }, "Guardar borrador");
+  const btnSend    = el("button", { class: "btn primary" }, "Enviar");
+  const acts = el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin-top:14px" }, [ btnPreview, btnDraft, btnSend ]);
+  ed.appendChild(acts);
+
+  function collect(sendNow, scheduleAt) {
+    return {
+      title: titleI.value.trim(),
+      body:  bodyI.value.trim(),
+      image_url: imgI.value.trim() || null,
+      button1_label: b1l.value.trim() || null,
+      button1_deeplink: b1d.value.trim() || null,
+      button2_label: b2l.value.trim() || null,
+      button2_deeplink: b2d.value.trim() || null,
+      audience: currentAudience(),
+      push_title: pushTitleI.value.trim() || null,
+      push_body: pushBodyI.value.trim() || null,
+      push_enabled: pushEnabled.checked,
+      send_now: sendNow,
+      schedule_at: scheduleAt,
+    };
+  }
+
+  btnPreview.addEventListener("click", () => {
+    const payload = collect(false, null);
+    openBroadcastPreview(payload);
+  });
+
+  btnDraft.addEventListener("click", async () => {
+    const payload = collect(false, null);
+    if (!payload.title || !payload.body) return toast("Título y cuerpo son obligatorios");
+    const r = await fetch("/api/admin/broadcasts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (j.ok) { toast("Borrador guardado (id " + j.id + ")"); reloadList(); }
+    else toast("Error: " + (j.error || "desconocido"));
+  });
+
+  btnSend.addEventListener("click", async () => {
+    const payload = collect(!schI.value, schI.value || null);
+    if (!payload.title || !payload.body) return toast("Título y cuerpo son obligatorios");
+    const conf = payload.send_now
+      ? "¿Enviar ahora a " + previewCountEl.textContent + " usuarios?"
+      : "¿Programar el envío para " + payload.schedule_at + "?";
+    if (!confirm(conf)) return;
+    const r = await fetch("/api/admin/broadcasts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      toast(payload.send_now
+        ? "Enviado a " + j.delivered + " · push " + j.pushed
+        : "Programado (id " + j.id + ")");
+      titleI.value = ""; bodyI.value = ""; imgI.value = "";
+      b1l.value = ""; b1d.value = ""; b2l.value = ""; b2d.value = "";
+      pushTitleI.value = ""; pushBodyI.value = ""; schI.value = "";
+      reloadList();
+    } else {
+      toast("Error: " + (j.error || "desconocido"));
+    }
+  });
+
+  root.appendChild(ed);
+
+  // ---- LISTADO ----
+  root.appendChild(el("h3", { style: "margin:16px 0 8px;font-size:16px" }, "Enviados y programados"));
+  const listWrap = el("div", { id: "bcastList" }, el("div", { class: "muted" }, "Cargando…"));
+  root.appendChild(listWrap);
+
+  async function reloadList() {
+    listWrap.innerHTML = "";
+    try {
+      const r = await fetch("/api/admin/broadcasts?limit=50", { cache: "no-store" });
+      const j = await r.json();
+      const items = (j && j.items) || [];
+      if (!items.length) {
+        listWrap.appendChild(el("div", { class: "muted", style: "padding:12px" }, "Todavía no hay mensajes."));
+        return;
+      }
+      const tbl = el("table", { class: "tbl" }, [
+        el("thead", {}, el("tr", {}, [
+          el("th", {}, "ID"), el("th", {}, "Título"),
+          el("th", {}, "Audiencia"), el("th", {}, "Estado"),
+          el("th", {}, "Enviado"), el("th", {}, "Acciones"),
+        ])),
+      ]);
+      const tb = el("tbody");
+      tbl.appendChild(tb);
+      items.forEach(it => {
+        const tr = el("tr", {}, [
+          el("td", {}, String(it.id)),
+          el("td", {}, [
+            el("strong", {}, it.title),
+            el("div", { class: "muted", style: "font-size:11.5px;margin-top:2px" }, it.preview || ""),
+          ]),
+          el("td", {}, String(it.audience_count ?? "—")),
+          el("td", {}, statusBadge(it.status)),
+          el("td", {}, it.sent_at ? new Date(it.sent_at).toLocaleString() : "—"),
+          el("td", {}, [
+            el("button", { class: "btn ghost xs", onclick: () => openBroadcastStats(it.id) }, "Estadísticas"),
+            el("button", { class: "btn ghost xs", style: "margin-left:6px",
+              onclick: () => resendBroadcast(it.id) }, "Reenviar"),
+            el("button", { class: "btn ghost xs", style: "margin-left:6px;color:#ef4444",
+              onclick: () => retirarBroadcast(it.id) }, "Retirar"),
+          ]),
+        ]);
+        tb.appendChild(tr);
+      });
+      listWrap.appendChild(tbl);
+    } catch (e) {
+      listWrap.appendChild(el("div", { class: "err" }, "Error: " + e.message));
+    }
+  }
+
+  function statusBadge(s) {
+    const map = { draft: ["#7a869a", "Borrador"], scheduled: ["#eab308", "Programado"], sent: ["#22c55e", "Enviado"], canceled: ["#ef4444", "Retirado"] };
+    const [c, t] = map[s] || ["#7a869a", s];
+    return el("span", { style: "padding:2px 8px;border-radius:6px;font-size:11px;background:" + c + "20;color:" + c }, t);
+  }
+
+  async function resendBroadcast(id) {
+    if (!confirm("¿Reenviar a la audiencia actual? Los usuarios ya alcanzados no recibirán duplicado, solo los nuevos.")) return;
+    const r = await fetch("/api/admin/broadcasts/" + id + "/send", { method: "POST" });
+    const j = await r.json();
+    if (j.ok) { toast("Reenviado · nuevos: " + j.delivered + ", push: " + j.pushed); reloadList(); }
+    else toast("Error: " + (j.error || "?"));
+  }
+  async function retirarBroadcast(id) {
+    if (!confirm("¿Retirar este mensaje? Desaparecerá del hilo de todos los usuarios.")) return;
+    const r = await fetch("/api/admin/broadcasts/" + id, { method: "DELETE" });
+    const j = await r.json();
+    if (j.ok) { toast("Retirado"); reloadList(); }
+    else toast("Error: " + (j.error || "?"));
+  }
+  async function openBroadcastStats(id) {
+    try {
+      const r = await fetch("/api/admin/broadcasts/" + id);
+      const j = await r.json();
+      if (!j.ok) return toast("No se pudo cargar");
+      const b = j.broadcast, s = j.stats;
+      const dlg = document.createElement("div");
+      dlg.className = "ac-overlay";
+      const kpi = (n, l) => `<div style="text-align:center;padding:12px;background:rgba(255,255,255,.03);border-radius:8px"><div style="font-size:22px;font-weight:700">${n}</div><div style="font-size:11.5px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em">${l}</div></div>`;
+      dlg.innerHTML = `<div class="ac-scrim"></div>
+        <div class="ac-dialog ac-dialog-wide" role="dialog" aria-modal="true">
+          <h3 style="margin:0 0 4px">${escapeHtml(b.title)}</h3>
+          <p class="muted" style="margin:0 0 12px;font-size:12.5px">Enviado: ${b.sent_at ? new Date(b.sent_at).toLocaleString() : "no enviado"}</p>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+            ${kpi(s.delivered, "Alcanzados")}${kpi(s.seen, "Vistos")}${kpi(s.clicked, "Clicks")}${kpi(s.hidden, "Ocultados")}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+            ${kpi(s.pushed, "Push enviados")}${kpi(s.clicked_b1, "Clicks botón 1")}${kpi(s.clicked_b2, "Clicks botón 2")}
+          </div>
+          <div style="padding:12px;background:rgba(0,0,0,.15);border-radius:8px;font-size:13px;line-height:1.5">
+            <strong>${escapeHtml(b.title)}</strong><br>${escapeHtml(b.body).replace(/\n/g, "<br>")}
+          </div>
+          <div class="ac-actions" style="margin-top:14px">
+            <button type="button" class="btn ghost ac-cancel">Cerrar</button>
+          </div>
+        </div>`;
+      document.body.appendChild(dlg);
+      dlg.querySelector(".ac-cancel").addEventListener("click", () => dlg.remove());
+      dlg.querySelector(".ac-scrim").addEventListener("click", () => dlg.remove());
+    } catch (e) { toast("Error: " + e.message); }
+  }
+
+  function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function openBroadcastPreview(payload) {
+    const dlg = document.createElement("div");
+    dlg.className = "ac-overlay";
+    const btns = [];
+    if (payload.button1_label) btns.push(`<button class="bcast-preview-btn primary">${escapeHtml(payload.button1_label)}</button>`);
+    if (payload.button2_label) btns.push(`<button class="bcast-preview-btn">${escapeHtml(payload.button2_label)}</button>`);
+    dlg.innerHTML = `<div class="ac-scrim"></div>
+      <div class="ac-dialog" role="dialog" aria-modal="true" style="max-width:400px">
+        <h3 style="margin:0 0 10px;font-size:15px">Cómo se ve en la app</h3>
+        <div style="background:#161821;color:#f4f4f7;border-radius:14px;padding:14px;font-family:system-ui">
+          <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+            <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#ff3b6b,#ff8a3b)"></div>
+            <div><strong>Equipo de Aura</strong> <span style="color:#3b82f6">✓</span><br><small style="opacity:.7">Cuenta oficial</small></div>
+          </div>
+          ${payload.image_url ? `<img src="${payload.image_url}" alt="" style="width:100%;border-radius:10px;margin-bottom:8px">` : ""}
+          <div style="font-weight:700;font-size:14.5px;margin-bottom:4px">${escapeHtml(payload.title || "(sin título)")}</div>
+          <div style="font-size:13px;line-height:1.4;opacity:.9;white-space:pre-wrap">${escapeHtml(payload.body || "(sin cuerpo)")}</div>
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">${btns.join("")}</div>
+        </div>
+        <div class="ac-actions" style="margin-top:14px">
+          <button type="button" class="btn ghost ac-cancel">Cerrar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(dlg);
+    dlg.querySelector(".ac-cancel").addEventListener("click", () => dlg.remove());
+    dlg.querySelector(".ac-scrim").addEventListener("click", () => dlg.remove());
+    if (!document.getElementById("bcastPreviewCss")) {
+      const st = document.createElement("style");
+      st.id = "bcastPreviewCss";
+      st.textContent = ".bcast-preview-btn{padding:8px 14px;border-radius:999px;border:0;background:rgba(255,255,255,.1);color:#fff;font-size:12.5px;font-weight:600;cursor:pointer}.bcast-preview-btn.primary{background:#e63a67}";
+      document.head.appendChild(st);
+    }
+  }
+
+  await reloadList();
 }
 
 /* boot */

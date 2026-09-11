@@ -10461,3 +10461,67 @@ body.map-open { overflow: hidden; }
 .pay-notice.pn-ok .pn-close { background: linear-gradient(135deg, #22c55e, #16a34a); }
 .pay-notice.pn-cancel .pn-close { background: linear-gradient(135deg, #ff3b6b, #ff8a3b); }
 .pn-close:active { transform: scale(.98); }
+
+/* ============================================================
+   V939 · Canal "Equipo de Aura" — estilos
+   ============================================================ */
+.chat-item-channel {
+  background: linear-gradient(90deg, rgba(230,58,103,0.06), transparent 60%);
+  border-left: 3px solid var(--brand, #e63a67);
+}
+.channel-avatar {
+  background-size: cover !important;
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-color: #fff;
+}
+.verified-tick {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: -2px;
+  margin-left: 2px;
+}
+.verified-tick svg { display: block; }
+
+/* Tarjeta broadcast dentro del hilo del canal */
+.bcast-card {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 14px;
+  padding: 14px;
+  margin: 6px 12px;
+  max-width: 90%;
+  align-self: flex-start;
+}
+.bcast-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px; margin-bottom: 6px;
+}
+.bcast-head strong { font-size: 14.5px; line-height: 1.3; }
+.bcast-trash {
+  flex: 0 0 auto; width: 28px; height: 28px;
+  border-radius: 999px; border: 0; background: rgba(255,255,255,0.04);
+  color: var(--text-muted, #94a3b8); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.bcast-trash:hover { background: rgba(239,68,68,0.15); color: #ef4444; }
+.bcast-image { display: block; width: 100%; border-radius: 10px; margin: 6px 0 8px; }
+.bcast-body { font-size: 13.5px; line-height: 1.45; opacity: 0.92; white-space: pre-wrap; }
+.bcast-buttons { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.bcast-btn {
+  padding: 8px 14px; border-radius: 999px; border: 0;
+  font-size: 12.5px; font-weight: 600; cursor: pointer;
+  font-family: inherit;
+}
+.bcast-btn.primary { background: var(--brand, #e63a67); color: #fff; }
+.bcast-btn.secondary { background: rgba(255,255,255,0.10); color: inherit; }
+.bcast-btn:active { transform: scale(0.98); }
+.bcast-time {
+  font-size: 11px; color: var(--text-muted, #94a3b8);
+  margin-top: 8px; text-align: right;
+}
+.channel-noreply {
+  text-align: center; font-size: 12px; color: var(--text-muted, #94a3b8);
+  padding: 10px 20px 14px; opacity: 0.9;
+  border-top: 1px solid var(--border, rgba(255,255,255,0.06));
+}

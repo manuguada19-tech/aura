@@ -2274,6 +2274,77 @@ async function migrate() {
     )`);
   } catch {}
 
+  // V939 · Canal "Equipo de Aura": mensajes de difusión con botones opcionales
+  // y trazas de lectura/click/ocultado. broadcast_messages es la fuente; el
+  // reparto por usuario se materializa perezosamente en broadcast_deliveries
+  // (solo se inserta una fila cuando el usuario abre/interactúa con el mensaje
+  // o cuando se manda el push, para no explotar la tabla con N * usuarios).
+  // audience_json guarda el criterio (all, plan, verified, city, zone…) para
+  // recalcular a demanda o reenviar. user_channel_prefs guarda si el usuario
+  // silenció el canal completo. broadcast_audiences guarda segmentos con
+  // nombre para reusar desde el editor.
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS broadcast_messages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(160) NOT NULL,
+      body TEXT NOT NULL,
+      image_url VARCHAR(500) NULL,
+      button1_label VARCHAR(40) NULL,
+      button1_deeplink VARCHAR(200) NULL,
+      button2_label VARCHAR(40) NULL,
+      button2_deeplink VARCHAR(200) NULL,
+      audience_json TEXT NULL,
+      audience_count INT NULL,
+      push_title VARCHAR(120) NULL,
+      push_body VARCHAR(240) NULL,
+      push_enabled TINYINT(1) NOT NULL DEFAULT 1,
+      status ENUM('draft','scheduled','sent','canceled') NOT NULL DEFAULT 'draft',
+      scheduled_at TIMESTAMP NULL,
+      sent_at TIMESTAMP NULL,
+      created_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_status_sched (status, scheduled_at),
+      INDEX idx_sent_at (sent_at)
+    )`);
+  } catch {}
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS broadcast_deliveries (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      broadcast_id INT NOT NULL,
+      user_id INT NOT NULL,
+      delivered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      seen_at TIMESTAMP NULL,
+      clicked_button TINYINT NULL,
+      clicked_at TIMESTAMP NULL,
+      hidden_at TIMESTAMP NULL,
+      push_sent INT NOT NULL DEFAULT 0,
+      UNIQUE KEY uniq_bcast_user (broadcast_id, user_id),
+      INDEX idx_user_hidden (user_id, hidden_at),
+      INDEX idx_bcast_seen (broadcast_id, seen_at),
+      INDEX idx_bcast_click (broadcast_id, clicked_at)
+    )`);
+  } catch {}
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS broadcast_audiences (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(80) NOT NULL,
+      filter_json TEXT NOT NULL,
+      created_by INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_name (name)
+    )`);
+  } catch {}
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS user_channel_prefs (
+      user_id INT PRIMARY KEY,
+      muted TINYINT(1) NOT NULL DEFAULT 0,
+      muted_at TIMESTAMP NULL,
+      all_hidden_before INT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`);
+  } catch {}
+
   // V635 · Índices de rendimiento (additivos e idempotentes). Todos van en
   //        try/catch: si el índice ya existe, TiDB/MySQL lanza error 1061 y lo
   //        ignoramos. No modifican datos ni esquema de columnas.
@@ -15914,6 +15985,559 @@ app.post("/api/my/offline", wrap(async (req, res) => {
   await pool.execute("UPDATE users SET online=0 WHERE id=?", [me]);
   res.json({ ok: true });
 }));
+
+/* ============================================================
+   V939 · Canal "Equipo de Aura" (broadcast) — lado del usuario
+   ------------------------------------------------------------
+   El canal aparece siempre fijado arriba en la lista de Mensajes
+   y su hilo se compone de todos los broadcasts enviados que este
+   usuario NO haya ocultado individualmente y que sean posteriores
+   a all_hidden_before (borrado del hilo entero). No hay input:
+   el usuario NO responde al canal; solo lee, pulsa botones,
+   silencia o borra. La audiencia del broadcast se aplica aquí al
+   listar; los estados (visto/click/ocultado) se guardan por fila
+   en broadcast_deliveries de forma perezosa.
+   ============================================================ */
+
+// Deep-link permitido: sólo esquemas seguros para nuestra propia app o https.
+// Filtra javascript:, data:, file: y cualquier otra cosa que pudiera
+// convertirse en XSS al pintarse en un href del panel o del cliente.
+function isSafeDeeplink(v) {
+  if (v == null) return true;
+  const s = String(v).trim();
+  if (!s) return true;
+  if (s.length > 200) return false;
+  if (/^aura:\/\//i.test(s)) return true;
+  if (/^https?:\/\//i.test(s)) return true;
+  if (/^\/[^\/]/.test(s)) return true; // ruta interna /faq, /premium…
+  return false;
+}
+
+// Aplica los filtros de audience_json y devuelve la lista de user_id destino.
+// Filtros soportados (todos opcionales, se combinan con AND):
+//   { all: true } → todos los usuarios activos
+//   { plan: "premium"|"free"|"any" }
+//   { verified: true|false }
+//   { zone: "hetero"|"lgtb" }
+//   { city: "Sevilla" }
+//   { min_age, max_age }
+//   { user_ids: [ ... ] } → lista explícita (test-send)
+async function resolveBroadcastAudience(filter) {
+  const f = filter || {};
+  if (Array.isArray(f.user_ids) && f.user_ids.length) {
+    const ids = f.user_ids.map(n => parseInt(n, 10)).filter(Boolean);
+    if (!ids.length) return [];
+    const [rows] = await pool.query(
+      `SELECT id FROM users WHERE id IN (?) AND status='active'`,
+      [ids]
+    );
+    return rows.map(r => r.id);
+  }
+  const where = ["status='active'"];
+  const args = [];
+  if (f.plan && f.plan !== "any") {
+    where.push("plan=?");
+    args.push(String(f.plan));
+  }
+  if (f.verified === true) where.push("verified=1");
+  if (f.verified === false) where.push("(verified IS NULL OR verified=0)");
+  if (f.zone === "hetero" || f.zone === "lgtb") {
+    where.push("zone=?");
+    args.push(f.zone);
+  }
+  if (f.city) {
+    where.push("city=?");
+    args.push(String(f.city).slice(0, 80));
+  }
+  if (f.min_age) { where.push("age>=?"); args.push(parseInt(f.min_age, 10) || 18); }
+  if (f.max_age) { where.push("age<=?"); args.push(parseInt(f.max_age, 10) || 120); }
+  const [rows] = await pool.query(
+    `SELECT id FROM users WHERE ${where.join(" AND ")}`,
+    args
+  );
+  return rows.map(r => r.id);
+}
+
+// Envía el broadcast a la audiencia calculada: inserta filas en
+// broadcast_deliveries (delivered_at = ahora) y dispara push a los que no
+// tengan el canal silenciado. Best-effort: si push falla para uno, seguimos.
+async function sendBroadcastToUsers(broadcastId, userIds, meta) {
+  meta = meta || {};
+  if (!Array.isArray(userIds) || !userIds.length) {
+    return { delivered: 0, pushed: 0 };
+  }
+  // Inserta reparto (ignorando duplicados si se reenvía).
+  const values = [];
+  const args = [];
+  for (const uid of userIds) {
+    values.push("(?,?)");
+    args.push(broadcastId, uid);
+  }
+  try {
+    await pool.execute(
+      `INSERT IGNORE INTO broadcast_deliveries (broadcast_id, user_id) VALUES ${values.join(",")}`,
+      args
+    );
+  } catch {}
+
+  // Push a los que no hayan silenciado el canal.
+  let pushed = 0;
+  if (meta.push !== false) {
+    const [muted] = await pool.query(
+      `SELECT user_id FROM user_channel_prefs WHERE muted=1 AND user_id IN (?)`,
+      [userIds]
+    );
+    const mutedSet = new Set(muted.map(r => r.user_id));
+    for (const uid of userIds) {
+      if (mutedSet.has(uid)) continue;
+      try {
+        const r = await pushToUser(uid, {
+          title: meta.pushTitle || "Equipo de Aura",
+          body: (meta.pushBody || meta.title || "Tienes un mensaje nuevo").slice(0, 200),
+          url: `/?bcast=${broadcastId}`,
+          tag: `bcast-${broadcastId}`,
+          icon: "/assets/aura-icon-192.png",
+        });
+        if (r && r.sent) {
+          pushed += r.sent;
+          try {
+            await pool.execute(
+              `UPDATE broadcast_deliveries SET push_sent=push_sent+? WHERE broadcast_id=? AND user_id=?`,
+              [r.sent, broadcastId, uid]
+            );
+          } catch {}
+        }
+      } catch { /* best-effort */ }
+    }
+  }
+  return { delivered: userIds.length, pushed };
+}
+
+// GET /api/my/channel/messages — hilo del canal para el usuario en sesión.
+// Solo mensajes enviados (status='sent'), no ocultados individualmente por
+// este usuario y posteriores al corte "borrar todo el hilo".
+app.get("/api/my/channel/messages", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[prefRow]] = await pool.query(
+    "SELECT muted, all_hidden_before FROM user_channel_prefs WHERE user_id=? LIMIT 1",
+    [me]
+  );
+  const cutoff = prefRow ? (prefRow.all_hidden_before || 0) : 0;
+  const [rows] = await pool.query(
+    `SELECT b.id, b.title, b.body, b.image_url,
+            b.button1_label, b.button1_deeplink,
+            b.button2_label, b.button2_deeplink,
+            b.sent_at,
+            d.seen_at, d.clicked_button, d.clicked_at, d.hidden_at
+       FROM broadcast_messages b
+       LEFT JOIN broadcast_deliveries d ON d.broadcast_id=b.id AND d.user_id=?
+      WHERE b.status='sent'
+        AND b.id > ?
+        AND (d.hidden_at IS NULL)
+      ORDER BY b.sent_at ASC, b.id ASC
+      LIMIT 200`,
+    [me, cutoff]
+  );
+  const unread = rows.filter(r => !r.seen_at).length;
+  res.json({
+    ok: true,
+    muted: !!(prefRow && prefRow.muted),
+    unread,
+    messages: rows.map(r => ({
+      id: r.id,
+      title: r.title,
+      body: r.body,
+      image_url: r.image_url || null,
+      buttons: [
+        r.button1_label && r.button1_deeplink ? { label: r.button1_label, deeplink: r.button1_deeplink } : null,
+        r.button2_label && r.button2_deeplink ? { label: r.button2_label, deeplink: r.button2_deeplink } : null,
+      ].filter(Boolean),
+      sent_at: r.sent_at,
+      seen: !!r.seen_at,
+      clicked_button: r.clicked_button || null,
+    })),
+  });
+}));
+
+// POST /api/my/channel/:id/seen — marca visto (idempotente).
+app.post("/api/my/channel/:id/seen", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const bid = parseInt(req.params.id, 10);
+  if (!bid) return res.status(400).json({ error: "bad_id" });
+  await pool.execute(
+    `INSERT INTO broadcast_deliveries (broadcast_id, user_id, seen_at)
+     VALUES (?,?,NOW())
+     ON DUPLICATE KEY UPDATE seen_at=COALESCE(seen_at, NOW())`,
+    [bid, me]
+  );
+  res.json({ ok: true });
+}));
+
+// POST /api/my/channel/:id/click  { button: 1|2 }
+app.post("/api/my/channel/:id/click", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const bid = parseInt(req.params.id, 10);
+  const btn = parseInt((req.body && req.body.button) || 0, 10);
+  if (!bid || (btn !== 1 && btn !== 2)) return res.status(400).json({ error: "bad_payload" });
+  await pool.execute(
+    `INSERT INTO broadcast_deliveries (broadcast_id, user_id, seen_at, clicked_button, clicked_at)
+     VALUES (?,?,NOW(),?,NOW())
+     ON DUPLICATE KEY UPDATE seen_at=COALESCE(seen_at, NOW()),
+                             clicked_button=VALUES(clicked_button),
+                             clicked_at=NOW()`,
+    [bid, me, btn]
+  );
+  res.json({ ok: true });
+}));
+
+// POST /api/my/channel/:id/hide — el usuario borra ese mensaje suelto.
+app.post("/api/my/channel/:id/hide", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const bid = parseInt(req.params.id, 10);
+  if (!bid) return res.status(400).json({ error: "bad_id" });
+  await pool.execute(
+    `INSERT INTO broadcast_deliveries (broadcast_id, user_id, hidden_at)
+     VALUES (?,?,NOW())
+     ON DUPLICATE KEY UPDATE hidden_at=NOW()`,
+    [bid, me]
+  );
+  res.json({ ok: true });
+}));
+
+// POST /api/my/channel/hide-all — el usuario borra todo el hilo (marca corte).
+app.post("/api/my/channel/hide-all", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[top]] = await pool.query(
+    "SELECT COALESCE(MAX(id),0) mx FROM broadcast_messages WHERE status='sent'"
+  );
+  const cutoff = (top && top.mx) || 0;
+  await pool.execute(
+    `INSERT INTO user_channel_prefs (user_id, all_hidden_before)
+     VALUES (?, ?)
+     ON DUPLICATE KEY UPDATE all_hidden_before=VALUES(all_hidden_before)`,
+    [me, cutoff]
+  );
+  res.json({ ok: true, cutoff });
+}));
+
+// GET /api/my/channel/prefs — lee estado silenciado.
+app.get("/api/my/channel/prefs", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[row]] = await pool.query(
+    "SELECT muted, muted_at, all_hidden_before FROM user_channel_prefs WHERE user_id=? LIMIT 1",
+    [me]
+  );
+  res.json({
+    ok: true,
+    muted: !!(row && row.muted),
+    muted_at: row ? row.muted_at : null,
+    all_hidden_before: row ? row.all_hidden_before : 0,
+  });
+}));
+
+// POST /api/my/channel/mute  { muted: bool }
+app.post("/api/my/channel/mute", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const muted = !!(req.body && req.body.muted);
+  await pool.execute(
+    `INSERT INTO user_channel_prefs (user_id, muted, muted_at)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE muted=VALUES(muted), muted_at=VALUES(muted_at)`,
+    [me, muted ? 1 : 0, muted ? new Date() : null]
+  );
+  res.json({ ok: true, muted });
+}));
+
+/* ============================================================
+   V939 · Canal "Equipo de Aura" — lado admin
+   ============================================================ */
+
+// Sanea y valida el payload del editor. Devuelve { ok:true, data } o
+// { ok:false, error }. Reutilizado por create y por schedule.
+function parseBroadcastPayload(b) {
+  if (!b || typeof b !== "object") return { ok: false, error: "bad_payload" };
+  const title = String(b.title || "").trim();
+  const body  = String(b.body  || "").trim();
+  if (!title) return { ok: false, error: "title_required" };
+  if (!body)  return { ok: false, error: "body_required" };
+  if (title.length > 160) return { ok: false, error: "title_too_long" };
+  if (body.length  > 2000) return { ok: false, error: "body_too_long" };
+  const b1l = b.button1_label ? String(b.button1_label).trim().slice(0, 40) : null;
+  const b1d = b.button1_deeplink ? String(b.button1_deeplink).trim() : null;
+  const b2l = b.button2_label ? String(b.button2_label).trim().slice(0, 40) : null;
+  const b2d = b.button2_deeplink ? String(b.button2_deeplink).trim() : null;
+  if (b1d && !isSafeDeeplink(b1d)) return { ok: false, error: "bad_button1_deeplink" };
+  if (b2d && !isSafeDeeplink(b2d)) return { ok: false, error: "bad_button2_deeplink" };
+  // La imagen se guarda como URL; no la validamos con validPhotoData porque
+  // el admin puede subir a un CDN externo. Solo forzamos esquema seguro.
+  const img = b.image_url ? String(b.image_url).trim() : null;
+  if (img && !isSafeDeeplink(img)) return { ok: false, error: "bad_image_url" };
+  const filter = (b.audience && typeof b.audience === "object") ? b.audience : { all: true };
+  const pushTitle = b.push_title ? String(b.push_title).slice(0, 120) : null;
+  const pushBody  = b.push_body  ? String(b.push_body).slice(0, 240)  : null;
+  const pushEnabled = b.push_enabled !== false; // por defecto sí
+  return {
+    ok: true,
+    data: {
+      title, body, image_url: img,
+      button1_label: b1l, button1_deeplink: b1d,
+      button2_label: b2l, button2_deeplink: b2d,
+      audience: filter,
+      push_title: pushTitle, push_body: pushBody, push_enabled: pushEnabled,
+    },
+  };
+}
+
+// POST /api/admin/broadcasts/preview-audience  { audience } → { count }
+// Devuelve cuántos usuarios entrarían en el envío sin materializarlo.
+app.post("/api/admin/broadcasts/preview-audience", wrap(async (req, res) => {
+  const filter = (req.body && req.body.audience) || { all: true };
+  const ids = await resolveBroadcastAudience(filter);
+  res.json({ ok: true, count: ids.length });
+}));
+
+// POST /api/admin/broadcasts  { ...payload, send_now?: bool, schedule_at?: ISO }
+// Crea el broadcast. Si send_now → status='sent' + reparto inmediato. Si
+// schedule_at → status='scheduled' y el planificador lo lanzará. Si no, draft.
+app.post("/api/admin/broadcasts", wrap(async (req, res) => {
+  const parsed = parseBroadcastPayload(req.body || {});
+  if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+  const d = parsed.data;
+  const sendNow = !!(req.body && req.body.send_now);
+  const scheduleAtRaw = req.body && req.body.schedule_at ? new Date(req.body.schedule_at) : null;
+  const scheduleAt = scheduleAtRaw && !isNaN(scheduleAtRaw.getTime()) ? scheduleAtRaw : null;
+  let status = "draft";
+  if (sendNow) status = "sent";
+  else if (scheduleAt) status = "scheduled";
+  const audienceIds = await resolveBroadcastAudience(d.audience);
+  const [ins] = await pool.execute(
+    `INSERT INTO broadcast_messages
+       (title, body, image_url, button1_label, button1_deeplink,
+        button2_label, button2_deeplink, audience_json, audience_count,
+        push_title, push_body, push_enabled, status, scheduled_at, sent_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    [
+      d.title, d.body, d.image_url,
+      d.button1_label, d.button1_deeplink,
+      d.button2_label, d.button2_deeplink,
+      JSON.stringify(d.audience), audienceIds.length,
+      d.push_title, d.push_body, d.push_enabled ? 1 : 0,
+      status, scheduleAt, sendNow ? new Date() : null,
+    ]
+  );
+  const id = ins.insertId;
+  let result = { delivered: 0, pushed: 0 };
+  if (sendNow) {
+    result = await sendBroadcastToUsers(id, audienceIds, {
+      title: d.title,
+      pushTitle: d.push_title,
+      pushBody: d.push_body,
+      push: d.push_enabled,
+    });
+  }
+  res.json({ ok: true, id, status, audience_count: audienceIds.length, ...result });
+}));
+
+// GET /api/admin/broadcasts?status=&limit=
+app.get("/api/admin/broadcasts", wrap(async (req, res) => {
+  const status = req.query.status ? String(req.query.status) : null;
+  const limit  = Math.min(200, parseInt(req.query.limit || "50", 10) || 50);
+  const where = [];
+  const args = [];
+  if (status) { where.push("status=?"); args.push(status); }
+  const [rows] = await pool.query(
+    `SELECT id, title, LEFT(body,140) AS preview, audience_count, status,
+            scheduled_at, sent_at, created_at
+       FROM broadcast_messages
+       ${where.length ? "WHERE " + where.join(" AND ") : ""}
+       ORDER BY id DESC LIMIT ?`,
+    [...args, limit]
+  );
+  res.json({ ok: true, items: rows });
+}));
+
+// GET /api/admin/broadcasts/:id → detalle + stats agregadas
+app.get("/api/admin/broadcasts/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [[row]] = await pool.query(
+    "SELECT * FROM broadcast_messages WHERE id=? LIMIT 1", [id]
+  );
+  if (!row) return res.status(404).json({ error: "not_found" });
+  const [[stats]] = await pool.query(
+    `SELECT
+        COUNT(*) AS delivered,
+        SUM(CASE WHEN seen_at   IS NOT NULL THEN 1 ELSE 0 END) AS seen,
+        SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) AS clicked,
+        SUM(CASE WHEN clicked_button=1 THEN 1 ELSE 0 END) AS clicked_b1,
+        SUM(CASE WHEN clicked_button=2 THEN 1 ELSE 0 END) AS clicked_b2,
+        SUM(CASE WHEN hidden_at IS NOT NULL THEN 1 ELSE 0 END) AS hidden,
+        SUM(push_sent) AS pushed
+       FROM broadcast_deliveries WHERE broadcast_id=?`,
+    [id]
+  );
+  let audience = null;
+  try { audience = row.audience_json ? JSON.parse(row.audience_json) : null; } catch {}
+  res.json({
+    ok: true,
+    broadcast: {
+      id: row.id,
+      title: row.title, body: row.body,
+      image_url: row.image_url,
+      button1_label: row.button1_label, button1_deeplink: row.button1_deeplink,
+      button2_label: row.button2_label, button2_deeplink: row.button2_deeplink,
+      audience, audience_count: row.audience_count,
+      push_title: row.push_title, push_body: row.push_body,
+      push_enabled: !!row.push_enabled,
+      status: row.status,
+      scheduled_at: row.scheduled_at, sent_at: row.sent_at,
+      created_at: row.created_at,
+    },
+    stats: {
+      delivered: Number(stats?.delivered || 0),
+      seen:      Number(stats?.seen || 0),
+      clicked:   Number(stats?.clicked || 0),
+      clicked_b1: Number(stats?.clicked_b1 || 0),
+      clicked_b2: Number(stats?.clicked_b2 || 0),
+      hidden:    Number(stats?.hidden || 0),
+      pushed:    Number(stats?.pushed || 0),
+    },
+  });
+}));
+
+// POST /api/admin/broadcasts/:id/send — reenvía uno en draft/scheduled/sent.
+// Si ya se envió, sirve para RE-DIFUNDIR a la audiencia actual (útil para
+// añadir usuarios nuevos que no existían la primera vez). No duplica filas
+// por INSERT IGNORE de la delivery.
+app.post("/api/admin/broadcasts/:id/send", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [[row]] = await pool.query(
+    "SELECT * FROM broadcast_messages WHERE id=? LIMIT 1", [id]
+  );
+  if (!row) return res.status(404).json({ error: "not_found" });
+  let audience = null;
+  try { audience = row.audience_json ? JSON.parse(row.audience_json) : { all: true }; } catch { audience = { all: true }; }
+  const ids = await resolveBroadcastAudience(audience);
+  const result = await sendBroadcastToUsers(id, ids, {
+    title: row.title,
+    pushTitle: row.push_title, pushBody: row.push_body,
+    push: !!row.push_enabled,
+  });
+  await pool.execute(
+    "UPDATE broadcast_messages SET status='sent', sent_at=COALESCE(sent_at, NOW()), audience_count=? WHERE id=?",
+    [ids.length, id]
+  );
+  res.json({ ok: true, id, audience_count: ids.length, ...result });
+}));
+
+// POST /api/admin/broadcasts/:id/test-send  { user_ids?: [] , to_admins?: bool }
+// Envía a una lista corta de destinatarios sin tocar la audiencia guardada.
+app.post("/api/admin/broadcasts/:id/test-send", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [[row]] = await pool.query(
+    "SELECT * FROM broadcast_messages WHERE id=? LIMIT 1", [id]
+  );
+  if (!row) return res.status(404).json({ error: "not_found" });
+  let ids = Array.isArray(req.body?.user_ids) ? req.body.user_ids : [];
+  if (req.body?.to_admins) {
+    const [admins] = await pool.query(
+      "SELECT id FROM users WHERE email IN (SELECT LOWER(TRIM(email)) FROM (SELECT REGEXP_REPLACE(v, ',', '\\n') email FROM settings WHERE k='app.access_admin_emails') a)"
+    ).catch(() => [[]]);
+    if (admins && admins.length) ids = ids.concat(admins.map(a => a.id));
+  }
+  ids = Array.from(new Set(ids.map(n => parseInt(n, 10)).filter(Boolean)));
+  const result = await sendBroadcastToUsers(id, ids, {
+    title: row.title,
+    pushTitle: row.push_title, pushBody: row.push_body,
+    push: !!row.push_enabled,
+  });
+  res.json({ ok: true, sent_to: ids.length, ...result });
+}));
+
+// DELETE /api/admin/broadcasts/:id — retira un broadcast: pasa a 'canceled'
+// y desaparece del hilo del usuario (el listado filtra por status='sent').
+app.delete("/api/admin/broadcasts/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [r] = await pool.execute(
+    "UPDATE broadcast_messages SET status='canceled' WHERE id=?",
+    [id]
+  );
+  res.json({ ok: true, affected: r.affectedRows });
+}));
+
+// GET/POST/DELETE /api/admin/broadcasts/audiences — segmentos guardados
+app.get("/api/admin/broadcasts/audiences", wrap(async (_req, res) => {
+  const [rows] = await pool.query(
+    "SELECT id, name, filter_json, created_at FROM broadcast_audiences ORDER BY id DESC LIMIT 200"
+  );
+  res.json({
+    ok: true,
+    items: rows.map(r => {
+      let f = null; try { f = JSON.parse(r.filter_json); } catch {}
+      return { id: r.id, name: r.name, filter: f, created_at: r.created_at };
+    }),
+  });
+}));
+
+app.post("/api/admin/broadcasts/audiences", wrap(async (req, res) => {
+  const name = String(req.body?.name || "").trim().slice(0, 80);
+  const filter = (req.body?.filter && typeof req.body.filter === "object") ? req.body.filter : null;
+  if (!name || !filter) return res.status(400).json({ error: "bad_payload" });
+  await pool.execute(
+    `INSERT INTO broadcast_audiences (name, filter_json) VALUES (?,?)
+     ON DUPLICATE KEY UPDATE filter_json=VALUES(filter_json)`,
+    [name, JSON.stringify(filter)]
+  );
+  res.json({ ok: true });
+}));
+
+app.delete("/api/admin/broadcasts/audiences/:id", wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error: "bad_id" });
+  const [r] = await pool.execute("DELETE FROM broadcast_audiences WHERE id=?", [id]);
+  res.json({ ok: true, affected: r.affectedRows });
+}));
+
+// Scheduler: cada 60 s despierta broadcasts con status='scheduled' cuyo
+// scheduled_at ya haya pasado. Simple, best-effort; no bloquea el proceso.
+async function broadcastScheduler() {
+  try {
+    const [rows] = await pool.query(
+      "SELECT id FROM broadcast_messages WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW() LIMIT 20"
+    );
+    for (const r of rows) {
+      try {
+        const [[b]] = await pool.query("SELECT * FROM broadcast_messages WHERE id=? LIMIT 1", [r.id]);
+        if (!b) continue;
+        let audience = { all: true };
+        try { audience = JSON.parse(b.audience_json); } catch {}
+        const ids = await resolveBroadcastAudience(audience);
+        await sendBroadcastToUsers(b.id, ids, {
+          title: b.title,
+          pushTitle: b.push_title, pushBody: b.push_body,
+          push: !!b.push_enabled,
+        });
+        await pool.execute(
+          "UPDATE broadcast_messages SET status='sent', sent_at=NOW(), audience_count=? WHERE id=?",
+          [ids.length, b.id]
+        );
+      } catch { /* siguiente */ }
+    }
+  } catch { /* siguiente ciclo */ }
+}
+setInterval(broadcastScheduler, 60 * 1000);
+// Primer disparo diferido unos segundos tras el arranque.
+setTimeout(broadcastScheduler, 15 * 1000);
 
 // POST /api/my/ensure  { email, name?, photo?, zone? }
 // Ensures a user record exists (creating a lightweight one if missing) and
