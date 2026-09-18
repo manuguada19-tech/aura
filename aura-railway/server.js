@@ -17886,6 +17886,31 @@ app.get("/api/version", (req, res) => {
   res.json({ ok: true, build: BUILD_ID });
 });
 
+// V947 · Shell con el build INYECTADO. El <link> de styles.css trae el
+// marcador __AURA_BUILD__ y aquí se sustituye por el BUILD_ID real al servir.
+// Por qué hace falta: el <link> llevaba un ?v= FIJO (?v=873) que nadie bumpeaba;
+// la URL del CSS no cambiaba nunca y el service worker —cache-first para URLs
+// con ?v=— servía el CSS viejo para siempre. Los arreglos de CSS estaban
+// desplegados pero no llegaban al móvil. app.js ya se versionaba bien (usa el
+// build de /api/version); con esto el CSS entra en el mismo régimen.
+//   · Se lee el fichero UNA vez al arrancar: Railway reinicia en cada deploy,
+//     así que el contenido en memoria siempre es el del build servido.
+//   · Si el marcador no aparece (index.html editado a mano), el replace es
+//     inocuo: sirve el fichero tal cual.
+let INDEX_HTML_BUILT = "";
+try {
+  const rawShell = fs.readFileSync(path.join(__dirname, "public", "index.html"), "utf8");
+  INDEX_HTML_BUILT = rawShell.split("__AURA_BUILD__").join(BUILD_ID);
+} catch (e) { console.warn("shell read failed:", e && e.message); }
+function sendShell(res) {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.type("html").send(INDEX_HTML_BUILT || "");
+}
+app.get("/index.html", (req, res) => {
+  if (!INDEX_HTML_BUILT) return res.sendFile(path.join(__dirname, "public", "index.html"));
+  sendShell(res);
+});
+
 // V783 · Telemetría mínima de cliente. Solo acepta una lista blanca de eventos
 // (p. ej. confirmar que el guard del botón "Atrás" se instala en móviles reales)
 // y los registra en el stream de actividad que ya ve el admin. Sin datos
@@ -18082,7 +18107,7 @@ try {
 // código muerto inútil: es la RED. Ese require va dentro de un try/catch que sólo
 // escribe en el log, así que si el módulo fallara al cargarse, "/" caería aquí y
 // seguiría abriendo la app, en vez de dar un 404 en la puerta del sitio.
-app.get("/", (req, res) => res.sendFile(path.join(__dirname, "public", "index.html")));
+app.get("/", (req, res) => sendShell(res));
 
 // SPA fallback: rutas cliente (deep-links de emails y navegación interna)
 // como /likes, /chats/123, /verify, /me, /subscription, etc. sirven index.html
@@ -18105,8 +18130,7 @@ const SPA_ROUTES = new Set([
 app.get(/^\/([^./]+)(?:\/.*)?$/, (req, res, next) => {
   const first = req.params[0];
   if (!SPA_ROUTES.has(first)) return next();
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.sendFile(path.join(__dirname, "public", "index.html"));
+  sendShell(res);
 });
 
 // error handler

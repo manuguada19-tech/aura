@@ -3012,6 +3012,17 @@ body.account-suspended .restriction-banner .rb-close {
 body:has(#tabbar:not([hidden])) .toast {
   bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tab-height, 62px) + 16px);
 }
+/* V947 · Refuerzo sin :has() · En la práctica el selector de arriba no se
+   aplicaba en todos los clientes (WebViews/Chrome con caché previa) y el toast
+   volvía a caer a bottom:32px, montado sobre la tabbar y recortado por el área
+   de gestos: el aviso se veía "pillado" abajo tapando el menú. app.js refleja
+   ahora la visibilidad de la tabbar en body.tabbar-on mediante un
+   MutationObserver, y esta regla —sin :has()— es la que garantiza el offset en
+   todos los navegadores. Misma altura que la regla de arriba para que ambas
+   coincidan si las dos aplican. */
+body.tabbar-on .toast {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--tab-height, 62px) + 16px);
+}
 
 /* Modal / bottom sheet */
 .modal {

@@ -19,7 +19,10 @@
 // V930 · v93: cambia index.html (es CORE_ASSET) y hay que invalidar la copia
 // vieja. Coste real nulo: las navegaciones son red-primero y no se cachean, y
 // app.js se pide con ?v=<build>, que cambia en cada despliegue de todos modos.
-const CACHE_VERSION = "aura-v93";
+// V947 · v94: se purgan las cachés que guardan el styles.css?v=873 viejo (el
+// ?v= fijo que impedía que los arreglos de CSS llegaran al cliente). Al
+// cambiar CACHE_VERSION, activate() borra todos los caches menos el nuevo.
+const CACHE_VERSION = "aura-v94";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

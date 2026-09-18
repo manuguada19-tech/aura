@@ -42,7 +42,13 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
-  <link rel="stylesheet" href="styles.css?v=873" />
+  <!-- V947 · El ?v= de styles.css ya NO es un número fijo que haya que bumpear
+       a mano: el servidor sustituye __AURA_BUILD__ por el BUILD_ID real (hash
+       de app.js+styles.css+index.html+admin) al servir el shell. Antes era
+       ?v=873 fijo, la URL nunca cambiaba y el service worker (cache-first para
+       URLs versionadas) servía el CSS VIEJO indefinidamente: por eso los
+       arreglos de CSS "no llegaban" al móvil aunque estuvieran desplegados. -->
+  <link rel="stylesheet" href="styles.css?v=__AURA_BUILD__" />
   <!-- Google AdSense: verificación de propiedad SIN cargar el código de
        anuncios en el arranque. El script pagead2 sólo se inyecta bajo demanda
        (ensureAdSenseLoader) cuando se muestra un anuncio en una pantalla con
@@ -184,10 +190,13 @@
       } catch(e){}
     })();
   </script>
-  <!-- V783 · styles.css se carga con su versión fija (?v=NNN, que se bumpea en
-       cada cambio de CSS), así el navegador la cachea en vez de re-descargarla
-       en cada apertura. El auto-actualizador (más abajo) recarga con caché
-       limpia cuando hay un despliegue nuevo. -->
+  <!-- V783/V947 · styles.css se carga con versión (?v=<build>) para que el
+       navegador la cachee en vez de re-descargarla en cada apertura. Desde
+       V947 el número lo inyecta el servidor (BUILD_ID) en lugar de un NNN
+       fijo: así cualquier cambio de CSS produce URL nueva y ni el navegador
+       ni el service worker pueden quedarse con la copia vieja. El
+       auto-actualizador (más abajo) recarga con caché limpia cuando hay un
+       despliegue nuevo. -->
 
   <script>
     (function(){

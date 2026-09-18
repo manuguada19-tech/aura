@@ -4090,6 +4090,22 @@ function generateUsers(count, opts = {}) {
 const viewport = $("#viewport");
 const tabbar = $("#tabbar");
 
+// V947 · El toast inferior ("Ubicación activada", "Notificaciones activas"…)
+// se quedaba PILLADO en el borde de la pantalla, montado encima de la tabbar y
+// recortado por el área de gestos: el CSS lo subía con body:has(#tabbar:not([hidden])),
+// pero :has() no se aplicaba en todos los clientes (WebViews y cachés viejas),
+// así que el aviso seguía saliendo abajo. Ahora la visibilidad de la tabbar se
+// refleja en una clase del <body> desde JS (sin depender de :has()) y el CSS la
+// usa directamente. Un MutationObserver cubre todos los sitios que muestran u
+// ocultan la tabbar, sin tener que tocar cada llamada.
+try {
+  const syncTabbarClass = () => {
+    document.body.classList.toggle("tabbar-on", !tabbar.hidden);
+  };
+  new MutationObserver(syncTabbarClass).observe(tabbar, { attributes: true, attributeFilter: ["hidden"] });
+  syncTabbarClass();
+} catch {}
+
 let _lastScreenFn = null;
 let _lastScreenOpts = null;
 // V751 · Memoria del scroll del menú "Yo" (perfil). Cuando el usuario entra en
