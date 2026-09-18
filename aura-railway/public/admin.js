@@ -1489,12 +1489,42 @@ function aplicarMenuPorRango() {
 }
 document.addEventListener("DOMContentLoaded", () => { try { aplicarMenuPorRango(); } catch (e) {} });
 
+/* V949 · Navegar es más rápido que la red. Antes: abres Suscripciones y al
+   instante Pagos; el render de Suscripciones seguía esperando sus /api y, al
+   resolver, continuaba añadiendo nodos al #view que route("payments") acababa
+   de vaciar → la pantalla de Pagos amanecía con el hero, los KPIs y los planes
+   de Suscripciones pegados debajo (y la página, con dos vistas, se volvía
+   interminable). Cada route() sube una generación; guardedRoot() devuelve el
+   contenedor capado para un render concreto: si su generación ya no es la
+   actual, sus appendChild/insertBefore se descartan en silencio y la vista
+   vieja muere sin dejar restos en la nueva. */
+let __routeGen = 0;
+function guardedRoot(root, gen) {
+  const ESCRIBE = new Set(["appendChild", "insertBefore", "append", "prepend", "replaceChildren", "removeChild"]);
+  return new Proxy(root, {
+    get(t, prop) {
+      const v = Reflect.get(t, prop);
+      if (typeof v !== "function") return v;
+      return (...a) => {
+        if (ESCRIBE.has(prop) && gen !== __routeGen) return undefined;
+        return v.apply(t, a);
+      };
+    },
+    set(t, prop, val) {
+      if (gen !== __routeGen && (prop === "innerHTML" || prop === "textContent")) return true;
+      t[prop] = val;
+      return true;
+    },
+  });
+}
+
 function route(view) {
   /* Blindaje: esconder la entrada del menú no basta, porque el hash se escribe a
      mano (#/settings) y route() lo obedecería. Aquí se corta. Lo que el
      servidor ya niega son los DATOS; esto evita además la pantalla vacía con
      errores por todas partes, que parece un panel roto. */
   if (!puedeVerVista(view)) {
+    __routeGen++; // que ningún render en vuelo siga pintando encima del aviso
     const container = $("#view");
     if (container) {
       container.innerHTML = "";
@@ -1540,6 +1570,7 @@ function route(view) {
     live: viewChatsAdmin,
   };
   __currentAdminView = view || "dashboard";
+  const gen = ++__routeGen;
   const container = $("#view");
   container.innerHTML = "";
   const loading = el("div", { class: "loading" }, "Cargando…");
@@ -1552,15 +1583,17 @@ function route(view) {
   if (isFx && !extras[view]) {
     let tries = 0;
     const wait = setInterval(() => {
+      if (gen !== __routeGen) { clearInterval(wait); return; } // ya mandó otra vista
       const now = (window.__adminExtraViews) || {};
       if (now[view]) {
         clearInterval(wait);
         loading.remove();
-        Promise.resolve(now[view](container, { el, $, api: window.__adminApi }))
-          .catch(err => { console.error(err); container.appendChild(el("div", { class: "error" }, "Error: " + (err && err.message || err))); })
-          .finally(() => { labelTables(container); });
+        Promise.resolve(now[view](guardedRoot(container, gen), { el, $, api: window.__adminApi }))
+          .catch(err => { console.error(err); if (gen === __routeGen) container.appendChild(el("div", { class: "error" }, "Error: " + (err && err.message || err))); })
+          .finally(() => { if (gen === __routeGen) labelTables(container); });
       } else if (++tries > 30) {
         clearInterval(wait);
+        if (gen !== __routeGen) return; // la vista ya no es la que espera
         loading.remove();
         container.innerHTML = "<div style='padding:24px'><h2>Módulo no cargado</h2><p>El paquete de Novedades no se pudo inicializar. Recarga la página con caché limpia (Ctrl+Shift+R).</p><p style='color:#888;font-size:12px'>view=" + view + "</p></div>";
       }
@@ -1568,10 +1601,11 @@ function route(view) {
     return;
   }
   const renderer = map[view] || extras[view] || viewDashboard;
-  Promise.resolve(renderer(container, { el, $, api: window.__adminApi }))
-    .catch(err => { console.error(err); container.appendChild(el("div", { class: "error" }, "Error cargando datos.")); })
+  Promise.resolve(renderer(guardedRoot(container, gen), { el, $, api: window.__adminApi }))
+    .catch(err => { console.error(err); if (gen === __routeGen) container.appendChild(el("div", { class: "error" }, "Error cargando datos.")); })
     .finally(() => {
       loading.remove();
+      if (gen !== __routeGen) return; // otro route() ganó: ni etiquetar tablas ajenas
       labelTables(container);
       // Retirar el splash inicial del admin al terminar el primer render
       try {
