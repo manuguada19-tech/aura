@@ -3537,7 +3537,7 @@ async function openUserDrawer(id, onChange) {
       const userPlanRank = PLAN_RANK_L[(u.plan || "free").toLowerCase()] ?? 0;
       fxBody.innerHTML = "";
       const help = el("div", { style: "font-size:12px;opacity:0.75;margin-bottom:10px" },
-        "Da acceso puntual a funciones sin cambiar el plan del usuario. Deja vacía la fecha para acceso permanente.");
+        "Da o quita acceso puntual a funciones sin cambiar el plan del usuario. Deja vacía la fecha para efecto permanente. «Conceder» suma acceso por encima del plan; «Restringir» se lo quita aunque su plan lo incluya (override); «Revocar»/«Devolver acceso» eliminan el override correspondiente.");
       fxBody.appendChild(help);
       const tbl = el("table", { class: "table small", style: "width:100%" });
       const thead = el("thead", {}, el("tr", {}, [
@@ -3552,45 +3552,67 @@ async function openUserDrawer(id, onChange) {
         const minRank = PLAN_RANK_L[(def.min_plan || "free").toLowerCase()] ?? 0;
         const byPlan = userPlanRank >= minRank;
         const activeGrants = activeByFeature[key] || [];
-        const hasGrant = activeGrants.length > 0;
-        const enabled = byPlan || hasGrant;
+        // V936 · Los grants ahora tienen modo: 'allow' (conceder) y 'deny'
+        // (override que quita la función aunque el plan la incluya). Antes,
+        // si el usuario ya tenía la función por plan, la columna "Acciones"
+        // mostraba un guion muerto y no había NADA que hacer. Ahora cada fila
+        // tiene exactamente una acción con sentido.
+        const denyGrant = activeGrants.find(g => (g.mode || "allow") === "deny");
+        const allowGrants = activeGrants.filter(g => (g.mode || "allow") !== "deny");
+        const hasGrant = allowGrants.length > 0;
+        const denied = !!denyGrant;
+        const enabled = !denied && (byPlan || hasGrant);
+
+        const revokeAll = async () => {
+          if (!confirm("¿Revocar todos los grants de " + def.label + " para este usuario?")) return;
+          try {
+            await api.post(`/api/admin/users/${id}/feature-grants/${key}/revoke-all`);
+            toast("Grants revocados");
+            drawer.close();
+            setTimeout(() => openUserDrawer(id, onChange), 60);
+          } catch { toast("Error al revocar"); }
+        };
+        const createGrant = async (mode) => {
+          const isDeny = mode === "deny";
+          const expIso = prompt(isDeny
+            ? "Restricción de " + def.label + " · fecha de fin (YYYY-MM-DD HH:MM) o vacío para permanente:"
+            : "Fecha de expiración (YYYY-MM-DD HH:MM) o vacío para permanente:", "");
+          const reason = prompt("Motivo (opcional):", "");
+          try {
+            const body = { feature: key, mode };
+            if (expIso && expIso.trim()) {
+              const d = new Date(expIso.trim().replace(" ", "T"));
+              if (!isNaN(+d)) body.expires_at = d.toISOString();
+            }
+            if (reason && reason.trim()) body.reason = reason.trim();
+            await api.post(`/api/admin/users/${id}/feature-grants`, body);
+            toast(isDeny ? "Función restringida" : "Acceso concedido");
+            drawer.close();
+            setTimeout(() => openUserDrawer(id, onChange), 60);
+          } catch { toast(isDeny ? "Error al restringir" : "Error al conceder"); }
+        };
+
         let statusHtml;
-        if (byPlan) statusHtml = "<span class='tag ok'>✓ Por plan</span>";
+        if (denied) {
+          const until = denyGrant.expires_at ? " (hasta " + fmt.reldate(denyGrant.expires_at) + ")" : " (permanente)";
+          statusHtml = "<span class='tag bad'>✗ Restringido" + until + "</span>";
+        }
+        else if (byPlan) statusHtml = "<span class='tag ok'>✓ Por plan</span>";
         else if (hasGrant) {
-          const g = activeGrants[0];
+          const g = allowGrants[0];
           const until = g.expires_at ? " (hasta " + fmt.reldate(g.expires_at) + ")" : " (permanente)";
           statusHtml = "<span class='tag ok'>✓ Grant" + until + "</span>";
         } else statusHtml = "<span class='tag muted'>✗ Sin acceso</span>";
+
         const tr = el("tr", {}, [
           el("td", {}, el("strong", {}, def.label + " ")),
           el("td", {}, el("span", { class: "tag" }, def.min_plan)),
           el("td", { html: statusHtml }),
           el("td", {}, [
-            byPlan ? el("small", { style: "opacity:0.6" }, "—") :
-            hasGrant ? btn("Revocar", "danger xs", async () => {
-              if (!confirm("¿Revocar acceso a " + def.label + "?")) return;
-              try {
-                await api.post(`/api/admin/users/${id}/feature-grants/${key}/revoke-all`);
-                toast("Acceso revocado");
-                drawer.close();
-                setTimeout(() => openUserDrawer(id, onChange), 60);
-              } catch { toast("Error al revocar"); }
-            }) : btn("Conceder", "ok xs", async () => {
-              const expIso = prompt("Fecha de expiración (YYYY-MM-DD HH:MM) o vacío para permanente:", "");
-              const reason = prompt("Motivo (opcional):", "");
-              try {
-                const body = { feature: key };
-                if (expIso && expIso.trim()) {
-                  const d = new Date(expIso.trim().replace(" ", "T"));
-                  if (!isNaN(+d)) body.expires_at = d.toISOString();
-                }
-                if (reason && reason.trim()) body.reason = reason.trim();
-                await api.post(`/api/admin/users/${id}/feature-grants`, body);
-                toast("Acceso concedido");
-                drawer.close();
-                setTimeout(() => openUserDrawer(id, onChange), 60);
-              } catch { toast("Error al conceder"); }
-            }),
+            denied ? btn("Devolver acceso", "ok xs", () => revokeAll()) :
+            byPlan ? btn("Restringir", "danger xs", () => createGrant("deny")) :
+            hasGrant ? btn("Revocar", "danger xs", () => revokeAll()) :
+            btn("Conceder", "ok xs", () => createGrant("allow")),
           ]),
         ]);
         tr.style.opacity = enabled ? "1" : "0.85";
@@ -3782,7 +3804,11 @@ async function openUserDrawer(id, onChange) {
         el("td", {}, d.ip || "—"),
         el("td", {}, d.location || "—"),
         el("td", {}, fmt.reldate(d.last_seen)),
-        el("td", {}, d.is_current ? tag("Actual", "ok") : tag("—", "muted")),
+        // V936 · "Activo" respondía con un guion seco para todo lo que no
+        // fuera el dispositivo actual, y parecía un dato sin rellenar. Ahora
+        // dice la verdad de la sesión: actual / cerrada / viva.
+        el("td", {}, d.is_current ? tag("Actual", "ok")
+          : (d.sessions_revoked_at ? tag("No", "muted") : tag("Sí", "ok"))),
         sessCell,
       ]));
     });
@@ -3858,6 +3884,32 @@ async function openUserDrawer(id, onChange) {
   const streamBox = el("div", { class: "empty small" }, "Cargando eventos…");
   form.appendChild(streamBox);
 
+  // V936 · Muchos eventos del stream no llevan `detail` (2fa_enabled,
+  // gps_consent_granted…), y la columna salía como un guion seco. Traducimos
+  // el código de evento a una frase legible: es el significado real del
+  // evento, no un dato inventado. Si el evento trae detail propio, manda ése.
+  const STREAM_DETAIL_LABELS = {
+    login: "Inicio de sesión correcto",
+    login_otp: "Login por código OTP",
+    login_otp_pending: "Código OTP enviado, pendiente de validar",
+    login_2fa_pending: "2FA requerida, pendiente de validar",
+    "2fa_enabled": "Autenticación en dos pasos activada",
+    "2fa_disabled": "Autenticación en dos pasos desactivada",
+    "2fa_recovery_regenerated": "Códigos de recuperación regenerados",
+    "2fa_login_ok": "Login completado con 2FA",
+    "2fa_login_recovery": "Login con código de recuperación",
+    "2fa_login_fail": "Fallo de código 2FA",
+    gps_consent_granted: "Consentimiento de ubicación concedido",
+    gps_consent_revoked: "Consentimiento de ubicación retirado",
+    gps_reask_requested: "Re-petición de ubicación solicitada",
+    account_self_deleted: "El usuario borró su propia cuenta",
+    device_logout_self: "El usuario cerró sesión en un dispositivo",
+    device_logout_all_self: "El usuario cerró sesión en todos los dispositivos",
+    device_incident_open: "Abierto aviso de dispositivo perdido/robado",
+    chat_send: "Mensaje enviado en un chat",
+    backguard_installed: "Guardia anti-'atrás' instalada",
+    backguard_exit_prompt: "Aviso de salida mostrado por la guardia anti-'atrás'",
+  };
   async function loadStream() {
     try {
       const r = await api.get("/api/admin/activity/user/" + id + "?limit=100");
@@ -3874,7 +3926,11 @@ async function openUserDrawer(id, onChange) {
         tb.appendChild(el("tr", {}, [
           el("td", {}, fmt.reldate(ev.created_at)),
           el("td", {}, el("span", { class: "tag" }, ev.event || "—")),
-          el("td", {}, ev.detail || "—"),
+          el("td", {}, ev.detail
+            ? ev.detail
+            : (STREAM_DETAIL_LABELS[ev.event]
+                ? el("small", { style: "opacity:0.7" }, STREAM_DETAIL_LABELS[ev.event])
+                : "—")),
           el("td", {}, ev.ip || "—"),
           el("td", {}, btn("Borrar", "ghost xs danger", async () => {
             if (!(await askConfirm("¿Borrar este evento del stream?", { okText: "Borrar", danger: true }))) return;

@@ -6,9 +6,14 @@
    a usuarios que no tienen el plan requerido. Los grants pueden
    ser permanentes o con expiración.
 
+   V936 · Cada grant tiene `mode`: 'allow' (conceder, el clásico) o 'deny'
+   (override que QUITA la función aunque el plan del usuario la incluya,
+   p.ej. para sancionar una capacidad sin bajarle el plan entero). La
+   precedencia en hasFeature es: deny > plan > allow.
+
      hasFeature(pool, userId, feature) → boolean
-       true si plan del usuario permite la feature OR
-       si hay grant activo (expires_at NULL o futuro).
+       false si hay un 'deny' activo; si no, true si el plan del usuario
+       permite la feature OR si hay grant 'allow' activo.
 
    FEATURES conocidas y plan mínimo por defecto:
      - video_call         : platinum
@@ -62,6 +67,13 @@ async function migrate(pool) {
     INDEX (feature),
     INDEX (expires_at)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  // V936 · Modo del grant. Hasta ahora los grants solo sabían CONCEDER acceso
+  // por encima del plan; no había forma de QUITARLE a un usuario una función
+  // que su plan ya incluye (sanción puntual sin bajarle el plan entero), y por
+  // eso la columna "Acciones" del panel quedaba muerta para usuarios de plan
+  // alto. 'deny' es un override que gana sobre el plan y sobre los 'allow'.
+  await q(`ALTER TABLE user_feature_grants ADD COLUMN mode VARCHAR(8) NOT NULL DEFAULT 'allow'`);
+  await q(`ALTER TABLE user_feature_grants ADD INDEX idx_mode (mode)`);
   console.log("[phase5] migrated user_feature_grants");
 }
 
@@ -77,6 +89,21 @@ async function hasActiveGrant(pool, userId, feature) {
     `SELECT 1 FROM user_feature_grants
       WHERE user_id=? AND feature=? AND revoked_at IS NULL
         AND (expires_at IS NULL OR expires_at > NOW())
+        AND mode='allow'
+      LIMIT 1`,
+    [userId, feature]
+  );
+  return r.length > 0;
+}
+
+// V936 · Override de denegación: gana sobre el plan y sobre los 'allow'.
+async function hasActiveDeny(pool, userId, feature) {
+  if (!userId || !feature) return false;
+  const [r] = await pool.query(
+    `SELECT 1 FROM user_feature_grants
+      WHERE user_id=? AND feature=? AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > NOW())
+        AND mode='deny'
       LIMIT 1`,
     [userId, feature]
   );
@@ -86,6 +113,9 @@ async function hasActiveGrant(pool, userId, feature) {
 async function hasFeature(pool, userId, feature) {
   const def = FEATURES[feature];
   if (!def) return false;
+  // La denegación va PRIMERO: un 'deny' activo veto aunque el plan incluya la
+  // función o haya un 'allow' vigente.
+  try { if (await hasActiveDeny(pool, userId, feature)) return false; } catch {}
   const plan = await getUserPlan(pool, userId);
   if (planAtLeast(plan, def.min_plan)) return true;
   return await hasActiveGrant(pool, userId, feature);
@@ -101,7 +131,9 @@ function register(app, pool, helpers) {
     const plan = await getUserPlan(pool, me);
     const out = {};
     for (const [k, def] of Object.entries(FEATURES)) {
-      out[k] = planAtLeast(plan, def.min_plan) || (await hasActiveGrant(pool, me, k));
+      let ok = planAtLeast(plan, def.min_plan) || (await hasActiveGrant(pool, me, k));
+      if (ok) { try { if (await hasActiveDeny(pool, me, k)) ok = false; } catch {} }
+      out[k] = ok;
     }
     res.json({ ok: true, plan, features: out });
   }));
@@ -115,7 +147,7 @@ function register(app, pool, helpers) {
   app.get("/api/admin/users/:uid/feature-grants", requireAdmin, wrap(async (req, res) => {
     const uid = parseInt(req.params.uid, 10);
     const [rows] = await pool.query(
-      `SELECT id, feature, granted_by, reason, expires_at, revoked_at, created_at
+      `SELECT id, feature, granted_by, reason, expires_at, revoked_at, created_at, mode
          FROM user_feature_grants
         WHERE user_id=?
         ORDER BY (revoked_at IS NULL) DESC, created_at DESC`,
@@ -132,13 +164,16 @@ function register(app, pool, helpers) {
     if (!FEATURES[feature]) return res.status(400).json({ error: "unknown_feature" });
     const expires = req.body?.expires_at ? new Date(req.body.expires_at) : null;
     const reason = req.body?.reason ? String(req.body.reason).slice(0, 240) : null;
+    // V936 · 'deny' crea un override que quita la función aunque el plan la
+    // incluya; 'allow' (defecto) es el comportamiento clásico de conceder.
+    const mode = String(req.body?.mode || "allow").toLowerCase() === "deny" ? "deny" : "allow";
     const adminId = readMyUserId(req) || null;
     const [r] = await pool.execute(
-      `INSERT INTO user_feature_grants (user_id, feature, granted_by, reason, expires_at)
-       VALUES (?,?,?,?,?)`,
-      [uid, feature, adminId, reason, expires && !isNaN(+expires) ? expires : null]
+      `INSERT INTO user_feature_grants (user_id, feature, granted_by, reason, expires_at, mode)
+       VALUES (?,?,?,?,?,?)`,
+      [uid, feature, adminId, reason, expires && !isNaN(+expires) ? expires : null, mode]
     );
-    res.json({ ok: true, id: r.insertId });
+    res.json({ ok: true, id: r.insertId, mode });
   }));
 
   // ADMIN — Revocar grant concreto

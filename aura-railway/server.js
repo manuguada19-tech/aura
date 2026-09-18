@@ -3164,6 +3164,20 @@ app.get("/api/users/:id", wrap(async (req, res) => {
       }
     }
   } catch {}
+  // V936 · Ubicación POR DISPOSITIVO. La tabla devices no guarda ubicación
+  // (solo IP), así que la columna salía siempre vacía en el panel. La
+  // derivamos de la IP de cada dispositivo con geoip-lite local (cacheado,
+  // sin llamadas externas) en el momento de leer: no añadimos columna ni
+  // migramos nada, y el dato es real (no inventado). Si la IP es privada o
+  // geoip-lite no la conoce, devolvemos cadena vacía y el panel pinta "—".
+  for (const d of devices) {
+    d.location = "";
+    if (!d.ip) continue;
+    try {
+      const g = await _geoLookup(d.ip, { external: false });
+      if (g) d.location = _geoLabel(g);
+    } catch {}
+  }
   res.json({ ...rows[0], province, timezone, devices, photos, activity });
 }));
 
@@ -14726,6 +14740,19 @@ async function _geoLookup(ip, opts) {
   }
   _geoCache.set(ipn, info);
   return info;
+}
+
+// V936 · Etiqueta legible de ubicación a partir de un resultado de _geoLookup.
+// Prioridad: ciudad > región > país. Para IPs privadas devuelve "Red local".
+// No inventa nada: si geoip-lite no conoce la IP, devuelve cadena vacía.
+function _geoLabel(g) {
+  if (!g) return "";
+  if (g.city === "Red local") return "Red local";
+  const cc = String(g.country_code || g.country || "").toUpperCase();
+  const regionName = (cc === "ES" && _ES_REGION_NAMES && _ES_REGION_NAMES[String(g.region || "").toUpperCase()]) || g.region || "";
+  const place = g.city || regionName;
+  if (place && cc) return place + ", " + cc;
+  return place || cc || "";
 }
 
 // V807 · Geocodificación INVERSA (coords GPS → ciudad/región). La ubicación por
