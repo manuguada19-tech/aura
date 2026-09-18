@@ -14532,6 +14532,28 @@ app.get("/api/admin/activity/user/:id", wrap(async (req, res) => {
   res.json({ ok: true, items: rows });
 }));
 
+/* V934 · Borrar eventos del stream de un usuario desde el panel. El stream
+   acumula TODO (logins, telemetría del guard, tracking de cliente) y a veces
+   hace falta limpiarlo: un evento concreto que mete ruido o el historial
+   entero de esa persona (privacidad, fichas ilegibles). Las dos rutas viven
+   bajo /api/admin/ (la puerta las protege) y dejan rastro en el registro de
+   actividad con el mismo patrón que el borrado de restricciones. */
+app.delete("/api/admin/activity/user/:id/stream", wrap(async (req, res) => {
+  const uid = parseInt(req.params.id, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [r] = await pool.execute("DELETE FROM activity_stream WHERE user_id=?", [uid]);
+  await logActivity("admin", `Stream de eventos del usuario ${uid} vaciado (${r.affectedRows} eventos)`);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
+app.delete("/api/admin/activity/stream/:eventId", wrap(async (req, res) => {
+  const eid = parseInt(req.params.eventId, 10);
+  if (!eid) return res.status(400).json({ error: "invalid_id" });
+  const [r] = await pool.execute("DELETE FROM activity_stream WHERE id=?", [eid]);
+  await logActivity("admin", `Evento ${eid} del stream eliminado (${r.affectedRows ? "existía" : "no existía"})`);
+  res.json({ ok: true, deleted: r.affectedRows });
+}));
+
 /* ============================================================
    V400 — Monitor de chats en vivo + moderación
    ============================================================ */

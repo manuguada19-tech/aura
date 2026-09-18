@@ -3840,11 +3840,25 @@ async function openUserDrawer(id, onChange) {
   // Muestra los eventos detallados del activity_stream de este usuario (login,
   // telemetría del guard "Atrás", tracking de cliente…). Se carga bajo demanda
   // del endpoint que ya existía; así el admin ve el detalle sin salir de la ficha.
-  const streamHeader = el("div", { class: "section-header" }, [ el("h3", {}, "Eventos (stream)") ]);
+  // V934 · El stream se puede limpiar: botón de vaciado completo en la
+  // cabecera y borrado fila a fila. Ambos con confirmación, porque el stream
+  // es prueba de qué hizo una cuenta: borrarlo debe ser una decisión.
+  const streamHeader = el("div", { class: "section-header" }, [
+    el("h3", {}, "Eventos (stream)"),
+    btn("Vaciar stream", "ghost xs danger", async () => {
+      if (!(await askConfirm("¿Borrar TODOS los eventos del stream de este usuario? Logins y telemetría guardados desaparecerán de la ficha.", { okText: "Vaciar stream", danger: true }))) return;
+      try {
+        const r = await api.del("/api/admin/activity/user/" + id + "/stream");
+        toast(`Stream vaciado (${r.deleted || 0} eventos)`);
+        await loadStream();
+      } catch { toast("No se pudo vaciar el stream"); }
+    }),
+  ]);
   form.appendChild(streamHeader);
   const streamBox = el("div", { class: "empty small" }, "Cargando eventos…");
   form.appendChild(streamBox);
-  (async () => {
+
+  async function loadStream() {
     try {
       const r = await api.get("/api/admin/activity/user/" + id + "?limit=100");
       const items = (r && r.items) || [];
@@ -3853,7 +3867,7 @@ async function openUserDrawer(id, onChange) {
       streamBox.className = "";
       const t = el("table", { class: "data-table" });
       t.appendChild(el("thead", {}, el("tr", {}, [
-        el("th", {}, "Cuándo"), el("th", {}, "Evento"), el("th", {}, "Detalle"), el("th", {}, "IP"),
+        el("th", {}, "Cuándo"), el("th", {}, "Evento"), el("th", {}, "Detalle"), el("th", {}, "IP"), el("th", {}, ""),
       ])));
       const tb = el("tbody");
       items.forEach(ev => {
@@ -3862,6 +3876,14 @@ async function openUserDrawer(id, onChange) {
           el("td", {}, el("span", { class: "tag" }, ev.event || "—")),
           el("td", {}, ev.detail || "—"),
           el("td", {}, ev.ip || "—"),
+          el("td", {}, btn("Borrar", "ghost xs danger", async () => {
+            if (!(await askConfirm("¿Borrar este evento del stream?", { okText: "Borrar", danger: true }))) return;
+            try {
+              await api.del("/api/admin/activity/stream/" + ev.id);
+              toast("Evento borrado");
+              await loadStream();
+            } catch { toast("No se pudo borrar el evento"); }
+          })),
         ]));
       });
       t.appendChild(tb);
@@ -3870,7 +3892,8 @@ async function openUserDrawer(id, onChange) {
       streamBox.className = "empty small";
       streamBox.textContent = "No se pudieron cargar los eventos.";
     }
-  })();
+  }
+  loadStream();
 
   // --- Restricciones ---
   const restrictionsHeader = el("div", { class: "section-header" }, [
