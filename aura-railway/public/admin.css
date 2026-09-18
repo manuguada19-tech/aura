@@ -1134,6 +1134,27 @@ textarea.input { resize: vertical; min-height: 60px; }
 .mod-body small { color: var(--text-muted); font-size: 12px; }
 .mod-tools { display: flex; gap: 6px; flex-wrap: wrap; }
 .mod-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+/* V948 · Botones de Moderación descuadrados. `.btn` declara height:36px fijo y
+   `.btn.xs` no lo levanta: cuando una etiqueta larga ("Cerrar todas las
+   sesiones", "🧨 Eliminación total (con email + bloqueos)") no cabía en una
+   línea, el texto seguía ocupando sus 2-4 líneas DENTRO de una caja de 36px y
+   se salía por debajo del borde, montado encima de la fila de al lado. Con
+   height:auto la caja crece con el texto; min-height conserva el porte de los
+   botones de una línea y el stretch del flex iguala las alturas de cada fila.
+   flex 1 1 auto (en vez del flex:1 de arriba) deja que el botón con etiqueta
+   larga tome más base y se envuelva menos. */
+.mod-actions .btn,
+.lv2-mod-actions .btn {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 32px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  white-space: normal;
+  text-align: center;
+  justify-content: center;
+  line-height: 1.25;
+}
 
 /* Cards grid */
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }

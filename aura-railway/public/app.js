@@ -2985,6 +2985,22 @@ async function registerServiceWorker() {
           if (dl && dl.tab && state.user) { applyDeepLink(dl); }
         } catch {}
       }
+      // V948 · Auto-refresco tras un despliegue. Cuando un SW NUEVO toma el
+      // control (activate → claim), avisa a las pestañas vivas. Si la pestaña
+      // llevaba otra versión, se recarga UNA sola vez para coger el HTML/CSS/JS
+      // del build nuevo: es lo que evita que un PC o un móvil se queden
+      // indefinidamente con el cascarón viejo (el caso del CSS que "no llegaba").
+      // El guard de sessionStorage corta el bucle: tras el reload, la versión
+      // guardada ya coincide y no se vuelve a recargar.
+      if (data.type === "sw-activated" && data.version) {
+        try {
+          const prev = sessionStorage.getItem("auraSwVersion");
+          sessionStorage.setItem("auraSwVersion", String(data.version));
+          if (prev && prev !== String(data.version)) {
+            setTimeout(() => { try { location.reload(); } catch {} }, 400);
+          }
+        } catch {}
+      }
     });
 
     // Periodic Background Sync (solo Chrome/Android con PWA instalada)

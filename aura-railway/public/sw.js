@@ -22,7 +22,10 @@
 // V947 · v94: se purgan las cachés que guardan el styles.css?v=873 viejo (el
 // ?v= fijo que impedía que los arreglos de CSS llegaran al cliente). Al
 // cambiar CACHE_VERSION, activate() borra todos los caches menos el nuevo.
-const CACHE_VERSION = "aura-v94";
+// V948 · v95: activate() además avisa a las pestañas vivas (sw-activated) para
+// que app.js recargue UNA vez si llevaban otra versión: ninguna pestaña que
+// estuviera abierta desde antes del despliegue se queda con cascarón/CSS viejos.
+const CACHE_VERSION = "aura-v95";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
@@ -44,6 +47,17 @@ self.addEventListener("activate", (event) => {
       const keys = await caches.keys();
       await Promise.all(keys.filter((k) => k !== CACHE_VERSION).map((k) => caches.delete(k)));
       await self.clients.claim();
+      // V948 · Avisar a las pestañas vivas de que hay SW nuevo. app.js compara
+      // la versión con la que tenía guardada y, si cambia, se recarga una vez.
+      // Sin esto, una pestaña abierta desde antes del despliegue seguía
+      // sirviendo el HTML/CSS de su carga anterior hasta que alguien la
+      // recargara a mano.
+      try {
+        const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        for (const c of list) {
+          try { c.postMessage({ type: "sw-activated", version: CACHE_VERSION }); } catch {}
+        }
+      } catch {}
     })()
   );
 });
