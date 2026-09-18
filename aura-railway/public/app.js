@@ -4322,9 +4322,39 @@ function _rerender() {
   document.head.appendChild(s);
 })();
 
+/* ---------------------------------------------------------------------------
+   V951 · PC con sesión iniciada = app de escritorio de verdad.
+   Hasta V950, entrar con sesión en un PC seguía mostrando la maqueta de
+   teléfono 400×820 centrada en el escenario oscuro: el usuario de escritorio
+   no ganaba nada con el ancho de su ventana. Con body.desktop-app el marco
+   desaparece: la tabbar pasa a ser una barra lateral a la izquierda y el
+   contenido ocupa todo el alto y el ancho útiles (ver bloque V951 en
+   styles.css). Reutiliza _welcomeIsDesktop() para que tablets y ventanas
+   estrechas sigan en modo móvil, y se retira solo al cerrar sesión o al
+   volver a la bienvenida a pantalla completa (welcome-desktop).
+   -------------------------------------------------------------------------- */
+function syncDesktopApp() {
+  let on = false;
+  try {
+    on = document.body.classList.contains("app-open") &&
+         !document.body.classList.contains("welcome-desktop") &&
+         _welcomeIsDesktop();
+  } catch {}
+  document.body.classList.toggle("desktop-app", on);
+}
+try {
+  const __mqW = window.matchMedia("(min-width: 901px)");
+  const __mqP = window.matchMedia("(hover: hover) and (pointer: fine)");
+  const __resyncDesktopApp = () => { try { syncDesktopApp(); } catch {} };
+  window.addEventListener("resize", __resyncDesktopApp, { passive: true });
+  if (__mqW.addEventListener) __mqW.addEventListener("change", __resyncDesktopApp);
+  if (__mqP.addEventListener) __mqP.addEventListener("change", __resyncDesktopApp);
+} catch {}
+
 function showApp() {
   tabbar.hidden = false;
   document.body.classList.add("app-open");
+  try { syncDesktopApp(); } catch {}
   // Ensure the current user is registered in DB for real chat + start heartbeat.
   // Auth.refresh() consigue un token de sesión firmado de forma silenciosa para
   // las sesiones antiguas que aún no lo tienen (migración previa al modo estricto).
@@ -4500,6 +4530,7 @@ function applyDeepLink(dl) {
 function hideApp() {
   tabbar.hidden = true;
   document.body.classList.remove("app-open");
+  document.body.classList.remove("desktop-app"); // V951 · sin sesión no hay escritorio
 }
 
 /* Tab handling */
@@ -4551,6 +4582,7 @@ function routeTab(tab) {
   // (it gets hidden while inside a chat, profile detail or onboarding).
   tabbar.hidden = false;
   document.body.classList.add("app-open");
+  try { syncDesktopApp(); } catch {} // V951 · por si cambió el ancho entre pantallas
   const map = {
     discover: screenDiscover,
     search: screenSearch,
@@ -5134,6 +5166,7 @@ function _welcomeBrandLogoHTML() {
 function buildDesktopWelcome(root, testMode, regOpen) {
   root.classList.add("hero-desktop");
   document.body.classList.add("welcome-desktop");
+  document.body.classList.remove("desktop-app"); // V951 · la bienvenida manda en PC
 
   if (testMode) {
     setTimeout(() => { try { showBetaBotsNotice(); } catch {} }, 350);
@@ -5274,6 +5307,7 @@ function screenWelcome(root) {
   }
   // Móvil/tablet: aseguramos que el flag de escritorio no quede pegado.
   document.body.classList.remove("welcome-desktop");
+  try { syncDesktopApp(); } catch {} // V951 · y el de app de escritorio tampoco
 
   // En modo pruebas privadas mostramos un aviso emergente cada vez que se
   // entra a la pantalla de bienvenida, aclarando que los perfiles visibles
@@ -18806,6 +18840,7 @@ async function boot() {
         }
         tabbar.hidden = false;
         document.body.classList.add("app-open");
+        try { syncDesktopApp(); } catch {} // V951
       } catch {}
     }
     function renderPreviewScreen(name) {
@@ -18857,7 +18892,7 @@ async function boot() {
           // Simular sesión mínima para que se pueda ver la pantalla y el tabbar
           state.user = state.user || { id: "preview", name: "Preview", email: "demo@aura.app", photo: "" };
           state.zone = state.zone || "hetero";
-          try { tabbar.hidden = false; document.body.classList.add("app-open"); } catch {}
+          try { tabbar.hidden = false; document.body.classList.add("app-open"); syncDesktopApp(); } catch {}
           render(screenSearch);
           return;
         } catch {}

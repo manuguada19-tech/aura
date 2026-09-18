@@ -10555,3 +10555,88 @@ body.map-open { overflow: hidden; }
   padding: 10px 20px 14px; opacity: 0.9;
   border-top: 1px solid var(--border, rgba(255,255,255,0.06));
 }
+
+/* ============================================================
+   V951 · APP DE ESCRITORIO REAL (body.desktop-app)
+   Con sesión iniciada en un PC (hover fino, >900px, ni tablet en
+   portrait ni landscape bajito — lo decide _welcomeIsDesktop() en
+   app.js), el marco de teléfono sobraba: el usuario de escritorio
+   pagaba todo el ancho de su ventana por un móvil de 400px flotando
+   en un escenario oscuro. Aquí el marco se retira y la app ocupa la
+   ventana de verdad:
+     · la tabbar se convierte en barra lateral izquierda (232px),
+     · el viewport ocupa el resto a altura completa,
+     · el cromo del móvil (notch, status, home) desaparece,
+     · las pantallas de rejilla (Cerca) aprovechan el ancho y las de
+       columna (Explorar, Chats, Perfil) se centran con un tope de
+       lectura para que no haya líneas de 1400px.
+   En móvil y tablet no existe esta clase: todo sigue exactamente igual.
+   ============================================================ */
+body.desktop-app { overflow: hidden !important; }
+body.desktop-app .stage {
+  grid-template-columns: 1fr !important;
+  gap: 0 !important; padding: 0 !important;
+  max-width: none !important; width: 100% !important;
+  min-height: 100dvh !important;
+}
+body.desktop-app .stage-side,
+body.desktop-app .stage-side-left,
+body.desktop-app .stage-side-right { display: none !important; }
+body.desktop-app #phoneScaleWrap {
+  width: 100% !important; height: auto !important;
+  min-height: 100dvh !important; flex: 1 1 auto !important;
+  display: block !important;
+}
+body.desktop-app .phone {
+  width: 100% !important; max-width: none !important; min-width: 0 !important;
+  height: auto !important; min-height: 100dvh !important; max-height: none !important;
+  border-radius: 0 !important; box-shadow: none !important;
+  transform: none !important;
+  flex-direction: row !important;
+}
+body.desktop-app .phone-notch,
+body.desktop-app .phone-status,
+body.desktop-app .phone-home { display: none !important; }
+/* La tabbar pasa a nav lateral: orden -1 para quedar a la izquierda. */
+body.desktop-app .tabbar {
+  order: -1;
+  width: 232px; min-width: 232px; height: 100dvh;
+  display: flex; flex-direction: column;
+  align-items: stretch; justify-content: flex-start;
+  gap: 4px; padding: 18px 12px;
+  grid-template-columns: none;
+  border-top: 0; border-right: 1px solid var(--border);
+}
+body.desktop-app .tab {
+  flex-direction: row; justify-content: flex-start;
+  gap: 12px; padding: 11px 14px; border-radius: 12px;
+}
+body.desktop-app .tab svg { width: 22px; height: 22px; }
+body.desktop-app .tab span { font-size: 14px; font-weight: 600; }
+body.desktop-app .tab.active {
+  background: var(--surface-2, rgba(127,127,127,.14));
+  color: var(--text, #fff);
+}
+body.desktop-app .tab-badge {
+  top: 50%; transform: translateY(-50%);
+  right: auto; left: 28px;
+}
+body.desktop-app .app-viewport { flex: 1 1 auto; min-width: 0; }
+/* Cerca: la rejilla ya era auto-fill; en escritorio gana columnas y algo
+   más de aire para que las tarjetas no queden ridículas de anchas. */
+body.desktop-app .nearby-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+body.desktop-app .nearby-section { padding: 16px 28px 8px; }
+/* Columnas de lectura: Explorar (pila de perfiles), Chats y Perfil se
+   centran con tope; el resto de pantallas igual, salvo Cerca que vive
+   a ancho completo. */
+body.desktop-app .screen:not([data-section="nearby"]) > * {
+  max-width: 860px; margin-left: auto; margin-right: auto;
+}
+body.desktop-app .discover-stack-wrap {
+  max-width: 460px; width: 100%;
+  margin-left: auto; margin-right: auto;
+}
+body.desktop-app .chat-list { max-width: 760px; margin-left: auto; margin-right: auto; }
