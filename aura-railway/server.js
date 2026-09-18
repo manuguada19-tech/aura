@@ -60,6 +60,20 @@ let BOOT_ERROR = null;
 // /api/my/restrictions/stream sigue funcionando sin buffering.
 app.use(compression());
 
+// V933 · El DNS tiene un registro www apuntando a Railway, pero el host NO está
+// asociado al servicio ni cubierto por el certificado TLS: cualquier sonda que
+// llegue por https://www.citasaura.es/… (incluidos los fetchers de ads.txt y
+// robots.txt de Google/AdSense) muere con error SSL o con un 404 de Railway.
+// Si algún día www llega a este servidor (en cuanto se asocie el dominio en la
+// consola, o ya hoy por HTTP puro), lo rebotamos al ápice con 301 conservando
+// ruta y query. Google sigue los 301 tanto para robots.txt como para ads.txt,
+// así que los ficheros de texto quedan alcanzables desde cualquier host.
+app.use((req, res, next) => {
+  const host = String(req.headers.host || "").split(":")[0].toLowerCase();
+  if (!host.startsWith("www.")) return next();
+  return res.redirect(301, "https://" + host.slice(4) + req.originalUrl);
+});
+
 // V879 · Candado de arranque. Mientras las migraciones corren, la base puede no
 // tener aún las tablas ni el secreto de firma de tokens, así que no podemos
 // atender API: devolvemos 503 con Retry-After en vez de errores raros o, peor,
@@ -13546,7 +13560,8 @@ async function seedEmailTemplates() {
     }
   }
   // V813 · Las plantillas ya sembradas en BD conservaban el logo/enlaces
-  // apuntando a `www.citasaura.es`, host que NO resuelve (el bueno es el ápex
+  // apuntando a `www.citasaura.es`, host que resuelve en DNS pero NO está
+  // asociado al servicio ni tiene certificado (el bueno es el ápex
   // `citasaura.es`), por lo que la cabecera del email salía con la imagen rota.
   // El seed normal usa ON DUPLICATE KEY UPDATE id=id (no toca filas existentes)
   // y la corrección del JSON (V809) no llegaba a esas filas. Aquí forzamos un
