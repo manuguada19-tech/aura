@@ -439,12 +439,19 @@
         var vw = (window.visualViewport && window.visualViewport.width)  || window.innerWidth  || document.documentElement.clientWidth;
         var vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight || document.documentElement.clientHeight;
 
-        var availW = Math.max(200, vw - GAP_W);
+        // V935 · En la banda estrecha (901–1200px) la tarjeta informativa vive
+        // pegada al teléfono: medir el hueco contra la ventana entera hacía
+        // que el marco se ampliara (~11% en ventanas casi cuadradas) y
+        // empujara la composición. Allí descontamos la tarjeta (+su gap) del
+        // ancho disponible y prohibimos ampliar: encoger para caber sí,
+        // crecer y comerse el espacio de al lado no.
+        var cramped = vw > 900 && vw <= 1200;
+        var availW = Math.max(200, vw - GAP_W - (cramped ? 352 : 0));
         var availH = Math.max(200, vh - GAP_H);
 
         var kW = availW / PHONE_W;
         var kH = availH / PHONE_H;
-        var k  = Math.min(kW, kH, 1.15); // permitir hasta un 15% más grande en pantallas enormes
+        var k  = Math.min(kW, kH, cramped ? 1 : 1.15); // en pantallas enormes, hasta un 15% más grande
         if (!isFinite(k) || k <= 0) k = 1;
         // Nunca comprimir demasiado (usuario podría hacer zoom in absurdo).
         k = Math.max(k, 0.30);
