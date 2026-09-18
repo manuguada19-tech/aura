@@ -3001,9 +3001,21 @@ body.account-suspended .restriction-banner .rb-close {
   background: var(--text); color: var(--bg);
   padding: 12px 16px; border-radius: 999px; font-size: 13px; font-weight: 600;
   box-shadow: var(--shadow-lg); z-index: 100;
+  /* V950 · visibility:hidden cuando no hay aviso. El escondite del toast era
+     SOLO el desplazamiento translateY(100px): con el offset de V938/V947
+     (bottom sube ~78px cuando hay tabbar) la pastilla "oculta" asomaba por el
+     borde inferior del viewport como una raya blanca en escritorio con
+     sesión iniciada. visibility se retira con retardo para que la animación
+     de salida siga viéndose, y al entrar no espera porque .show lo devuelve
+     al instante. */
+  visibility: hidden;
+  transition: transform .35s cubic-bezier(.2,.9,.2,1), visibility 0s linear .35s;
+}
+.toast.show {
+  transform: translate(-50%, 0);
+  visibility: visible;
   transition: transform .35s cubic-bezier(.2,.9,.2,1);
 }
-.toast.show { transform: translate(-50%, 0); }
 /* V938 · Cuando la tabbar inferior está visible, bottom:32px cae ENCIMA del
    menú y tapa los botones (el aviso «Notificaciones activas» era el caso más
    visible). Lo subimos por encima de la barra usando la misma condición que
