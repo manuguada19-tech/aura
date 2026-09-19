@@ -1235,11 +1235,8 @@ $("#themeBtn").addEventListener("click", () => {
   window.__setSidebarMode = applyMode;
 })();
 
-/* V785 · Buscador global de la cabecera.
-   El input de la topbar (.search-wrap input) existía en el HTML pero no estaba
-   conectado a nada. Ahora busca usuarios en vivo (/api/users?q=) por nombre o
-   email y, al elegir un resultado, abre su ficha (openUserDrawer).
-   Atajo ⌘K / Ctrl+K para enfocar. Es aditivo: no toca ninguna vista existente. */
+/* V961 · Buscador global real: usuarios, tickets, denuncias, pagos y secciones.
+   El resultado siempre indica el tipo para no abrir la pantalla equivocada. */
 (function wireGlobalSearch() {
   const input = document.querySelector(".search-wrap input");
   const wrap = document.querySelector(".search-wrap");
@@ -1262,32 +1259,61 @@ $("#themeBtn").addEventListener("click", () => {
   async function run(q) {
     lastQ = q;
     try {
-      const data = await api.get("/api/users?q=" + encodeURIComponent(q) + "&limit=8");
+      const data = await api.get("/api/admin/global-search?q=" + encodeURIComponent(q));
       if (q !== lastQ) return; // respuesta obsoleta
-      const rows = (data && data.rows) || [];
       panel.innerHTML = "";
-      if (!rows.length) {
+      const groups = (data && data.groups) || {};
+      const needle = q.toLocaleLowerCase("es");
+      const modules = Array.from(document.querySelectorAll("#nav .nav-link[data-view]"))
+        .filter(n => n.style.display !== "none" && n.textContent.toLocaleLowerCase("es").includes(needle))
+        .slice(0, 6)
+        .map(n => ({ view: n.dataset.view, label: n.textContent.replace(/[★☆]/g, "").trim() }));
+      const total = Object.values(groups).reduce((n, rows) => n + (Array.isArray(rows) ? rows.length : 0), 0) + modules.length;
+      if (!total) {
         panel.appendChild(el("div", { style: "padding:10px 12px;opacity:.6;font-size:13px" }, "Sin resultados"));
         open(); return;
       }
-      rows.forEach((u) => {
-        const row = el("div", {
-          style: "display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;cursor:pointer",
-        }, [
-          avatar(u.photo_url, 30),
-          el("div", { style: "flex:1;min-width:0" }, [
-            el("div", { style: "font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, u.name || "—"),
-            el("small", { style: "opacity:.65;font-size:11px" }, `#${u.id}${u.email ? " · " + u.email : ""}`),
-          ]),
-        ]);
-        row.addEventListener("mouseenter", () => { row.style.background = "rgba(124,58,237,.15)"; });
-        row.addEventListener("mouseleave", () => { row.style.background = "transparent"; });
-        row.addEventListener("mousedown", (e) => {
-          e.preventDefault();
-          close(); input.value = "";
-          try { openUserDrawer(u.id); } catch {}
+
+      const addGroup = (label, rows, formatter, onPick) => {
+        if (!Array.isArray(rows) || !rows.length) return;
+        panel.appendChild(el("div", { class: "gsearch-group-title" }, label));
+        rows.forEach((item) => {
+          const f = formatter(item);
+          const row = el("button", { class: "gsearch-result", type: "button" }, [
+            el("span", { class: `gsearch-type ${f.tone || ""}` }, f.icon || "•"),
+            el("span", { class: "gsearch-copy" }, [
+              el("strong", {}, f.title || "—"),
+              el("small", {}, f.detail || ""),
+            ]),
+            el("span", { class: "gsearch-arrow" }, "→"),
+          ]);
+          row.addEventListener("mousedown", (e) => {
+            e.preventDefault(); close(); input.value = ""; onPick(item);
+          });
+          panel.appendChild(row);
         });
-        panel.appendChild(row);
+      };
+
+      addGroup("Secciones", modules,
+        m => ({ icon: "↗", title: m.label, detail: "Abrir sección" }),
+        m => document.querySelector(`[data-view="${m.view}"]`)?.click());
+      addGroup("Usuarios", groups.users,
+        u => ({ icon: "U", tone: "rose", title: u.name || `Usuario #${u.id}`, detail: `#${u.id}${u.email ? " · " + u.email : ""}` }),
+        u => { try { openUserDrawer(u.id); } catch {} });
+      addGroup("Tickets", groups.tickets,
+        t => ({ icon: "T", tone: t.priority === "high" ? "red" : "amber", title: `${t.ref || "#" + t.id} · ${t.subject || "Sin asunto"}`, detail: `${t.email || ""} · ${t.status || ""}` }),
+        () => document.querySelector('[data-view="tickets"]')?.click());
+      addGroup("Denuncias", groups.reports,
+        r => ({ icon: "D", tone: "red", title: `Denuncia #${r.id} · ${r.reason || "Sin motivo"}`, detail: `Usuario #${r.target_id} · ${r.status || ""}` }),
+        () => document.querySelector('[data-view="reports"]')?.click());
+      addGroup("Pagos", groups.payments,
+        p => ({ icon: "€", tone: "green", title: p.invoice_no || `Pago #${p.id}`, detail: `${p.email || ""} · ${fmt.eur(p.amount)} · ${p.status || ""}` }),
+        () => document.querySelector('[data-view="payments"]')?.click());
+
+      /* Conserva una altura cómoda incluso cuando una búsqueda devuelve varias
+         categorías; el teclado puede seguir cerrándola con Escape. */
+      panel.querySelectorAll(".gsearch-result").forEach((row) => {
+        row.addEventListener("focus", () => row.scrollIntoView({ block: "nearest" }));
       });
       open();
     } catch { close(); }
@@ -1363,6 +1389,120 @@ $("#nav").addEventListener("click", (e) => {
       else nav.appendChild(anchor);
     });
   } catch (e) { console.warn("injectDynamicNavLinks", e); }
+})();
+
+/* V961 · Navegación de trabajo: secciones plegables, favoritos y recientes.
+   No elimina ninguna ruta; solo reduce el ruido de un menú que ya supera las
+   cuarenta pantallas. Todo se guarda únicamente para este navegador. */
+(function enhanceAdminNavigation() {
+  const nav = document.getElementById("nav");
+  const sidebar = document.getElementById("sidebar");
+  if (!nav || !sidebar) return;
+  const readList = (key, fallback = []) => {
+    try { const v = JSON.parse(localStorage.getItem(key) || "null"); return Array.isArray(v) ? v : fallback; }
+    catch { return fallback; }
+  };
+  let favorites = readList("aura-admin-favorites", ["dashboard", "users", "tickets", "moderation"]);
+  let recent = readList("aura-admin-recent", []);
+  let collapsed = new Set(readList("aura-admin-nav-collapsed", []));
+
+  const smart = el("div", { class: "nav-smart" }, [
+    el("div", { class: "nav-smart-head" }, [
+      el("strong", {}, "Mis accesos"),
+      el("small", {}, "Favoritos y recientes"),
+    ]),
+    el("div", { class: "nav-smart-list" }),
+  ]);
+  sidebar.insertBefore(smart, nav);
+  const smartList = smart.querySelector(".nav-smart-list");
+
+  const linkFor = view => nav.querySelector(`.nav-link[data-view="${view}"]`);
+  const labelFor = view => {
+    const link = linkFor(view);
+    return link?.dataset.navLabel || link?.querySelector("span:nth-of-type(2)")?.textContent?.trim() || view;
+  };
+  function renderSmart() {
+    smartList.innerHTML = "";
+    const items = [];
+    favorites.slice(0, 5).forEach(view => { if (linkFor(view)?.style.display !== "none") items.push({ view, favorite: true }); });
+    recent.filter(view => !favorites.includes(view)).slice(0, 3).forEach(view => { if (linkFor(view)?.style.display !== "none") items.push({ view, favorite: false }); });
+    if (!items.length) {
+      smartList.appendChild(el("span", { class: "nav-smart-empty" }, "Marca una estrella en el menú"));
+      return;
+    }
+    items.forEach(item => {
+      const chip = el("button", { class: `nav-smart-chip${item.favorite ? " favorite" : ""}`, type: "button", title: labelFor(item.view) }, [
+        el("span", {}, item.favorite ? "★" : "↗"),
+        el("span", {}, labelFor(item.view)),
+      ]);
+      chip.addEventListener("click", () => linkFor(item.view)?.click());
+      smartList.appendChild(chip);
+    });
+  }
+  function decorateLinks() {
+    nav.querySelectorAll(".nav-link[data-view]").forEach(link => {
+      const view = link.dataset.view;
+      if (!link.dataset.navLabel) link.dataset.navLabel = link.querySelector("span:nth-of-type(2)")?.textContent?.trim() || view;
+      if (link.querySelector(".nav-star")) return;
+      const star = el("button", {
+        class: `nav-star${favorites.includes(view) ? " active" : ""}`,
+        type: "button", title: favorites.includes(view) ? "Quitar de favoritos" : "Añadir a favoritos",
+        "aria-label": favorites.includes(view) ? "Quitar de favoritos" : "Añadir a favoritos",
+      }, favorites.includes(view) ? "★" : "☆");
+      star.addEventListener("click", e => {
+        e.preventDefault(); e.stopPropagation();
+        favorites = favorites.includes(view) ? favorites.filter(v => v !== view) : [view, ...favorites].slice(0, 8);
+        localStorage.setItem("aura-admin-favorites", JSON.stringify(favorites));
+        nav.querySelectorAll(".nav-star").forEach(s => {
+          const active = favorites.includes(s.closest(".nav-link")?.dataset.view);
+          s.classList.toggle("active", active); s.textContent = active ? "★" : "☆";
+          s.title = active ? "Quitar de favoritos" : "Añadir a favoritos";
+        });
+        renderSmart();
+      });
+      link.appendChild(star);
+    });
+  }
+
+  nav.querySelectorAll(".nav-section").forEach(section => {
+    const name = section.textContent.trim();
+    section.dataset.sectionName = name;
+    section.tabIndex = 0;
+    section.setAttribute("role", "button");
+    section.setAttribute("aria-expanded", collapsed.has(name) ? "false" : "true");
+    section.innerHTML = `<span>${name}</span><span class="nav-section-chevron">⌄</span>`;
+    const apply = () => {
+      const off = collapsed.has(name);
+      section.classList.toggle("collapsed", off);
+      section.setAttribute("aria-expanded", off ? "false" : "true");
+      for (let n = section.nextElementSibling; n; n = n.nextElementSibling) {
+        if (n.classList?.contains("nav-section")) break;
+        if (n.classList?.contains("nav-link")) n.classList.toggle("nav-hidden-by-group", off);
+      }
+    };
+    const toggle = () => {
+      collapsed.has(name) ? collapsed.delete(name) : collapsed.add(name);
+      localStorage.setItem("aura-admin-nav-collapsed", JSON.stringify([...collapsed]));
+      apply();
+    };
+    section.addEventListener("click", toggle);
+    section.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+    apply();
+  });
+  decorateLinks();
+  renderSmart();
+  window.__renderAdminSmartNav = renderSmart;
+
+  nav.addEventListener("click", e => {
+    const link = e.target.closest(".nav-link[data-view]");
+    if (!link || e.target.closest(".nav-star")) return;
+    const view = link.dataset.view;
+    recent = [view, ...recent.filter(v => v !== view)].slice(0, 6);
+    localStorage.setItem("aura-admin-recent", JSON.stringify(recent));
+    renderSmart();
+  });
 })();
 
 /* Click en el logo/nombre "Aura" del sidebar → volver al Panel (dashboard) */
@@ -1487,7 +1627,10 @@ function aplicarMenuPorRango() {
     if (!visibles) g.style.display = "none";
   });
 }
-document.addEventListener("DOMContentLoaded", () => { try { aplicarMenuPorRango(); } catch (e) {} });
+document.addEventListener("DOMContentLoaded", () => {
+  try { aplicarMenuPorRango(); } catch (e) {}
+  try { window.__renderAdminSmartNav?.(); } catch (e) {}
+});
 
 /* V949 · Navegar es más rápido que la red. Antes: abres Suscripciones y al
    instante Pagos; el render de Suscripciones seguía esperando sus /api y, al
@@ -2142,12 +2285,140 @@ function proEmpty(icon, title, desc) {
 /* =========================================================
    Placeholder view functions (defined progressively below)
    ========================================================= */
+const DASHBOARD_PREF_DEFAULTS = {
+  kpis: ["users", "online", "mrr", "matches"],
+  work_center: true,
+  health: true,
+  shortcuts: true,
+};
+function getDashboardPrefs() {
+  try {
+    const p = Object.assign({}, DASHBOARD_PREF_DEFAULTS, JSON.parse(localStorage.getItem("aura-admin-dashboard-prefs") || "{}"));
+    if (!Array.isArray(p.kpis) || !p.kpis.length) p.kpis = [...DASHBOARD_PREF_DEFAULTS.kpis];
+    p.kpis = p.kpis.filter(k => DASHBOARD_PREF_DEFAULTS.kpis.includes(k));
+    if (!p.kpis.length) p.kpis = [...DASHBOARD_PREF_DEFAULTS.kpis];
+    return p;
+  }
+  catch { return { ...DASHBOARD_PREF_DEFAULTS }; }
+}
+function openDashboardPrefs() {
+  const current = getDashboardPrefs();
+  const choices = [
+    ["users", "Nuevos usuarios"], ["online", "Usuarios en línea"],
+    ["mrr", "Ingresos MRR"], ["matches", "Matches"],
+  ];
+  const overlay = el("div", { class: "ac-overlay" });
+  overlay.innerHTML = `<div class="ac-scrim"></div><div class="ac-dialog ac-dialog-wide dashboard-prefs" role="dialog" aria-modal="true">
+    <div class="prefs-head"><div><small>MI PANEL</small><h3>Personalizar dashboard</h3></div><button class="prefs-close" type="button" aria-label="Cerrar">×</button></div>
+    <p class="muted small">Elige qué información quieres ver. La configuración se guarda en este navegador.</p>
+    <div class="prefs-grid"></div>
+    <div class="prefs-block"><strong>Secciones</strong>
+      <label><input type="checkbox" data-pref="work_center" ${current.work_center ? "checked" : ""}> Centro de trabajo</label>
+      <label><input type="checkbox" data-pref="health" ${current.health ? "checked" : ""}> Estado técnico</label>
+      <label><input type="checkbox" data-pref="shortcuts" ${current.shortcuts ? "checked" : ""}> Accesos rápidos</label>
+    </div>
+    <div class="ac-actions"><button class="btn ghost prefs-reset" type="button">Restaurar</button><button class="btn primary prefs-save" type="button">Guardar</button></div>
+  </div>`;
+  const grid = overlay.querySelector(".prefs-grid");
+  choices.forEach(([key, label]) => grid.appendChild(el("label", { class: "prefs-choice" }, [
+    el("input", { type: "checkbox", "data-kpi": key, checked: current.kpis.includes(key) }),
+    el("span", {}, label),
+  ])));
+  const close = () => overlay.remove();
+  overlay.querySelector(".ac-scrim").addEventListener("click", close);
+  overlay.querySelector(".prefs-close").addEventListener("click", close);
+  overlay.querySelector(".prefs-reset").addEventListener("click", () => {
+    localStorage.removeItem("aura-admin-dashboard-prefs"); close(); route("dashboard");
+  });
+  overlay.querySelector(".prefs-save").addEventListener("click", () => {
+    const kpis = Array.from(overlay.querySelectorAll("[data-kpi]:checked")).map(n => n.dataset.kpi);
+    if (!kpis.length) { toast("Selecciona al menos un indicador"); return; }
+    const next = { kpis };
+    overlay.querySelectorAll("[data-pref]").forEach(n => { next[n.dataset.pref] = n.checked; });
+    localStorage.setItem("aura-admin-dashboard-prefs", JSON.stringify(next));
+    close(); route("dashboard"); toast("Panel personalizado");
+  });
+  document.body.appendChild(overlay);
+}
+
+function renderOperationsCenter(data, showWork = true, showHealth = true) {
+  const wrap = el("section", { class: "ops-center" });
+  const head = el("div", { class: "ops-head" }, [
+    el("div", {}, [el("small", {}, "PRIORIDADES"), el("h2", {}, "Centro de trabajo"), el("p", {}, "Todo lo que necesita atención, ordenado en una sola cola.")]),
+    btn("Actualizar", "ghost sm", () => route("dashboard")),
+  ]);
+  wrap.appendChild(head);
+
+  const queueGrid = el("div", { class: "ops-queues" });
+  (data?.queues || []).forEach(q => {
+    const card = el("button", { class: `ops-queue ${q.tone || ""}`, type: "button" }, [
+      el("span", { class: "ops-queue-count" }, fmt.num(q.count || 0)),
+      el("span", { class: "ops-queue-label" }, q.label),
+      q.urgent ? el("small", {}, `${q.urgent} urgentes`) : el("small", {}, q.count ? "Pendientes" : "Al día"),
+    ]);
+    card.addEventListener("click", () => document.querySelector(`[data-view="${q.view}"]`)?.click());
+    queueGrid.appendChild(card);
+  });
+  if (showWork) wrap.appendChild(queueGrid);
+
+  const lower = el("div", { class: `ops-lower${showHealth ? "" : " no-health"}${showWork ? "" : " no-work"}` });
+  const work = el("div", { class: "ops-list" }, [
+    el("div", { class: "ops-subhead" }, [el("strong", {}, "Siguiente por atender"), el("small", {}, `${(data?.work_items || []).length} elementos prioritarios`)]),
+  ]);
+  const items = data?.work_items || [];
+  if (!items.length) work.appendChild(el("div", { class: "ops-empty" }, "No hay tareas pendientes."));
+  items.slice(0, 7).forEach(item => {
+    const row = el("button", { class: "ops-item", type: "button" }, [
+      el("span", { class: `ops-severity ${item.severity || "medium"}` }),
+      el("span", { class: "ops-item-copy" }, [el("strong", {}, item.title || "Pendiente"), el("small", {}, item.detail || "")]),
+      el("time", {}, fmt.reldate(item.created_at)), el("span", { class: "ops-go" }, "→"),
+    ]);
+    row.addEventListener("click", () => document.querySelector(`[data-view="${item.view_name}"]`)?.click());
+    work.appendChild(row);
+  });
+  if (showWork) lower.appendChild(work);
+
+  if (showHealth) {
+    const h = data?.health || {};
+    const ok = h.status === "ok" && h.ready !== false && h.database?.ok !== false;
+    const health = el("aside", { class: `ops-health ${ok ? "ok" : "attention"}` }, [
+      el("div", { class: "health-head" }, [
+        el("span", { class: "health-pulse" }),
+        el("div", {}, [el("small", {}, "ESTADO TÉCNICO"), el("h3", {}, ok ? "Todo funciona" : "Requiere atención")]),
+      ]),
+      el("dl", { class: "health-metrics" }, [
+        el("div", {}, [el("dt", {}, "API"), el("dd", {}, h.ready === false ? "Iniciando" : "Operativa")]),
+        el("div", {}, [el("dt", {}, "Base de datos"), el("dd", {}, h.database?.ok === false ? "Sin conexión" : `${h.database?.latency_ms ?? "—"} ms`)]),
+        el("div", {}, [el("dt", {}, "Emails en cola"), el("dd", {}, fmt.num(h.email?.queued || 0))]),
+        el("div", {}, [el("dt", {}, "Push en cola"), el("dd", {}, fmt.num(h.push?.queued || 0))]),
+        el("div", {}, [el("dt", {}, "Errores 24 h"), el("dd", {}, fmt.num(h.errors_24h || 0))]),
+        el("div", {}, [el("dt", {}, "Última copia"), el("dd", {}, h.backup?.last_full_export_at ? fmt.reldate(h.backup.last_full_export_at) : (h.backup?.last_export_at ? fmt.reldate(h.backup.last_export_at) : "Pendiente"))]),
+      ]),
+    ]);
+    if (Array.isArray(h.issues) && h.issues.length) {
+      const alerts = el("div", { class: "health-alerts" });
+      h.issues.slice(0, 4).forEach(i => alerts.appendChild(el("div", { class: i.level || "warn" }, i.label)));
+      health.appendChild(alerts);
+    }
+    const healthActions = el("div", { class: "health-actions" }, [
+      btn("Ver logs", "ghost sm", () => document.querySelector('[data-view="logs"]')?.click()),
+      btn("Copias", "ghost sm", () => document.querySelector('[data-view="backup"]')?.click()),
+    ]);
+    health.appendChild(healthActions);
+    lower.appendChild(health);
+  }
+  wrap.appendChild(lower);
+  return wrap;
+}
+
 async function viewDashboard(root){
-  const [stats, activity, zones] = await Promise.all([
+  const [stats, activity, zones, operations] = await Promise.all([
     api.get("/api/stats/dashboard"),
     api.get("/api/activity"),
     api.get("/api/stats/zones"),
+    api.get("/api/admin/operations-summary").catch(() => null),
   ]);
+  const dashPrefs = getDashboardPrefs();
 
   // V823 — KPIs con series y tendencias REALES del backend (7 días).
   // Si el backend no manda la serie (instancia antigua), no inventamos datos:
@@ -2172,50 +2443,39 @@ async function viewDashboard(root){
 
   const kpisPro = document.createElement("div");
   kpisPro.className = "pro-kpis";
-  kpisPro.appendChild(proKpi({
+  const kpiCards = {};
+  kpiCards.users = proKpi({
     label: "Nuevos usuarios (7d)", icon: "👥", value: fmt.num(stats.signups_week || 0),
     trend: stats.signups_trend || null, sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
     sub: "vs semana anterior",
-  }));
-  kpisPro.appendChild(proKpi({
+  });
+  kpiCards.online = proKpi({
     label: "Usuarios en línea", icon: "🟢", value: fmt.num(stats.online || 0),
     trend: null, sparkline: sparkOnline, gradA: "#22c55e", gradB: "#16a34a",
     sub: "últimas 12h",
-  }));
-  kpisPro.appendChild(proKpi({
+  });
+  kpiCards.mrr = proKpi({
     label: "MRR estimado", icon: "💰", value: fmt.eur(stats.mrr || 0),
     trend: stats.mrr_trend || null, sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
     sub: `${fmt.num(stats.subscriptions || 0)} suscripciones`,
-  }));
-  kpisPro.appendChild(proKpi({
+  });
+  kpiCards.matches = proKpi({
     label: "Matches nuevos (7d)", icon: "💞", value: fmt.num(stats.matches_week || stats.matches || 0),
     trend: stats.matches_trend || null, sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
     sub: `${fmt.num(stats.open_reports || 0)} denuncias abiertas`,
-  }));
+  });
+  dashPrefs.kpis.forEach(key => { if (kpiCards[key]) kpisPro.appendChild(kpiCards[key]); });
   root.appendChild(kpisPro);
 
   root.appendChild(viewTitle("Panel principal",
     "Vista general de tu plataforma en tiempo real.",
-    [ btn("🔄 Resetear estadísticas", "ghost sm", async () => {
-        const ans = prompt(
-          "Esto BORRARÁ todos los usuarios, matches, mensajes, denuncias, pagos, logs y actividad.\n" +
-          "Se conservan: ajustes, planes, contenido/textos, países.\n\n" +
-          'Para confirmar, escribe: RESET'
-        );
-        if (ans !== "RESET") { toast("Cancelado"); return; }
-        try {
-          const r = await api.post("/api/admin/reset-stats", { confirm: "RESET" });
-          const totals = Object.entries(r.deleted || {})
-            .filter(([, v]) => typeof v === "number" && v > 0)
-            .reduce((a, [, v]) => a + v, 0);
-          toast(`Estadísticas reseteadas · ${totals} registros eliminados`);
-          setTimeout(() => route("dashboard"), 600);
-        } catch (e) {
-          toast("Error al resetear estadísticas");
-        }
-      }),
+    [ btn("Personalizar", "ghost sm", openDashboardPrefs),
       btn("Exportar usuarios", "ghost sm", () => downloadCSV("users")),
       btn("＋ Ir a campañas", "primary sm", () => { document.querySelector('[data-view="notifications"]').click(); }) ]));
+
+  if (operations && (dashPrefs.work_center || dashPrefs.health)) {
+    root.appendChild(renderOperationsCenter(operations, dashPrefs.work_center, dashPrefs.health));
+  }
 
   // --- Modo pruebas privado: toggle rápido en cabecera del dashboard ---
   try {
@@ -2425,7 +2685,7 @@ async function viewDashboard(root){
     cardsGrid.appendChild(card);
   });
   sectionsWrap.appendChild(cardsGrid);
-  root.appendChild(sectionsWrap);
+  if (dashPrefs.shortcuts) root.appendChild(sectionsWrap);
 
   const kpis = [
     { title: "Usuarios totales", val: fmt.num(stats.total), sub: `${stats.active} activos`, cls: "rose",
@@ -8582,22 +8842,6 @@ async function viewPromos(root){
   }
 }
 async function viewStats(root){
-  const resetBtn = btn("🔄 Resetear estadísticas", "danger sm", async () => {
-    const ans = prompt(
-      "Esto BORRARÁ todos los usuarios, matches, mensajes, denuncias, pagos, logs, actividad y contadores de ciudades.\n" +
-      "Se conservan: ajustes, planes, contenido/textos, países.\n\n" +
-      'Para confirmar, escribe: RESET'
-    );
-    if (ans !== "RESET") { toast("Cancelado"); return; }
-    resetBtn.disabled = true;
-    try {
-      const r = await api.post("/api/admin/reset-stats", { confirm: "RESET" });
-      toast("Estadísticas reseteadas");
-      route("stats");
-    } catch (e) {
-      toast("Error: " + (e.data?.error || e.message), "err");
-    } finally { resetBtn.disabled = false; }
-  });
   root.appendChild(viewTitle("Estadísticas", "Distribuciones y KPIs de la comunidad.",
     [
       btn("📅 Informe programado", "ghost sm", () => openScheduledReport()),
@@ -8615,7 +8859,6 @@ async function viewStats(root){
       btn("📊 Comparar periodos", "ghost sm", () => openStatsCompare()),
       btn("🌍 Mapa de calor", "ghost sm", () => openHeatmap()),
       btn("🎯 Cohortes retención", "ghost sm", () => openCohorts()),
-      resetBtn,
     ]));
   const [cities, gender, orientation] = await Promise.all([
     api.get("/api/stats/cities"),
@@ -9516,6 +9759,31 @@ function fullDataPanel() {
 /* ============================================================
    Backup / restauración de configuración
    ============================================================ */
+function askDestructiveReset() {
+  return new Promise(resolve => {
+    const overlay = el("div", { class: "ac-overlay" });
+    overlay.innerHTML = `<div class="ac-scrim"></div><div class="ac-dialog ac-dialog-wide reset-dialog" role="alertdialog" aria-modal="true">
+      <div class="reset-warning-mark">!</div>
+      <h3>Eliminación irreversible de datos</h3>
+      <p>Se borrarán usuarios, mensajes, matches, denuncias, pagos, registros y actividad. Esta acción no se puede deshacer desde el panel.</p>
+      <label class="reset-ack"><input type="checkbox"> He descargado y comprobado una copia completa reciente.</label>
+      <label class="field"><span>Escribe <strong>RESET AURA</strong> para confirmar</span><input class="input reset-phrase" autocomplete="off" placeholder="RESET AURA"></label>
+      <div class="ac-actions"><button class="btn ghost reset-cancel" type="button">Cancelar</button><button class="btn danger reset-ok" type="button" disabled>Eliminar todos los datos</button></div>
+    </div>`;
+    const phrase = overlay.querySelector(".reset-phrase");
+    const ack = overlay.querySelector(".reset-ack input");
+    const ok = overlay.querySelector(".reset-ok");
+    const validate = () => { ok.disabled = phrase.value.trim() !== "RESET AURA" || !ack.checked; };
+    phrase.addEventListener("input", validate); ack.addEventListener("change", validate);
+    const done = value => { overlay.remove(); resolve(value); };
+    overlay.querySelector(".ac-scrim").addEventListener("click", () => done(false));
+    overlay.querySelector(".reset-cancel").addEventListener("click", () => done(false));
+    ok.addEventListener("click", () => done(true));
+    document.body.appendChild(overlay);
+    setTimeout(() => phrase.focus(), 30);
+  });
+}
+
 async function viewBackup(root){
   root.appendChild(viewTitle(
     "Backup",
@@ -9807,6 +10075,44 @@ async function viewBackup(root){
     }),
   ]);
   root.appendChild(impPanel);
+
+  // V961 · Las acciones destructivas viven únicamente aquí, lejos de los KPIs
+  // cotidianos. Se exige copia completa reciente y una confirmación doble.
+  const lastFull = info && info.last_full_export_at ? new Date(info.last_full_export_at) : null;
+  const fullBackupRecent = !!(lastFull && !Number.isNaN(lastFull.getTime()) && Date.now() - lastFull.getTime() < 24 * 3600 * 1000);
+  const resetBtn = btn("Eliminar datos de la plataforma", "danger", async (ev) => {
+    if (!fullBackupRecent) {
+      toast("Descarga primero una copia completa y vuelve a comprobar");
+      return;
+    }
+    if (!(await askConfirm("Vas a entrar en la confirmación final. No cierres esta pantalla si tienes dudas.", { okText: "Continuar", danger: true }))) return;
+    if (!(await askDestructiveReset())) { toast("Operación cancelada"); return; }
+    const b = ev?.currentTarget;
+    try {
+      if (b) b.disabled = true;
+      const r = await api.post("/api/admin/reset-stats", { confirm: "RESET AURA" });
+      const total = Object.values(r.deleted || {}).filter(v => typeof v === "number").reduce((a, v) => a + v, 0);
+      toast(`Datos eliminados: ${fmt.num(total)} registros`);
+      route("dashboard");
+    } catch (e) {
+      toast("No se pudo completar la eliminación");
+    } finally { if (b) b.disabled = false; }
+  });
+  resetBtn.disabled = !fullBackupRecent;
+  const dangerPanel = el("section", { class: "backup-danger-zone" }, [
+    el("div", {}, [
+      el("small", {}, "ZONA DE PELIGRO"),
+      el("h3", {}, "Reiniciar los datos de la plataforma"),
+      el("p", {}, "Esta función se ha retirado del Panel y de Estadísticas para evitar clics accidentales. Solo se habilita durante las 24 horas posteriores a una copia completa."),
+      el("div", { class: `backup-proof ${fullBackupRecent ? "ok" : "missing"}` },
+        fullBackupRecent ? `Copia completa verificada: ${fmt.date(info.last_full_export_at)}` : "Falta una copia completa reciente"),
+    ]),
+    el("div", { class: "backup-danger-actions" }, [
+      btn("Comprobar de nuevo", "ghost", () => route("backup")),
+      resetBtn,
+    ]),
+  ]);
+  root.appendChild(dangerPanel);
 }
 
 async function viewLogs(root){

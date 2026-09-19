@@ -7674,7 +7674,7 @@ app.post("/api/admin/backup/import", wrap(async (req, res) => {
 // GET /api/admin/backup/info  → última fecha de export/import (para dashboard)
 app.get("/api/admin/backup/info", wrap(async (req, res) => {
   const [rows] = await pool.query(
-    "SELECT k, v FROM settings WHERE k IN ('backup.last_export_at','backup.last_export_sections','backup.last_import_at','backup.last_snapshot_at','backup.last_snapshot_file')"
+    "SELECT k, v FROM settings WHERE k IN ('backup.last_export_at','backup.last_export_sections','backup.last_import_at','backup.last_snapshot_at','backup.last_snapshot_file','backup.last_full_export_at')"
   );
   const info = {};
   for (const r of rows) info[r.k] = r.v;
@@ -7694,6 +7694,7 @@ app.get("/api/admin/backup/info", wrap(async (req, res) => {
     last_import_at: info["backup.last_import_at"] || null,
     last_snapshot_at: info["backup.last_snapshot_at"] || null,
     last_snapshot_file: info["backup.last_snapshot_file"] || null,
+    last_full_export_at: info["backup.last_full_export_at"] || null,
     snapshots_count: snapshotsCount,
     counts: {
       content: cntContent[0].c,
@@ -8043,6 +8044,12 @@ app.get("/api/admin/backup/full-export", requireAdmin, wrap(async (req, res) => 
       redacted_rows: tachadas,
       redacted_by_table: tachadoPorTabla,
     });
+    try {
+      await pool.execute(
+        "INSERT INTO settings (k,v) VALUES ('backup.last_full_export_at',?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
+        [new Date().toISOString()]
+      );
+    } catch {}
     await logActivity("admin",
       `Copia completa de datos descargada (${conFotos ? "con" : "sin"} fotos): ${totalFilas} filas de ${Object.keys(cuenta).length} tablas, ${Math.round(bytes / 1048576)} MB`);
   } catch (e) {
@@ -15444,10 +15451,11 @@ app.post("/api/admin/chats/:id/unblock-pair", wrap(async (req, res) => {
 // Reset dashboard statistics — clears counters and activity but preserves
 // settings, plans, countries/cities, content, admins. Wipes user-generated
 // tables so the dashboard KPIs reflect real (empty) data.
-// Requires body confirm="RESET".
+// Requires the explicit body confirm="RESET AURA". The longer phrase prevents
+// old UI buttons or an accidental replay from emptying production data.
 app.post("/api/admin/reset-stats", wrap(async (req, res) => {
   const confirm = String(req.body?.confirm || "");
-  if (confirm !== "RESET") return res.status(400).json({ error: "confirm_required" });
+  if (confirm !== "RESET AURA") return res.status(400).json({ error: "confirm_required" });
   const candidates = [
     "messages", "conversations", "reports", "payments",
     "promotions", "notification_campaigns", "logs", "activity",
@@ -17919,7 +17927,7 @@ const BUILD_ID = (() => {
     // al desplegar cambios del admin el navegador servía la versión cacheada y
     // había que forzar recarga a mano. Ahora cualquier cambio en estos ficheros
     // cambia el BUILD_ID y el checker del cliente recarga solo.
-    for (const f of ["app.js", "styles.css", "index.html", "admin.js", "admin_features.js"]) {
+    for (const f of ["app.js", "styles.css", "index.html", "admin.html", "admin.css", "admin.js", "admin_features.js"]) {
       try { h.update(fs.readFileSync(path.join(__dirname, "public", f))); } catch {}
     }
     return h.digest("hex").slice(0, 12);
@@ -17931,6 +17939,133 @@ app.get("/api/version", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.json({ ok: true, build: BUILD_ID });
 });
+
+/* V961 · Resumen operativo del panel de administración.
+   Una única petición alimenta el centro de trabajo y el estado técnico. Las
+   consultas son deliberadamente tolerantes: durante una migración puede faltar
+   alguna tabla y eso no debe dejar el panel entero en blanco. */
+async function adminScalar(sql, params = []) {
+  try {
+    const [rows] = await pool.query(sql, params);
+    return Number(rows?.[0]?.n || 0);
+  } catch { return 0; }
+}
+async function adminRows(sql, params = []) {
+  try { const [rows] = await pool.query(sql, params); return rows || []; }
+  catch { return []; }
+}
+
+app.get("/api/admin/operations-summary", wrap(async (req, res) => {
+  const dbStarted = Date.now();
+  let dbOk = true;
+  try { await pool.query("SELECT 1"); } catch { dbOk = false; }
+  const dbMs = Date.now() - dbStarted;
+
+  const [
+    reports, tickets, urgentTickets, kyc, appeals, nowPhotos, devices,
+    emailQueued, emailFailed, pushQueued, pushFailed, errors24h, backupRows,
+  ] = await Promise.all([
+    adminScalar("SELECT COUNT(*) n FROM reports WHERE status IN ('open','reviewing','escalated')"),
+    adminScalar("SELECT COUNT(*) n FROM support_tickets WHERE status <> 'closed'"),
+    adminScalar("SELECT COUNT(*) n FROM support_tickets WHERE status <> 'closed' AND priority='high'"),
+    adminScalar("SELECT COUNT(*) n FROM identity_verifications WHERE status IN ('pending','manual_review','suspended')"),
+    adminScalar("SELECT COUNT(*) n FROM appeals WHERE status IN ('open','review')"),
+    adminScalar("SELECT COUNT(*) n FROM photos WHERE is_now_photo=1 AND approved=0"),
+    adminScalar("SELECT COUNT(*) n FROM device_incidents WHERE status IN ('pending_evidence','pending_admin','approved','active')"),
+    adminScalar("SELECT COUNT(*) n FROM email_outbox WHERE status='queued'"),
+    adminScalar("SELECT COUNT(*) n FROM email_outbox WHERE status='failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
+    adminScalar("SELECT COUNT(*) n FROM push_campaigns WHERE status IN ('queued','sending')"),
+    adminScalar("SELECT COALESCE(SUM(failed_count),0) n FROM push_campaigns WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
+    adminScalar("SELECT COUNT(*) n FROM logs WHERE level='error' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
+    adminRows("SELECT k,v FROM settings WHERE k IN ('backup.last_export_at','backup.last_snapshot_at','backup.last_full_export_at')"),
+  ]);
+
+  const backup = Object.fromEntries(backupRows.map(r => [r.k, r.v]));
+  const queues = [
+    { key: "reports", label: "Denuncias", count: reports, view: "reports", tone: reports ? "danger" : "ok" },
+    { key: "tickets", label: "Tickets", count: tickets, urgent: urgentTickets, view: "tickets", tone: urgentTickets ? "danger" : (tickets ? "warn" : "ok") },
+    { key: "kyc", label: "Verificación", count: kyc, view: "kyc", tone: kyc ? "warn" : "ok" },
+    { key: "appeals", label: "Apelaciones", count: appeals, view: "appeals", tone: appeals ? "warn" : "ok" },
+    { key: "photos", label: "Fotos por aprobar", count: nowPhotos, view: "fx_moderation_ai", tone: nowPhotos ? "warn" : "ok" },
+    { key: "devices", label: "Dispositivos perdidos", count: devices, view: "device_incidents", tone: devices ? "danger" : "ok" },
+  ];
+
+  const workItems = await adminRows(`
+    SELECT * FROM (
+      SELECT 'report' kind, id, CONCAT('Denuncia #', id) title,
+             CONCAT(reason, ' · usuario #', target_id) detail,
+             CASE WHEN status='escalated' THEN 'critical' ELSE 'high' END severity,
+             created_at, 'reports' view_name
+        FROM reports WHERE status IN ('open','reviewing','escalated')
+      UNION ALL
+      SELECT 'ticket', id, CONCAT('Ticket ', ref) title,
+             CONCAT(subject, ' · ', email) detail,
+             CASE WHEN priority='high' THEN 'critical' ELSE 'medium' END severity,
+             created_at, 'tickets'
+        FROM support_tickets WHERE status <> 'closed'
+      UNION ALL
+      SELECT 'appeal', id, CONCAT('Apelación #', id) title,
+             CONCAT(email, ' · ', COALESCE(account_status,'cuenta')) detail,
+             'medium' severity, created_at, 'appeals'
+        FROM appeals WHERE status IN ('open','review')
+    ) work
+    ORDER BY FIELD(severity,'critical','high','medium'), created_at ASC
+    LIMIT 12`);
+
+  const technicalIssues = [];
+  if (!dbOk) technicalIssues.push({ level: "critical", label: "Base de datos sin respuesta" });
+  if (emailFailed) technicalIssues.push({ level: "danger", label: `${emailFailed} emails fallidos en 24 h` });
+  if (emailQueued >= 25) technicalIssues.push({ level: "warn", label: `${emailQueued} emails en cola` });
+  if (pushFailed) technicalIssues.push({ level: "danger", label: `${pushFailed} envíos push fallidos en 24 h` });
+  if (pushQueued >= 10) technicalIssues.push({ level: "warn", label: `${pushQueued} campañas push en cola` });
+  if (errors24h) technicalIssues.push({ level: errors24h >= 10 ? "danger" : "warn", label: `${errors24h} errores registrados en 24 h` });
+
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    queues,
+    work_items: workItems,
+    health: {
+      status: technicalIssues.some(i => ["critical", "danger"].includes(i.level)) ? "attention" : "ok",
+      ready: BOOT_READY,
+      database: { ok: dbOk, latency_ms: dbMs },
+      email: { queued: emailQueued, failed_24h: emailFailed },
+      push: { queued: pushQueued, failed_24h: pushFailed },
+      errors_24h: errors24h,
+      backup: {
+        last_export_at: backup["backup.last_export_at"] || null,
+        last_snapshot_at: backup["backup.last_snapshot_at"] || null,
+        last_full_export_at: backup["backup.last_full_export_at"] || null,
+      },
+      build: BUILD_ID,
+      uptime_seconds: Math.round(process.uptime()),
+      issues: technicalIssues,
+    },
+  });
+}));
+
+/* V961 · Búsqueda global real. Antes la cabecera prometía buscar denuncias y
+   transacciones, pero solo consultaba usuarios. */
+app.get("/api/admin/global-search", wrap(async (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 100);
+  if (q.length < 2) return res.json({ ok: true, groups: {} });
+  const like = `%${q}%`;
+  const id = /^\d+$/.test(q) ? Number(q) : -1;
+  const [users, tickets, reports, payments] = await Promise.all([
+    adminRows(`SELECT id,name,email,photo_url,status FROM users
+                WHERE id=? OR name LIKE ? OR email LIKE ? ORDER BY id DESC LIMIT 8`, [id, like, like]),
+    adminRows(`SELECT id,ref,subject,email,status,priority,created_at FROM support_tickets
+                WHERE id=? OR ref LIKE ? OR subject LIKE ? OR email LIKE ? ORDER BY created_at DESC LIMIT 6`, [id, like, like, like]),
+    adminRows(`SELECT id,target_id,reason,status,created_at FROM reports
+                WHERE id=? OR CAST(target_id AS CHAR)=? OR reason LIKE ? ORDER BY created_at DESC LIMIT 6`, [id, q, like]),
+    adminRows(`SELECT p.id,p.invoice_no,p.amount,p.currency,p.status,p.created_at,u.email
+                 FROM payments p LEFT JOIN users u ON u.id=p.user_id
+                WHERE p.id=? OR p.invoice_no LIKE ? OR u.email LIKE ? ORDER BY p.created_at DESC LIMIT 6`, [id, like, like]),
+  ]);
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, groups: { users, tickets, reports, payments } });
+}));
 
 // V947 · Shell con el build INYECTADO. El <link> de styles.css trae el
 // marcador __AURA_BUILD__ y aquí se sustituye por el BUILD_ID real al servir.

@@ -1,6 +1,19 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 8 septiembre 2026 · última versión desplegada: V917**
+**Fecha de este resumen: 19 septiembre 2026 · última versión desplegada: V960**
+
+### V961 (19/09/2026) — Panel administrativo orientado a operaciones
+
+- Dashboard con **Centro de trabajo**: denuncias, tickets urgentes, KYC,
+  apelaciones, fotos pendientes y dispositivos perdidos en una sola cola.
+- **Estado técnico** en vivo: API, latencia de base de datos, colas de email y
+  push, fallos recientes, errores y fecha de la última copia completa.
+- Buscador global real para usuarios, tickets, denuncias, pagos y secciones.
+- Menú plegable con favoritos y accesos recientes guardados por navegador.
+- Dashboard personalizable (KPIs y bloques visibles).
+- “Resetear estadísticas” retirado de Dashboard/Estadísticas y trasladado a
+  Backup > Zona de peligro. Exige copia completa reciente, doble confirmación y
+  la frase exacta `RESET AURA`.
 
 ## CÓMO RETOMAR EL PROYECTO EN UN CHAT NUEVO
 
