@@ -4341,6 +4341,15 @@ function syncDesktopApp() {
          _welcomeIsDesktop();
   } catch {}
   document.body.classList.toggle("desktop-app", on);
+  // V952 · La barra lateral de escritorio muestra quién eres. Pasamos el nombre
+  // a CSS como variable (content: var(...)) para pintarlo SIN inyectar DOM
+  // dentro de #tabbar, que tiene su propia lógica de clics.
+  try {
+    if (on) {
+      const nm = (state && state.user && state.user.name) ? String(state.user.name) : "Tu cuenta";
+      document.body.style.setProperty("--aura-user-name", '"' + nm.replace(/"/g, "") + '"');
+    }
+  } catch {}
 }
 try {
   const __mqW = window.matchMedia("(min-width: 901px)");
