@@ -1238,6 +1238,10 @@ const ESCRITURA = [
   // Tickets de soporte (responder, cambiar estado, repartir)
   [/^(POST|PUT|PATCH) \/api\/tickets(\/|$)/, 2],
   [/^POST \/api\/(tickets|moderation)\/auto-assign$/, 2],
+  [/^POST \/api\/admin\/cases\/(ticket|report|payment)\/[^/]+\/notes$/, 2],
+  // Cada miembro protege su propia sesión; estas rutas nunca aceptan un email
+  // ajeno en el body y por eso pueden estar disponibles desde viewer.
+  [/^POST \/api\/admin\/2fa\/(setup|enable|disable)$/, 1],
   // Fotos de "busco ahora": aprobar / rechazar
   [/^POST \/api\/admin\/now-photos\/[^/]+\/(approve|reject|ai-check)$/, 2],
   // KYC: aprobar y rechazar (borrar la cuenta NO — está arriba, en el punto 1)
@@ -1327,6 +1331,47 @@ app.use((req, res, next) => {
     });
   }
   next();
+});
+
+/* V963 · Segundo factor de elevación para acciones críticas. No sustituye el
+   control de permisos: se ejecuta después de él y solo añade una comprobación
+   TOTP cuando la persona ha activado 2FA en su perfil del panel. */
+function isCriticalAdminAction(req) {
+  const key = `${String(req.method || "GET").toUpperCase()} ${req.path}`;
+  if (/^DELETE \/api\/(?!admin\/2fa)/.test(key)) return true;
+  if (/^POST \/api\/payments\/[^/]+\/refund$/.test(key)) return true;
+  if (/^POST \/api\/admin\/.*(?:reset|restore|purge|full-delete)/.test(key)) return true;
+  if (/^(PUT|PATCH) \/api\/settings$/.test(key)) {
+    return Object.keys(req.body || {}).some(k => /security|password|secret|stripe|payment|didit|superadmin|smtp|emailjs|backup/i.test(k));
+  }
+  if (/^PUT \/api\/admin\/me$/.test(key) && (req.body?.email || req.body?.password)) return true;
+  return false;
+}
+
+app.use(async (req, res, next) => {
+  if (!req.admin || !isCriticalAdminAction(req)) return next();
+  try {
+    const email = String(req.admin.email || "").toLowerCase();
+    const [rows] = await pool.query(
+      "SELECT secret, enabled FROM staff_2fa WHERE email=? LIMIT 1", [email]
+    );
+    const cfg = rows[0];
+    // Activar 2FA es voluntario; una vez activado, no existe bypass para estas
+    // operaciones. Así evitamos bloquear cuentas antiguas durante el despliegue.
+    if (!cfg || !cfg.enabled) return next();
+    const code = String(req.get("X-Admin-2FA") || "").replace(/\s+/g, "");
+    if (!code || !totpVerify(cfg.secret, code)) {
+      return res.status(428).json({
+        error: "admin_2fa_required",
+        message: code ? "El código 2FA no es válido." : "Confirma esta acción con tu código 2FA.",
+      });
+    }
+    await pool.execute("UPDATE staff_2fa SET last_used_at=NOW() WHERE email=?", [email]).catch(() => {});
+    next();
+  } catch (e) {
+    console.warn("[admin-2fa] critical check:", e.message);
+    res.status(503).json({ error: "admin_2fa_unavailable", message: "No se pudo comprobar el segundo factor." });
+  }
 });
 
 /* ---------- Schema ---------- */
@@ -2249,6 +2294,65 @@ async function migrate() {
       CONSTRAINT fk_user_2fa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB`);
   } catch (e) { /* ya existe */ }
+
+  /* V963 · Operaciones del panel: 2FA real para el equipo, responsables/notas
+     por caso, histórico técnico y verificación de copias. Todo es aditivo para
+     que una instalación existente pueda actualizarse sin perder datos. */
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS staff_2fa (
+      email VARCHAR(190) NOT NULL PRIMARY KEY,
+      secret VARCHAR(64) NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      recovery TEXT NULL,
+      activated_at TIMESTAMP NULL,
+      last_used_at TIMESTAMP NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB`);
+  } catch {}
+  for (const stmt of [
+    "ALTER TABLE support_tickets ADD COLUMN assignee_email VARCHAR(190) NULL",
+    "ALTER TABLE support_tickets ADD COLUMN admin_notes TEXT NULL",
+    "ALTER TABLE reports ADD COLUMN assignee_email VARCHAR(190) NULL",
+    "ALTER TABLE reports ADD COLUMN admin_notes TEXT NULL",
+  ]) { try { await pool.execute(stmt); } catch {} }
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS admin_case_notes (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      case_type ENUM('ticket','report','payment') NOT NULL,
+      case_id INT NOT NULL,
+      author VARCHAR(190) NOT NULL,
+      body TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_case (case_type, case_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch {}
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS admin_technical_metrics (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      api_ready TINYINT(1) NOT NULL DEFAULT 1,
+      db_ok TINYINT(1) NOT NULL DEFAULT 1,
+      db_latency_ms INT NOT NULL DEFAULT 0,
+      errors_count INT NOT NULL DEFAULT 0,
+      email_queued INT NOT NULL DEFAULT 0,
+      email_failed INT NOT NULL DEFAULT 0,
+      push_queued INT NOT NULL DEFAULT 0,
+      push_failed INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_created (created_at)
+    ) ENGINE=InnoDB`);
+  } catch {}
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS backup_verifications (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      snapshot_name VARCHAR(255) NOT NULL,
+      status ENUM('ok','failed') NOT NULL,
+      detail VARCHAR(500) NULL,
+      checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_snapshot (snapshot_name),
+      INDEX idx_checked (checked_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch {}
 
   // V441 - Admin puede volver a pedir el consentimiento GPS a un usuario.
   //        Cuando reask_pending=1, el cliente muestra el modal de consentimiento
@@ -3605,7 +3709,8 @@ app.patch("/api/plans/:id", wrap(async (req, res) => {
 app.get("/api/reports", wrap(async (req, res) => {
   const { status } = req.query;
   let sql = `
-    SELECT r.id, r.reason, r.status, r.created_at, r.target_id,
+    SELECT r.id, r.reason, r.details, r.status, r.created_at, r.target_id,
+           r.assignee_email, r.admin_notes,
            u.name AS target_name, u.email AS target_email, u.photo_url AS target_photo
     FROM reports r LEFT JOIN users u ON u.id = r.target_id
   `;
@@ -3613,11 +3718,15 @@ app.get("/api/reports", wrap(async (req, res) => {
   if (status) { sql += " WHERE r.status=?"; params.push(status); }
   sql += " ORDER BY r.created_at DESC LIMIT 100";
   const [rows] = await pool.query(sql, params);
-  res.json(rows);
+  const normalHours = Math.max(1, parseInt(getSetting("reports.sla_normal_hours", "24"), 10) || 24);
+  const urgentHours = Math.max(1, parseInt(getSetting("reports.sla_high_hours", "4"), 10) || 4);
+  res.json(rows.map(r => ({ ...r,
+    sla_due_at: new Date(new Date(r.created_at).getTime() + (r.status === "escalated" ? urgentHours : normalHours) * 3600000).toISOString()
+  })));
 }));
-app.patch("/api/reports/:id", wrap(async (req, res) => {
-  const { status } = req.body;
-  if (!status) return res.status(400).json({ error: "status_required" });
+app.patch("/api/reports/:id(\\d+)", wrap(async (req, res) => {
+  const { status, assignee_email, admin_notes } = req.body || {};
+  if (status == null && assignee_email == null && admin_notes == null) return res.status(400).json({ error: "no_fields" });
   // Cargar datos de la denuncia para el hook de email
   let repRow = null;
   try {
@@ -3628,9 +3737,16 @@ app.patch("/api/reports/:id", wrap(async (req, res) => {
     );
     if (rr.length) repRow = rr[0];
   } catch {}
-  await pool.execute("UPDATE reports SET status=?, resolved_at=CASE WHEN ? IN ('resolved','dismissed') THEN NOW() ELSE resolved_at END WHERE id=?",
-    [status, status, req.params.id]);
-  await logActivity("admin", `Denuncia ${req.params.id} → ${status}`);
+  const sets = [], vals = [];
+  if (status != null) {
+    sets.push("status=?", "resolved_at=CASE WHEN ? IN ('resolved','dismissed') THEN NOW() ELSE resolved_at END");
+    vals.push(status, status);
+  }
+  if (assignee_email != null) { sets.push("assignee_email=?"); vals.push(String(assignee_email).slice(0,190) || null); }
+  if (admin_notes != null) { sets.push("admin_notes=?"); vals.push(String(admin_notes).slice(0,8000)); }
+  vals.push(req.params.id);
+  await pool.execute(`UPDATE reports SET ${sets.join(", ")} WHERE id=?`, vals);
+  await logActivity("admin", `Denuncia ${req.params.id} actualizada por ${req.admin?.email || "admin"}`);
 
   try {
     if (repRow && (status === "resolved" || status === "dismissed") && repRow.reporter_id) {
@@ -3641,6 +3757,25 @@ app.patch("/api/reports/:id", wrap(async (req, res) => {
     }
   } catch {}
   res.json({ ok: true });
+}));
+
+app.get("/api/reports/:id(\\d+)", wrap(async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT r.*, u.name target_name,u.email target_email,u.photo_url target_photo,
+            ru.name reporter_name,ru.email reporter_email
+       FROM reports r
+       LEFT JOIN users u ON u.id=r.target_id
+       LEFT JOIN users ru ON ru.id=r.reporter_id
+      WHERE r.id=? LIMIT 1`, [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: "not_found" });
+  const [notes] = await pool.query(
+    "SELECT id,author,body,created_at FROM admin_case_notes WHERE case_type='report' AND case_id=? ORDER BY created_at DESC", [req.params.id]);
+  const r = rows[0];
+  const hours = r.status === "escalated"
+    ? (parseInt(getSetting("reports.sla_high_hours", "4"),10) || 4)
+    : (parseInt(getSetting("reports.sla_normal_hours", "24"),10) || 24);
+  r.sla_due_at = new Date(new Date(r.created_at).getTime() + hours * 3600000).toISOString();
+  res.json({ report: r, notes });
 }));
 
 /* ============================================================
@@ -5992,6 +6127,26 @@ app.get("/api/admin/waitlist/export.csv", wrap(async (req, res) => {
   res.send(lines.join("\n"));
 }));
 
+// V963 · Responsables disponibles y notas internas compartidas por los casos.
+app.get("/api/admin/case-assignees", wrap(async (req, res) => {
+  const owner = activeAdminEmail();
+  const staff = await adminRows("SELECT email,name,role FROM staff WHERE status='active' ORDER BY name,email");
+  const items = [{ email: owner, name: getSetting("admin.display_name", "") || "Administrador", role: "superadmin" }];
+  for (const s of staff) if (String(s.email).toLowerCase() !== String(owner).toLowerCase()) items.push(s);
+  res.json({ items });
+}));
+
+app.post("/api/admin/cases/:type/:id/notes", wrap(async (req, res) => {
+  const type = String(req.params.type || "");
+  const id = parseInt(req.params.id, 10);
+  const body = String(req.body?.body || "").trim().slice(0,8000);
+  if (!['ticket','report','payment'].includes(type) || !id || !body) return res.status(400).json({ error: "bad_request" });
+  const author = String(req.admin?.email || "admin").slice(0,190);
+  const [r] = await pool.execute(
+    "INSERT INTO admin_case_notes (case_type,case_id,author,body) VALUES (?,?,?,?)", [type,id,author,body]);
+  res.json({ ok:true, id:r.insertId, author, body, created_at:new Date().toISOString() });
+}));
+
 // ADMIN: list tickets
 app.get("/api/tickets", wrap(async (req, res) => {
   const { status, priority, category, q } = req.query;
@@ -6009,7 +6164,7 @@ app.get("/api/tickets", wrap(async (req, res) => {
   const [rows] = await pool.query(
     `SELECT id, ref, user_id, name, email, category, subject,
             LEFT(message, 220) AS excerpt, priority, status, attachments,
-            created_at, updated_at
+            assignee_email, admin_notes, created_at, updated_at
        FROM support_tickets ${where}
        ORDER BY
          CASE status WHEN 'open' THEN 1 WHEN 'in_progress' THEN 2 WHEN 'waiting' THEN 3 ELSE 4 END,
@@ -6024,23 +6179,41 @@ app.get("/api/tickets", wrap(async (req, res) => {
   const [[{ waiting }]]     = await pool.query("SELECT COUNT(*) `waiting` FROM support_tickets WHERE status='waiting'");
   const [[{ closed }]]      = await pool.query("SELECT COUNT(*) `closed` FROM support_tickets WHERE status='closed'");
   const [[{ high }]]        = await pool.query("SELECT COUNT(*) `high` FROM support_tickets WHERE priority='high' AND status<>'closed'");
-  res.json({ items: rows, stats: { open, in_progress, waiting, closed, high } });
+  const slaHours = {
+    high: Math.max(1, parseInt(getSetting("tickets.sla_high", "2"),10) || 2),
+    med: Math.max(1, parseInt(getSetting("tickets.sla_normal", "24"),10) || 24),
+    low: Math.max(1, parseInt(getSetting("tickets.sla_low", "72"),10) || 72),
+  };
+  const items = rows.map(t => ({ ...t,
+    sla_due_at: new Date(new Date(t.created_at).getTime() + (slaHours[t.priority] || slaHours.low) * 3600000).toISOString()
+  }));
+  res.json({ items, stats: { open, in_progress, waiting, closed, high } });
 }));
 
 // ADMIN: single ticket detail + messages
-app.get("/api/tickets/:id", wrap(async (req, res) => {
+app.get("/api/tickets/:id(\\d+)", wrap(async (req, res) => {
   const [[t]] = await pool.query("SELECT * FROM support_tickets WHERE id=?", [req.params.id]);
   if (!t) return res.status(404).json({ error: "not_found" });
   const [msgs] = await pool.query(
     "SELECT id, author, author_name, body, created_at FROM support_ticket_messages WHERE ticket_id=? ORDER BY created_at ASC",
     [req.params.id]
   );
-  res.json({ ticket: t, messages: msgs });
+  const [notes] = await pool.query(
+    "SELECT id,author,body,created_at FROM admin_case_notes WHERE case_type='ticket' AND case_id=? ORDER BY created_at DESC",
+    [req.params.id]
+  );
+  const slaH = t.priority === "high"
+    ? (parseInt(getSetting("tickets.sla_high", "2"),10) || 2)
+    : t.priority === "med"
+      ? (parseInt(getSetting("tickets.sla_normal", "24"),10) || 24)
+      : (parseInt(getSetting("tickets.sla_low", "72"),10) || 72);
+  t.sla_due_at = new Date(new Date(t.created_at).getTime() + Math.max(1,slaH) * 3600000).toISOString();
+  res.json({ ticket: t, messages: msgs, notes });
 }));
 
 // ADMIN: update ticket (status / priority / assignment stub)
-app.patch("/api/tickets/:id", wrap(async (req, res) => {
-  const allowed = ["status", "priority", "category"];
+app.patch("/api/tickets/:id(\\d+)", wrap(async (req, res) => {
+  const allowed = ["status", "priority", "category", "assignee_email", "admin_notes"];
   const fields = [];
   const params = [];
   for (const k of allowed) {
@@ -6054,7 +6227,7 @@ app.patch("/api/tickets/:id", wrap(async (req, res) => {
 }));
 
 // ADMIN: reply
-app.post("/api/tickets/:id/reply", wrap(async (req, res) => {
+app.post("/api/tickets/:id(\\d+)/reply", wrap(async (req, res) => {
   const body = String(req.body?.body || "").trim().slice(0, 8000);
   const authorName = String(req.body?.author_name || "Soporte Aura").slice(0, 120);
   const closeAfter = !!req.body?.close;
@@ -6092,7 +6265,7 @@ app.post("/api/tickets/:id/reply", wrap(async (req, res) => {
 }));
 
 // ADMIN: delete
-app.delete("/api/tickets/:id", wrap(async (req, res) => {
+app.delete("/api/tickets/:id(\\d+)", wrap(async (req, res) => {
   await pool.execute("DELETE FROM support_tickets WHERE id=?", [req.params.id]);
   await logActivity("ticket", `Ticket ${req.params.id} eliminado`);
   res.json({ ok: true });
@@ -6106,6 +6279,15 @@ app.get("/api/payments", wrap(async (req, res) => {
     ORDER BY p.created_at DESC LIMIT 100
   `);
   res.json(rows);
+}));
+app.get("/api/payments/:id(\\d+)", wrap(async (req, res) => {
+  const [rows] = await pool.query(`
+    SELECT p.*,u.name user_name,u.email user_email,u.photo_url user_photo
+      FROM payments p LEFT JOIN users u ON u.id=p.user_id WHERE p.id=? LIMIT 1`, [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error:"not_found" });
+  const [notes] = await pool.query(
+    "SELECT id,author,body,created_at FROM admin_case_notes WHERE case_type='payment' AND case_id=? ORDER BY created_at DESC", [req.params.id]);
+  res.json({ payment:rows[0], notes });
 }));
 app.post("/api/payments/:id/refund", wrap(async (req, res) => {
   await pool.execute("UPDATE payments SET status='refunded' WHERE id=?", [req.params.id]);
@@ -7688,6 +7870,11 @@ app.get("/api/admin/backup/info", wrap(async (req, res) => {
     const all = await fs.promises.readdir(path.join(__dirname, "backups"));
     snapshotsCount = all.filter(n => /^aura-snapshot-.*\.json$/.test(n)).length;
   } catch {}
+  let verification = null;
+  try {
+    const [vr] = await pool.query("SELECT snapshot_name,status,detail,checked_at FROM backup_verifications ORDER BY checked_at DESC LIMIT 1");
+    verification = vr[0] || null;
+  } catch {}
   res.json({
     last_export_at: info["backup.last_export_at"] || null,
     last_export_sections: info["backup.last_export_sections"] || null,
@@ -7696,6 +7883,7 @@ app.get("/api/admin/backup/info", wrap(async (req, res) => {
     last_snapshot_file: info["backup.last_snapshot_file"] || null,
     last_full_export_at: info["backup.last_full_export_at"] || null,
     snapshots_count: snapshotsCount,
+    verification,
     counts: {
       content: cntContent[0].c,
       design: cntDesign[0].c,
@@ -7704,6 +7892,49 @@ app.get("/api/admin/backup/info", wrap(async (req, res) => {
     }
   });
 }));
+
+async function verifySnapshotFile(name) {
+  const safe = String(name || "");
+  if (!/^aura-snapshot-[a-zA-Z0-9_\-]+\.json$/.test(safe)) throw new Error("Nombre de snapshot no válido");
+  const raw = await fs.promises.readFile(path.join(__dirname, "backups", safe), "utf8");
+  const data = JSON.parse(raw);
+  if (!data || data.__aura_backup__ !== true || !data.sections || typeof data.sections !== "object") {
+    throw new Error("Formato de copia no válido");
+  }
+  const required = ["content","design","config","emails"];
+  const missing = required.filter(k => !(k in data.sections));
+  if (missing.length) throw new Error("Faltan secciones: " + missing.join(", "));
+  for (const k of ["content","design","config"]) {
+    if (!data.sections[k] || typeof data.sections[k] !== "object" || Array.isArray(data.sections[k])) {
+      throw new Error(`La sección ${k} está dañada`);
+    }
+    for (const [settingKey,value] of Object.entries(data.sections[k])) {
+      if (!settingKey || value == null || typeof value === "object") throw new Error(`Dato no restaurable en ${k}`);
+    }
+  }
+  if (!Array.isArray(data.sections.emails)) throw new Error("Plantillas de email dañadas");
+  if (data.sections.emails.some(t => !t || typeof t !== "object" || !t.id)) throw new Error("Una plantilla de email está dañada");
+  return {
+    size: Buffer.byteLength(raw), sections: required,
+    records: Object.keys(data.sections.content).length + Object.keys(data.sections.design).length + Object.keys(data.sections.config).length + data.sections.emails.length,
+    generated_at: data.generated_at || null,
+  };
+}
+
+async function recordSnapshotVerification(name) {
+  try {
+    const detail = await verifySnapshotFile(name);
+    await pool.execute(
+      "INSERT INTO backup_verifications (snapshot_name,status,detail) VALUES (?,'ok',?)",
+      [name, JSON.stringify(detail).slice(0,500)]);
+    return { status:"ok", detail };
+  } catch (e) {
+    await pool.execute(
+      "INSERT INTO backup_verifications (snapshot_name,status,detail) VALUES (?,'failed',?)",
+      [String(name).slice(0,255), String(e.message || e).slice(0,500)]).catch(() => {});
+    return { status:"failed", error:String(e.message || e) };
+  }
+}
 
 // POST /api/admin/backup/snapshot  → guarda un snapshot completo en /backend/backups
 // y lo registra en settings para poder listarlo/descargarlo después.
@@ -7737,6 +7968,7 @@ app.post("/api/admin/backup/snapshot", wrap(async (req, res) => {
   const fname = `aura-snapshot-${safeLabel}-${ts}.json`;
   const fpath = path.join(dir, fname);
   await fs.promises.writeFile(fpath, JSON.stringify(payload, null, 2), "utf8");
+  const verification = await recordSnapshotVerification(fname);
   try {
     await pool.execute(
       "INSERT INTO settings (k, v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)",
@@ -7748,7 +7980,7 @@ app.post("/api/admin/backup/snapshot", wrap(async (req, res) => {
     );
   } catch {}
   await logActivity("admin", `Snapshot guardado: ${fname}`);
-  res.json({ ok: true, file: fname, size: (await fs.promises.stat(fpath)).size });
+  res.json({ ok: true, file: fname, size: (await fs.promises.stat(fpath)).size, verification });
 }));
 
 // GET /api/admin/backup/snapshots  → lista de snapshots disponibles
@@ -7767,7 +7999,21 @@ app.get("/api/admin/backup/snapshots", wrap(async (req, res) => {
     } catch {}
   }
   out.sort((a,b) => (a.mtime < b.mtime ? 1 : -1));
+  let latest = {};
+  try {
+    const [vr] = await pool.query(`SELECT v.snapshot_name,v.status,v.detail,v.checked_at
+      FROM backup_verifications v
+      JOIN (SELECT snapshot_name,MAX(id) id FROM backup_verifications GROUP BY snapshot_name) x ON x.id=v.id`);
+    latest = Object.fromEntries(vr.map(v => [v.snapshot_name,v]));
+  } catch {}
+  out.forEach(f => { f.verification = latest[f.name] || null; });
   res.json({ items: out });
+}));
+
+app.post("/api/admin/backup/verify/:name", wrap(async (req, res) => {
+  const result = await recordSnapshotVerification(req.params.name);
+  if (result.status !== "ok") return res.status(422).json({ ok:false, ...result });
+  res.json({ ok:true, ...result });
 }));
 
 // GET /api/admin/backup/snapshot/:name  → descarga un snapshot concreto
@@ -15922,6 +16168,70 @@ app.post("/api/2fa/login-verify", wrap(async (req, res) => {
   res.json({ ok: true, user: u, used_recovery: usedRecovery, auth_token: signUserToken(u.id, undefined, _did) });
 }));
 
+/* V963 · 2FA del PANEL. Está separado del 2FA de usuarios porque una cuenta de
+   staff no tiene por qué existir en `users`. El email firmado del token de
+   administración es la identidad y nunca se acepta desde el body. */
+async function getAdmin2FA(email) {
+  const [rows] = await pool.query(
+    "SELECT email,secret,enabled,recovery,activated_at,last_used_at FROM staff_2fa WHERE email=? LIMIT 1",
+    [String(email || "").toLowerCase()]
+  );
+  return rows[0] || null;
+}
+
+app.get("/api/admin/2fa/status", wrap(async (req, res) => {
+  const r = await getAdmin2FA(req.admin?.email);
+  let remaining = 0;
+  try { remaining = r?.recovery ? JSON.parse(r.recovery).length : 0; } catch {}
+  res.json({ ok: true, enabled: !!r?.enabled, recovery_remaining: remaining,
+    activated_at: r?.activated_at || null, last_used_at: r?.last_used_at || null });
+}));
+
+app.post("/api/admin/2fa/setup", wrap(async (req, res) => {
+  const email = String(req.admin?.email || "").toLowerCase();
+  if (!email) return res.status(401).json({ error: "unauthorized" });
+  const secret = generateSecret();
+  await pool.execute(
+    `INSERT INTO staff_2fa (email,secret,enabled,recovery,activated_at)
+     VALUES (?,?,0,NULL,NULL)
+     ON DUPLICATE KEY UPDATE secret=VALUES(secret),enabled=0,recovery=NULL,activated_at=NULL`,
+    [email, secret]
+  );
+  res.json({ ok: true, secret, otpauth: buildOtpauthUrl(email, secret), issuer: TOTP_ISSUER });
+}));
+
+app.post("/api/admin/2fa/enable", wrap(async (req, res) => {
+  const email = String(req.admin?.email || "").toLowerCase();
+  const token = String(req.body?.token || "").trim();
+  const r = await getAdmin2FA(email);
+  if (!r?.secret) return res.status(400).json({ error: "no_setup", message: "Inicia primero la configuración." });
+  if (!totpVerify(r.secret, token)) return res.status(400).json({ error: "invalid_code", message: "El código no es válido." });
+  const codes = genRecoveryCodes(8);
+  await pool.execute(
+    "UPDATE staff_2fa SET enabled=1,recovery=?,activated_at=NOW(),last_used_at=NOW() WHERE email=?",
+    [JSON.stringify(codes.map(hashRecovery)), email]
+  );
+  await logActivity("security", `2FA del panel activado para ${email}`);
+  res.json({ ok: true, recovery_codes: codes });
+}));
+
+app.post("/api/admin/2fa/disable", wrap(async (req, res) => {
+  const email = String(req.admin?.email || "").toLowerCase();
+  const token = String(req.body?.token || "").trim();
+  const r = await getAdmin2FA(email);
+  if (!r?.enabled) return res.json({ ok: true, was_enabled: false });
+  let valid = /^\d{6}$/.test(token) && totpVerify(r.secret, token);
+  if (!valid && token) {
+    let recovery = [];
+    try { recovery = JSON.parse(r.recovery || "[]"); } catch {}
+    valid = recovery.includes(hashRecovery(token));
+  }
+  if (!valid) return res.status(400).json({ error: "invalid_code", message: "El código no es válido." });
+  await pool.execute("DELETE FROM staff_2fa WHERE email=?", [email]);
+  await logActivity("security", `2FA del panel desactivado para ${email}`);
+  res.json({ ok: true });
+}));
+
 /* ============================================================
    GPS opcional (RGPD) — Endpoints usuario
    ============================================================
@@ -17955,6 +18265,7 @@ async function adminRows(sql, params = []) {
   catch { return []; }
 }
 
+let lastTechnicalSampleAt = 0;
 app.get("/api/admin/operations-summary", wrap(async (req, res) => {
   const dbStarted = Date.now();
   let dbOk = true;
@@ -18020,6 +18331,19 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
   if (pushQueued >= 10) technicalIssues.push({ level: "warn", label: `${pushQueued} campañas push en cola` });
   if (errors24h) technicalIssues.push({ level: errors24h >= 10 ? "danger" : "warn", label: `${errors24h} errores registrados en 24 h` });
 
+  // Una muestra cada cinco minutos como máximo. El histórico se alimenta con
+  // la lectura normal del panel, sin cron externo y sin inflar la base.
+  if (Date.now() - lastTechnicalSampleAt > 5 * 60 * 1000) {
+    lastTechnicalSampleAt = Date.now();
+    pool.execute(
+      `INSERT INTO admin_technical_metrics
+       (api_ready,db_ok,db_latency_ms,errors_count,email_queued,email_failed,push_queued,push_failed)
+       VALUES (?,?,?,?,?,?,?,?)`,
+      [BOOT_READY ? 1 : 0, dbOk ? 1 : 0, dbMs, errors24h, emailQueued, emailFailed, pushQueued, pushFailed]
+    ).catch(() => {});
+    pool.execute("DELETE FROM admin_technical_metrics WHERE created_at < DATE_SUB(NOW(), INTERVAL 90 DAY)").catch(() => {});
+  }
+
   res.set("Cache-Control", "no-store");
   res.json({
     ok: true,
@@ -18043,6 +18367,19 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
       issues: technicalIssues,
     },
   });
+}));
+
+app.get("/api/admin/technical-history", wrap(async (req, res) => {
+  const period = ["24h","7d","30d"].includes(String(req.query.period)) ? String(req.query.period) : "24h";
+  const hours = period === "30d" ? 720 : (period === "7d" ? 168 : 24);
+  const [rows] = await pool.query(
+    `SELECT api_ready,db_ok,db_latency_ms,errors_count,email_queued,email_failed,push_queued,push_failed,created_at
+       FROM admin_technical_metrics
+      WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)
+      ORDER BY created_at ASC LIMIT 1000`, [hours]);
+  const outages = rows.filter(r => !r.api_ready || !r.db_ok).length;
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, period, outages, points:rows });
 }));
 
 /* V961 · Búsqueda global real. Antes la cabecera prometía buscar denuncias y

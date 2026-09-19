@@ -1,6 +1,16 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 19 septiembre 2026 · última versión desplegada: V962**
+**Fecha de este resumen: 19 septiembre 2026 · última versión preparada: V963**
+
+### V963 (19/09/2026) — Operaciones, seguridad y recuperación
+
+- El buscador abre directamente el ticket, la denuncia o el pago seleccionado.
+- Vistas de filtros guardadas en Tickets, Denuncias y Pagos.
+- SLA visible y ficha de caso con responsable, estado y notas internas.
+- Histórico técnico con gráficas de errores, colas, latencia y caídas.
+- Todas las tablas del panel se convierten en tarjetas legibles en móvil.
+- 2FA real y opcional para confirmar eliminaciones, reembolsos y ajustes críticos.
+- Los snapshots se verifican automáticamente y pueden comprobarse otra vez desde Backup.
 
 ### V962 (19/09/2026) — Acceso claro desde móvil
 

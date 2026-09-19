@@ -400,6 +400,30 @@ function fmtMoney(amount, cur) {
 }
 
 /* API helper */
+function requestAdmin2FACode(message) {
+  return new Promise((resolve) => {
+    const overlay = el("div", { class: "ac-overlay admin-2fa-overlay" });
+    overlay.innerHTML = `<div class="ac-scrim"></div><div class="ac-dialog" role="dialog" aria-modal="true">
+      <div class="security-mark">2FA</div><h3>Confirmación de seguridad</h3>
+      <p>${String(message || "Introduce el código de tu aplicación autenticadora.")}</p>
+      <input class="input admin-2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+      <div class="ac-actions"><button class="btn ghost cancel" type="button">Cancelar</button><button class="btn primary confirm" type="button">Confirmar</button></div>
+    </div>`;
+    const input = overlay.querySelector("input");
+    const finish = value => { overlay.remove(); resolve(value); };
+    overlay.querySelector(".cancel").onclick = () => finish("");
+    overlay.querySelector(".ac-scrim").onclick = () => finish("");
+    overlay.querySelector(".confirm").onclick = () => {
+      const code = input.value.replace(/\D/g, "");
+      if (code.length !== 6) { input.focus(); return; }
+      finish(code);
+    };
+    input.addEventListener("keydown", e => { if (e.key === "Enter") overlay.querySelector(".confirm").click(); });
+    document.body.appendChild(overlay);
+    setTimeout(() => input.focus(), 20);
+  });
+}
+
 // Callable: api(url, opts?) -> también objeto con .get/.post/.patch/.put/.del
 // V547 · Exponer helpers para admin_features.js
 setTimeout(() => {
@@ -422,6 +446,15 @@ async function api(url, opts) {
     cache: "no-store",
   });
   if (r.status === 401) return handleAuthFailure();
+  if (r.status === 428 && !opts._2faRetry) {
+    let data = null;
+    try { data = await r.json(); } catch {}
+    if (data?.error === "admin_2fa_required") {
+      const code = await requestAdmin2FACode(data.message);
+      if (!code) throw Object.assign(new Error("Acción cancelada"), { status:428, data });
+      return api(url, { ...opts, _2faRetry:true, headers:{ ...(opts.headers || {}), "X-Admin-2FA":code } });
+    }
+  }
   if (!r.ok) {
     let data = null;
     try { data = await r.json(); } catch {}
@@ -528,6 +561,64 @@ document.addEventListener("click", async (e) => {
   });
 });
 
+async function renderAdminTwoFaBox() {
+  let status = { enabled:false };
+  try { status = await api.get("/api/admin/2fa/status"); } catch {}
+  const box = el("section", { class:"admin-2fa-box" });
+  const paint = () => {
+    box.innerHTML = "";
+    box.appendChild(el("div", { class:"admin-2fa-head" }, [
+      el("div", { class:"security-mark" }, status.enabled ? "OK" : "2FA"),
+      el("div", {}, [
+        el("strong", {}, status.enabled ? "Protección 2FA activa" : "Protección de acciones críticas"),
+        el("small", {}, status.enabled
+          ? `Eliminaciones, reembolsos y cambios críticos pedirán un código. Códigos de rescate: ${status.recovery_remaining || 0}.`
+          : "Actívala para confirmar eliminaciones, reembolsos y cambios críticos desde una app autenticadora."),
+      ]),
+    ]));
+    if (!status.enabled) {
+      box.appendChild(btn("Activar 2FA", "primary sm", async () => {
+        try {
+          const setup = await api.post("/api/admin/2fa/setup", {});
+          const modal = el("div", { class:"ac-overlay admin-2fa-overlay" });
+          modal.innerHTML = `<div class="ac-scrim"></div><div class="ac-dialog ac-dialog-wide" role="dialog" aria-modal="true">
+            <div class="security-mark">2FA</div><h3>Configurar autenticador</h3>
+            <p>Añade una cuenta manualmente en Google Authenticator, Authy o Aegis con esta clave:</p>
+            <code class="twofa-secret"></code>
+            <p class="muted small">Después escribe el código de 6 dígitos que genera la aplicación.</p>
+            <input class="input admin-2fa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+            <div class="ac-actions"><button class="btn ghost cancel" type="button">Cancelar</button><button class="btn primary confirm" type="button">Activar</button></div>
+          </div>`;
+          modal.querySelector(".twofa-secret").textContent = setup.secret;
+          const close = () => modal.remove();
+          modal.querySelector(".cancel").onclick = close;
+          modal.querySelector(".ac-scrim").onclick = close;
+          modal.querySelector(".confirm").onclick = async () => {
+            const token = modal.querySelector("input").value.replace(/\D/g, "");
+            if (token.length !== 6) return toast("Escribe los 6 dígitos");
+            try {
+              const done = await api.post("/api/admin/2fa/enable", { token });
+              modal.querySelector(".ac-dialog").innerHTML = `<div class="security-mark">OK</div><h3>2FA activada</h3><p>Guarda estos códigos de recuperación en un lugar seguro. Solo se muestran una vez.</p><pre class="recovery-codes"></pre><div class="ac-actions"><button class="btn primary finish" type="button">He guardado los códigos</button></div>`;
+              modal.querySelector(".recovery-codes").textContent = (done.recovery_codes || []).join("\n");
+              modal.querySelector(".finish").onclick = () => { status = { enabled:true, recovery_remaining:(done.recovery_codes || []).length }; close(); paint(); };
+            } catch (e) { toast(e.message || "Código no válido"); }
+          };
+          document.body.appendChild(modal);
+        } catch (e) { toast(e.message || "No se pudo iniciar el 2FA"); }
+      }));
+    } else {
+      box.appendChild(btn("Desactivar 2FA", "ghost danger sm", async () => {
+        const token = await requestAdmin2FACode("Introduce el código de 6 dígitos de tu aplicación para desactivar la protección.");
+        if (!token) return;
+        try { await api.post("/api/admin/2fa/disable", { token }); status = { enabled:false }; paint(); toast("2FA desactivada"); }
+        catch (e) { toast(e.message || "Código no válido"); }
+      }));
+    }
+  };
+  paint();
+  return box;
+}
+
 /* Admin profile drawer — opened by clicking the avatar (top bar or sidebar).
    Lets the admin set display name, role, email, avatar image and password. */
 async function openAdminProfile() {
@@ -633,22 +724,7 @@ async function openAdminProfile() {
       el("small", { class: "help" }, "Lo cambia solo el administrador principal, desde Staff & Permisos."),
     ]));
   }
-  /* V931 · Aquí había un recuadro "🔐 Verificación en dos pasos (2FA)" y se ha
-     quitado, junto con sus tres funciones (renderTwoFaBox, openTwoFaSetup y
-     openTwoFaDisable, que estaban justo encima de openAdminProfile).
-     Motivo: las CUATRO rutas que usaba no existen en el servidor —
-     /api/admin/2fa/{status,setup,enable,disable}— y la tabla `staff` no tiene
-     columnas de TOTP. Al abrir el cajón, el fetch de status fallaba, el catch
-     pintaba "2FA no activado", y el botón "Activar 2FA" moría en "Error
-     iniciando 2FA". Es decir: enseñaba un candado que no cerraba nada, que es
-     peor que no enseñar ninguno, porque invita a quedarse tranquilo.
-     Ojo: el 2FA que SÍ funciona (/api/2fa/*) es el de los usuarios de la app.
-     No tiene nada que ver con la entrada al panel.
-     Para hacerlo de verdad hace falta: tabla staff_2fa, las tres rutas, y
-     exigir el código en /api/admin/login reaprovechando el TOTP nativo que ya
-     hay en el servidor. Se deja pendiente a propósito: al ser hoy un único
-     administrador, perder el móvil y los códigos de recuperación significaría
-     quedarse fuera del propio panel. Mejor cuando haya equipo. */
+  node.appendChild(await renderAdminTwoFaBox());
 
   node.appendChild(el("h3", { class: "ap-h3" }, "Cambiar contraseña"));
   node.appendChild(el("p", { class: "help" }, esDueno
@@ -1311,13 +1387,13 @@ $("#themeBtn").addEventListener("click", () => {
         u => { try { openUserDrawer(u.id); } catch {} });
       addGroup("Tickets", groups.tickets,
         t => ({ icon: "T", tone: t.priority === "high" ? "red" : "amber", title: `${t.ref || "#" + t.id} · ${t.subject || "Sin asunto"}`, detail: `${t.email || ""} · ${t.status || ""}` }),
-        () => document.querySelector('[data-view="tickets"]')?.click());
+        t => { route("tickets"); openTicketDrawer(t.id); });
       addGroup("Denuncias", groups.reports,
         r => ({ icon: "D", tone: "red", title: `Denuncia #${r.id} · ${r.reason || "Sin motivo"}`, detail: `Usuario #${r.target_id} · ${r.status || ""}` }),
-        () => document.querySelector('[data-view="reports"]')?.click());
+        r => { route("reports"); openReportDrawer(r.id); });
       addGroup("Pagos", groups.payments,
         p => ({ icon: "€", tone: "green", title: p.invoice_no || `Pago #${p.id}`, detail: `${p.email || ""} · ${fmt.eur(p.amount)} · ${p.status || ""}` }),
-        () => document.querySelector('[data-view="payments"]')?.click());
+        p => { route("payments"); openPaymentDrawer(p.id); });
 
       /* Conserva una altura cómoda incluso cuando una búsqueda devuelve varias
          categorías; el teclado puede seguir cerrándola con Escape. */
@@ -1811,7 +1887,8 @@ function route(view) {
 /* Annotate every td in a .data-table with data-label from its column header,
    so the mobile card layout can render "Header: value" pairs. Idempotent. */
 function labelTables(root) {
-  (root || document).querySelectorAll(".data-table").forEach(tbl => {
+  (root || document).querySelectorAll("table").forEach(tbl => {
+    if (!tbl.classList.contains("no-mobile-cards")) tbl.classList.add("mobile-card-table");
     const heads = Array.from(tbl.querySelectorAll("thead th")).map(th => th.textContent.trim());
     tbl.querySelectorAll("tbody tr").forEach(tr => {
       Array.from(tr.children).forEach((td, i) => {
@@ -1822,6 +1899,43 @@ function labelTables(root) {
     });
   });
 }
+
+/* V963 · Vistas guardadas. Son personales para este navegador y no mezclan
+   filtros entre módulos. Se conservan aunque se cierre el panel. */
+function savedFiltersControl(viewKey, getState, applyState) {
+  const key = "aura-admin-saved-filters:" + viewKey;
+  const read = () => { try { const v = JSON.parse(localStorage.getItem(key) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
+  const write = rows => localStorage.setItem(key, JSON.stringify(rows.slice(0,20)));
+  const wrap = el("div", { class:"saved-filter-actions" });
+  wrap.appendChild(btn("Guardar vista", "ghost sm", () => {
+    const name = window.prompt("Nombre de esta vista de filtros:", "Mi vista");
+    if (!name?.trim()) return;
+    const rows = read().filter(x => x.name !== name.trim());
+    rows.unshift({ name:name.trim().slice(0,50), state:getState(), saved_at:new Date().toISOString() });
+    write(rows); toast("Vista guardada");
+  }));
+  wrap.appendChild(btn("Mis filtros", "ghost sm", () => {
+    const rows = read();
+    const overlay = el("div", { class:"ac-overlay" });
+    const dialog = el("div", { class:"ac-dialog ac-dialog-wide" }, [
+      el("h3", {}, "Filtros guardados"),
+      el("p", { class:"muted small" }, "Recupera una búsqueda habitual con un toque."),
+    ]);
+    const list = el("div", { class:"saved-filter-list" });
+    if (!rows.length) list.appendChild(el("div", { class:"empty" }, "Todavía no has guardado ninguna vista."));
+    rows.forEach((item, index) => list.appendChild(el("div", { class:"saved-filter-row" }, [
+      el("button", { class:"saved-filter-open", type:"button", onclick:() => { applyState(item.state || {}); overlay.remove(); } }, [
+        el("strong", {}, item.name), el("small", {}, item.saved_at ? new Date(item.saved_at).toLocaleDateString("es-ES") : ""),
+      ]),
+      btn("Eliminar", "ghost danger xs", () => { rows.splice(index,1); write(rows); overlay.remove(); wrap.querySelector("button:last-child")?.click(); }),
+    ])));
+    dialog.appendChild(list);
+    dialog.appendChild(el("div", { class:"ac-actions" }, btn("Cerrar", "ghost", () => overlay.remove())));
+    overlay.appendChild(el("div", { class:"ac-scrim", onclick:() => overlay.remove() }));
+    overlay.appendChild(dialog); document.body.appendChild(overlay);
+  }));
+  return wrap;
+}
 // Also observe async table inserts (e.g. refresh() after filter change)
 if (typeof MutationObserver !== "undefined") {
   document.addEventListener("DOMContentLoaded", () => {
@@ -1831,7 +1945,7 @@ if (typeof MutationObserver !== "undefined") {
       for (const m of muts) {
         for (const node of m.addedNodes) {
           if (node.nodeType !== 1) continue;
-          if (node.matches?.(".data-table") || node.querySelector?.(".data-table")) {
+          if (node.matches?.("table") || node.querySelector?.("table")) {
             labelTables(view);
             return;
           }
@@ -2387,6 +2501,37 @@ function openDashboardPrefs() {
   document.body.appendChild(overlay);
 }
 
+async function openTechnicalHistory() {
+  const overlay = el("div", { class:"ac-overlay" });
+  const modal = el("div", { class:"ac-dialog ac-dialog-wide technical-history" }, [
+    el("div", { class:"technical-history-head" }, [el("div", {}, [el("small", {}, "OBSERVABILIDAD"),el("h3", {}, "Historial técnico")]),btn("Cerrar","ghost sm",()=>overlay.remove())]),
+  ]);
+  const controls=el("div",{class:"technical-periods"}); const charts=el("div",{class:"technical-charts"});
+  modal.appendChild(controls);modal.appendChild(charts);
+  function chart(title, points, field, color, suffix="") {
+    const vals=points.map(p=>Number(p[field]||0)); const max=Math.max(1,...vals);
+    const xy=vals.map((v,i)=>`${vals.length<2?0:(i/(vals.length-1))*100},${38-(v/max)*34}`).join(" ");
+    return el("section",{class:"technical-chart"},[
+      el("div",{class:"technical-chart-title"},[el("strong",{},title),el("span",{},`${vals.at(-1)||0}${suffix}`)]),
+      el("div",{class:"technical-chart-svg"},(()=>{const s=document.createElementNS("http://www.w3.org/2000/svg","svg");s.setAttribute("viewBox","0 0 100 40");s.setAttribute("preserveAspectRatio","none");const p=document.createElementNS(s.namespaceURI,"polyline");p.setAttribute("points",xy);p.setAttribute("fill","none");p.setAttribute("stroke",color);p.setAttribute("stroke-width","2");p.setAttribute("vector-effect","non-scaling-stroke");s.appendChild(p);return s;})()),
+    ]);
+  }
+  async function load(period) {
+    charts.innerHTML="<div class='loading'>Cargando histórico…</div>";
+    try {
+      const d=await api.get("/api/admin/technical-history?period="+period); const pts=d.points||[]; charts.innerHTML="";
+      if(!pts.length){charts.appendChild(el("div",{class:"empty"},"El histórico empezará a aparecer con las próximas lecturas del panel."));return;}
+      charts.appendChild(el("div",{class:"technical-summary"},[el("strong",{},String(d.outages||0)),el("span",{},"muestras con caída detectada")]));
+      charts.appendChild(chart("Latencia de base de datos",pts,"db_latency_ms","#38bdf8"," ms"));
+      charts.appendChild(chart("Errores registrados (24 h)",pts,"errors_count","#fb7185"));
+      charts.appendChild(chart("Emails en cola",pts,"email_queued","#fbbf24"));
+      charts.appendChild(chart("Push en cola",pts,"push_queued","#a78bfa"));
+    } catch(e){charts.innerHTML="";charts.appendChild(el("div",{class:"error"},"No se pudo cargar el histórico."));}
+  }
+  [["24h","24 horas"],["7d","7 días"],["30d","30 días"]].forEach(([v,l],i)=>controls.appendChild(el("button",{class:"btn ghost sm"+(i?"":" active"),onclick:(e)=>{controls.querySelectorAll("button").forEach(b=>b.classList.remove("active"));e.currentTarget.classList.add("active");load(v);}},l)));
+  overlay.appendChild(el("div",{class:"ac-scrim",onclick:()=>overlay.remove()}));overlay.appendChild(modal);document.body.appendChild(overlay);load("24h");
+}
+
 function renderOperationsCenter(data, showWork = true, showHealth = true) {
   const wrap = el("section", { class: "ops-center" });
   const head = el("div", { class: "ops-head" }, [
@@ -2419,7 +2564,11 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       el("span", { class: "ops-item-copy" }, [el("strong", {}, item.title || "Pendiente"), el("small", {}, item.detail || "")]),
       el("time", {}, fmt.reldate(item.created_at)), el("span", { class: "ops-go" }, "→"),
     ]);
-    row.addEventListener("click", () => document.querySelector(`[data-view="${item.view_name}"]`)?.click());
+    row.addEventListener("click", () => {
+      route(item.view_name);
+      if (item.kind === "ticket") openTicketDrawer(item.id);
+      else if (item.kind === "report") openReportDrawer(item.id);
+    });
     work.appendChild(row);
   });
   if (showWork) lower.appendChild(work);
@@ -2447,6 +2596,7 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       health.appendChild(alerts);
     }
     const healthActions = el("div", { class: "health-actions" }, [
+      btn("Historial", "primary sm", () => openTechnicalHistory()),
       btn("Ver logs", "ghost sm", () => document.querySelector('[data-view="logs"]')?.click()),
       btn("Copias", "ghost sm", () => document.querySelector('[data-view="backup"]')?.click()),
     ]);
@@ -5603,6 +5753,49 @@ function openModAutoRules() {
   load();
 }
 
+async function openReportDrawer(id) {
+  let data;
+  try { data = await api.get("/api/reports/" + id); } catch { return toast("No se pudo abrir la denuncia"); }
+  const r = data.report;
+  const notes = data.notes || [];
+  const assignees = await api.get("/api/admin/case-assignees").catch(() => ({ items:[] }));
+  const body = el("div", { class:"drawer-wrap case-drawer" }, [
+    el("button", { class:"drawer-close", "data-close":true, title:"Cerrar", "aria-label":"Cerrar" }, "×"),
+    el("div", { class:"case-drawer-title" }, [
+      el("small", {}, `DENUNCIA R${String(r.id).padStart(4,"0")}`),
+      el("h2", {}, r.reason || "Sin motivo"),
+      slaBadge(r.sla_due_at, ["resolved","dismissed"].includes(r.status)),
+    ]),
+    el("div", { class:"info-grid" }, [
+      el("div", {}, [el("span", { class:"kv-k" }, "Usuario denunciado"), el("span", { class:"kv-v" }, r.target_name || `#${r.target_id}`)]),
+      el("div", {}, [el("span", { class:"kv-k" }, "Denunciante"), el("span", { class:"kv-v" }, r.reporter_name || (r.reporter_id ? `#${r.reporter_id}` : "Anónimo"))]),
+      el("div", {}, [el("span", { class:"kv-k" }, "Fecha"), el("span", { class:"kv-v" }, fmt.date(r.created_at))]),
+    ]),
+  ]);
+  if (r.details) body.appendChild(el("div", { class:"case-details" }, [el("strong", {}, "Detalles"), el("p", {}, r.details)]));
+  const status = el("select", { class:"input" }, ["open","reviewing","escalated","resolved","dismissed"].map(s => el("option", { value:s, selected:r.status===s }, STATUS_ES[s] || s)));
+  const assignee = el("select", { class:"input" }, [el("option", { value:"" }, "Sin asignar"), ...(assignees.items||[]).map(a => el("option", { value:a.email, selected:r.assignee_email===a.email }, a.name || a.email))]);
+  body.appendChild(el("div", { class:"tk-drawer-controls" }, [
+    el("label", {}, [el("span", {}, "Estado"), status]),
+    el("label", {}, [el("span", {}, "Responsable"), assignee]),
+  ]));
+  body.appendChild(btn("Guardar asignación y estado", "primary sm", async () => {
+    try { await api.patch("/api/reports/" + r.id, { status:status.value, assignee_email:assignee.value }); toast("Denuncia actualizada"); }
+    catch (e) { toast(e.message || "No se pudo guardar"); }
+  }));
+  body.appendChild(el("h3", {}, "Notas internas"));
+  const list = el("div", { class:"case-notes" });
+  const paint = () => { list.innerHTML=""; if (!notes.length) list.appendChild(el("small", { class:"muted" }, "Sin notas internas.")); notes.forEach(n => list.appendChild(el("div", { class:"case-note" }, [el("div", {}, [el("strong", {}, n.author),el("time", {}, fmt.reldate(n.created_at))]),el("p", {}, n.body)]))); };
+  paint(); body.appendChild(list);
+  const note = el("textarea", { class:"input", rows:3, placeholder:"Añadir una nota para el equipo…" });
+  body.appendChild(note);
+  body.appendChild(el("div", { class:"drawer-actions" }, [
+    btn("Añadir nota", "ghost sm", async () => { const text=note.value.trim(); if(!text)return; try { const n=await api.post(`/api/admin/cases/report/${r.id}/notes`,{body:text}); notes.unshift(n); note.value=""; paint(); } catch(e){toast(e.message);} }),
+    btn("Abrir perfil", "ghost sm", () => openUserDrawer(r.target_id)),
+  ]));
+  drawer.open(body);
+}
+
 async function viewReports(root){
   // V520 — Pro Hero para Denuncias
   try {
@@ -5677,12 +5870,13 @@ async function viewReports(root){
     chipsWrap.appendChild(b);
   });
   filters.appendChild(chipsWrap);
-  filters.appendChild(el("input", {
+  const reportsSearch = el("input", {
     class: "input mod-search",
     type: "search",
     placeholder: "Buscar usuario, motivo, email…",
     oninput: (e) => { state.q = e.target.value.toLowerCase(); refresh(); },
-  }));
+  });
+  filters.appendChild(reportsSearch);
   const viewToggle = el("div", { class: "mod-view-toggle" });
   ["grid","table"].forEach(v => {
     const b = el("button", {
@@ -5699,6 +5893,13 @@ async function viewReports(root){
   });
   filters.appendChild(viewToggle);
   root.appendChild(filters);
+  root.appendChild(savedFiltersControl("reports", () => ({ ...state }), (next) => {
+    Object.assign(state, { status:"",q:"",view:"grid" }, next || {});
+    reportsSearch.value = state.q || "";
+    chipsWrap.querySelectorAll(".mod-chip").forEach((x,i) => x.classList.toggle("active", chips[i]?.k === state.status));
+    viewToggle.querySelectorAll(".mod-view-btn").forEach(x => x.classList.toggle("active", x.textContent.includes(state.view === "grid" ? "Tarjetas" : "Tabla")));
+    refresh();
+  }));
 
   const wrap = el("section", { class: "mod-panel-v2" });
   root.appendChild(wrap);
@@ -5769,8 +5970,11 @@ async function viewReports(root){
           el("div", { class: "mod-card-meta" }, [
             statusTag(r.status),
             el("span", { class: "mod-card-when" }, fmt.reldate(r.created_at)),
+            slaBadge(r.sla_due_at, ["resolved","dismissed"].includes(r.status)),
+            el("span", { class:"case-assignee" }, r.assignee_email ? `Asignado a ${r.assignee_email}` : "Sin asignar"),
           ]),
           el("div", { class: "mod-card-actions" }, [
+            btn("Abrir", "brand xs", () => openReportDrawer(r.id)),
             btn("👤 Perfil", "ghost xs", () => openUserDrawer(r.target_id)),
             el("select", {
               class: "input xs mod-card-status",
@@ -5789,7 +5993,7 @@ async function viewReports(root){
       const table = el("table", { class: "data-table" });
       table.appendChild(el("thead", {}, [ el("tr", {}, [
         el("th", {}, "#"), el("th", {}, "Usuario"), el("th", {}, "Motivo"),
-        el("th", {}, "Estado"), el("th", {}, "Fecha"), el("th", { class: "ta-right" }, "Acciones"),
+        el("th", {}, "Estado"), el("th", {}, "SLA"), el("th", {}, "Fecha"), el("th", { class: "ta-right" }, "Acciones"),
       ])]));
       const tb = el("tbody");
       rows.forEach(r => tb.appendChild(el("tr", {}, [
@@ -5800,8 +6004,10 @@ async function viewReports(root){
         ])]),
         el("td", {}, r.reason),
         el("td", {}, statusTag(r.status)),
+        el("td", {}, slaBadge(r.sla_due_at, ["resolved","dismissed"].includes(r.status))),
         el("td", {}, fmt.reldate(r.created_at)),
         el("td", { class: "ta-right" }, [
+          btn("Abrir", "brand xs", () => openReportDrawer(r.id)),
           el("select", { class: "input xs", onchange: async (e) => {
             try { await api.patch("/api/reports/" + r.id, { status: e.target.value }); toast("Actualizada"); refresh(); }
             catch { toast("Error"); }
@@ -6337,6 +6543,15 @@ function openAppealDrawer(a, onChange) {
 /* =====================================================================
    Tickets — soporte
    ===================================================================== */
+function slaBadge(dueAt, closed) {
+  if (closed || !dueAt) return el("span", { class:"sla-pill done" }, "SLA cerrado");
+  const ms = new Date(dueAt).getTime() - Date.now();
+  const absH = Math.max(1, Math.ceil(Math.abs(ms) / 3600000));
+  if (ms < 0) return el("span", { class:"sla-pill overdue" }, `SLA vencido ${absH} h`);
+  if (ms <= 4 * 3600000) return el("span", { class:"sla-pill urgent" }, `SLA ${absH} h`);
+  return el("span", { class:"sla-pill ok" }, `SLA ${absH} h`);
+}
+
 const TICKET_CAT_LABELS = {
   account:  "🔐 Cuenta",
   profile:  "👤 Perfil",
@@ -6407,31 +6622,35 @@ async function viewTickets(root) {
   root.appendChild(statsBox);
 
   // Filters
-  root.appendChild(el("div", { class: "filters-row tk-filters" }, [
-    el("input", {
+  const ticketSearch = el("input", {
       class: "input",
       type: "search",
       placeholder: "Buscar por referencia, asunto, correo…",
       oninput: (e) => { state.q = e.target.value; debounceRefresh(); },
-    }),
-    el("select", { class: "input", onchange: (e) => { state.status = e.target.value; refresh(); } }, [
+    });
+  const ticketStatus = el("select", { class: "input", onchange: (e) => { state.status = e.target.value; refresh(); } }, [
       el("option", { value: "" }, "Todos los estados"),
       el("option", { value: "open" }, "Abiertos"),
       el("option", { value: "in_progress" }, "En curso"),
       el("option", { value: "waiting" }, "Esperando"),
       el("option", { value: "closed" }, "Cerrados"),
-    ]),
-    el("select", { class: "input", onchange: (e) => { state.priority = e.target.value; refresh(); } }, [
+    ]);
+  const ticketPriority = el("select", { class: "input", onchange: (e) => { state.priority = e.target.value; refresh(); } }, [
       el("option", { value: "" }, "Todas prioridades"),
       el("option", { value: "high" }, "🔴 Alta"),
       el("option", { value: "med" }, "🟡 Media"),
       el("option", { value: "low" }, "🟢 Baja"),
-    ]),
-    el("select", { class: "input", onchange: (e) => { state.category = e.target.value; refresh(); } }, [
+    ]);
+  const ticketCategory = el("select", { class: "input", onchange: (e) => { state.category = e.target.value; refresh(); } }, [
       el("option", { value: "" }, "Todas categorías"),
       ...Object.entries(TICKET_CAT_LABELS).map(([k, v]) => el("option", { value: k }, v)),
-    ]),
-  ]));
+    ]);
+  root.appendChild(el("div", { class: "filters-row tk-filters" }, [ticketSearch,ticketStatus,ticketPriority,ticketCategory]));
+  root.appendChild(savedFiltersControl("tickets", () => ({ ...state }), (next) => {
+    Object.assign(state, { status:"",priority:"",category:"",q:"" }, next || {});
+    ticketSearch.value=state.q||""; ticketStatus.value=state.status||"";
+    ticketPriority.value=state.priority||""; ticketCategory.value=state.category||""; refresh();
+  }));
 
   const wrap = el("div", { class: "panel table-panel tk-list" });
   root.appendChild(wrap);
@@ -6482,10 +6701,12 @@ async function viewTickets(root) {
         el("div", { class: "tk-meta" }, [
           el("span", { class: "tk-cat" }, cat),
           el("span", { class: "tk-status tk-badge-" + t.status }, TICKET_STATUS_LABEL[t.status] || t.status),
+          el("span", { class:"case-assignee" }, t.assignee_email ? `Asignado a ${t.assignee_email}` : "Sin asignar"),
         ]),
         el("div", { class: "tk-foot" }, [
           el("span", { class: "tk-from" }, `${t.name} · ${t.email}`),
           el("span", { class: "tk-date" }, fmt.reldate(t.created_at)),
+          slaBadge(t.sla_due_at, t.status === "closed"),
         ]),
       ]);
       grid.appendChild(card);
@@ -6538,6 +6759,8 @@ async function openTicketDrawer(id) {
   catch { toast("Error cargando ticket"); close(); return; }
   const t = data.ticket;
   const msgs = data.messages || [];
+  const notes = data.notes || [];
+  const assignees = await api.get("/api/admin/case-assignees").catch(() => ({ items:[] }));
 
   drawer.innerHTML = "";
   drawer.appendChild(el("div", { class: "tk-drawer-head" }, [
@@ -6553,6 +6776,7 @@ async function openTicketDrawer(id) {
     el("span", { class: "tk-prio " + (TICKET_PRIORITY[t.priority]?.cls || "prio-low") },
       TICKET_PRIORITY[t.priority]?.label || t.priority),
     el("span", { class: "tk-status tk-badge-" + t.status }, TICKET_STATUS_LABEL[t.status] || t.status),
+    slaBadge(t.sla_due_at, t.status === "closed"),
   ]));
 
   drawer.appendChild(el("div", { class: "tk-drawer-user" }, [
@@ -6576,8 +6800,17 @@ async function openTicketDrawer(id) {
     try { await api.patch("/api/tickets/" + t.id, { priority: prioSel.value }); toast("Prioridad actualizada"); }
     catch { toast("Error"); }
   });
+  const assigneeSel = el("select", { class:"input xs" }, [
+    el("option", { value:"" }, "Sin asignar"),
+    ...(assignees.items || []).map(a => el("option", { value:a.email, selected:t.assignee_email===a.email }, a.name || a.email)),
+  ]);
+  assigneeSel.addEventListener("change", async () => {
+    try { await api.patch("/api/tickets/" + t.id, { assignee_email:assigneeSel.value }); toast("Responsable actualizado"); }
+    catch { toast("No se pudo asignar"); }
+  });
   controls.appendChild(el("label", {}, [ el("span", {}, "Estado"), statusSel ]));
   controls.appendChild(el("label", {}, [ el("span", {}, "Prioridad"), prioSel ]));
+  controls.appendChild(el("label", {}, [ el("span", {}, "Responsable"), assigneeSel ]));
   drawer.appendChild(controls);
 
   drawer.appendChild(el("h4", { class: "tk-drawer-section" }, "Mensaje del usuario"));
@@ -6597,6 +6830,25 @@ async function openTicketDrawer(id) {
     });
     drawer.appendChild(thread);
   }
+
+  drawer.appendChild(el("h4", { class:"tk-drawer-section" }, "Notas internas"));
+  const notesList = el("div", { class:"case-notes" });
+  const paintNotes = () => {
+    notesList.innerHTML = "";
+    if (!notes.length) notesList.appendChild(el("small", { class:"muted" }, "Sin notas internas."));
+    notes.forEach(n => notesList.appendChild(el("div", { class:"case-note" }, [
+      el("div", {}, [el("strong", {}, n.author || "Equipo"), el("time", {}, fmt.reldate(n.created_at))]),
+      el("p", {}, n.body),
+    ])));
+  };
+  paintNotes(); drawer.appendChild(notesList);
+  const noteInput = el("textarea", { class:"input", rows:3, placeholder:"Añadir una nota visible solo para el equipo…" });
+  drawer.appendChild(noteInput);
+  drawer.appendChild(btn("Añadir nota", "ghost sm", async () => {
+    const body = noteInput.value.trim(); if (!body) return;
+    try { const n = await api.post(`/api/admin/cases/ticket/${t.id}/notes`, { body }); notes.unshift(n); noteInput.value=""; paintNotes(); toast("Nota guardada"); }
+    catch { toast("No se pudo guardar la nota"); }
+  }));
 
   drawer.appendChild(el("h4", { class: "tk-drawer-section" }, "Responder"));
   const reply = el("textarea", { class: "input", rows: 6, placeholder: "Escribe una respuesta al usuario…" });
@@ -7961,6 +8213,34 @@ async function openManualPayment() {
   document.body.appendChild(overlay);
 }
 
+async function openPaymentDrawer(id) {
+  let data;
+  try { data = await api.get("/api/payments/" + id); } catch { return toast("No se pudo abrir el pago"); }
+  const p = data.payment, notes = data.notes || [];
+  const body = el("div", { class:"drawer-wrap case-drawer" }, [
+    el("button", { class:"drawer-close", "data-close":true, title:"Cerrar", "aria-label":"Cerrar" }, "×"),
+    el("div", { class:"case-drawer-title" }, [el("small", {}, `PAGO #${p.id}`),el("h2", {}, p.invoice_no || `Pago #${p.id}`),statusTag(p.status)]),
+    el("div", { class:"info-grid" }, [
+      el("div", {}, [el("span", { class:"kv-k" }, "Usuario"),el("span", { class:"kv-v" }, p.user_name || `#${p.user_id}`)]),
+      el("div", {}, [el("span", { class:"kv-k" }, "Email"),el("span", { class:"kv-v" }, p.user_email || "—")]),
+      el("div", {}, [el("span", { class:"kv-k" }, "Importe"),el("span", { class:"kv-v" }, fmtMoney(p.amount,p.currency))]),
+      el("div", {}, [el("span", { class:"kv-k" }, "Método"),el("span", { class:"kv-v" }, p.method || "—")]),
+      el("div", {}, [el("span", { class:"kv-k" }, "Fecha"),el("span", { class:"kv-v" }, fmt.date(p.created_at))]),
+    ]),
+  ]);
+  body.appendChild(el("h3", {}, "Notas internas"));
+  const list=el("div",{class:"case-notes"});
+  const paint=()=>{list.innerHTML="";if(!notes.length)list.appendChild(el("small",{class:"muted"},"Sin notas internas."));notes.forEach(n=>list.appendChild(el("div",{class:"case-note"},[el("div",{},[el("strong",{},n.author),el("time",{},fmt.reldate(n.created_at))]),el("p",{},n.body)])));};
+  paint(); body.appendChild(list);
+  const note=el("textarea",{class:"input",rows:3,placeholder:"Añadir una nota para el equipo…"}); body.appendChild(note);
+  const actions=[
+    btn("Añadir nota","ghost sm",async()=>{const text=note.value.trim();if(!text)return;try{const n=await api.post(`/api/admin/cases/payment/${p.id}/notes`,{body:text});notes.unshift(n);note.value="";paint();}catch(e){toast(e.message);}}),
+    btn("Ver factura","ghost sm",()=>window.open(`/api/payments/${p.id}/invoice?adminToken=`+encodeURIComponent(localStorage.getItem("adminToken")||""),"_blank")),
+  ];
+  if(p.status==="completed") actions.push(btn("Reembolsar","danger sm",async()=>{if(!(await askConfirm("¿Reembolsar este pago? Se solicitará el código 2FA si está activado.",{okText:"Reembolsar",danger:true})))return;try{await api.post(`/api/payments/${p.id}/refund`,{});toast("Pago reembolsado");drawer.close();route("payments");}catch(e){toast(e.message);}}));
+  body.appendChild(el("div",{class:"drawer-actions"},actions)); drawer.open(body);
+}
+
 async function viewPayments(root){
   root.appendChild(viewTitle("Pagos & Facturación",
     "Historial de transacciones con reembolsos.",
@@ -8094,6 +8374,10 @@ async function viewPayments(root){
     oninput: (e) => { stateP.q = e.target.value.toLowerCase(); render(); } });
   root.appendChild(el("div", { style: "display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;" },
     [ statusSel, methodSel, searchInp ]));
+  root.appendChild(savedFiltersControl("payments", () => ({ ...stateP }), (next) => {
+    Object.assign(stateP, { status:"",method:"",q:"" }, next || {});
+    statusSel.value=stateP.status||""; methodSel.value=stateP.method||""; searchInp.value=stateP.q||""; render();
+  }));
 
   const wrap = el("div");
   root.appendChild(wrap);
@@ -8141,6 +8425,7 @@ async function viewPayments(root){
             window.open("/api/payments/" + p.id + "/invoice?adminToken="
               + encodeURIComponent(localStorage.getItem("adminToken") || ""), "_blank");
           }),
+          btn("Abrir", "brand xs", () => openPaymentDrawer(p.id)),
           /* V934 · Borrador. Abre EXACTAMENTE el mismo documento con marca de
              agua «BORRADOR», sin emitir nada y sin gastar número. Va antes que
              el botón de emitir porque es el paso que debería hacerse primero. */
@@ -9889,6 +10174,10 @@ async function viewBackup(root){
       el("span", {}, "Última descarga: "), el("strong", {}, fmtDate(info && info.last_export_at)), el("span", {}, " · "),
       el("span", {}, "Último import: "), el("strong", {}, fmtDate(info && info.last_import_at)),
     ]),
+    el("div", { class:`backup-verification ${info?.verification?.status === "ok" ? "ok" : "pending"}` },
+      info?.verification?.status === "ok"
+        ? `Copia comprobada automáticamente · ${fmtDate(info.verification.checked_at)}`
+        : "Aún no hay una copia verificada"),
   ]));
 
   // ---- Exportar ----
@@ -9995,6 +10284,8 @@ async function viewBackup(root){
         const info = el("div", { style: "min-width:0;flex:1" }, [
           el("div", { style: "font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" }, it.name),
           el("div", { class: "muted small" }, `${new Date(it.mtime).toLocaleString("es-ES")} · ${(it.size/1024).toFixed(1)} KB`),
+          el("span", { class:`backup-check-pill ${it.verification?.status || "pending"}` },
+            it.verification?.status === "ok" ? "Restauración comprobada" : (it.verification?.status === "failed" ? "Verificación fallida" : "Pendiente de verificar")),
         ]);
         const dl = el("a", {
           class: "btn btn-ghost",
@@ -10016,6 +10307,10 @@ async function viewBackup(root){
           }
         }, "Descargar");
         row.appendChild(info);
+        row.appendChild(btn("Verificar", "ghost sm", async () => {
+          try { const r=await api.post("/api/admin/backup/verify/"+encodeURIComponent(it.name),{}); toast(r.status==="ok"?"La copia puede restaurarse":"La copia no es válida"); refreshSnapshots(); }
+          catch(e){ toast(e.message || "La verificación ha fallado"); }
+        }));
         row.appendChild(dl);
         snapList.appendChild(row);
       });
@@ -10169,12 +10464,10 @@ async function viewLogs(root){
       btn("🧹 Limpiar > 30 días", "danger sm", async () => {
         if (!(await askConfirm("¿Borrar todos los logs anteriores a 30 días?", { okText: "Limpiar", danger: true }))) return;
         try {
-          const r = await fetch("/api/admin/logs/purge?days=30", { method: "DELETE", headers: authHeaders() });
-          if (!r.ok) throw new Error();
+          const d = await api.del("/api/admin/logs/purge?days=30");
           // V931 · La ruta ya existe (antes no) y devuelve cuántas filas borró:
           // decirlo evita la duda de "¿ha hecho algo o no?" cuando no había nada
           // que borrar, que es el caso normal si la purga automática va bien.
-          const d = await r.json().catch(() => ({}));
           const n = Number(d.deleted);
           toast(Number.isFinite(n) ? (n ? `Borrados ${n} logs de más de 30 días` : "No había logs de más de 30 días") : "Logs antiguos limpiados");
           refresh();
@@ -16508,8 +16801,7 @@ async function viewKyc(root) {
         const bDel = el("button", { class: "btn small ghost", onclick: async () => {
           if (!confirm("¿Eliminar este bloqueo?")) return;
           try {
-            const r = await fetch("/api/admin/kyc/blocks/" + b.id, { method: "DELETE", headers: authHeaders() });
-            if (!r.ok) throw new Error();
+            await api.del("/api/admin/kyc/blocks/" + b.id);
             toast("Bloqueo eliminado"); loadBlocks();
           } catch { toast("Error al eliminar"); }
         } }, "Desbloquear");
@@ -21461,10 +21753,8 @@ async function viewBroadcasts(root) {
   }
   async function retirarBroadcast(id) {
     if (!confirm("¿Retirar este mensaje? Desaparecerá del hilo de todos los usuarios.")) return;
-    const r = await fetch("/api/admin/broadcasts/" + id, { method: "DELETE", headers: authHeaders() });
-    const j = await r.json();
-    if (j.ok) { toast("Retirado"); reloadList(); }
-    else toast("Error: " + (j.error || "?"));
+    try { await api.del("/api/admin/broadcasts/" + id); toast("Retirado"); reloadList(); }
+    catch (e) { toast("Error: " + (e.message || "?")); }
   }
   async function openBroadcastStats(id) {
     try {
