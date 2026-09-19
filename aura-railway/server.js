@@ -2438,6 +2438,35 @@ async function migrate() {
       );
     }
   } catch (e) { /* additivo: si falla, no bloquea el arranque */ }
+
+  // V958 · La cuenta de prueba podía quedarse con `users.photo_url` vacío
+  // aunque conservase una foto en su galería. Explorar disimulaba el problema
+  // con su avatar determinista, pero el panel de Usuarios enseñaba un círculo
+  // vacío. Recuperamos primero la foto real de `photos`; solo para esta cuenta
+  // ficticia, si tampoco existe, persistimos el mismo avatar por id que ya usa
+  // Explorar. El flag evita volver a ponerlo si en el futuro se elimina a mano.
+  try {
+    const [[flag]] = await pool.query("SELECT v FROM settings WHERE k='test_user_photo_v958'");
+    if (!flag || flag.v !== "1") {
+      await pool.execute(
+        `UPDATE users u
+            SET u.photo_url = COALESCE(
+              (SELECT COALESCE(NULLIF(p.crop_url, ''), p.url)
+                 FROM photos p
+                WHERE p.user_id=u.id AND COALESCE(p.is_now_photo, 0)=0
+                ORDER BY p.is_primary DESC, p.id ASC LIMIT 1),
+              CONCAT('https://i.pravatar.cc/600?u=', u.id)
+            )
+          WHERE (u.email='prueba@aura.app'
+             OR LOWER(u.name) LIKE '%usuario de prueba%'
+             OR LOWER(u.name) LIKE '%usuario prueba%')
+            AND (u.photo_url IS NULL OR TRIM(u.photo_url)='')`
+      );
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES ('test_user_photo_v958','1') ON DUPLICATE KEY UPDATE v='1'"
+      );
+    }
+  } catch (e) { /* additivo: si falla, no bloquea el arranque */ }
 }
 
 /* ---------- Seed data (only if empty) ---------- */
@@ -3060,8 +3089,16 @@ app.get("/api/users", wrap(async (req, res) => {
   if (plan) { clauses.push("plan=?"); params.push(plan); }
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const [rows] = await pool.query(
-    `SELECT id, email, name, age, gender, orientation, zone, city, country, height, weight, ethnicity, bio, photo_url, verified, online, plan, status, role, created_at
-     FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT users.id, email, name, age, gender, orientation, zone, city, country,
+            height, weight, ethnicity, bio,
+            COALESCE(NULLIF(users.photo_url, ''),
+              (SELECT COALESCE(NULLIF(p.crop_url, ''), p.url)
+                 FROM photos p
+                WHERE p.user_id=users.id AND COALESCE(p.is_now_photo, 0)=0
+                ORDER BY p.is_primary DESC, p.id ASC LIMIT 1)
+            ) AS photo_url,
+            verified, online, plan, status, role, created_at
+       FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     [...params, Number(limit), Number(offset)]
   );
   const [[{ total }]] = await pool.query(`SELECT COUNT(*) total FROM users ${where}`, params);
@@ -3121,7 +3158,16 @@ app.get("/api/users/:id", wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT * FROM users WHERE id=?", [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: "not_found" });
   const [devices] = await pool.query("SELECT * FROM devices WHERE user_id=? ORDER BY last_seen DESC LIMIT 10", [req.params.id]);
-  const [photos] = await pool.query("SELECT * FROM photos WHERE user_id=?", [req.params.id]);
+  const [photos] = await pool.query(
+    "SELECT * FROM photos WHERE user_id=? ORDER BY is_primary DESC, id ASC", [req.params.id]
+  );
+  // V958 · Registros antiguos pueden tener galería pero no la copia de la
+  // principal en users.photo_url. El detalle del admin debe mostrar la foto
+  // efectiva sin modificar silenciosamente la cuenta al abrir el cajón.
+  if (!String(rows[0].photo_url || "").trim()) {
+    const primary = photos.find((p) => !Number(p.is_now_photo) && (p.crop_url || p.url));
+    if (primary) rows[0].photo_url = primary.crop_url || primary.url;
+  }
   // Recent activity: entries in the activity log that mention this user or their email.
   let activity = [];
   try {
