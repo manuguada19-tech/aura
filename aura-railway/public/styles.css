@@ -10907,3 +10907,286 @@ body.desktop-app .screen > .swipe-card-stack-hint {
 /* — 4 · Mapa anclado al viewport de la app (no a la ventana) — */
 body.desktop-app .app-viewport { position: relative; }
 body.desktop-app .map-overlay { position: absolute; inset: 0; }
+
+/* ==========================================================================
+   V956 · AJUSTES DE ESCRITORIO: EXPLORAR, TICKETS, AVISOS Y NAVEGACIÓN
+   Todo el rediseño visual queda limitado a body.desktop-app. Móvil conserva
+   tamaños, composición y gestos originales.
+   ========================================================================== */
+
+/* Explorar: en un lienzo panorámico, cover recortaba las fotos verticales.
+   contain garantiza que la imagen completa quede siempre dentro de la tarjeta. */
+body.desktop-app .swipe-card {
+  /* Capa 1: foto completa. Capa 3: la misma foto a sangre, oscurecida por la
+     capa intermedia, para que las bandas laterales formen un fondo coherente. */
+  background-image:
+    var(--swipe-photo),
+    linear-gradient(rgba(4,5,9,.76), rgba(4,5,9,.76)),
+    var(--swipe-photo) !important;
+  background-size: contain, cover, cover;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: #0b0c12;
+  border: 1px solid color-mix(in srgb, var(--brand-3) 22%, var(--border));
+}
+body.desktop-app .swipe-card::after {
+  background:
+    linear-gradient(90deg, rgba(5,6,10,.48), transparent 24%, transparent 76%, rgba(5,6,10,.48)),
+    linear-gradient(180deg, transparent 38%, rgba(5,6,10,.82));
+}
+
+/* Navegación lateral: cada destino tiene identidad propia, manteniendo el
+   degradado multicolor de Aura en vez de seis botones idénticos. */
+body.desktop-app .tab[data-tab="discover"] { --tab-accent: #ff7a1a; --tab-accent-2: #ff2e93; }
+body.desktop-app .tab[data-tab="search"]   { --tab-accent: #2f8bff; --tab-accent-2: #06b6d4; }
+body.desktop-app .tab[data-tab="nearby"]   { --tab-accent: #14b8a6; --tab-accent-2: #22c55e; }
+body.desktop-app .tab[data-tab="likes"]    { --tab-accent: #ff2e93; --tab-accent-2: #a04bff; }
+body.desktop-app .tab[data-tab="chats"]    { --tab-accent: #8b5cf6; --tab-accent-2: #2f8bff; }
+body.desktop-app .tab[data-tab="me"]       { --tab-accent: #f59e0b; --tab-accent-2: #ff5b69; }
+body.desktop-app .tab {
+  position: relative;
+  overflow: visible;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tab-accent) 5%, transparent), transparent 72%);
+}
+body.desktop-app .tab::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  width: 3px;
+  height: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--tab-accent), var(--tab-accent-2));
+  transition: height .18s ease;
+}
+body.desktop-app .tab svg {
+  color: var(--tab-accent);
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--tab-accent) 22%, var(--surface)),
+    color-mix(in srgb, var(--tab-accent-2) 12%, var(--surface)));
+  border: 1px solid color-mix(in srgb, var(--tab-accent) 24%, transparent);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--tab-accent) 14%, transparent);
+}
+body.desktop-app .tab:hover {
+  background: linear-gradient(90deg, color-mix(in srgb, var(--tab-accent) 14%, var(--surface)), var(--surface-2));
+  border-color: color-mix(in srgb, var(--tab-accent) 24%, transparent);
+}
+body.desktop-app .tab:hover::before,
+body.desktop-app .tab.active::before { height: 28px; }
+body.desktop-app .tab.active {
+  background: linear-gradient(110deg, var(--tab-accent), var(--tab-accent-2));
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--tab-accent) 30%, transparent), inset 0 1px 0 rgba(255,255,255,.25);
+}
+body.desktop-app .tab.active svg {
+  color: #fff;
+  background: rgba(255,255,255,.2);
+  border-color: rgba(255,255,255,.28);
+  box-shadow: none;
+}
+
+/* Tickets: el flujo de Perfil se mantiene dentro del shell de PC y aprovecha
+   el ancho con un hero editorial, tres categorías por fila y formulario en
+   dos columnas. */
+body.desktop-app .screen.screen-tickets > .info-wrap.ticket-wrap {
+  width: 100%;
+  max-width: 1180px !important;
+  margin: 0 auto;
+  padding: 28px 12px 64px;
+  box-sizing: border-box;
+}
+body.desktop-app .screen-tickets .ticket-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, .75fr);
+  grid-template-rows: auto auto auto;
+  column-gap: 52px;
+  align-items: center;
+  padding: 38px 42px;
+  border-radius: 28px;
+  margin: 4px 0 30px;
+  background:
+    radial-gradient(circle at 88% 8%, rgba(255,255,255,.28), transparent 28%),
+    linear-gradient(120deg, #ff5b32 0%, #ff2e93 48%, #7545e8 100%);
+  box-shadow: 0 24px 58px rgba(213, 45, 116, .24);
+}
+body.desktop-app .screen-tickets .ticket-hero-badge,
+body.desktop-app .screen-tickets .ticket-hero-title,
+body.desktop-app .screen-tickets .ticket-hero-sub { grid-column: 1; }
+body.desktop-app .screen-tickets .ticket-hero-title {
+  margin-top: 14px;
+  font-size: clamp(30px, 3vw, 42px);
+  max-width: 650px;
+}
+body.desktop-app .screen-tickets .ticket-hero-sub {
+  max-width: 640px;
+  font-size: 15px;
+  margin-bottom: 0;
+}
+body.desktop-app .screen-tickets .ticket-hero-stats {
+  grid-column: 2;
+  grid-row: 1 / 4;
+  width: 100%;
+  gap: 12px;
+}
+body.desktop-app .screen-tickets .ticket-stat {
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-radius: 18px;
+}
+body.desktop-app .screen-tickets .ticket-stat strong { font-size: 21px; }
+body.desktop-app .screen-tickets .ticket-stat span { font-size: 11.5px; }
+body.desktop-app .screen-tickets .ticket-section-title { font-size: 14px; margin-top: 28px; }
+body.desktop-app .screen-tickets .ticket-cat-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+body.desktop-app .screen-tickets .ticket-cat-card {
+  min-height: 126px;
+  padding: 18px;
+  border-radius: 20px;
+}
+body.desktop-app .screen-tickets .ticket-cat-card:hover { transform: translateY(-4px); }
+body.desktop-app .screen-tickets .ticket-cat-ic { width: 48px; height: 48px; font-size: 27px; }
+body.desktop-app .screen-tickets .ticket-cat-h { font-size: 15px; }
+body.desktop-app .screen-tickets .ticket-cat-p { font-size: 12.5px; }
+body.desktop-app .screen-tickets .ticket-selfhelp,
+body.desktop-app .screen-tickets .ticket-form-box {
+  margin-top: 26px;
+  padding: 4px 24px 24px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  box-shadow: 0 18px 44px rgba(0,0,0,.12);
+}
+body.desktop-app .screen-tickets .ticket-search-wrap { max-width: 760px; }
+body.desktop-app .screen-tickets .ticket-matches {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 10px;
+}
+body.desktop-app .screen-tickets .ticket-still { grid-column: 1 / -1; }
+body.desktop-app .screen-tickets .ticket-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+body.desktop-app .screen-tickets .ticket-form > .field:nth-child(3),
+body.desktop-app .screen-tickets .ticket-form > .field:has(textarea),
+body.desktop-app .screen-tickets .ticket-form > .ticket-label,
+body.desktop-app .screen-tickets .ticket-form > .ticket-priority,
+body.desktop-app .screen-tickets .ticket-form > .ticket-attach-row,
+body.desktop-app .screen-tickets .ticket-form > .ticket-attach-list,
+body.desktop-app .screen-tickets .ticket-form > .ticket-consent,
+body.desktop-app .screen-tickets .ticket-form > .ticket-submit { grid-column: 1 / -1; }
+body.desktop-app .screen-tickets .ticket-priority { gap: 14px; }
+body.desktop-app .screen-tickets .ticket-pri { min-height: 82px; justify-content: center; }
+body.desktop-app .screen-tickets .ticket-submit { width: min(360px, 100%); justify-self: end; }
+
+/* La vista de detalle sólo existe visualmente en PC. */
+.notif-detail { display: none; }
+
+body.desktop-app .modal-card.notif-modal {
+  width: min(1040px, calc(100vw - 80px));
+  max-width: 1040px;
+  max-height: min(84dvh, 780px);
+  overflow: hidden;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 26px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+}
+body.desktop-app .notif-list-wrap { max-height: calc(min(84dvh, 780px) - 48px); }
+body.desktop-app .notif-head h3 { font-size: 24px; }
+body.desktop-app .notif-subhint { padding: 12px 14px; }
+body.desktop-app .notif-workspace {
+  display: grid;
+  grid-template-columns: minmax(300px, .8fr) minmax(420px, 1.2fr);
+  min-height: 390px;
+  max-height: 52vh;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--surface-2) 54%, transparent);
+}
+body.desktop-app .notif-list {
+  min-height: 0;
+  max-height: none;
+  overflow-y: auto;
+  padding: 10px;
+  gap: 7px;
+  border-right: 1px solid var(--border);
+}
+body.desktop-app .notif-item {
+  position: relative;
+  padding: 13px 14px;
+  border-radius: 14px;
+  transition: transform .14s ease, border-color .14s ease, background .14s ease;
+}
+body.desktop-app .notif-item:hover { transform: translateX(3px); border-color: color-mix(in srgb, var(--brand-3) 38%, var(--border)); }
+body.desktop-app .notif-item.selected {
+  background: linear-gradient(115deg,
+    color-mix(in srgb, var(--brand-1) 15%, var(--surface)),
+    color-mix(in srgb, var(--brand-3) 12%, var(--surface)));
+  border-color: color-mix(in srgb, var(--brand-1) 45%, transparent);
+  box-shadow: inset 3px 0 0 var(--brand-1);
+}
+body.desktop-app .notif-item .notif-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+body.desktop-app .notif-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 34px 38px;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--brand-3) 13%, transparent), transparent 42%),
+    color-mix(in srgb, var(--surface) 88%, transparent);
+}
+body.desktop-app .notif-detail-empty {
+  margin: auto;
+  max-width: 320px;
+  text-align: center;
+  color: var(--text-muted);
+}
+body.desktop-app .notif-detail-empty-ic {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 14px;
+  border-radius: 22px;
+  font-size: 30px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand-1) 20%, transparent), color-mix(in srgb, var(--brand-3) 18%, transparent));
+}
+body.desktop-app .notif-detail-empty strong { display: block; color: var(--text); font-size: 18px; }
+body.desktop-app .notif-detail-empty p { margin: 7px 0 0; font-size: 13px; line-height: 1.5; }
+body.desktop-app .notif-detail-top { display: flex; align-items: center; justify-content: space-between; }
+body.desktop-app .notif-detail-icon {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  font-size: 30px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand-1) 22%, transparent), color-mix(in srgb, var(--brand-3) 20%, transparent));
+  border: 1px solid color-mix(in srgb, var(--brand-1) 28%, transparent);
+}
+body.desktop-app .notif-detail-state {
+  padding: 6px 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-1) 16%, transparent);
+  color: var(--brand-1);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+body.desktop-app .notif-detail-state.is-read { background: var(--surface-2); color: var(--text-muted); }
+body.desktop-app .notif-detail-title { margin: 26px 0 12px; font-size: 26px; line-height: 1.2; }
+body.desktop-app .notif-detail-text { margin: 0; font-size: 15px; line-height: 1.7; color: var(--text-soft); white-space: pre-line; }
+body.desktop-app .notif-detail-time { margin-top: auto; padding-top: 28px; font-size: 12px; color: var(--text-muted); }
+body.desktop-app .notif-modal .modal-actions { margin-top: 0; }

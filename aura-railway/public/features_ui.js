@@ -774,6 +774,34 @@
     const { ok, data } = await api("/api/my/notifications");
     if (!ok) { toast("No se pudieron cargar las notificaciones."); return; }
     const items = data.items || [];
+    // V956 · En escritorio la bandeja deja de ser una lista móvil ampliada:
+    // la selección permanece a la izquierda y el aviso completo se lee en un
+    // panel de detalle. En móvil el CSS oculta este panel y conserva el flujo
+    // compacto de siempre.
+    const detail = h("section", { class: "notif-detail", "aria-live": "polite" }, [
+      h("div", { class: "notif-detail-empty" }, [
+        h("span", { class: "notif-detail-empty-ic" }, "🔔"),
+        h("strong", {}, "Selecciona un aviso"),
+        h("p", {}, "Aquí podrás leerlo completo sin salir de la bandeja."),
+      ]),
+    ]);
+    let selectedRow = null;
+    const showDetail = (n, row) => {
+      const meta = NOTIF_TYPE_META[n.type] || {};
+      const icon = n.icon || meta.icon || "🔔";
+      if (selectedRow) selectedRow.classList.remove("selected");
+      selectedRow = row;
+      if (selectedRow) selectedRow.classList.add("selected");
+      detail.replaceChildren(
+        h("div", { class: "notif-detail-top" }, [
+          h("div", { class: "notif-detail-icon" }, icon),
+          h("span", { class: "notif-detail-state" + (n.read_at ? " is-read" : "") }, n.read_at ? "Leído" : "Nuevo"),
+        ]),
+        h("h4", { class: "notif-detail-title" }, n.title || meta.label || "Notificación"),
+        h("p", { class: "notif-detail-text" }, n.body || "Este aviso no incluye información adicional."),
+        h("div", { class: "notif-detail-time" }, timeAgo(n.created_at))
+      );
+    };
     const rows = items.length ? items.map((n) => {
       const meta = NOTIF_TYPE_META[n.type] || {};
       const icon = n.icon || meta.icon || "🔔";
@@ -787,6 +815,7 @@
         n.read_at ? null : h("span", { class: "notif-dot" }, ""),
       ]);
       row.onclick = async () => {
+        showDetail(n, row);
         if (!n.read_at) {
           // Optimista: marca como leída al instante y revierte si falla.
           const prevIso = n.read_at;
@@ -794,11 +823,13 @@
           row.classList.remove("unread");
           const dot = row.querySelector(".notif-dot");
           if (dot) dot.remove();
+          showDetail(n, row);
           const r = await api(`/api/my/notifications/${n.id}/read`, { method: "POST" }).catch(() => null);
           if (!r || !r.ok) {
             n.read_at = prevIso;
             row.classList.add("unread");
-            if (dot) row.appendChild(dot);
+            if (dot && !row.querySelector(".notif-dot")) row.appendChild(dot);
+            showDetail(n, row);
             toast("No se pudo marcar como leída. Inténtalo de nuevo.");
             return;
           }
@@ -834,12 +865,20 @@
             "Pulsa ", h("b", {}, "Ajustes"), " para elegir qué avisos recibes y por qué canal: app, móvil o correo.",
           ]),
         ]),
-        h("div", { class: "notif-list" }, rows),
+        h("div", { class: "notif-workspace" }, [
+          h("div", { class: "notif-list" }, rows),
+          detail,
+        ]),
         h("div", { class: "modal-actions" }, [
           h("button", { class: "btn secondary", onclick: closeModal }, "Cerrar"),
         ]),
       ]),
     ], "notif-modal");
+    // Presenta el aviso más reciente en el panel sin marcarlo como leído hasta
+    // que el usuario lo pulse expresamente.
+    if (items.length && document.body.classList.contains("desktop-app")) {
+      showDetail(items[0], rows[0]);
+    }
   }
 
   // ============ PREFERENCIAS DE NOTIFICACIONES (V592) =============

@@ -4155,12 +4155,13 @@ const SECTION_MAP = {
   screenInfoHelp: "info", screenInfoFaq: "info", screenInfoTerms: "info",
   screenInfoPrivacy: "info", screenInfoContact: "info", screenInfoRules: "info",
   screenInfoPreferences: "info", screenInfoKycPolicy: "info",
+  screenSupportTicket: "info",
 };
 function render(screenFn, opts = {}) {
   _lastScreenFn = screenFn;
   _lastScreenOpts = opts;
   // Remove info-open flag when navigating away from an info screen
-  const infoFns = ["screenInfoHelp","screenInfoFaq","screenInfoTerms","screenInfoPrivacy","screenInfoContact","screenInfoRules","screenInfoPreferences","screenInfoKycPolicy"];
+  const infoFns = ["screenInfoHelp","screenInfoFaq","screenInfoTerms","screenInfoPrivacy","screenInfoContact","screenInfoRules","screenInfoPreferences","screenInfoKycPolicy","screenSupportTicket"];
   if (!infoFns.includes(screenFn && screenFn.name)) {
     document.body.classList.remove("info-open");
   }
@@ -10651,7 +10652,7 @@ function renderStack(stack) {
 function buildSwipeCard(u, depth = 0) {
   const scale = 1 - depth * 0.04;
   const y = depth * 10;
-  const card = el("div", { class: "swipe-card", style: `background-image:url('${u.photo}');transform:translateY(${y}px) scale(${scale});z-index:${10 - depth};opacity:${depth > 1 ? 0 : 1}` });
+  const card = el("div", { class: "swipe-card", style: `--swipe-photo:url('${u.photo}');background-image:var(--swipe-photo);transform:translateY(${y}px) scale(${scale});z-index:${10 - depth};opacity:${depth > 1 ? 0 : 1}` });
   const indicators = el("div", { class: "indicators" });
   for (let i = 0; i < u.photos.length; i++) {
     indicators.appendChild(el("span", { class: i === 0 ? "active" : "" }));
@@ -10716,7 +10717,8 @@ function buildSwipeCard(u, depth = 0) {
       const cur = card._pi || 0;
       const next = x > rect.width / 2 ? Math.min(u.photos.length - 1, cur + 1) : Math.max(0, cur - 1);
       card._pi = next;
-      card.style.backgroundImage = `url('${u.photos[next]}')`;
+      card.style.setProperty("--swipe-photo", `url('${u.photos[next]}')`);
+      card.style.backgroundImage = "var(--swipe-photo)";
       $$(".indicators span", card).forEach((s,i) => s.classList.toggle("active", i === next));
     }
   });
