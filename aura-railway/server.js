@@ -5339,6 +5339,35 @@ app.delete("/api/admin/now-status/history/:id", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+/* V964 · Una persona puede tener varios intentos KYC. Tanto la cola como el
+   contador del Panel deben trabajar con una sola verificación efectiva por
+   identidad; de lo contrario el Panel cuenta intentos históricos duplicados. */
+const KYC_STATUS_PRIORITY = {
+  verified: 6, manual_review: 5,
+  pending: 4, doc_ok: 4, selfie_ok: 4, video_ok: 4,
+  suspended: 2, rejected: 1,
+};
+function collapseKycVerifications(rows) {
+  const priorityOf = (status) => KYC_STATUS_PRIORITY[status] || 3;
+  const groups = new Map();
+  for (const row of rows || []) {
+    const key = row.user_id != null ? `u:${row.user_id}`
+      : (row.email ? `e:${String(row.email).toLowerCase()}` : `r:${row.id}`);
+    const current = groups.get(key);
+    if (!current) { groups.set(key, { rep: row, count: 1 }); continue; }
+    current.count++;
+    const rowPriority = priorityOf(row.status);
+    const currentPriority = priorityOf(current.rep.status);
+    const rowUpdatedAt = new Date(row.updated_at).getTime() || 0;
+    const currentUpdatedAt = new Date(current.rep.updated_at).getTime() || 0;
+    if (rowPriority > currentPriority
+        || (rowPriority === currentPriority && rowUpdatedAt > currentUpdatedAt)) {
+      current.rep = row;
+    }
+  }
+  return [...groups.values()].map(group => ({ ...group.rep, dup_count: group.count }));
+}
+
 /* ---- ADMIN: cola de revisión manual ------------------------ */
 app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   const status = String(req.query.status || "manual_review");
@@ -5384,25 +5413,7 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   // (el de mayor prioridad: si tiene una verificación aprobada, sale como
   // verificado aunque haya intentos pendientes). No se borra nada: los intentos
   // siguen en la BD para auditoría; solo se limpia la vista del panel.
-  const STATUS_PRIO = {
-    verified: 6, manual_review: 5,
-    pending: 4, doc_ok: 4, selfie_ok: 4, video_ok: 4,
-    suspended: 2, rejected: 1,
-  };
-  const prioOf = (s) => STATUS_PRIO[s] || 3;
-  const groups = new Map();
-  for (const r of allRows) {
-    const key = r.user_id != null ? `u:${r.user_id}`
-      : (r.email ? `e:${String(r.email).toLowerCase()}` : `r:${r.id}`);
-    const cur = groups.get(key);
-    if (!cur) { groups.set(key, { rep: r, count: 1 }); continue; }
-    cur.count++;
-    const better = prioOf(r.status) > prioOf(cur.rep.status)
-      || (prioOf(r.status) === prioOf(cur.rep.status)
-          && new Date(r.updated_at).getTime() > new Date(cur.rep.updated_at).getTime());
-    if (better) cur.rep = r;
-  }
-  const collapsed = [...groups.values()].map(g => ({ ...g.rep, dup_count: g.count }));
+  const collapsed = collapseKycVerifications(allRows);
 
   // Contadores de las pestañas: por PERSONA (estado efectivo), no por intento.
   const isInProgress = (s) => ["pending", "doc_ok", "selfie_ok", "video_ok"].includes(s);
@@ -18273,13 +18284,16 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
   const dbMs = Date.now() - dbStarted;
 
   const [
-    reports, tickets, urgentTickets, kyc, appeals, nowPhotos, devices,
+    reports, tickets, urgentTickets, kycRows, appeals, nowPhotos, devices,
     emailQueued, emailFailed, pushQueued, pushFailed, errors24h, backupRows,
   ] = await Promise.all([
     adminScalar("SELECT COUNT(*) n FROM reports WHERE status IN ('open','reviewing','escalated')"),
     adminScalar("SELECT COUNT(*) n FROM support_tickets WHERE status <> 'closed'"),
     adminScalar("SELECT COUNT(*) n FROM support_tickets WHERE status <> 'closed' AND priority='high'"),
-    adminScalar("SELECT COUNT(*) n FROM identity_verifications WHERE status IN ('pending','manual_review','suspended')"),
+    adminRows(`SELECT id, user_id, email, status, updated_at
+                 FROM identity_verifications
+                ORDER BY updated_at DESC, id DESC
+                LIMIT 5000`),
     adminScalar("SELECT COUNT(*) n FROM appeals WHERE status IN ('open','review')"),
     adminScalar("SELECT COUNT(*) n FROM photos WHERE is_now_photo=1 AND approved=0"),
     adminScalar("SELECT COUNT(*) n FROM device_incidents WHERE status IN ('pending_evidence','pending_admin','approved','active')"),
@@ -18290,6 +18304,11 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     adminScalar("SELECT COUNT(*) n FROM logs WHERE level='error' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
     adminRows("SELECT k,v FROM settings WHERE k IN ('backup.last_export_at','backup.last_snapshot_at','backup.last_full_export_at')"),
   ]);
+
+  // Mismo criterio que /api/admin/kyc/queue: una persona, un caso efectivo.
+  const kyc = collapseKycVerifications(kycRows)
+    .filter(row => ["pending", "manual_review", "suspended"].includes(row.status))
+    .length;
 
   const backup = Object.fromEntries(backupRows.map(r => [r.k, r.v]));
   const queues = [

@@ -1,6 +1,13 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 19 septiembre 2026 · última versión preparada: V963**
+**Fecha de este resumen: 19 septiembre 2026 · última versión preparada: V964**
+
+### V964 (19/09/2026) — Contador KYC sin duplicados
+
+- El contador “Verificación” del Panel usa ahora la misma agrupación por
+  identidad que la cola KYC.
+- Varios intentos históricos de una misma persona cuentan como un solo caso
+  efectivo, por lo que el Panel y Verificación muestran la misma cantidad.
 
 ### V963 (19/09/2026) — Operaciones, seguridad y recuperación
 
