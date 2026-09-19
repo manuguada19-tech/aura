@@ -10838,3 +10838,72 @@ body.desktop-app .screen > .chat-list { max-width: 980px; margin-left: auto; mar
 body.desktop-app .screen > .likes-tabs { max-width: 640px; margin-left: auto; margin-right: auto; }
 body.desktop-app .settings-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 body.desktop-app .settings-section { grid-column: 1 / -1; }
+
+/* ==========================================================================
+   V955 · PC SIN RESIDUOS DE MÓVIL (body.desktop-app)
+   Las capturas del usuario mostraban cinco restos móviles en escritorio:
+     1 · Subpantallas y sesiones recicladas caían en la maqueta del welcome
+         (móvil con notch + tarjetas laterales): lo cierra el autocurado de
+         render() en app.js (app-open + syncDesktopApp en cada render).
+     2 · Filtros, zona y packs de lecturas abrían como hoja inferior móvil de
+         400px flotando en mitad de la ventana.
+     3 · Secciones topadas a 1160/520/980px con huecos negros a los lados,
+         mientras el mapa ocupaba todo: el usuario lo leyó como "sin ajustar".
+     4 · El mapa (position:fixed a la ventana) dejaba la barra de filtros
+         flotando baja y tapaba la barra lateral.
+     5 · Buscar y Likes mantenían la rejilla móvil de dos columnas.
+   Todo vive bajo body.desktop-app: el móvil y la tablet no se tocan.
+   ========================================================================== */
+
+/* — 2 · Hojas y modales como diálogo centrado de escritorio — */
+body.desktop-app .modal { align-items: center; padding: 28px; }
+body.desktop-app .modal-sheet {
+  width: min(760px, 100%);
+  max-height: min(86dvh, 940px);
+  border-radius: 22px;
+  border: 1px solid var(--border);
+  box-shadow: 0 40px 120px rgba(0, 0, 0, .55);
+  padding-top: 10px;
+  animation: deskModalIn .16s ease;
+}
+body.desktop-app .modal-sheet::before { display: none; } /* sin asa de arrastre */
+@keyframes deskModalIn { from { transform: scale(.97); opacity: 0; } }
+/* Filtros: dos columnas de grupos dentro del diálogo. */
+body.desktop-app .filters-body,
+body.desktop-app .nearby-filters-sheet {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 14px 24px; align-items: start;
+}
+body.desktop-app .filters-body .sheet-titlebar,
+body.desktop-app .nearby-filters-sheet .sheet-titlebar { grid-column: 1 / -1; }
+/* Los grupos con rango/slider ocupan fila completa para no ahogarse. */
+body.desktop-app .filter-group:has(.single-range-slider),
+body.desktop-app .filter-group:has(.num-range) { grid-column: 1 / -1; }
+/* Zona: rejilla de tarjetas en vez de lista vertical estrecha. */
+body.desktop-app .zone-options { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+
+/* — 3 · Lienzo a sangre: ninguna sección deja huecos laterales — */
+body.desktop-app .screen:not([data-section="nearby"]) > * {
+  max-width: none; margin-left: 0; margin-right: 0;
+}
+body.desktop-app .screen:not([data-section="nearby"]) {
+  padding-left: 26px; padding-right: 26px; box-sizing: border-box;
+}
+/* Anchos diseñados: la pila de Explorar y los controles siguen centrados. */
+body.desktop-app .discover-stack-wrap { max-width: 1060px; margin-left: auto; margin-right: auto; }
+body.desktop-app .screen > .likes-tabs { max-width: 720px; margin-left: auto; margin-right: auto; }
+/* — 5 · Rejillas responsivas en vez de las dos columnas del móvil — */
+body.desktop-app .results-grid { grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); }
+body.desktop-app .likes-grid { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+body.desktop-app .settings-list { grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); }
+body.desktop-app .screen > .chat-list { max-width: none; }
+/* Los estados vacíos no se estiran: tarjeta centrada de lectura. */
+body.desktop-app .screen > .empty,
+body.desktop-app .screen > .nearby-empty,
+body.desktop-app .screen > .swipe-card-stack-hint {
+  max-width: 760px; margin-left: auto; margin-right: auto;
+}
+
+/* — 4 · Mapa anclado al viewport de la app (no a la ventana) — */
+body.desktop-app .app-viewport { position: relative; }
+body.desktop-app .map-overlay { position: absolute; inset: 0; }

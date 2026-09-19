@@ -4182,6 +4182,25 @@ function render(screenFn, opts = {}) {
   const screen = el("div", { class: "screen", "data-section": section });
   viewport.appendChild(screen);
   screenFn(screen, opts);
+  // V955 · Autocuración en PC: con sesión abierta, el caparazón de escritorio
+  // (barra lateral + sin marco de teléfono) no puede perderse a mitad de la
+  // navegación. Antes, cualquier flujo que quitaba body.app-open sin volver a
+  // pintar (subpantallas de "Yo", expiraciones, arranques parciales) dejaba la
+  // app DENTRO de la maqueta de móvil del welcome (notch, tarjetas laterales,
+  // columna de 400px): el "tema de móvil antiguo" de las capturas. En PC con
+  // sesión recuperamos app-open y resincronizamos desktop-app en CADA render.
+  // En móvil y en la preview del admin no se toca nada.
+  try {
+    if (section !== "welcome" &&
+        typeof _welcomeIsDesktop === "function" && _welcomeIsDesktop() &&
+        !(typeof isPreviewMode === "function" && isPreviewMode()) &&
+        state && state.user && state.user.id &&
+        !document.body.classList.contains("app-open")) {
+      tabbar.hidden = false;
+      document.body.classList.add("app-open");
+    }
+    syncDesktopApp();
+  } catch {}
   // After the screen mounts, re-apply design/content so inline hero styles
   // and CSS vars land on the newly created nodes (otherwise selectors like
   // .screen-hero that were styled by applyDesign() before the render lose
