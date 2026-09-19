@@ -771,6 +771,12 @@
   }
 
   async function openNotifications() {
+    // V957 · Fijar el modo de PC antes de construir el modal evita que una
+    // resincronización tardía de Perfil lo pinte con el ancho móvil. El fallback
+    // de 1100 px cubre Chrome en equipos híbridos que reportan pointer:coarse.
+    const desktopNotice = document.body.classList.contains("desktop-app") ||
+      (document.body.classList.contains("app-open") && window.innerWidth >= 1100);
+    if (desktopNotice) document.body.classList.add("desktop-app");
     const { ok, data } = await api("/api/my/notifications");
     if (!ok) { toast("No se pudieron cargar las notificaciones."); return; }
     const items = data.items || [];
@@ -873,10 +879,10 @@
           h("button", { class: "btn secondary", onclick: closeModal }, "Cerrar"),
         ]),
       ]),
-    ], "notif-modal");
+    ], "notif-modal" + (desktopNotice ? " notif-modal-desktop" : ""));
     // Presenta el aviso más reciente en el panel sin marcarlo como leído hasta
     // que el usuario lo pulse expresamente.
-    if (items.length && document.body.classList.contains("desktop-app")) {
+    if (items.length && desktopNotice) {
       showDetail(items[0], rows[0]);
     }
   }

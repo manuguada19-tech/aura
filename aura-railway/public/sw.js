@@ -25,7 +25,10 @@
 // V948 · v95: activate() además avisa a las pestañas vivas (sw-activated) para
 // que app.js recargue UNA vez si llevaban otra versión: ninguna pestaña que
 // estuviera abierta desde antes del despliegue se queda con cascarón/CSS viejos.
-const CACHE_VERSION = "aura-v95";
+// V957 · v96: fuerza a Chrome/PWA a retirar el CSS/JS anterior. V956 cambió
+// tickets y avisos de PC; mantener v95 permitía que una pestaña ya abierta
+// conservara la composición móvil hasta el siguiente ciclo de versión.
+const CACHE_VERSION = "aura-v96";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

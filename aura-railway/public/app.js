@@ -18471,6 +18471,13 @@ function screenSupportTicket(root) {
   TICKET_STATE.query = "";
   TICKET_STATE.attachments = [];
 
+  // V957 · Conserva de forma explícita el shell de PC. hideApp() se diseñó
+  // para pantallas públicas y retiraba desktop-app antes de que el render
+  // pudiera recuperarlo; en algunos Chrome la pantalla llegaba a pintarse con
+  // la composición móvil antigua. Capturamos el estado antes de ocultarlo.
+  const keepDesktopShell = document.body.classList.contains("desktop-app") ||
+    (document.body.classList.contains("app-open") && window.innerWidth >= 1100);
+
   root.classList.add("screen-info", "screen-tickets");
   document.body.classList.add("info-open");
   root.appendChild(topbar("Soporte · Ticket", () => {
@@ -18478,6 +18485,10 @@ function screenSupportTicket(root) {
     render(screenMe);
   }));
   hideApp();
+  if (keepDesktopShell) {
+    document.body.classList.add("app-open", "desktop-app");
+    tabbar.hidden = false;
+  }
 
   const wrap = el("div", { class: "info-wrap ticket-wrap" });
 
