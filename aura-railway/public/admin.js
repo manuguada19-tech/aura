@@ -1240,6 +1240,7 @@ $("#themeBtn").addEventListener("click", () => {
 (function wireGlobalSearch() {
   const input = document.querySelector(".search-wrap input");
   const wrap = document.querySelector(".search-wrap");
+  const mobileButton = document.getElementById("mobileSearchBtn");
   if (!input || !wrap) return;
 
   wrap.style.position = wrap.style.position || "relative";
@@ -1252,8 +1253,16 @@ $("#themeBtn").addEventListener("click", () => {
     "box-shadow:0 24px 60px rgba(0,0,0,.45);padding:6px";
   wrap.appendChild(panel);
 
-  function close() { panel.style.display = "none"; panel.innerHTML = ""; }
+  function close() {
+    panel.style.display = "none"; panel.innerHTML = "";
+    if (window.matchMedia("(max-width:720px)").matches) wrap.classList.remove("mobile-open");
+  }
   function open() { panel.style.display = "block"; }
+
+  mobileButton?.addEventListener("click", () => {
+    wrap.classList.add("mobile-open");
+    requestAnimationFrame(() => input.focus());
+  });
 
   let timer = null, lastQ = "";
   async function run(q) {
@@ -1391,7 +1400,7 @@ $("#nav").addEventListener("click", (e) => {
   } catch (e) { console.warn("injectDynamicNavLinks", e); }
 })();
 
-/* V961 · Navegación de trabajo: secciones plegables, favoritos y recientes.
+/* V962 · Navegación de trabajo: secciones plegables, favoritos y recientes.
    No elimina ninguna ruta; solo reduce el ruido de un menú que ya supera las
    cuarenta pantallas. Todo se guarda únicamente para este navegador. */
 (function enhanceAdminNavigation() {
@@ -1405,16 +1414,28 @@ $("#nav").addEventListener("click", (e) => {
   let favorites = readList("aura-admin-favorites", ["dashboard", "users", "tickets", "moderation"]);
   let recent = readList("aura-admin-recent", []);
   let collapsed = new Set(readList("aura-admin-nav-collapsed", []));
+  let smartHidden = localStorage.getItem("aura-admin-smart-hidden") === "1";
 
   const smart = el("div", { class: "nav-smart" }, [
     el("div", { class: "nav-smart-head" }, [
       el("strong", {}, "Mis accesos"),
-      el("small", {}, "Favoritos y recientes"),
+      el("button", { class: "nav-smart-toggle", type: "button", "aria-expanded": smartHidden ? "false" : "true" }, smartHidden ? "Mostrar" : "Ocultar"),
     ]),
     el("div", { class: "nav-smart-list" }),
   ]);
   sidebar.insertBefore(smart, nav);
   const smartList = smart.querySelector(".nav-smart-list");
+  const smartToggle = smart.querySelector(".nav-smart-toggle");
+  function applySmartVisibility() {
+    smart.classList.toggle("collapsed", smartHidden);
+    smartToggle.textContent = smartHidden ? "Mostrar" : "Ocultar";
+    smartToggle.setAttribute("aria-expanded", smartHidden ? "false" : "true");
+  }
+  smartToggle.addEventListener("click", () => {
+    smartHidden = !smartHidden;
+    localStorage.setItem("aura-admin-smart-hidden", smartHidden ? "1" : "0");
+    applySmartVisibility();
+  });
 
   const linkFor = view => nav.querySelector(`.nav-link[data-view="${view}"]`);
   const labelFor = view => {
@@ -1493,6 +1514,7 @@ $("#nav").addEventListener("click", (e) => {
   });
   decorateLinks();
   renderSmart();
+  applySmartVisibility();
   window.__renderAdminSmartNav = renderSmart;
 
   nav.addEventListener("click", e => {
@@ -1503,6 +1525,30 @@ $("#nav").addEventListener("click", (e) => {
     localStorage.setItem("aura-admin-recent", JSON.stringify(recent));
     renderSmart();
   });
+})();
+
+/* V962 · Barra inferior móvil. Las mejoras importantes dejan de depender de
+   que el administrador sepa abrir y recorrer todo el menú lateral. */
+(function installMobileAdminTools() {
+  if (document.querySelector(".mobile-admin-tools")) return;
+  const bar = el("nav", { class: "mobile-admin-tools", "aria-label": "Accesos rápidos del panel" });
+  const tool = (icon, label, action) => {
+    const b = el("button", { type: "button" }, [el("span", {}, icon), el("small", {}, label)]);
+    b.addEventListener("click", action); return b;
+  };
+  const onDashboard = (selector) => {
+    const scroll = () => document.querySelector(selector)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (__currentAdminView === "dashboard") scroll();
+    else { document.querySelector('[data-view="dashboard"]')?.click(); setTimeout(scroll, 350); }
+  };
+  bar.append(
+    tool("☰", "Menú", () => document.getElementById("menuBtn")?.click()),
+    tool("⌕", "Buscar", () => document.getElementById("mobileSearchBtn")?.click()),
+    tool("!", "Pendientes", () => onDashboard(".ops-center")),
+    tool("●", "Estado", () => onDashboard(".ops-health")),
+    tool("⚙", "Mi panel", () => openDashboardPrefs()),
+  );
+  document.body.appendChild(bar);
 })();
 
 /* Click en el logo/nombre "Aura" del sidebar → volver al Panel (dashboard) */

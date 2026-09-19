@@ -1,6 +1,15 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 19 septiembre 2026 · última versión desplegada: V960**
+**Fecha de este resumen: 19 septiembre 2026 · última versión desplegada: V962**
+
+### V962 (19/09/2026) — Acceso claro desde móvil
+
+- “Mis accesos” se puede ocultar y volver a mostrar; la preferencia queda
+  guardada en el navegador.
+- Nueva barra inferior móvil con accesos directos a Menú, Buscar, Pendientes,
+  Estado técnico y Personalización del panel.
+- El buscador global, antes oculto por falta de espacio en móvil, ahora se abre
+  desde un botón dedicado y ocupa temporalmente la cabecera completa.
 
 ### V961 (19/09/2026) — Panel administrativo orientado a operaciones
 
