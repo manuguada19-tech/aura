@@ -19224,6 +19224,8 @@ async function openCohorts() {
   .di-create-field textarea{resize:vertical;min-height:76px}
   .di-create-note{margin:0;padding:10px 12px;border-radius:9px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);color:#bfdbfe;font-size:12px;line-height:1.45}
   .di-create-footer{display:flex;justify-content:flex-end;gap:8px;padding-top:18px;margin-top:18px;border-top:1px solid #2a2f45}
+  .di-create-callout{display:flex;align-items:center;justify-content:space-between;gap:14px;margin:12px 0;padding:14px 16px;border-radius:12px;background:linear-gradient(135deg,rgba(59,130,246,.16),rgba(16,185,129,.10));border:1px solid rgba(59,130,246,.45)}
+  .di-create-callout strong{display:block;color:#fff;font-size:14px}.di-create-callout span{display:block;margin-top:3px;color:#b8c4da;font-size:12px}
   .di-selfie-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
   .di-selfie-compare figure{margin:0;background:#000;border-radius:10px;overflow:hidden;border:2px solid #2a2f45}
   .di-selfie-compare img{width:100%;height:220px;object-fit:cover;display:block}
@@ -19247,6 +19249,7 @@ async function openCohorts() {
     .di-create-grid{grid-template-columns:1fr}
     .di-create-field.full{grid-column:auto}
     .di-detail-overlay{padding:8px;align-items:flex-start}
+    .di-create-callout{align-items:stretch;flex-direction:column}.di-create-callout .di-btn{width:100%;padding:10px 12px}
   }
   `;
   document.head.appendChild(s);
@@ -19962,12 +19965,9 @@ async function viewPushCampaigns(root) {
 }
 
 async function viewDeviceIncidents(root) {
-  const createBtn = el("button", { class: "btn prim", type: "button" }, "+ Añadir dispositivo perdido");
-  createBtn.addEventListener("click", openCreateIncident);
   root.appendChild(viewTitle(
     "🛡 Dispositivos perdidos",
-    "Casos de dispositivo perdido/robado. Verifica identidad, emite alarma, envía mensaje o bloquea la cuenta con trazabilidad legal firmada.",
-    [createBtn]
+    "Casos de dispositivo perdido/robado. Verifica identidad, emite alarma, envía mensaje o bloquea la cuenta con trazabilidad legal firmada."
   ));
   root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
     ["🆕", "Caso nuevo pendiente de selfie del usuario."],
@@ -19980,6 +19980,15 @@ async function viewDeviceIncidents(root) {
     ["📎", "Denuncia policial adjunta (obligatoria)."],
     ["📍", "Última ubicación conocida en el momento del reporte."],
     ["🗂", "Auditoría con firma hash de cada acción del admin."],
+  ]));
+  const createBtn = el("button", { class: "di-btn ok", type: "button" }, "+ Añadir dispositivo perdido");
+  createBtn.addEventListener("click", openCreateIncident);
+  root.appendChild(el("div", { class: "di-create-callout" }, [
+    el("div", {}, [
+      el("strong", {}, "Alta manual de un caso"),
+      el("span", {}, "Selecciona al usuario y registra aquí su dispositivo perdido o robado."),
+    ]),
+    createBtn,
   ]));
 
   // KPIs
