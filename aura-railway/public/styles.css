@@ -10829,7 +10829,12 @@ body.desktop-app .desk-brand-name {
 /* Anchos: mismo lienzo amplio para todas las secciones salvo Cerca (completa). */
 body.desktop-app .screen:not([data-section="nearby"]) > * { max-width: 1160px; }
 body.desktop-app .discover-stack-wrap { max-width: 520px; }
-body.desktop-app .chat-list { max-width: 980px; }
-body.desktop-app .likes-tabs { max-width: 640px; margin-left: auto; margin-right: auto; }
-body.desktop-app .settings-list { display: block; }
+/* Los topes por sección necesitan el combinador ".screen >" para igualar la
+   especificidad (0,3,1) de la regla del lienzo y ganarle por orden de fuente.
+   Sin él, el lienzo (1160) los pisaba: el tope de Chats estaba muerto desde
+   V951 y el de Likes desde V953. La rejilla del perfil no compite por max-width
+   (el lienzo ya se lo da) pero sí por display: vuelve a dos columnas. */
+body.desktop-app .screen > .chat-list { max-width: 980px; margin-left: auto; margin-right: auto; }
+body.desktop-app .screen > .likes-tabs { max-width: 640px; margin-left: auto; margin-right: auto; }
+body.desktop-app .settings-list { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 body.desktop-app .settings-section { grid-column: 1 / -1; }
