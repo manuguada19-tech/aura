@@ -473,6 +473,7 @@ function registerDeviceIncidents(app, pool, wrap, helpers = {}) {
     ? helpers.emailIsAdminListed : () => false;
   const refreshDeviceLocks = typeof helpers.refreshDeviceLocks === "function"
     ? helpers.refreshDeviceLocks : async () => {};
+  const admEmail = (req) => (req.admin && req.admin.email) || null;
 
   async function logAction(incidentId, action, detail, adminEmail) {
     const payload = `${incidentId}|${action}|${detail || ""}|${Date.now()}`;
@@ -511,6 +512,60 @@ function registerDeviceIncidents(app, pool, wrap, helpers = {}) {
     const [[{ approved_7d }]] = await pool.query("SELECT COUNT(*) approved_7d FROM device_incidents WHERE status IN ('approved','active') AND reviewed_at >= NOW() - INTERVAL 7 DAY");
     const [[{ total }]] = await pool.query("SELECT COUNT(*) total FROM device_incidents");
     res.json({ ok: true, active, pending_admin, locked, approved_7d, total });
+  }));
+
+  // Alta manual desde Administración. Nace pendiente de revisión para que
+  // ninguna acción sensible (alarma o bloqueo) se ejecute automáticamente.
+  app.post("/api/admin/device-incidents", wrap(async (req, res) => {
+    const b = req.body || {};
+    const userId = parseInt(b.user_id, 10);
+    const type = String(b.type || "lost").trim();
+    const allowedTypes = new Set(["lost", "stolen", "suspicious", "other"]);
+    if (!userId) return res.status(400).json({ error: "user_required" });
+    if (!allowedTypes.has(type)) return res.status(400).json({ error: "bad_type" });
+
+    const [[user]] = await pool.query(
+      "SELECT id, email, role FROM users WHERE id=? LIMIT 1", [userId]
+    );
+    if (!user) return res.status(404).json({ error: "user_not_found" });
+    if (String(user.role || "user") !== "user" || emailIsAdminListed(user.email)) {
+      return res.status(403).json({ error: "staff_account_not_allowed" });
+    }
+
+    const reason = b.reason == null ? null : String(b.reason).trim().slice(0, 2000);
+    const policeUrl = b.police_report_url == null ? null : String(b.police_report_url).trim().slice(0, 500);
+    if (policeUrl) {
+      try {
+        const parsed = new URL(policeUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("bad_protocol");
+      } catch (_) { return res.status(400).json({ error: "invalid_police_report_url" }); }
+    }
+    const email = b.emergency_contact_email == null ? null : String(b.emergency_contact_email).trim().slice(0, 190);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: "invalid_emergency_email" });
+    }
+    const phone = b.emergency_contact_phone == null ? null : String(b.emergency_contact_phone).trim().slice(0, 40);
+    const lockMessage = b.lock_message == null ? null : String(b.lock_message).trim().slice(0, 500);
+
+    const openStatuses = ["pending_selfie", "pending_evidence", "pending_admin", "approved", "active"];
+    const [[{ open_count }]] = await pool.query(
+      `SELECT COUNT(*) open_count FROM device_incidents
+        WHERE user_id=? AND status IN (${openStatuses.map(() => "?").join(",")})`,
+      [userId, ...openStatuses]
+    );
+    if (Number(open_count) >= 3) {
+      return res.status(409).json({ error: "too_many_open_cases", max: 3 });
+    }
+
+    const [ins] = await pool.execute(
+      `INSERT INTO device_incidents
+         (user_id, type, status, reason, police_report_url, lock_message,
+          emergency_contact_email, emergency_contact_phone)
+       VALUES (?,?,'pending_admin',?,?,?,?,?)`,
+      [userId, type, reason, policeUrl || null, lockMessage, email || null, phone || null]
+    );
+    await logAction(ins.insertId, "manual-create", reason || "Alta manual desde Administración", admEmail(req));
+    res.status(201).json({ ok: true, incident_id: ins.insertId, status: "pending_admin" });
   }));
 
   // Detalle
@@ -580,8 +635,6 @@ function registerDeviceIncidents(app, pool, wrap, helpers = {}) {
   }));
 
   // ---- Acciones (POST) ----
-  const admEmail = (req) => (req.admin && req.admin.email) || null;
-
   app.post("/api/admin/device-incidents/:id/approve", wrap(async (req, res) => {
     const id = idOf(req);
     await pool.execute("UPDATE device_incidents SET status='approved', reviewed_at=NOW() WHERE id=?", [id]);

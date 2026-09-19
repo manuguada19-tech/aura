@@ -19216,6 +19216,14 @@ async function openCohorts() {
   .di-detail header{padding:16px 20px;border-bottom:1px solid #2a2f45;display:flex;justify-content:space-between;align-items:center}
   .di-detail .close-x{background:none;border:none;color:#9aa4bf;font-size:24px;cursor:pointer}
   .di-detail .body{padding:20px}
+  .di-create-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .di-create-field{display:flex;flex-direction:column;gap:6px}
+  .di-create-field.full{grid-column:1/-1}
+  .di-create-field label{font-size:12px;font-weight:600;color:#c1c7d8}
+  .di-create-field input,.di-create-field select,.di-create-field textarea{width:100%;box-sizing:border-box;padding:10px 11px;border-radius:8px;border:1px solid #2a2f45;background:#12141c;color:#e6e9f2;font:inherit}
+  .di-create-field textarea{resize:vertical;min-height:76px}
+  .di-create-note{margin:0;padding:10px 12px;border-radius:9px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3);color:#bfdbfe;font-size:12px;line-height:1.45}
+  .di-create-footer{display:flex;justify-content:flex-end;gap:8px;padding-top:18px;margin-top:18px;border-top:1px solid #2a2f45}
   .di-selfie-compare{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}
   .di-selfie-compare figure{margin:0;background:#000;border-radius:10px;overflow:hidden;border:2px solid #2a2f45}
   .di-selfie-compare img{width:100%;height:220px;object-fit:cover;display:block}
@@ -19235,6 +19243,11 @@ async function openCohorts() {
   .di-info-box{background:#1a1d2b;border:1px solid #2a2f45;border-radius:10px;padding:12px}
   .di-info-box h5{margin:0 0 8px;font-size:11px;color:#9aa4bf;text-transform:uppercase;letter-spacing:.5px}
   .di-info-box .v{font-size:14px;color:#fff}
+  @media(max-width:640px){
+    .di-create-grid{grid-template-columns:1fr}
+    .di-create-field.full{grid-column:auto}
+    .di-detail-overlay{padding:8px;align-items:flex-start}
+  }
   `;
   document.head.appendChild(s);
 })();
@@ -19949,9 +19962,12 @@ async function viewPushCampaigns(root) {
 }
 
 async function viewDeviceIncidents(root) {
+  const createBtn = el("button", { class: "btn prim", type: "button" }, "+ Añadir dispositivo perdido");
+  createBtn.addEventListener("click", openCreateIncident);
   root.appendChild(viewTitle(
     "🛡 Dispositivos perdidos",
-    "Casos de dispositivo perdido/robado. Verifica identidad, emite alarma, envía mensaje o bloquea la cuenta con trazabilidad legal firmada."
+    "Casos de dispositivo perdido/robado. Verifica identidad, emite alarma, envía mensaje o bloquea la cuenta con trazabilidad legal firmada.",
+    [createBtn]
   ));
   root.appendChild(sectionLegend("¿Qué significa cada icono aquí?", [
     ["🆕", "Caso nuevo pendiente de selfie del usuario."],
@@ -19989,6 +20005,93 @@ async function viewDeviceIncidents(root) {
 
   const grid = el("div", { class: "di-grid" });
   root.appendChild(grid);
+
+  function openCreateIncident() {
+    const overlay = el("div", { class: "di-detail-overlay" });
+    const modal = el("div", { class: "di-detail", style: "max-width:700px" });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    modal.appendChild(el("header", {}, [
+      el("div", {}, [
+        el("h3", { style: "margin:0" }, "Añadir dispositivo perdido"),
+        el("div", { style: "font-size:12px;color:#9aa4bf;margin-top:4px" }, "Crea manualmente un caso para un usuario de Aura."),
+      ]),
+      el("button", { class: "close-x", type: "button", onclick: () => overlay.remove() }, "×"),
+    ]));
+
+    const body = el("div", { class: "body" });
+    body.appendChild(el("p", { class: "di-create-note" }, "El caso quedará pendiente de revisión. No se bloqueará la cuenta ni se activará ninguna alarma automáticamente."));
+    const form = el("div", { class: "di-create-grid", style: "margin-top:16px" });
+    const picker = userPicker({ placeholder: "Busca por nombre o email…" });
+    const userField = el("div", { class: "di-create-field full" }, [
+      el("label", {}, "Usuario *"), picker.wrap,
+    ]);
+    form.appendChild(userField);
+
+    const type = el("select", {});
+    [["lost", "Perdido"], ["stolen", "Robado"], ["suspicious", "Actividad sospechosa"], ["other", "Otro"]]
+      .forEach(([value, label]) => type.appendChild(el("option", { value }, label)));
+    form.appendChild(el("div", { class: "di-create-field" }, [el("label", {}, "Tipo *"), type]));
+
+    const police = el("input", { type: "url", placeholder: "https://…" });
+    form.appendChild(el("div", { class: "di-create-field" }, [el("label", {}, "Enlace de denuncia (opcional)"), police]));
+
+    const reason = el("textarea", { maxlength: "2000", placeholder: "Explica por qué se abre el caso…" });
+    form.appendChild(el("div", { class: "di-create-field full" }, [el("label", {}, "Motivo o notas"), reason]));
+
+    const lockMessage = el("textarea", { maxlength: "500", placeholder: "Mensaje que se mostrará si después se bloquea…" });
+    form.appendChild(el("div", { class: "di-create-field full" }, [el("label", {}, "Mensaje de bloqueo (opcional)"), lockMessage]));
+
+    const email = el("input", { type: "email", maxlength: "190", placeholder: "contacto@ejemplo.com" });
+    const phone = el("input", { type: "tel", maxlength: "40", placeholder: "+34 600 000 000" });
+    form.appendChild(el("div", { class: "di-create-field" }, [el("label", {}, "Email de emergencia"), email]));
+    form.appendChild(el("div", { class: "di-create-field" }, [el("label", {}, "Teléfono de emergencia"), phone]));
+    body.appendChild(form);
+
+    const footer = el("div", { class: "di-create-footer" });
+    footer.appendChild(el("button", { class: "di-btn", type: "button", onclick: () => overlay.remove() }, "Cancelar"));
+    const submit = el("button", { class: "di-btn prim", type: "button" }, "Crear caso");
+    submit.addEventListener("click", async () => {
+      const userId = picker.getId();
+      if (!userId) { toast("Selecciona un usuario de la lista"); return; }
+      if (police.value.trim() && !police.checkValidity()) { toast("El enlace de denuncia no es válido"); police.focus(); return; }
+      if (email.value.trim() && !email.checkValidity()) { toast("El email de emergencia no es válido"); email.focus(); return; }
+      submit.disabled = true;
+      submit.textContent = "Creando…";
+      try {
+        const r = await api.post("/api/admin/device-incidents", {
+          user_id: userId,
+          type: type.value,
+          reason: reason.value.trim() || null,
+          police_report_url: police.value.trim() || null,
+          lock_message: lockMessage.value.trim() || null,
+          emergency_contact_email: email.value.trim() || null,
+          emergency_contact_phone: phone.value.trim() || null,
+        });
+        overlay.remove();
+        currentStatus = "";
+        tabs.querySelectorAll(".di-tab").forEach((x, i) => x.classList.toggle("on", i === 0));
+        await Promise.all([load(), loadKpis()]);
+        toast("Caso #" + r.incident_id + " creado correctamente");
+      } catch (e) {
+        const messages = {
+          user_not_found: "El usuario ya no existe",
+          staff_account_not_allowed: "No se puede abrir un caso para una cuenta administrativa",
+          too_many_open_cases: "Este usuario ya tiene el máximo de casos abiertos",
+          invalid_police_report_url: "El enlace de denuncia no es válido",
+          invalid_emergency_email: "El email de emergencia no es válido",
+        };
+        const code = e.data && e.data.error;
+        toast(messages[code] || e.message || "No se pudo crear el caso");
+        submit.disabled = false;
+        submit.textContent = "Crear caso";
+      }
+    });
+    footer.appendChild(submit);
+    body.appendChild(footer);
+    modal.appendChild(body);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
 
   function statusBadge(s) {
     const map = {
