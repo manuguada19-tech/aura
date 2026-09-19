@@ -4350,6 +4350,25 @@ function syncDesktopApp() {
       document.body.style.setProperty("--aura-user-name", '"' + nm.replace(/"/g, "") + '"');
     }
   } catch {}
+  // V953 · Cerradura de marca REAL en la barra lateral: el mismo logo recortado
+  //   y el mismo título degradado que la mini-marca propia de la app
+  //   (.brand-logo-crop + .brand-name-mini), en vez de un corazón dibujado.
+  //   Se inyecta como elemento que NO es pestaña: el manejador del menú lo
+  //   ignora (e.target.closest(".tab")), así no interfiere con los clics.
+  try {
+    const tb = document.getElementById("tabbar");
+    const db = tb ? tb.querySelector(".desk-brand") : null;
+    if (on && tb && !db) {
+      const d = document.createElement("div");
+      d.className = "desk-brand";
+      d.setAttribute("aria-hidden", "true");
+      d.innerHTML = '<span class="desk-brand-logo"><img src="assets/aura-logo-round.png?v=13" alt=""></span>' +
+        '<span class="desk-brand-name">Aura</span>';
+      tb.prepend(d);
+    } else if (!on && db) {
+      db.remove();
+    }
+  } catch {}
 }
 try {
   const __mqW = window.matchMedia("(min-width: 901px)");

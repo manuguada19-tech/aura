@@ -10664,34 +10664,16 @@ body.desktop-app .phone {
 body.desktop-app .app-viewport,
 body.desktop-app .screen { background: transparent; }
 
-/* 2 · Barra lateral de marca: tinte de marca arriba + corazón degradado. */
+/* 2 · Barra lateral de marca: tinte de marca arriba. La cerradura (logo +
+   título) la pone .desk-brand, inyectada por app.js con los assets reales. */
 body.desktop-app .tabbar {
   background-image:
-    url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23ff3b6b'/%3E%3Cstop offset='1' stop-color='%23ff8a3b'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath fill='url(%23g)' d='M12 21s-7.5-4.9-10-9.2C.4 8.6 2.4 5 6 5c2.2 0 3.6 1.2 4.5 2.6L12 9l1.5-1.4C14.4 6.2 15.8 5 18 5c3.6 0 5.6 3.6 4 6.8C19.5 16.1 12 21 12 21z'/%3E%3C/svg%3E"),
     linear-gradient(180deg, color-mix(in srgb, var(--brand-1) 9%, var(--surface)) 0%, var(--surface) 46%);
-  background-position: 16px 20px, 0 0;
-  background-size: 30px 30px, auto;
-  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0;
+  background-repeat: no-repeat;
   border-right: 1px solid var(--border);
   padding: 18px 14px 16px;
   gap: 6px;
-}
-/* Wordmark "Aura" en texto degradado, alineado a la derecha del corazón. */
-body.desktop-app .tabbar::before {
-  content: "Aura";
-  padding-left: 40px;
-  padding-bottom: 14px;
-  margin-bottom: 8px;
-  font-size: 23px;
-  font-weight: 800;
-  letter-spacing: .4px;
-  line-height: 30px;
-  background: var(--grad-brand);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  border-bottom: 1px solid var(--border);
 }
 /* Ficha de usuario anclada abajo (nombre vía --aura-user-name, lo pone app.js). */
 body.desktop-app .tabbar::after {
@@ -10808,3 +10790,46 @@ body.desktop-app .swipe-card { border-radius: 26px; box-shadow: 0 24px 60px rgba
 body.desktop-app .screen::-webkit-scrollbar { width: 10px; }
 body.desktop-app .screen::-webkit-scrollbar-track { background: transparent; }
 body.desktop-app .screen::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 8px; }
+
+/* ==========================================================================
+   V953 · MARCA REAL Y ANCHOS COHERENTES (body.desktop-app)
+   El usuario pidió tres correcciones: el logo de la barra no era el de Aura,
+   ni sus colores, ni el título; y unas secciones leían "móvil" (columna
+   estrecha) mientras otras ocupaban todo el ancho. V953:
+   - Cerradura de marca real (.desk-brand, la inyecta app.js): el PNG oficial
+     recortado igual que .brand-logo-crop y el título con el degradado exacto
+     de .brand-name-mini (naranja→magenta→púrpura→azul, 20px/800).
+   - Anchos coherentes: el lienzo de sección pasa de 860 a 1160, la pila de
+     Explorar gana presencia (520), Chats 980, los tabs de Likes ya no se
+     estiran y el menú de Perfil se ordena en dos columnas. Cerca sigue a
+     ancho completo. Ninguna sección vuelve a parecer un móvil incrustado.
+   ========================================================================== */
+body.desktop-app .desk-brand {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 6px 14px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+body.desktop-app .desk-brand-logo {
+  width: 34px; height: 34px; overflow: hidden;
+  border-radius: 10px; flex: 0 0 auto; line-height: 0;
+}
+body.desktop-app .desk-brand-logo img {
+  width: 42px; height: auto; display: block;
+  margin: -1px 0 0 -4px;
+  clip-path: inset(0 0 30% 0);
+  -webkit-clip-path: inset(0 0 30% 0);
+}
+body.desktop-app .desk-brand-name {
+  font-weight: 800; font-size: 20px; letter-spacing: .01em;
+  background: linear-gradient(90deg, #ff7a1a 0%, #ff2e93 35%, #a04bff 65%, #2f8bff 100%);
+  -webkit-background-clip: text; background-clip: text;
+  color: transparent; -webkit-text-fill-color: transparent;
+}
+/* Anchos: mismo lienzo amplio para todas las secciones salvo Cerca (completa). */
+body.desktop-app .screen:not([data-section="nearby"]) > * { max-width: 1160px; }
+body.desktop-app .discover-stack-wrap { max-width: 520px; }
+body.desktop-app .chat-list { max-width: 980px; }
+body.desktop-app .likes-tabs { max-width: 640px; margin-left: auto; margin-right: auto; }
+body.desktop-app .settings-list { display: block; }
+body.desktop-app .settings-section { grid-column: 1 / -1; }
