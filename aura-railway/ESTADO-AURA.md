@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 19 septiembre 2026 · última versión preparada: V964**
+**Fecha de este resumen: 20 septiembre 2026 · última versión preparada: V965**
+
+### V965 (20/09/2026) — Control operativo y acciones masivas seguras
+
+- Estado técnico incorpora un centro de incidencias con autorrefresco y
+  reintentos seguros de emails y campañas push no entregadas.
+- Nueva comprobación de coherencia para KYC, tickets, denuncias, registros
+  huérfanos y solicitudes RGPD vencidas.
+- Las acciones masivas de usuarios muestran una vista previa real con token de
+  cinco minutos ligado a usuarios, acción y contenido. Verificar, desverificar,
+  etiquetar, cambiar plan y enviar email ya ejecutan su operación completa.
+- La auditoría registra resultado, identificador de petición, objetivo, cambios
+  saneados, estado anterior/posterior y huella SHA-256; el panel permite filtrar
+  por resultado y consultar el detalle.
+- GDPR usa los estados reales de base de datos y destaca borrados vencidos.
 
 ### V964 (19/09/2026) — Contador KYC sin duplicados
 

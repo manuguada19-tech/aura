@@ -2532,6 +2532,80 @@ async function openTechnicalHistory() {
   overlay.appendChild(el("div",{class:"ac-scrim",onclick:()=>overlay.remove()}));overlay.appendChild(modal);document.body.appendChild(overlay);load("24h");
 }
 
+async function openIncidentsCenter() {
+  const overlay=el("div",{class:"ac-overlay"});
+  const body=el("div",{class:"incident-list"});
+  const stamp=el("small",{class:"incident-refresh"},"Actualizando…");
+  let timer=null, closed=false;
+  const close=()=>{closed=true;if(timer)clearInterval(timer);document.removeEventListener("keydown",onKey);overlay.remove();};
+  const onKey=e=>{if(e.key==="Escape")close();};
+  const modal=el("div",{class:"ac-dialog ac-dialog-wide ops-modal",role:"dialog","aria-modal":"true"},[
+    el("div",{class:"technical-history-head"},[
+      el("div",{},[el("small",{},"OPERACIONES"),el("h3",{},"Centro de incidencias"),stamp]),
+      btn("Cerrar","ghost sm",close),
+    ]),body,
+  ]);
+  async function load() {
+    if(closed)return;
+    stamp.textContent="Actualizando…";
+    try {
+      const d=await api.get("/api/admin/incidents");
+      if(closed)return;
+      body.innerHTML="";
+      body.appendChild(el("div",{class:"incident-kpis"},[
+        el("div",{},[el("strong",{},String(d.counts?.total||0)),el("span",{},"Total")]),
+        el("div",{},[el("strong",{},String(d.counts?.email||0)),el("span",{},"Emails")]),
+        el("div",{},[el("strong",{},String(d.counts?.push||0)),el("span",{},"Push")]),
+        el("div",{},[el("strong",{},String(d.counts?.errors||0)),el("span",{},"Errores")]),
+      ]));
+      if(!(d.items||[]).length) body.appendChild(el("div",{class:"ops-modal-empty"},"No hay incidencias activas."));
+      (d.items||[]).forEach(item=>{
+        const actions=el("div",{class:"incident-actions"});
+        if(item.retryable){
+          const retry=btn("Reintentar","primary sm",async()=>{
+            retry.disabled=true;retry.textContent="Reintentando…";
+            try{await api.post(`/api/admin/incidents/${encodeURIComponent(item.kind)}/${item.source_id}/retry`,{});toast("Reintento iniciado");await load();}
+            catch(e){toast("No se pudo reintentar: "+e.message,"err");retry.disabled=false;retry.textContent="Reintentar";}
+          });
+          actions.appendChild(retry);
+        }
+        body.appendChild(el("article",{class:`incident-row ${item.kind||"log"}`},[
+          el("div",{class:"incident-copy"},[
+            el("div",{class:"incident-title"},[el("strong",{},item.title||"Incidencia"),el("span",{class:`chip xs ${item.status==="failed"||item.status==="error"?"t-warn":""}`},item.status||"—")]),
+            el("p",{},item.detail||"Sin detalle"),
+            el("time",{},item.created_at?new Date(item.created_at).toLocaleString():"—"),
+          ]),actions,
+        ]));
+      });
+      stamp.textContent=`Actualizado ${new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"})} · cada 30 s`;
+    } catch(e) {
+      body.innerHTML="";body.appendChild(el("div",{class:"error"},"No se pudieron cargar las incidencias."));stamp.textContent="Actualización fallida";
+    }
+  }
+  overlay.appendChild(el("div",{class:"ac-scrim",onclick:close}));overlay.appendChild(modal);document.body.appendChild(overlay);
+  document.addEventListener("keydown",onKey);await load();timer=setInterval(load,30000);
+}
+
+async function openDataConsistency() {
+  const overlay=el("div",{class:"ac-overlay"});
+  const body=el("div",{class:"consistency-list"},[el("div",{class:"loading"},"Comprobando…")]);
+  const close=()=>{document.removeEventListener("keydown",onKey);overlay.remove();};
+  const onKey=e=>{if(e.key==="Escape")close();};
+  const modal=el("div",{class:"ac-dialog ac-dialog-wide ops-modal",role:"dialog","aria-modal":"true"},[
+    el("div",{class:"technical-history-head"},[el("div",{},[el("small",{},"INTEGRIDAD"),el("h3",{},"Coherencia de datos")]),btn("Cerrar","ghost sm",close)]),body,
+  ]);
+  overlay.appendChild(el("div",{class:"ac-scrim",onclick:close}));overlay.appendChild(modal);document.body.appendChild(overlay);document.addEventListener("keydown",onKey);
+  try {
+    const d=await api.get("/api/admin/data-consistency");body.innerHTML="";
+    body.appendChild(el("div",{class:`consistency-summary ${d.ok?"ok":"attention"}`},d.ok?"No se han detectado incoherencias críticas.":"Hay incoherencias que requieren revisión."));
+    (d.checks||[]).forEach(c=>body.appendChild(el("article",{class:`consistency-row ${c.status||"ok"}`},[
+      el("span",{class:"consistency-mark","aria-hidden":"true"},c.status==="error"?"×":c.status==="warn"?"!":"✓"),
+      el("div",{},[el("strong",{},c.label||c.key),el("p",{},c.detail||"")]),
+      el("b",{},String(c.value??0)),
+    ])));
+  } catch(e){body.innerHTML="";body.appendChild(el("div",{class:"error"},"No se pudo completar la comprobación."));}
+}
+
 function renderOperationsCenter(data, showWork = true, showHealth = true) {
   const wrap = el("section", { class: "ops-center" });
   const head = el("div", { class: "ops-head" }, [
@@ -2597,6 +2671,8 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
     }
     const healthActions = el("div", { class: "health-actions" }, [
       btn("Historial", "primary sm", () => openTechnicalHistory()),
+      btn("Incidencias", "ghost sm", () => openIncidentsCenter()),
+      btn("Coherencia", "ghost sm", () => openDataConsistency()),
       btn("Ver logs", "ghost sm", () => document.querySelector('[data-view="logs"]')?.click()),
       btn("Copias", "ghost sm", () => document.querySelector('[data-view="backup"]')?.click()),
     ]);
@@ -3485,18 +3561,31 @@ async function viewUsers(root){
   bulkBar.appendChild(bulkCount);
   bulkBar.appendChild(el("span", { class: "spacer", style: "flex:1" }));
 
-  async function bulkAction(action, extraPrompt) {
+  async function bulkAction(action, options = {}) {
     if (!selectedIds.size) return;
     const ids = Array.from(selectedIds);
-    let confirmMsg = `¿Aplicar "${action}" a ${ids.length} usuarios?`;
-    let extra = null;
-    if (extraPrompt) {
-      extra = prompt(extraPrompt);
-      if (extra === null) return;
-    } else if (!confirm(confirmMsg)) return;
+    const payload = { ids, action };
+    if (options.prompt) {
+      const value = prompt(options.prompt);
+      if (value === null) return;
+      payload.value = value;
+    }
+    if (options.subject != null) payload.subject = options.subject;
+    if (options.body != null) payload.body = options.body;
     try {
-      const r = await api.post("/api/users/bulk", { ids, action, value: extra });
-      toast(`Aplicado a ${r.affected || ids.length} usuarios`);
+      const preview = await api.post("/api/users/bulk/preview", payload);
+      const s = preview.summary || {};
+      const sample = (s.users || []).map(u => `${u.name || "Sin nombre"} (${u.email || "#" + u.id})`).join("\n");
+      const more = (s.affected || 0) > (s.users || []).length
+        ? `\n…y ${(s.affected || 0) - s.users.length} más.` : "";
+      const skipped = s.skipped ? `\n${s.skipped} selecciones no son usuarios válidos y se omitirán.` : "";
+      const ok = await askConfirm(
+        `${s.label || "Aplicar acción"}\n\nAfectará a ${s.affected || 0} usuario(s):\n${sample}${more}${skipped}\n\nLa vista previa caduca en 5 minutos.`,
+        { okText:"Confirmar y aplicar", danger:["ban","delete","suspend","unverify"].includes(action) }
+      );
+      if (!ok) return;
+      const r = await api.post("/api/users/bulk", { ...payload, preview_token:preview.token });
+      toast(`Aplicado a ${r.affected ?? ids.length} usuarios`);
       selectedIds.clear();
       refresh();
     } catch (e) { toast("Error: " + (e.message || "")); }
@@ -3505,23 +3594,21 @@ async function viewUsers(root){
   bulkBar.appendChild(btn("✅ Verificar", "sm", () => bulkAction("verify")));
   bulkBar.appendChild(btn("❌ Desverificar", "sm", () => bulkAction("unverify")));
   bulkBar.appendChild(btn("🚫 Suspender", "sm", () => bulkAction("suspend")));
-  bulkBar.appendChild(btn("⛔ Banear", "sm", () => bulkAction("ban", "Motivo del baneo (opcional):")));
+  bulkBar.appendChild(btn("⛔ Banear", "sm", () => bulkAction("ban", { prompt:"Motivo del baneo (opcional):" })));
   bulkBar.appendChild(btn("🔓 Reactivar", "sm", () => bulkAction("activate")));
-  bulkBar.appendChild(btn("🏷 Añadir etiqueta", "sm", () => bulkAction("tag", "Etiqueta a aplicar:")));
-  bulkBar.appendChild(btn("💎 Cambiar plan", "sm", () => bulkAction("plan", "Plan (free/premium/gold/platinum):")));
-  bulkBar.appendChild(btn("✉️ Enviar email", "sm", () => {
+  bulkBar.appendChild(btn("🏷 Añadir etiqueta", "sm", () => bulkAction("tag", { prompt:"Etiqueta a aplicar:" })));
+  bulkBar.appendChild(btn("💎 Cambiar plan", "sm", () => bulkAction("plan", { prompt:"Plan (free/premium/gold/platinum):" })));
+  bulkBar.appendChild(btn("✉️ Enviar email", "sm", async () => {
     const subject = prompt("Asunto:"); if (!subject) return;
-    const body = prompt("Cuerpo (HTML permitido):"); if (!body) return;
-    bulkAction("email", null) && (async () => {
-      try { await api.post("/api/users/bulk", { ids: Array.from(selectedIds), action: "email", subject, body }); toast("Emails encolados"); selectedIds.clear(); refresh(); } catch(e){ toast(e.message); }
-    })();
+    const body = prompt("Mensaje (texto):"); if (!body) return;
+    await bulkAction("email", { subject, body });
   }));
   bulkBar.appendChild(btn("📥 Exportar selección", "sm", () => {
     const ids = Array.from(selectedIds);
     const url = "/api/users/export?ids=" + ids.join(",") + "&adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || "");
     window.open(url, "_blank");
   }));
-  bulkBar.appendChild(btn("🗑 Eliminar de app y Didit", "danger sm", () => bulkAction("delete")));
+  bulkBar.appendChild(btn("🗑 Bloquear acceso", "danger sm", () => bulkAction("delete")));
   bulkBar.appendChild(btn("✖ Deseleccionar", "sm", () => { selectedIds.clear(); refresh(); }));
   root.appendChild(bulkBar);
 
@@ -6399,7 +6486,7 @@ async function viewAuditLog(root) {
     ["👤", "Administrador que ejecutó la acción"],
   ]));
 
-  const stateA = { actor: "", method: "", q: "" };
+  const stateA = { actor: "", method: "", outcome: "", q: "" };
 
   const filters = el("div", { class: "mod-filters" });
   const methodSel = el("select", { class: "input", onchange: (e) => { stateA.method = e.target.value; refresh(); } }, [
@@ -6410,6 +6497,11 @@ async function viewAuditLog(root) {
     el("option", { value: "DELETE" }, "DELETE (eliminar)"),
   ]);
   filters.appendChild(methodSel);
+  filters.appendChild(el("select", { class:"input", onchange:(e)=>{stateA.outcome=e.target.value;refresh();} }, [
+    el("option",{value:""},"Cualquier resultado"),
+    el("option",{value:"success"},"Correcto"),
+    el("option",{value:"failed"},"Fallido"),
+  ]));
   filters.appendChild(el("input", {
     class: "input", type: "search", placeholder: "Filtrar por administrador (email)…",
     oninput: (e) => { stateA.actor = e.target.value.trim(); refreshDebounced(); },
@@ -6444,6 +6536,30 @@ async function viewAuditLog(root) {
     return method + " " + p;
   }
 
+  function openAuditDetail(row) {
+    const overlay=el("div",{class:"ac-overlay"});
+    const close=()=>{document.removeEventListener("keydown",onKey);overlay.remove();};
+    const onKey=e=>{if(e.key==="Escape")close();};
+    const jsonBlock=(title,value)=>{
+      const section=el("section",{class:"audit-json"},[el("h4",{},title)]);
+      section.appendChild(el("pre",{},value==null?"Sin datos":JSON.stringify(value,null,2)));
+      return section;
+    };
+    const modal=el("div",{class:"ac-dialog ac-dialog-wide audit-detail",role:"dialog","aria-modal":"true"},[
+      el("div",{class:"technical-history-head"},[el("div",{},[el("small",{},"TRAZABILIDAD"),el("h3",{},`Registro #${row.id}`)]),btn("Cerrar","ghost sm",close)]),
+      el("dl",{class:"audit-meta"},[
+        el("div",{},[el("dt",{},"Resultado"),el("dd",{},row.outcome==="failed"?"Fallido":"Correcto")]),
+        el("div",{},[el("dt",{},"Administrador"),el("dd",{},row.actor||"—")]),
+        el("div",{},[el("dt",{},"Petición"),el("dd",{},row.request_id||"—")]),
+        el("div",{},[el("dt",{},"Objetivo"),el("dd",{},row.target_type?`${row.target_type} #${row.target_id||"—"}`:"—")]),
+        el("div",{},[el("dt",{},"Ruta"),el("dd",{},`${row.method||""} ${row.path||""}`)]),
+        el("div",{},[el("dt",{},"Huella SHA-256"),el("dd",{class:"mono"},row.entry_hash||"—")]),
+      ]),
+      el("div",{class:"audit-json-grid"},[jsonBlock("Estado anterior",row.before),jsonBlock("Cambios solicitados",row.changes),jsonBlock("Estado posterior",row.after)]),
+    ]);
+    overlay.appendChild(el("div",{class:"ac-scrim",onclick:close}));overlay.appendChild(modal);document.body.appendChild(overlay);document.addEventListener("keydown",onKey);
+  }
+
   async function refresh() {
     wrap.innerHTML = "";
     wrap.appendChild(el("div", { class: "loading" }, "Cargando…"));
@@ -6452,6 +6568,7 @@ async function viewAuditLog(root) {
       const p = new URLSearchParams();
       if (stateA.actor) p.set("actor", stateA.actor);
       if (stateA.method) p.set("method", stateA.method);
+      if (stateA.outcome) p.set("outcome", stateA.outcome);
       if (stateA.q) p.set("q", stateA.q);
       p.set("limit", "300");
       const data = await api.get("/api/admin/audit-log?" + p.toString());
@@ -6471,21 +6588,22 @@ async function viewAuditLog(root) {
     const table = el("table", { class: "data-table" });
     table.innerHTML = `<thead><tr>
       <th>#</th><th>Fecha</th><th>Administrador</th><th>Acción</th>
-      <th>Método</th><th>Estado</th><th>IP</th>
+      <th>Objetivo</th><th>Resultado</th><th>Estado</th><th></th>
     </tr></thead>`;
     const tb = document.createElement("tbody");
     rows.forEach(r => {
-      const mIc = r.method === "DELETE" ? "🗑" : "✏️";
       const okCls = (r.status >= 200 && r.status < 300) ? "t-ok" : (r.status >= 400 ? "t-warn" : "");
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="mono">#${r.id}</td>
         <td>${r.created_at ? new Date(r.created_at).toLocaleString() : "—"}</td>
-        <td>${r.actor || "—"}</td>
+        <td>${escapeHtml(r.actor || "—")}</td>
         <td>${friendly(r.method, r.path).replace(/</g, "&lt;")}</td>
-        <td>${mIc} ${r.method}</td>
+        <td>${r.target_type ? `${escapeHtml(r.target_type)} #${r.target_id || "—"}` : "—"}</td>
+        <td><span class="audit-outcome ${r.outcome === "failed" ? "failed" : "success"}">${r.outcome === "failed" ? "Fallido" : "Correcto"}</span></td>
         <td><span class="chip xs ${okCls}">${r.status || "—"}</span></td>
-        <td class="mono">${r.ip || "—"}</td>`;
+        <td class="ta-right"></td>`;
+      tr.lastElementChild.appendChild(btn("Detalle","ghost xs",()=>openAuditDetail(r)));
       tb.appendChild(tr);
     });
     table.appendChild(tb);

@@ -1505,27 +1505,31 @@
 
     // ---- GDPR -------------------------------------------------------
     async function view_gdpr(container) {
+      const isOverdue = (r) => r.type === "delete" && ["pending","processing"].includes(r.status)
+        && r.scheduled_for && new Date(r.scheduled_for).getTime() < Date.now();
+      const statusLabel = { pending:"Pendiente", processing:"En proceso", completed:"Completada", cancelled:"Cancelada" };
       DataView(container, {
         title: "Solicitudes GDPR", subtitle: "Exportaciones y borrados solicitados por usuarios", icon: "🔒",
         fetch: async () => (await api("/api/admin/gdpr/requests")).data?.items || [],
         rowId: (r) => r.id,
         kpis: (rows) => [
           { label: "Total solicitudes", value: rows.length, accent: "blue" },
-          { label: "Pendientes borrado", value: rows.filter((r) => r.status === "scheduled" && r.type === "delete").length, accent: "amber" },
-          { label: "Completadas", value: rows.filter((r) => r.status === "done").length, accent: "green" },
+          { label: "Borrados pendientes", value: rows.filter((r) => ["pending","processing"].includes(r.status) && r.type === "delete").length, accent: "amber" },
+          { label: "Plazo vencido", value: rows.filter(isOverdue).length, accent: "red" },
+          { label: "Completadas", value: rows.filter((r) => r.status === "completed").length, accent: "green" },
           { label: "Canceladas", value: rows.filter((r) => r.status === "cancelled").length, accent: "red" },
         ],
         filters: [
           { key: "type", label: "Tipo", type: "select", options: [ { value: "export", label: "Export" }, { value: "delete", label: "Borrado" } ] },
-          { key: "status", label: "Estado", type: "select", options: [ { value: "pending", label: "Pendiente" }, { value: "scheduled", label: "Programada" }, { value: "done", label: "Completada" }, { value: "cancelled", label: "Cancelada" } ] },
+          { key: "status", label: "Estado", type: "select", options: [ { value: "pending", label: "Pendiente" }, { value: "processing", label: "En proceso" }, { value: "completed", label: "Completada" }, { value: "cancelled", label: "Cancelada" } ] },
         ],
         columns: [
           { key: "id", label: "ID", sortable: true },
           { key: "user", label: "Usuario", render: (r) => (r.name || r.email || `#${r.user_id}`) },
           { key: "type", label: "Tipo", render: (r) => { const b = document.createElement("span"); b.className = "fx-badge " + (r.type === "delete" ? "red" : "blue"); b.textContent = r.type; return b; } },
-          { key: "status", label: "Estado" },
+          { key: "status", label: "Estado", render: (r) => { const b=document.createElement("span"); b.className="fx-badge "+(r.status==="completed"?"ok":r.status==="cancelled"?"off":isOverdue(r)?"red":"amber"); b.textContent=isOverdue(r)?"Vencida":(statusLabel[r.status]||r.status); return b; } },
           { key: "requested_at", label: "Solicitado", sortable: true, render: (r) => fmtDate(r.requested_at) },
-          { key: "scheduled_for", label: "Programado", render: (r) => fmtDate(r.scheduled_for) },
+          { key: "scheduled_for", label: "Vencimiento", render: (r) => { const w=document.createElement("span"); w.textContent=fmtDate(r.scheduled_for); if(isOverdue(r)){w.className="fx-gdpr-overdue";w.title="El plazo programado ya ha vencido";} return w; } },
           { key: "completed_at", label: "Completado", render: (r) => fmtDate(r.completed_at) },
         ],
         actions: [],

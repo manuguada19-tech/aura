@@ -1114,14 +1114,51 @@ app.use((req, res, next) => {
   });
 });
 
-// V824 · Auditoría de acciones de admin. Registra SOLO las peticiones que
+// V824/V965 · Auditoría de acciones de admin. Registra SOLO las peticiones que
 // modifican estado (POST/PUT/PATCH/DELETE) hechas por un admin autenticado.
-// Se engancha al final de la respuesta para conocer el código de estado y no
-// interfiere con ningún handler. Es best-effort: si falla el INSERT, se ignora.
+// V965 añade identificador de petición, objetivo, cambios saneados y fotografía
+// anterior/posterior para las entidades operativas principales. Nunca guarda
+// contraseñas, tokens, secretos, documentos, imágenes ni cuerpos de mensajes.
 const AUDIT_SKIP_PATHS = new Set([
-  "/api/admin/login", "/api/admin/logout", "/api/admin/audit-log",
+  "/api/admin/login", "/api/admin/logout", "/api/admin/audit-log", "/api/users/bulk/preview",
 ]);
-app.use((req, res, next) => {
+const AUDIT_SECRET_KEYS = /pass(word)?|token|secret|authorization|cookie|otp|totp|recovery|html|body|message|photo|selfie|document|media/i;
+function sanitizeAuditValue(value, depth = 0) {
+  if (depth > 3 || value == null) return value == null ? null : "[omitido]";
+  if (Array.isArray(value)) return value.slice(0, 50).map(v => sanitizeAuditValue(v, depth + 1));
+  if (typeof value !== "object") return typeof value === "string" ? value.slice(0, 500) : value;
+  const out = {};
+  for (const [key, val] of Object.entries(value).slice(0, 50)) {
+    out[key] = AUDIT_SECRET_KEYS.test(key) ? "[redactado]" : sanitizeAuditValue(val, depth + 1);
+  }
+  return out;
+}
+function auditTarget(pathname) {
+  const defs = [
+    [/^\/api\/(?:admin\/)?users\/(\d+)/, "users", ["id","status","plan","verified","role","zone","updated_at"]],
+    [/^\/api\/reports\/(\d+)/, "reports", ["id","status","priority","assignee_email","resolved_at"]],
+    [/^\/api\/tickets\/(\d+)/, "support_tickets", ["id","status","priority","assignee_email","updated_at"]],
+    [/^\/api\/payments\/(\d+)/, "payments", ["id","status"]],
+    [/^\/api\/admin\/gdpr\/requests\/(\d+)/, "gdpr_requests", ["id","type","status","scheduled_for","completed_at"]],
+    [/^\/api\/admin\/email-outbox\/(\d+)/, "email_outbox", ["id","status","sent_at","error"]],
+  ];
+  for (const [re, table, fields] of defs) {
+    const m = re.exec(pathname);
+    if (m) return { table, fields, id: Number(m[1]) };
+  }
+  return null;
+}
+async function auditSnapshot(target) {
+  if (!target || !target.id) return null;
+  try {
+    const [rows] = await pool.query(
+      `SELECT ${target.fields.map(f => `\`${f}\``).join(",")} FROM \`${target.table}\` WHERE id=? LIMIT 1`,
+      [target.id]
+    );
+    return rows[0] || null;
+  } catch { return null; }
+}
+app.use(async (req, res, next) => {
   try {
     const m = req.method;
     if (m === "GET" || m === "HEAD" || m === "OPTIONS") return next();
@@ -1130,11 +1167,30 @@ app.use((req, res, next) => {
     const actor = (req.admin && req.admin.email) || "admin";
     const ip = (typeof clientIp === "function" ? clientIp(req) : (req.ip || "")) || "";
     const path = req.originalUrl ? req.originalUrl.split("?")[0].slice(0, 255) : req.path.slice(0, 255);
+    const requestId = String(req.get("X-Request-Id") || crypto.randomBytes(12).toString("hex")).slice(0, 64);
+    const target = auditTarget(path);
+    const before = await auditSnapshot(target);
+    const changes = sanitizeAuditValue(req.body || {});
+    res.setHeader("X-Request-Id", requestId);
     res.on("finish", () => {
-      pool.execute(
-        "INSERT INTO admin_audit_log (actor, method, path, status, ip) VALUES (?,?,?,?,?)",
-        [actor.slice(0, 190), m, path, res.statusCode || null, String(ip).slice(0, 64)]
-      ).catch(() => {});
+      (async () => {
+        const after = await auditSnapshot(target);
+        const outcome = res.statusCode >= 200 && res.statusCode < 400 ? "success" : "failed";
+        const beforeJson = before ? JSON.stringify(before).slice(0, 12000) : null;
+        const afterJson = after ? JSON.stringify(after).slice(0, 12000) : null;
+        const changesJson = Object.keys(changes || {}).length ? JSON.stringify(changes).slice(0, 12000) : null;
+        const hash = crypto.createHash("sha256").update([
+          requestId, actor, m, path, String(res.statusCode || ""),
+          beforeJson || "", afterJson || "", changesJson || "",
+        ].join("|")).digest("hex");
+        await pool.execute(
+          `INSERT INTO admin_audit_log
+           (actor,method,path,status,ip,request_id,outcome,target_type,target_id,before_json,after_json,changes_json,entry_hash)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [actor.slice(0,190),m,path,res.statusCode||null,String(ip).slice(0,64),requestId,outcome,
+           target?.table || null,target?.id || null,beforeJson,afterJson,changesJson,hash]
+        );
+      })().catch(() => {});
     });
   } catch (e) { /* nunca bloquea la petición */ }
   next();
@@ -1225,6 +1281,7 @@ const ESCRITURA = [
   /* --- 3. Moderador (2): atender a la gente y aplicar las normas --- */
   // Suspender, banear, avisar y reactivar
   [/^POST \/api\/users\/[^/]+\/action$/, 2],
+  [/^POST \/api\/users\/bulk\/preview$/, 2],
   [/^POST \/api\/users\/bulk$/, 2],
   [/^POST \/api\/admin\/users\/[^/]+\/moderate$/, 2],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/users\/[^/]+\/restrictions/, 2],
@@ -1254,6 +1311,7 @@ const ESCRITURA = [
   /* --- 4. Administrador (3): además, hablarle a los usuarios y el contenido --- */
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/notifications(\/|$)/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/push(\/|$)/, 3],
+  [/^POST \/api\/admin\/incidents\/(email|push)\/[^/]+\/retry$/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/popups(\/|$)/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/newsletters(\/|$)/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/email-templates(\/|$)/, 3],
@@ -1430,9 +1488,19 @@ async function migrate() {
       path VARCHAR(255) NOT NULL,
       status INT NULL,
       ip VARCHAR(64) NULL,
+      request_id VARCHAR(64) NULL,
+      outcome VARCHAR(20) NULL,
+      target_type VARCHAR(64) NULL,
+      target_id BIGINT NULL,
+      before_json LONGTEXT NULL,
+      after_json LONGTEXT NULL,
+      changes_json LONGTEXT NULL,
+      entry_hash CHAR(64) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_created (created_at),
-      INDEX idx_actor (actor)
+      INDEX idx_actor (actor),
+      INDEX idx_request (request_id),
+      INDEX idx_target (target_type, target_id)
     )`,
     `CREATE TABLE IF NOT EXISTS countries (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1977,6 +2045,22 @@ async function migrate() {
       }
     }
   }
+
+  // V965 · Reconciliación para instalaciones que ya tenían la tabla de
+  // auditoría V824. MySQL no admite ADD COLUMN IF NOT EXISTS en todas las
+  // versiones soportadas, por eso cada ALTER es idempotente mediante catch.
+  for (const stmt of [
+    "ALTER TABLE admin_audit_log ADD COLUMN request_id VARCHAR(64) NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN outcome VARCHAR(20) NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN target_type VARCHAR(64) NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN target_id BIGINT NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN before_json LONGTEXT NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN after_json LONGTEXT NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN changes_json LONGTEXT NULL",
+    "ALTER TABLE admin_audit_log ADD COLUMN entry_hash CHAR(64) NULL",
+    "ALTER TABLE admin_audit_log ADD INDEX idx_request (request_id)",
+    "ALTER TABLE admin_audit_log ADD INDEX idx_target (target_type, target_id)",
+  ]) { try { await pool.execute(stmt); } catch {} }
 
   // Ads override column on users: allows the admin to force show/hide ads
   // per user regardless of plan. Values: 'default' (respect plan), 'force_on', 'force_off'.
@@ -3201,6 +3285,8 @@ app.get("/api/users", wrap(async (req, res) => {
                 WHERE p.user_id=users.id AND COALESCE(p.is_now_photo, 0)=0
                 ORDER BY p.is_primary DESC, p.id ASC LIMIT 1)
             ) AS photo_url,
+            (SELECT GROUP_CONCAT(t.tag ORDER BY t.created_at SEPARATOR ',')
+               FROM user_admin_tags t WHERE t.user_id=users.id) AS tags,
             verified, online, plan, status, role, created_at
        FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     [...params, Number(limit), Number(offset)]
@@ -9953,15 +10039,30 @@ app.get("/api/admin/audit-log", requireAdmin, wrap(async (req, res) => {
   const clauses = [], args = [];
   if (req.query.actor) { clauses.push("actor LIKE ?"); args.push("%" + String(req.query.actor).slice(0, 190) + "%"); }
   if (req.query.method) { clauses.push("method=?"); args.push(String(req.query.method).toUpperCase().slice(0, 10)); }
-  if (req.query.q) { clauses.push("path LIKE ?"); args.push("%" + String(req.query.q).slice(0, 255) + "%"); }
+  if (req.query.outcome) { clauses.push("outcome=?"); args.push(String(req.query.outcome).slice(0, 20)); }
+  if (req.query.q) {
+    const q = "%" + String(req.query.q).slice(0, 255) + "%";
+    clauses.push("(path LIKE ? OR request_id LIKE ? OR target_type LIKE ? OR CAST(target_id AS CHAR) LIKE ?)");
+    args.push(q, q, q, q);
+  }
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   args.push(limit);
   try {
     const [rows] = await pool.query(
-      `SELECT id, actor, method, path, status, ip, created_at
+      `SELECT id, actor, method, path, status, ip, request_id, outcome,
+              target_type, target_id, before_json, after_json, changes_json,
+              entry_hash, created_at
          FROM admin_audit_log ${where} ORDER BY id DESC LIMIT ?`, args
     );
-    res.json({ ok: true, rows });
+    res.json({ ok: true, rows: rows.map(r => ({
+      ...r,
+      before: safeJson(r.before_json),
+      after: safeJson(r.after_json),
+      changes: safeJson(r.changes_json),
+      before_json: undefined,
+      after_json: undefined,
+      changes_json: undefined,
+    })) });
   } catch (e) { res.json({ ok: true, rows: [] }); }
 }));
 
@@ -9973,7 +10074,7 @@ app.get("/api/export/:kind", wrap(async (req, res) => {
   else if (kind === "reports") sql = "SELECT id, reporter_id, target_id, reason, status, created_at FROM reports ORDER BY id";
   else if (kind === "logs") sql = "SELECT id, level, source, message, created_at FROM logs ORDER BY id";
   else if (kind === "infractions") sql = "SELECT id, user_id, email, type, title, severity, status, created_at, resolved_at FROM admin_infractions ORDER BY id DESC";
-  else if (kind === "audit") sql = "SELECT id, actor, method, path, status, ip, created_at FROM admin_audit_log ORDER BY id DESC LIMIT 5000";
+  else if (kind === "audit") sql = "SELECT id, actor, method, path, status, outcome, target_type, target_id, request_id, entry_hash, ip, created_at FROM admin_audit_log ORDER BY id DESC LIMIT 5000";
   else return res.status(400).json({ error: "invalid_kind" });
   const [rows] = await pool.query(sql);
   const csv = toCSV(rows);
@@ -14129,6 +14230,44 @@ async function enqueueEmail(templateId, userId, vars = {}) {
   }
 }
 
+// V965 · Mensaje libre iniciado desde una acción masiva del panel. El texto
+// se trata siempre como texto (no HTML ejecutable), se registra en outbox y se
+// entrega con el mismo transporte y trazabilidad que el resto de correos.
+async function sendCustomAdminEmail(user, subject, message) {
+  if (!user?.id || !user?.email) throw new Error("invalid_recipient");
+  const cleanSubject = String(subject || "").trim().slice(0, 200);
+  const cleanMessage = String(message || "").trim().slice(0, 20000);
+  if (!cleanSubject || !cleanMessage) throw new Error("email_required");
+  const escapeEmailText = value => String(value || "").replace(/[&<>"']/g, ch => ({
+    "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;",
+  })[ch]);
+  const escaped = escapeEmailText(cleanMessage).replace(/\r?\n/g, "<br>");
+  const html = `<div style="font-family:Arial,sans-serif;line-height:1.6;color:#20242f"><p>Hola ${escapeEmailText(user.name)},</p><p>${escaped}</p><p>Equipo Aura</p></div>`;
+  const [ins] = await pool.execute(
+    `INSERT INTO email_outbox (template_id,user_id,to_email,subject,html,status)
+     VALUES ('admin_bulk',?,?,?,?, 'queued')`,
+    [user.id, String(user.email).slice(0,190), cleanSubject, html]
+  );
+  const outboxId = ins.insertId;
+  setImmediate(async () => {
+    try {
+      const sender = routeSender("admin_bulk", "engagement");
+      if (isSmtpReady()) {
+        await sendMailByRoute({ templateId:"admin_bulk", category:"engagement", to:user.email,
+          cc:null, subject:cleanSubject, html, replyTo:sender.replyTo });
+      } else {
+        await sendViaEmailJS({ to_email:user.email, cc_email:null, subject:cleanSubject,
+          html, from_email:sender.from, reply_to:sender.replyTo });
+      }
+      await pool.execute("UPDATE email_outbox SET status='sent',sent_at=NOW(),error=NULL WHERE id=?", [outboxId]);
+    } catch (e) {
+      await pool.execute("UPDATE email_outbox SET status='failed',error=? WHERE id=?",
+        [String(e?.message || e).slice(0,380),outboxId]).catch(() => {});
+    }
+  });
+  return { ok:true, id:outboxId, status:"queued" };
+}
+
 // ------- Endpoints admin -------
 
 app.get("/api/admin/email-templates", wrap(async (req, res) => {
@@ -14272,20 +14411,25 @@ app.get("/api/admin/email-outbox", wrap(async (req, res) => {
   res.json({ rows });
 }));
 
+async function retryOutboxRow(row) {
+  if (!row) throw new Error("not_found");
+  // Añade routing por categoría al reintento (leyendo la categoría de la plantilla)
+  try {
+    const [tp] = await pool.query("SELECT category FROM email_templates WHERE id=? LIMIT 1", [row.template_id]);
+    const _sender = routeSender(row.template_id, tp.length ? tp[0].category : "");
+    row.from_email = _sender.from;
+    row.reply_to   = _sender.replyTo;
+  } catch {}
+  await sendViaEmailJS(row);
+  await pool.execute("UPDATE email_outbox SET status='sent', sent_at=CURRENT_TIMESTAMP, error=NULL WHERE id=?", [row.id]);
+}
+
 app.post("/api/admin/email-outbox/:id/retry", wrap(async (req, res) => {
   const [rows] = await pool.query("SELECT * FROM email_outbox WHERE id=? LIMIT 1", [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: "not_found" });
   const row = rows[0];
   try {
-    // Añade routing por categoría al reintento (leyendo la categoría de la plantilla)
-    try {
-      const [tp] = await pool.query("SELECT category FROM email_templates WHERE id=? LIMIT 1", [row.template_id]);
-      const _sender = routeSender(row.template_id, tp.length ? tp[0].category : "");
-      row.from_email = _sender.from;
-      row.reply_to   = _sender.replyTo;
-    } catch {}
-    await sendViaEmailJS(row);
-    await pool.execute("UPDATE email_outbox SET status='sent', sent_at=CURRENT_TIMESTAMP, error=NULL WHERE id=?", [row.id]);
+    await retryOutboxRow(row);
     res.json({ ok: true, status: "sent" });
   } catch (e) {
     await pool.execute("UPDATE email_outbox SET status='failed', error=? WHERE id=?", [String(e.message).slice(0, 380), row.id]);
@@ -18401,6 +18545,95 @@ app.get("/api/admin/technical-history", wrap(async (req, res) => {
   res.json({ ok:true, period, outages, points:rows });
 }));
 
+/* V965 · Centro de incidencias accionable. Reúne fallos reales y trabajos
+   atascados; no inventa estados. Los reintentos reutilizan exactamente el mismo
+   transporte que el panel de Emails y el de Push. */
+app.get("/api/admin/incidents", wrap(async (req, res) => {
+  const [emails, pushes, errors] = await Promise.all([
+    adminRows(`SELECT id,template_id,to_email,subject,status,error,created_at
+                 FROM email_outbox
+                WHERE status='failed' OR (status='queued' AND created_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE))
+                ORDER BY created_at DESC LIMIT 60`),
+    adminRows(`SELECT id,title,status,failed_count,delivered_count,target_count,created_at,sent_at
+                 FROM push_campaigns
+                WHERE failed_count>0 OR status='failed'
+                   OR (status IN ('queued','sending') AND created_at < DATE_SUB(NOW(), INTERVAL 15 MINUTE))
+                ORDER BY created_at DESC LIMIT 40`),
+    adminRows(`SELECT id,level,source,message,created_at
+                 FROM logs WHERE level='error' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                ORDER BY created_at DESC LIMIT 60`),
+  ]);
+  const items = [
+    ...emails.map(x => ({ id:`email:${x.id}`,kind:"email",source_id:x.id,
+      title:x.status === "failed" ? `Email fallido: ${x.subject}` : `Email atascado: ${x.subject}`,
+      detail:x.error || `${x.template_id} · pendiente desde hace más de 10 min`,status:x.status,
+      created_at:x.created_at,retryable:true })),
+    ...pushes.map(x => {
+      const stuck = ["queued","sending","failed"].includes(x.status);
+      return { id:`push:${x.id}`,kind:"push",source_id:x.id,
+        title:`Push: ${x.title}`,detail:x.failed_count ? `${x.failed_count} entregas fallidas de ${x.target_count || 0}` : `Campaña atascada en ${x.status}`,
+        status:x.status,created_at:x.sent_at || x.created_at,retryable:stuck };
+    }),
+    ...errors.map(x => ({ id:`log:${x.id}`,kind:"log",source_id:x.id,
+      title:`${x.source || "Sistema"}`,detail:String(x.message || "Error sin detalle").slice(0,500),
+      status:"error",created_at:x.created_at,retryable:false })),
+  ].sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, generated_at:new Date().toISOString(), counts:{
+    total:items.length,email:emails.length,push:pushes.length,errors:errors.length,
+  }, items:items.slice(0,120) });
+}));
+
+app.post("/api/admin/incidents/:kind/:id/retry", wrap(async (req, res) => {
+  const kind = String(req.params.kind || "");
+  const id = parseInt(req.params.id, 10);
+  if (!id || !["email","push"].includes(kind)) return res.status(400).json({ error:"invalid_incident" });
+  if (kind === "email") {
+    const [rows] = await pool.query("SELECT * FROM email_outbox WHERE id=? LIMIT 1", [id]);
+    if (!rows.length) return res.status(404).json({ error:"not_found" });
+    try { await retryOutboxRow(rows[0]); }
+    catch (e) {
+      await pool.execute("UPDATE email_outbox SET status='failed', error=? WHERE id=?", [String(e.message).slice(0,380),id]);
+      return res.status(502).json({ error:"retry_failed", message:"El email sigue fallando." });
+    }
+  } else {
+    const [rows] = await pool.query("SELECT id,status,delivered_count FROM push_campaigns WHERE id=? LIMIT 1", [id]);
+    if (!rows.length) return res.status(404).json({ error:"not_found" });
+    if (rows[0].status === "sent" || Number(rows[0].delivered_count || 0) > 0) {
+      return res.status(409).json({ error:"partial_retry_unsafe", message:"No se reenvía una campaña parcialmente entregada para evitar duplicados." });
+    }
+    await pool.execute("UPDATE push_campaigns SET status='queued', scheduled_at=NULL WHERE id=?", [id]);
+    processCampaign(id).catch(e => console.warn("[push] incident retry", id, e.message));
+  }
+  await logActivity("admin", `Incidencia ${kind} #${id} reintentada por ${req.admin?.email || "admin"}`);
+  res.json({ ok:true, kind, id });
+}));
+
+/* V965 · Comprobaciones cruzadas de integridad. Se ejecutan bajo demanda para
+   no cargar el dashboard y devuelven siempre la cifra y el criterio usado. */
+app.get("/api/admin/data-consistency", wrap(async (req, res) => {
+  const [kycRows, openReports, openTickets, orphanMessages, orphanConversations, overdueGdpr] = await Promise.all([
+    adminRows(`SELECT id,user_id,email,status,updated_at FROM identity_verifications ORDER BY updated_at DESC,id DESC LIMIT 10000`),
+    adminScalar("SELECT COUNT(*) n FROM reports WHERE status IN ('open','reviewing','escalated')"),
+    adminScalar("SELECT COUNT(*) n FROM support_tickets WHERE status <> 'closed'"),
+    adminScalar(`SELECT COUNT(*) n FROM messages m LEFT JOIN conversations c ON c.id=m.conversation_id WHERE c.id IS NULL`),
+    adminScalar(`SELECT COUNT(*) n FROM conversations c LEFT JOIN users a ON a.id=c.user_a LEFT JOIN users b ON b.id=c.user_b WHERE a.id IS NULL OR b.id IS NULL`),
+    adminScalar(`SELECT COUNT(*) n FROM gdpr_requests WHERE type='delete' AND status IN ('pending','processing') AND scheduled_for < NOW()`),
+  ]);
+  const kycEffective = collapseKycVerifications(kycRows)
+    .filter(r => ["pending","manual_review","suspended"].includes(r.status)).length;
+  const checks = [
+    { key:"kyc",label:"KYC pendiente",value:kycEffective,status:"ok",detail:"Una persona cuenta una sola vez." },
+    { key:"reports",label:"Denuncias abiertas",value:openReports,status:"ok",detail:"Mismo criterio que el Centro de trabajo." },
+    { key:"tickets",label:"Tickets abiertos",value:openTickets,status:"ok",detail:"Excluye únicamente los cerrados." },
+    { key:"orphan_messages",label:"Mensajes huérfanos",value:orphanMessages,status:orphanMessages ? "error" : "ok",detail:"Mensajes sin conversación existente." },
+    { key:"orphan_conversations",label:"Conversaciones huérfanas",value:orphanConversations,status:orphanConversations ? "error" : "ok",detail:"Conversaciones con algún usuario inexistente." },
+    { key:"gdpr_overdue",label:"Borrados RGPD vencidos",value:overdueGdpr,status:overdueGdpr ? "warn" : "ok",detail:"Solicitudes cuya fecha programada ya pasó." },
+  ];
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:!checks.some(c => c.status === "error"),generated_at:new Date().toISOString(),checks });
+}));
+
 /* V961 · Búsqueda global real. Antes la cabecera prometía buscar denuncias y
    transacciones, pero solo consultaba usuarios. */
 app.get("/api/admin/global-search", wrap(async (req, res) => {
@@ -19013,7 +19246,7 @@ adminExtra.register(app, pool, { readMyUserId, wrap, requireAdmin }); // V712 ·
 // dispositivo: el panel ya podía escribir locked_at, pero ahora el bloqueo se
 // aplica de verdad (guardián de /api/my/*), así que hay que impedir bloquear a
 // un administrador y avisar al guardián en cuanto cambia el estado.
-adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin, emailIsAdminListed, refreshDeviceLocks }); // V713 · 2º lote endpoints admin
+adminExtra2.register(app, pool, { readMyUserId, wrap, requireAdmin, emailIsAdminListed, refreshDeviceLocks, sendCustomAdminEmail }); // V713/V965 · 2º lote endpoints admin
 // V931 · isReviewDeniedFor / isAccessLockedFor van aquí porque el login por
 // huella (POST /api/webauthn/login/verify) es pre-sesión y firma un token de
 // sesión válido: sin los candados dejaba entrar en una app cerrada a cualquiera

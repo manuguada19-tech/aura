@@ -466,7 +466,7 @@ function register(app, pool, helpers) {
   // Admin GDPR
   app.get("/api/admin/gdpr/requests", requireAdmin, wrap(async (req, res) => {
     const [rows] = await pool.query(
-      "SELECT g.*, u.email, u.name FROM gdpr_requests g JOIN users u ON u.id=g.user_id ORDER BY g.requested_at DESC LIMIT 500"
+      "SELECT g.*, u.email, u.name FROM gdpr_requests g LEFT JOIN users u ON u.id=g.user_id ORDER BY g.requested_at DESC LIMIT 500"
     );
     res.json({ ok: true, items: rows });
   }));

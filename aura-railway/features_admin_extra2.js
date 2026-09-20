@@ -23,6 +23,7 @@
      Estadísticas:
        GET  /api/stats/cohorts
      Usuarios:
+       POST /api/users/bulk/preview         { ids:[], action, ... }
        POST /api/users/bulk                 { ids:[], action }
      Dispositivos perdidos (device_incidents):
        GET  /api/admin/device-incidents          (?status)
@@ -78,6 +79,16 @@ async function migrate(pool) {
     hash CHAR(64) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_inc (incident_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+
+  // Etiquetas internas del panel. Se guardan aparte para no mezclar metadatos
+  // administrativos con el perfil público del usuario.
+  await pool.query(`CREATE TABLE IF NOT EXISTS user_admin_tags (
+    user_id INT NOT NULL,
+    tag VARCHAR(32) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, tag),
+    INDEX idx_tag (tag)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
 
   // IMPORTANTE · Reconciliación de esquema.
@@ -179,7 +190,7 @@ function register(app, pool, helpers) {
   registerTickets(app, pool, wrap);
   registerPayments(app, pool, wrap, helpers);
   registerStats(app, pool, wrap);
-  registerUsersBulk(app, pool, wrap);
+  registerUsersBulk(app, pool, wrap, helpers);
   registerDeviceIncidents(app, pool, wrap, helpers);
 }
 
@@ -429,32 +440,139 @@ function registerStats(app, pool, wrap) {
   }));
 }
 // ==================== USUARIOS (bulk) ====================
-function registerUsersBulk(app, pool, wrap) {
+function registerUsersBulk(app, pool, wrap, helpers = {}) {
+  const crypto = require("crypto");
   const STATUS = { ban: "banned", suspend: "suspended", activate: "active", unban: "active" };
+  const ACTIONS = new Set(["ban", "suspend", "activate", "unban", "delete", "verify", "unverify", "tag", "plan", "email"]);
+  const PLANS = new Set(["free", "premium", "gold", "platinum"]);
+  const PREVIEW_TTL_MS = 5 * 60 * 1000;
+  const previewSecret = crypto.randomBytes(32);
+
+  function cleanIds(raw) {
+    return [...new Set((Array.isArray(raw) ? raw : [])
+      .map((n) => parseInt(n, 10))
+      .filter((n) => Number.isFinite(n) && n > 0))].slice(0, 500);
+  }
+  function cleanPayload(body) {
+    const action = String(body?.action || "").toLowerCase();
+    return {
+      ids: cleanIds(body?.ids), action,
+      value: String(body?.value || "").trim().slice(0, 80),
+      subject: String(body?.subject || "").trim().slice(0, 200),
+      body: String(body?.body || "").trim().slice(0, 20000),
+    };
+  }
+  function previewDigest(payload, actor, expires) {
+    const canonical = JSON.stringify({ ...payload, ids:[...payload.ids].sort((a,b)=>a-b), actor, expires });
+    return crypto.createHmac("sha256", previewSecret).update(canonical).digest("base64url");
+  }
+  function issuePreview(payload, actor) {
+    const expires = Date.now() + PREVIEW_TTL_MS;
+    return `${expires}.${previewDigest(payload, actor, expires)}`;
+  }
+  function validPreview(token, payload, actor) {
+    const [expRaw, sig] = String(token || "").split(".");
+    const expires = Number(expRaw);
+    if (!expires || expires < Date.now() || expires > Date.now() + PREVIEW_TTL_MS + 5000 || !sig) return false;
+    const expected = previewDigest(payload, actor, expires);
+    const a = Buffer.from(sig); const b = Buffer.from(expected);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+  function actionLabel(action, value) {
+    return ({
+      verify:"Marcar como verificados", unverify:"Retirar verificación",
+      suspend:"Suspender cuentas", ban:"Banear cuentas", activate:"Reactivar cuentas",
+      unban:"Reactivar cuentas", delete:"Bloquear acceso", tag:`Añadir etiqueta «${value}»`,
+      plan:`Cambiar al plan ${value}`, email:"Enviar un email individual",
+    })[action] || action;
+  }
+  function canRunAction(req, action) {
+    const level = { viewer:1, moderator:2, admin:3, superadmin:4 }[String(req.admin?.role || "").toLowerCase()] || 0;
+    return !["plan","email"].includes(action) || level >= 3;
+  }
+
+  app.post("/api/users/bulk/preview", wrap(async (req, res) => {
+    const payload = cleanPayload(req.body);
+    if (!payload.ids.length) return res.status(400).json({ error:"ids_required", message:"Selecciona al menos un usuario." });
+    if (!ACTIONS.has(payload.action)) return res.status(400).json({ error:"unknown_action", message:"Acción masiva no reconocida." });
+    if (!canRunAction(req,payload.action)) return res.status(403).json({ error:"forbidden_role", message:"Esta acción necesita el rango Administrador." });
+    if (payload.action === "tag" && !payload.value) return res.status(400).json({ error:"value_required", message:"Escribe una etiqueta." });
+    if (payload.action === "plan" && !PLANS.has(payload.value)) return res.status(400).json({ error:"invalid_plan", message:"El plan no es válido." });
+    if (payload.action === "email" && (!payload.subject || !payload.body)) return res.status(400).json({ error:"email_required", message:"El asunto y el mensaje son obligatorios." });
+    const ph = payload.ids.map(() => "?").join(",");
+    const [users] = await pool.query(
+      `SELECT id,name,email,status,verified,plan FROM users WHERE role='user' AND id IN (${ph}) ORDER BY id`, payload.ids
+    );
+    const actor = String(req.admin?.email || "admin").toLowerCase();
+    const normalized = { ...payload, ids:users.map(u => Number(u.id)) };
+    res.json({ ok:true, token:issuePreview(normalized, actor), expires_in:Math.round(PREVIEW_TTL_MS/1000),
+      summary:{ action:payload.action, label:actionLabel(payload.action,payload.value), requested:payload.ids.length,
+        affected:users.length, skipped:payload.ids.length-users.length,
+        users:users.slice(0,12).map(u => ({ id:u.id,name:u.name,email:u.email,status:u.status,verified:!!u.verified,plan:u.plan })) } });
+  }));
+
   app.post("/api/users/bulk", wrap(async (req, res) => {
-    const ids = Array.isArray(req.body?.ids)
-      ? req.body.ids.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n) && n > 0)
-      : [];
-    const action = String(req.body?.action || "");
+    const payload = cleanPayload(req.body);
+    const { ids, action } = payload;
     if (!ids.length) return res.status(400).json({ error: "ids_required" });
+    if (!ACTIONS.has(action)) return res.status(400).json({ error:"unknown_action" });
+    if (!canRunAction(req,action)) return res.status(403).json({ error:"forbidden_role", message:"Esta acción necesita el rango Administrador." });
     const ph = ids.map(() => "?").join(",");
+    const [targets] = await pool.query(`SELECT id,name,email FROM users WHERE id IN (${ph}) AND role='user' ORDER BY id`, ids);
+    const targetIds = targets.map(u => Number(u.id));
+    if (!targetIds.length) return res.json({ ok:true, affected:0, count:0 });
+    const normalized = { ...payload, ids:targetIds };
+    if (targetIds.length > 1) {
+      const actor = String(req.admin?.email || "admin").toLowerCase();
+      if (!validPreview(req.body?.preview_token, normalized, actor)) {
+        return res.status(409).json({ error:"preview_required", message:"La selección cambió o la vista previa caducó. Revísala de nuevo." });
+      }
+    }
+    const targetPh = targetIds.map(() => "?").join(",");
     let affected = 0;
     if (STATUS[action]) {
       const [r] = await pool.query(
-        `UPDATE users SET status=? WHERE id IN (${ph}) AND role='user'`,
-        [STATUS[action], ...ids]
+        `UPDATE users SET status=? WHERE id IN (${targetPh}) AND role='user'`,
+        [STATUS[action], ...targetIds]
       );
       affected = r.affectedRows || 0;
     } else if (action === "delete") {
+      // Conservador y reversible: la acción masiva bloquea el acceso. La
+      // eliminación completa (incluido Didit) sigue exigiendo la ficha individual.
       const [r] = await pool.query(
-        `UPDATE users SET status='banned' WHERE id IN (${ph}) AND role='user'`,
-        ids
+        `UPDATE users SET status='banned' WHERE id IN (${targetPh}) AND role='user'`,
+        targetIds
       );
       affected = r.affectedRows || 0;
+    } else if (action === "verify" || action === "unverify") {
+      const [r] = await pool.query(
+        `UPDATE users SET verified=? WHERE id IN (${targetPh}) AND role='user'`,
+        [action === "verify" ? 1 : 0, ...targetIds]
+      );
+      affected = r.affectedRows || 0;
+    } else if (action === "plan") {
+      if (!PLANS.has(payload.value)) return res.status(400).json({ error:"invalid_plan", message:"El plan no es válido." });
+      const [r] = await pool.query(`UPDATE users SET plan=? WHERE id IN (${targetPh}) AND role='user'`, [payload.value, ...targetIds]);
+      affected = r.affectedRows || 0;
+    } else if (action === "tag") {
+      const tag = payload.value.replace(/\s+/g, " ").slice(0,32);
+      if (!tag) return res.status(400).json({ error:"value_required", message:"Escribe una etiqueta." });
+      const values = targetIds.map(() => "(?,?)").join(",");
+      const args = targetIds.flatMap(id => [id,tag]);
+      const [r] = await pool.query(`INSERT IGNORE INTO user_admin_tags (user_id,tag) VALUES ${values}`, args);
+      affected = r.affectedRows || 0;
+    } else if (action === "email") {
+      if (!payload.subject || !payload.body) return res.status(400).json({ error:"email_required", message:"El asunto y el mensaje son obligatorios." });
+      const sendCustomAdminEmail = helpers.sendCustomAdminEmail;
+      if (typeof sendCustomAdminEmail !== "function") return res.status(503).json({ error:"email_unavailable" });
+      for (const user of targets) {
+        await sendCustomAdminEmail(user, payload.subject, payload.body);
+        affected += 1;
+      }
     } else {
       return res.status(400).json({ error: "unknown_action" });
     }
-    res.json({ ok: true, affected, count: affected });
+    res.json({ ok: true, affected, count: affected, selected:targetIds.length });
   }));
 }
 // ==================== DISPOSITIVOS PERDIDOS ====================
