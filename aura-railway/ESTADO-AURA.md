@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 20 septiembre 2026 · última versión preparada: V966**
+**Fecha de este resumen: 20 septiembre 2026 · última versión preparada: V967**
+
+### V967 (20/09/2026) — Panel en vivo, despliegue y recuperación
+
+- El panel mantiene un canal SSE autenticado y muestra su estado en la cabecera;
+  Panel, Auditoría y Logs se actualizan sin recargar el navegador y esperan si
+  hay un formulario, diálogo o ficha abierta.
+- Estado técnico incorpora build, commit, arranque, base de datos, conexiones en
+  vivo y monitor de las tareas automáticas de KYC, actividad, logs, dispositivos,
+  campañas push y comunicaciones programadas.
+- Las acciones masivas de estado, verificación, plan y etiquetas guardan el
+  estado anterior. Se pueden deshacer desde el aviso inmediato o desde Auditoría,
+  sin sobrescribir cambios posteriores.
+- Los botones masivos muestran el rango actual y quedan desactivados cuando el
+  miembro del equipo no tiene el permiso necesario.
 
 ### V966 (20/09/2026) — Higiene de indexación para AdSense
 

@@ -51,6 +51,7 @@ const GPS_GOOD_ACCURACY_M = 300;
 // problema. Ahora abrimos el puerto de inmediato y migramos en segundo plano:
 // el healthcheck pasa al instante y la API contesta 503 hasta que esté listo.
 let BOOT_READY = false;
+const BOOT_STARTED_AT = new Date().toISOString();
 let BOOT_ERROR = null;
 
 // V634 · Compresión gzip en origen. Cloudflare ya comprime en el borde, pero
@@ -1122,6 +1123,14 @@ app.use((req, res, next) => {
 const AUDIT_SKIP_PATHS = new Set([
   "/api/admin/login", "/api/admin/logout", "/api/admin/audit-log", "/api/users/bulk/preview",
 ]);
+const ADMIN_LIVE_CLIENTS = new Set();
+let ADMIN_EVENT_SEQ = 0;
+function broadcastAdminEvent(event) {
+  const packet = `id: ${++ADMIN_EVENT_SEQ}\nevent: change\ndata: ${JSON.stringify(event)}\n\n`;
+  for (const client of ADMIN_LIVE_CLIENTS) {
+    try { client.write(packet); } catch { ADMIN_LIVE_CLIENTS.delete(client); }
+  }
+}
 const AUDIT_SECRET_KEYS = /pass(word)?|token|secret|authorization|cookie|otp|totp|recovery|html|body|message|photo|selfie|document|media/i;
 function sanitizeAuditValue(value, depth = 0) {
   if (depth > 3 || value == null) return value == null ? null : "[omitido]";
@@ -1190,6 +1199,10 @@ app.use(async (req, res, next) => {
           [actor.slice(0,190),m,path,res.statusCode||null,String(ip).slice(0,64),requestId,outcome,
            target?.table || null,target?.id || null,beforeJson,afterJson,changesJson,hash]
         );
+        if (outcome === "success") broadcastAdminEvent({
+          request_id:requestId,method:m,path,target_type:target?.table||null,target_id:target?.id||null,
+          at:new Date().toISOString(),
+        });
       })().catch(() => {});
     });
   } catch (e) { /* nunca bloquea la petición */ }
@@ -1240,6 +1253,7 @@ const LECTURA_RESERVADA = [
   // La lista del equipo y el registro de auditoría: quién manda y qué ha hecho.
   [/^\/api\/admin\/staff(\/|$)/, 4],
   [/^\/api\/admin\/audit-log(\/|$)/, 4],
+  [/^\/api\/admin\/reversible-actions(\/|$)/, 4],
   /* Estas dos NO estaban en el plan; las añado porque al revisar los GET
      aparecieron y son escalada de privilegio disfrazada de lectura:
        · otp-codes devuelve los códigos de verificación en claro de cualquier
@@ -1283,6 +1297,9 @@ const ESCRITURA = [
   [/^POST \/api\/users\/[^/]+\/action$/, 2],
   [/^POST \/api\/users\/bulk\/preview$/, 2],
   [/^POST \/api\/users\/bulk$/, 2],
+  // Cada miembro puede deshacer su propia acción masiva; el handler vuelve a
+  // comprobar autor y rango de la acción original. El dueño puede deshacer todas.
+  [/^POST \/api\/admin\/reversible-actions\/[^/]+\/undo$/, 2],
   [/^POST \/api\/admin\/users\/[^/]+\/moderate$/, 2],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/users\/[^/]+\/restrictions/, 2],
   // Infracciones
@@ -1501,6 +1518,19 @@ async function migrate() {
       INDEX idx_actor (actor),
       INDEX idx_request (request_id),
       INDEX idx_target (target_type, target_id)
+    )`,
+    `CREATE TABLE IF NOT EXISTS admin_reversible_actions (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      actor VARCHAR(190) NOT NULL,
+      action VARCHAR(40) NOT NULL,
+      label VARCHAR(255) NOT NULL,
+      before_json LONGTEXT NOT NULL,
+      after_json LONGTEXT NULL,
+      undone_at TIMESTAMP NULL,
+      undone_by VARCHAR(190) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_created (created_at),
+      INDEX idx_undone (undone_at)
     )`,
     `CREATE TABLE IF NOT EXISTS countries (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -5907,9 +5937,34 @@ app.post("/api/admin/users/:id/full-delete", wrap(async (req, res) => {
   });
 }));
 
+/* V967 · Estado observable de trabajos automáticos. Es deliberadamente
+   operativo y no contiene argumentos, destinatarios ni datos personales. */
+const ADMIN_JOB_STATUS = new Map([
+  ["kyc_cleanup", { key:"kyc_cleanup", label:"Limpieza KYC", schedule:"Cada 6 horas" }],
+  ["activity_cleanup", { key:"activity_cleanup", label:"Retención de actividad", schedule:"Cada 12 horas" }],
+  ["logs_cleanup", { key:"logs_cleanup", label:"Retención de logs", schedule:"Cada 12 horas" }],
+  ["device_cleanup", { key:"device_cleanup", label:"Privacidad de dispositivos", schedule:"Cada 12 horas" }],
+  ["push_scheduler", { key:"push_scheduler", label:"Campañas push", schedule:"Cada minuto" }],
+  ["broadcast_scheduler", { key:"broadcast_scheduler", label:"Comunicaciones programadas", schedule:"Cada minuto" }],
+]);
+async function runAdminJob(key, work) {
+  const state = ADMIN_JOB_STATUS.get(key) || { key, label:key, schedule:"—" };
+  state.status="running"; state.last_started_at=new Date().toISOString(); state.last_error=null;
+  ADMIN_JOB_STATUS.set(key,state);
+  try {
+    const result = await work();
+    state.status="ok"; state.last_finished_at=new Date().toISOString(); state.runs=(state.runs||0)+1;
+    return result;
+  } catch (e) {
+    state.status="failed"; state.last_finished_at=new Date().toISOString(); state.last_error=String(e?.message||e).slice(0,300);
+    console.warn(`[job:${key}]`, state.last_error);
+    return null;
+  }
+}
+
 /* ---- Cleanup cron: verificaciones y fotos > 30 días -------- */
 async function kycCleanup() {
-  try {
+  return runAdminJob("kyc_cleanup", async () => {
     await pool.execute(
       `DELETE FROM id_photos
          WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)`
@@ -5919,7 +5974,7 @@ async function kycCleanup() {
          WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)
            AND status IN ('verified','rejected','suspended')`
     );
-  } catch (e) { console.warn("kyc cleanup failed:", e.message); }
+  });
 }
 setInterval(kycCleanup, 6 * 60 * 60 * 1000); // cada 6 h
 setTimeout(kycCleanup, 30 * 1000);
@@ -5930,14 +5985,14 @@ setTimeout(kycCleanup, 30 * 1000);
    ralentiza. Borramos los eventos con más de 90 días. Configurable vía
    settings (activity.retention_days); 0 o vacío desactiva la purga. */
 async function activityStreamCleanup() {
-  try {
+  return runAdminJob("activity_cleanup", async () => {
     const days = parseInt(getSetting("activity.retention_days", "90"), 10);
     if (!Number.isFinite(days) || days <= 0) return; // desactivado
     await pool.execute(
       "DELETE FROM activity_stream WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
       [days]
     );
-  } catch (e) { console.warn("activity_stream cleanup failed:", e.message); }
+  });
 }
 setInterval(activityStreamCleanup, 12 * 60 * 60 * 1000); // cada 12 h
 setTimeout(activityStreamCleanup, 60 * 1000);
@@ -5950,14 +6005,14 @@ setTimeout(activityStreamCleanup, 60 * 1000);
    cambiarle el texto. Mismo patrón y mismo ajuste que activity_stream:
    logs.retention_days, 0 o vacío desactiva la purga. */
 async function logsCleanup() {
-  try {
+  return runAdminJob("logs_cleanup", async () => {
     const days = parseInt(getSetting("logs.retention_days", "90"), 10);
     if (!Number.isFinite(days) || days <= 0) return; // desactivado
     await pool.execute(
       "DELETE FROM logs WHERE created_at < DATE_SUB(NOW(), INTERVAL ? DAY)",
       [days]
     );
-  } catch (e) { console.warn("logs cleanup failed:", e.message); }
+  });
 }
 setInterval(logsCleanup, 12 * 60 * 60 * 1000); // cada 12 h
 setTimeout(logsCleanup, 60 * 1000);
@@ -5972,7 +6027,7 @@ setTimeout(logsCleanup, 60 * 1000);
    por defecto; 0 o vacío desactiva la purga) y se conserva el resto del caso
    —tipo, motivo, fechas, auditoría— que es lo que da valor a un histórico. */
 async function deviceIncidentsCleanup() {
-  try {
+  return runAdminJob("device_cleanup", async () => {
     const days = parseInt(getSetting("device.retention_days", "90"), 10);
     if (!Number.isFinite(days) || days <= 0) return; // desactivado
     await pool.execute(
@@ -5984,7 +6039,7 @@ async function deviceIncidentsCleanup() {
           AND COALESCE(reviewed_at, requested_at) < DATE_SUB(NOW(), INTERVAL ? DAY)`,
       [days]
     );
-  } catch (e) { console.warn("device incidents cleanup failed:", e.message); }
+  });
 }
 setInterval(deviceIncidentsCleanup, 12 * 60 * 60 * 1000); // cada 12 h
 setTimeout(deviceIncidentsCleanup, 90 * 1000);
@@ -6835,10 +6890,10 @@ async function processCampaign(id) {
 
 // Loop cada 60s para lanzar campañas programadas
 setInterval(async () => {
-  try {
+  await runAdminJob("push_scheduler", async () => {
     const [rows] = await pool.query("SELECT id FROM push_campaigns WHERE status='scheduled' AND scheduled_at <= NOW() LIMIT 5");
     for (const r of rows) { processCampaign(r.id).catch(e => console.warn("[push] campaign", r.id, e.message)); }
-  } catch (e) { /* silent */ }
+  });
 }, 60000);
 
 // -- Endpoints públicos usuario ------------------------------------------
@@ -17128,7 +17183,7 @@ app.delete("/api/admin/broadcasts/audiences/:id", wrap(async (req, res) => {
 // Scheduler: cada 60 s despierta broadcasts con status='scheduled' cuyo
 // scheduled_at ya haya pasado. Simple, best-effort; no bloquea el proceso.
 async function broadcastScheduler() {
-  try {
+  return runAdminJob("broadcast_scheduler", async () => {
     const [rows] = await pool.query(
       "SELECT id FROM broadcast_messages WHERE status='scheduled' AND scheduled_at IS NOT NULL AND scheduled_at <= NOW() LIMIT 20"
     );
@@ -17150,7 +17205,7 @@ async function broadcastScheduler() {
         );
       } catch { /* siguiente */ }
     }
-  } catch { /* siguiente ciclo */ }
+  });
 }
 setInterval(broadcastScheduler, 60 * 1000);
 // Primer disparo diferido unos segundos tras el arranque.
@@ -18404,6 +18459,35 @@ app.get("/api/version", (req, res) => {
   res.set("Cache-Control", "no-store");
   res.json({ ok: true, build: BUILD_ID });
 });
+
+/* V967 · Canal en tiempo real del panel. EventSource no admite cabeceras,
+   por eso usa el mismo adminToken por query que las descargas del panel. */
+app.get("/api/admin/events", requireAdmin, (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  ADMIN_LIVE_CLIENTS.add(res);
+  res.write(`event: ready\ndata: ${JSON.stringify({ ok:true,build:BUILD_ID,at:new Date().toISOString() })}\n\n`);
+  const ping = setInterval(() => { try { res.write(":ping\n\n"); } catch {} }, 25000);
+  res.on("close", () => { clearInterval(ping); ADMIN_LIVE_CLIENTS.delete(res); });
+});
+
+app.get("/api/admin/system-status", requireAdmin, wrap(async (_req, res) => {
+  let dbOk=true, dbLatency=null;
+  const started=Date.now();
+  try { await pool.query("SELECT 1"); dbLatency=Date.now()-started; } catch { dbOk=false; }
+  res.set("Cache-Control","no-store");
+  res.json({ ok:BOOT_READY&&dbOk, deployment:{
+    build:BUILD_ID, commit:String(process.env.RAILWAY_GIT_COMMIT_SHA || "").slice(0,12) || null,
+    ready:BOOT_READY, started_at:BOOT_STARTED_AT, database_ok:dbOk, database_latency_ms:dbLatency,
+    live_connections:ADMIN_LIVE_CLIENTS.size,
+  }, jobs:Array.from(ADMIN_JOB_STATUS.values()).map(j => ({
+    key:j.key,label:j.label,schedule:j.schedule,status:j.status||"waiting",runs:j.runs||0,
+    last_started_at:j.last_started_at||null,last_finished_at:j.last_finished_at||null,last_error:j.last_error||null,
+  })) });
+}));
 
 /* V961 · Resumen operativo del panel de administración.
    Una única petición alimenta el centro de trabajo y el estado técnico. Las

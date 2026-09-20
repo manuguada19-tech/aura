@@ -518,7 +518,7 @@ function registerUsersBulk(app, pool, wrap, helpers = {}) {
     if (!ACTIONS.has(action)) return res.status(400).json({ error:"unknown_action" });
     if (!canRunAction(req,action)) return res.status(403).json({ error:"forbidden_role", message:"Esta acción necesita el rango Administrador." });
     const ph = ids.map(() => "?").join(",");
-    const [targets] = await pool.query(`SELECT id,name,email FROM users WHERE id IN (${ph}) AND role='user' ORDER BY id`, ids);
+    const [targets] = await pool.query(`SELECT id,name,email,status,verified,plan FROM users WHERE id IN (${ph}) AND role='user' ORDER BY id`, ids);
     const targetIds = targets.map(u => Number(u.id));
     if (!targetIds.length) return res.json({ ok:true, affected:0, count:0 });
     const normalized = { ...payload, ids:targetIds };
@@ -530,6 +530,18 @@ function registerUsersBulk(app, pool, wrap, helpers = {}) {
     }
     const targetPh = targetIds.map(() => "?").join(",");
     let affected = 0;
+    let reversibleBefore = null;
+    let reversibleAfter = null;
+    if (["ban","suspend","activate","unban","delete"].includes(action)) {
+      reversibleBefore = targets.map(u => ({ id:Number(u.id), status:u.status }));
+      reversibleAfter = targets.map(u => ({ id:Number(u.id), status:STATUS[action] || "banned" }));
+    } else if (["verify","unverify"].includes(action)) {
+      reversibleBefore = targets.map(u => ({ id:Number(u.id), verified:Number(u.verified) ? 1 : 0 }));
+      reversibleAfter = targets.map(u => ({ id:Number(u.id), verified:action === "verify" ? 1 : 0 }));
+    } else if (action === "plan") {
+      reversibleBefore = targets.map(u => ({ id:Number(u.id), plan:u.plan }));
+      reversibleAfter = targets.map(u => ({ id:Number(u.id), plan:payload.value }));
+    }
     if (STATUS[action]) {
       const [r] = await pool.query(
         `UPDATE users SET status=? WHERE id IN (${targetPh}) AND role='user'`,
@@ -557,6 +569,10 @@ function registerUsersBulk(app, pool, wrap, helpers = {}) {
     } else if (action === "tag") {
       const tag = payload.value.replace(/\s+/g, " ").slice(0,32);
       if (!tag) return res.status(400).json({ error:"value_required", message:"Escribe una etiqueta." });
+      const [existing] = await pool.query(`SELECT user_id FROM user_admin_tags WHERE tag=? AND user_id IN (${targetPh})`, [tag,...targetIds]);
+      const had = new Set(existing.map(r => Number(r.user_id)));
+      reversibleBefore = targetIds.map(id => ({ id, tag, had_tag:had.has(id) }));
+      reversibleAfter = targetIds.map(id => ({ id, tag, had_tag:true }));
       const values = targetIds.map(() => "(?,?)").join(",");
       const args = targetIds.flatMap(id => [id,tag]);
       const [r] = await pool.query(`INSERT IGNORE INTO user_admin_tags (user_id,tag) VALUES ${values}`, args);
@@ -572,7 +588,99 @@ function registerUsersBulk(app, pool, wrap, helpers = {}) {
     } else {
       return res.status(400).json({ error: "unknown_action" });
     }
-    res.json({ ok: true, affected, count: affected, selected:targetIds.length });
+    let undoId = null;
+    if (reversibleBefore && affected > 0) {
+      const [ins] = await pool.execute(
+        `INSERT INTO admin_reversible_actions (actor,action,label,before_json,after_json)
+         VALUES (?,?,?,?,?)`,
+        [String(req.admin?.email || "admin").slice(0,190),action,
+         `${actionLabel(action,payload.value)} · ${targetIds.length} usuario(s)`,
+         JSON.stringify(reversibleBefore),JSON.stringify(reversibleAfter)]
+      );
+      undoId = ins.insertId;
+    }
+    res.json({ ok: true, affected, count: affected, selected:targetIds.length, undo_id:undoId });
+  }));
+
+  app.get("/api/admin/reversible-actions", wrap(async (_req, res) => {
+    const [rows] = await pool.query(
+      `SELECT id,actor,action,label,undone_at,undone_by,created_at
+         FROM admin_reversible_actions ORDER BY id DESC LIMIT 100`
+    );
+    res.json({ ok:true, rows });
+  }));
+
+  app.post("/api/admin/reversible-actions/:id/undo", wrap(async (req, res) => {
+    const id = parseInt(req.params.id,10);
+    if (!id) return res.status(400).json({ error:"invalid_id" });
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      const [rows] = await conn.query("SELECT * FROM admin_reversible_actions WHERE id=? FOR UPDATE", [id]);
+      const item = rows[0];
+      if (!item) { await conn.rollback(); return res.status(404).json({ error:"not_found" }); }
+      const isOwner = String(req.admin?.role || "").toLowerCase() === "superadmin";
+      const sameActor = String(item.actor || "").toLowerCase() === String(req.admin?.email || "").toLowerCase();
+      if (!isOwner && (!sameActor || !canRunAction(req,item.action))) {
+        await conn.rollback();
+        return res.status(403).json({ error:"forbidden_role", message:"Solo puedes deshacer tus propias acciones y con el mismo rango necesario." });
+      }
+      if (item.undone_at) { await conn.rollback(); return res.status(409).json({ error:"already_undone", message:"Este cambio ya fue deshecho." }); }
+      let before = [];
+      let after = [];
+      try { before = JSON.parse(item.before_json || "[]"); } catch {}
+      try { after = JSON.parse(item.after_json || "[]"); } catch {}
+      if (!Array.isArray(before) || !before.length || !Array.isArray(after) || after.length !== before.length) {
+        await conn.rollback();
+        return res.status(409).json({ error:"not_reversible", message:"Este cambio no contiene un estado válido para restaurar." });
+      }
+      /* No se pisa un cambio posterior. Para deshacer, el estado actual debe
+         seguir siendo exactamente el que dejó esta acción. */
+      const ids = before.map(x => Number(x.id)).filter(Boolean);
+      const placeholders = ids.map(() => "?").join(",");
+      let changedSince = false;
+      if (item.action === "tag") {
+        const tag = String(after[0]?.tag || before[0]?.tag || "");
+        const [currentTags] = await conn.query(
+          `SELECT user_id FROM user_admin_tags WHERE tag=? AND user_id IN (${placeholders}) FOR UPDATE`, [tag,...ids]
+        );
+        const present = new Set(currentTags.map(x => Number(x.user_id)));
+        changedSince = after.some(x => present.has(Number(x.id)) !== !!x.had_tag);
+      } else {
+        const [currentUsers] = await conn.query(
+          `SELECT id,status,verified,plan FROM users WHERE id IN (${placeholders}) AND role='user' FOR UPDATE`, ids
+        );
+        const current = new Map(currentUsers.map(x => [Number(x.id),x]));
+        changedSince = after.some(x => {
+          const now = current.get(Number(x.id));
+          if (!now) return true;
+          if (Object.prototype.hasOwnProperty.call(x,"status")) return String(now.status) !== String(x.status);
+          if (Object.prototype.hasOwnProperty.call(x,"verified")) return Number(now.verified) !== Number(x.verified);
+          if (Object.prototype.hasOwnProperty.call(x,"plan")) return String(now.plan) !== String(x.plan);
+          return true;
+        });
+      }
+      if (changedSince) {
+        await conn.rollback();
+        return res.status(409).json({ error:"changed_since", message:"No se puede deshacer porque uno o más usuarios cambiaron después de esta acción." });
+      }
+      if (item.action === "tag") {
+        for (const x of before) if (!x.had_tag) await conn.execute("DELETE FROM user_admin_tags WHERE user_id=? AND tag=?", [x.id,x.tag]);
+      } else if (["verify","unverify"].includes(item.action)) {
+        for (const x of before) await conn.execute("UPDATE users SET verified=? WHERE id=? AND role='user'", [x.verified ? 1 : 0,x.id]);
+      } else if (item.action === "plan") {
+        for (const x of before) if (PLANS.has(x.plan)) await conn.execute("UPDATE users SET plan=? WHERE id=? AND role='user'", [x.plan,x.id]);
+      } else if (["ban","suspend","activate","unban","delete"].includes(item.action)) {
+        for (const x of before) await conn.execute("UPDATE users SET status=? WHERE id=? AND role='user'", [x.status,x.id]);
+      } else {
+        await conn.rollback(); return res.status(409).json({ error:"not_reversible" });
+      }
+      await conn.execute("UPDATE admin_reversible_actions SET undone_at=NOW(),undone_by=? WHERE id=?",
+        [String(req.admin?.email || "admin").slice(0,190),id]);
+      await conn.commit();
+      res.json({ ok:true,id,restored:before.length });
+    } catch (e) { try { await conn.rollback(); } catch {} throw e; }
+    finally { conn.release(); }
   }));
 }
 // ==================== DISPOSITIVOS PERDIDOS ====================

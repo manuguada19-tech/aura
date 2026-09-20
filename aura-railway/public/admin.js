@@ -26,6 +26,33 @@ const toast = (m, ms=2200) => {
   clearTimeout(toast._t); toast._t = setTimeout(()=>t.classList.remove("show"), ms);
 };
 
+/* Confirmación accionable para cambios masivos reversibles. A diferencia del
+   toast normal, permanece visible hasta que el administrador lo cierre o use
+   Deshacer. */
+function showUndoAction(id, message, onDone) {
+  if (!id) return;
+  document.querySelector(".admin-undo-toast")?.remove();
+  const notice = el("aside", { class:"admin-undo-toast", role:"status" }, [
+    el("div", {}, [el("strong", {}, "Cambio aplicado"), el("span", {}, message || "La acción se puede deshacer desde Auditoría.")]),
+  ]);
+  const undo = btn("Deshacer", "primary sm", async () => {
+    undo.disabled = true;
+    undo.textContent = "Deshaciendo…";
+    try {
+      const result = await api.post(`/api/admin/reversible-actions/${id}/undo`, {});
+      notice.remove();
+      toast(`Cambio deshecho · ${result.restored || 0} usuario(s) restaurados`, 3500);
+      if (typeof onDone === "function") await onDone();
+    } catch (e) {
+      undo.disabled = false;
+      undo.textContent = "Deshacer";
+      toast(e.message || "No se pudo deshacer", 4000);
+    }
+  });
+  notice.appendChild(el("div", { class:"admin-undo-actions" }, [undo, btn("Cerrar", "ghost sm", () => notice.remove())]));
+  document.body.appendChild(notice);
+}
+
 /* Dialog para editar una restricción existente. Permite cambiar el tipo
    (feature), motivo, duración (presets o indefinida). Devuelve null si se
    cancela o un objeto { feature, reason, duration_hours, indefinite }. */
@@ -1643,6 +1670,70 @@ $("#nav").addEventListener("click", (e) => {
 })();
 
 let __currentAdminView = "dashboard";
+
+/* V967 · Actualización en tiempo real del panel. El servidor avisa por SSE
+   después de cada cambio confirmado. Solo se vuelven a cargar las vistas que
+   son resúmenes (Panel, Auditoría y Logs), y nunca mientras haya un diálogo,
+   un cajón o un campo en edición. */
+let __adminLiveSource = null;
+let __adminLiveRefreshTimer = null;
+let __adminLivePending = false;
+function setAdminLiveState(state, text) {
+  const badge = document.getElementById("adminLiveState");
+  if (!badge) return;
+  badge.className = `admin-live-state ${state}`;
+  badge.querySelector("span:last-child").textContent = text;
+}
+function adminLiveRefreshBlocked() {
+  const active = document.activeElement;
+  const editing = active && (active.matches?.("input,textarea,select") || active.isContentEditable);
+  const drawerOpen = !document.getElementById("drawer")?.hidden;
+  return document.hidden || editing || drawerOpen || !!document.querySelector(".ac-overlay,.modal-backdrop,.inv-modal-bg");
+}
+function queueAdminLiveRefresh() {
+  if (!["dashboard", "audit", "logs"].includes(__currentAdminView)) return;
+  __adminLivePending = true;
+  clearTimeout(__adminLiveRefreshTimer);
+  __adminLiveRefreshTimer = setTimeout(() => {
+    if (!__adminLivePending) return;
+    if (adminLiveRefreshBlocked()) {
+      __adminLiveRefreshTimer = setTimeout(queueAdminLiveRefresh, 1200);
+      return;
+    }
+    __adminLivePending = false;
+    const view = __currentAdminView;
+    if (["dashboard", "audit", "logs"].includes(view)) route(view);
+  }, 650);
+}
+function initAdminLiveUpdates() {
+  const topbar = document.querySelector(".topbar-right");
+  if (!topbar || document.getElementById("adminLiveState")) return;
+  const badge = el("div", { id:"adminLiveState", class:"admin-live-state connecting", title:"Actualización automática del panel", "aria-live":"polite" }, [
+    el("span", { class:"admin-live-dot", "aria-hidden":"true" }), el("span", {}, "Conectando")
+  ]);
+  topbar.insertBefore(badge, topbar.firstChild);
+  if (!ADMIN_TOKEN || typeof EventSource === "undefined") {
+    setAdminLiveState("offline", "Sin conexión");
+    return;
+  }
+  const connect = () => {
+    try { __adminLiveSource?.close(); } catch {}
+    setAdminLiveState("connecting", "Reconectando");
+    __adminLiveSource = new EventSource(`/api/admin/events?adminToken=${encodeURIComponent(ADMIN_TOKEN)}`);
+    __adminLiveSource.addEventListener("ready", () => setAdminLiveState("online", "En vivo"));
+    __adminLiveSource.addEventListener("change", () => {
+      setAdminLiveState("online", "En vivo");
+      queueAdminLiveRefresh();
+    });
+    __adminLiveSource.onopen = () => setAdminLiveState("online", "En vivo");
+    __adminLiveSource.onerror = () => setAdminLiveState("connecting", "Reconectando");
+  };
+  connect();
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && (!__adminLiveSource || __adminLiveSource.readyState === EventSource.CLOSED)) connect();
+    if (!document.hidden && __adminLivePending) queueAdminLiveRefresh();
+  });
+}
 /* ============================================================
    V920 · El panel se adapta al rango de quien ha entrado
    ------------------------------------------------------------
@@ -2606,6 +2697,76 @@ async function openDataConsistency() {
   } catch(e){body.innerHTML="";body.appendChild(el("div",{class:"error"},"No se pudo completar la comprobación."));}
 }
 
+async function openSystemStatus() {
+  const overlay = el("div", { class:"ac-overlay" });
+  const body = el("div", { class:"system-status-body" }, [el("div", { class:"loading" }, "Cargando estado…")]);
+  let timer = null;
+  let closed = false;
+  const close = () => { closed = true; clearInterval(timer); document.removeEventListener("keydown", onKey); overlay.remove(); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  const refreshBtn = btn("Actualizar", "ghost sm", () => load());
+  const modal = el("div", { class:"ac-dialog ac-dialog-wide system-status-modal", role:"dialog", "aria-modal":"true" }, [
+    el("div", { class:"technical-history-head" }, [
+      el("div", {}, [el("small", {}, "OPERACIÓN"), el("h3", {}, "Sistema y tareas automáticas")]),
+      el("div", { class:"system-status-head-actions" }, [refreshBtn, btn("Cerrar", "ghost sm", close)]),
+    ]), body,
+  ]);
+
+  async function load() {
+    refreshBtn.disabled = true;
+    try {
+      const data = await api.get("/api/admin/system-status");
+      if (closed) return;
+      const d = data.deployment || {};
+      body.innerHTML = "";
+      body.appendChild(el("section", { class:`deployment-card ${data.ok ? "ok" : "attention"}` }, [
+        el("div", { class:"deployment-state" }, [
+          el("span", { class:"deployment-light", "aria-hidden":"true" }),
+          el("div", {}, [el("small", {}, "DESPLIEGUE ACTUAL"), el("strong", {}, data.ok ? "Operativo" : "Requiere atención")]),
+        ]),
+        el("dl", { class:"deployment-grid" }, [
+          el("div", {}, [el("dt", {}, "Build"), el("dd", { class:"mono" }, d.build || "—")]),
+          el("div", {}, [el("dt", {}, "Commit"), el("dd", { class:"mono" }, d.commit || "No disponible")]),
+          el("div", {}, [el("dt", {}, "Aplicación"), el("dd", {}, d.ready ? "Lista" : "Iniciando")]),
+          el("div", {}, [el("dt", {}, "Base de datos"), el("dd", {}, d.database_ok ? `${d.database_latency_ms ?? "—"} ms` : "Sin conexión")]),
+          el("div", {}, [el("dt", {}, "Arranque"), el("dd", {}, d.started_at ? fmt.date(d.started_at) : "—")]),
+          el("div", {}, [el("dt", {}, "Paneles en vivo"), el("dd", {}, String(d.live_connections ?? 0))]),
+        ]),
+      ]));
+
+      const jobs = el("section", { class:"system-jobs" }, [
+        el("div", { class:"system-jobs-title" }, [el("h4", {}, "Tareas automáticas"), el("small", {}, `Actualizado ${new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"})}`)]),
+      ]);
+      const grid = el("div", { class:"system-jobs-grid" });
+      (data.jobs || []).forEach(job => {
+        const state = job.status === "failed" ? "failed" : (job.status === "running" ? "running" : (job.status === "ok" ? "ok" : "waiting"));
+        const stateText = { failed:"Falló", running:"En curso", ok:"Correcta", waiting:"Pendiente" }[state];
+        grid.appendChild(el("article", { class:`system-job ${state}` }, [
+          el("div", { class:"system-job-head" }, [el("strong", {}, job.label || job.key), el("span", { class:`system-job-state ${state}` }, stateText)]),
+          el("div", { class:"system-job-meta" }, [
+            el("span", {}, job.schedule || "—"),
+            el("span", {}, `${job.runs || 0} ejecuciones desde el arranque`),
+          ]),
+          el("p", {}, job.last_finished_at ? `Última finalización: ${fmt.date(job.last_finished_at)}` : (job.last_started_at ? `Iniciada: ${fmt.date(job.last_started_at)}` : "Aún no se ha ejecutado")),
+          job.last_error ? el("pre", { class:"system-job-error" }, job.last_error) : null,
+        ]));
+      });
+      jobs.appendChild(grid);
+      body.appendChild(jobs);
+    } catch (e) {
+      body.innerHTML = "";
+      body.appendChild(el("div", { class:"error" }, e.message || "No se pudo consultar el sistema."));
+    } finally { refreshBtn.disabled = false; }
+  }
+
+  overlay.appendChild(el("div", { class:"ac-scrim", onclick:close }));
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey);
+  await load();
+  if (!closed) timer = setInterval(load, 15000);
+}
+
 function renderOperationsCenter(data, showWork = true, showHealth = true) {
   const wrap = el("section", { class: "ops-center" });
   const head = el("div", { class: "ops-head" }, [
@@ -2670,6 +2831,7 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       health.appendChild(alerts);
     }
     const healthActions = el("div", { class: "health-actions" }, [
+      btn("Sistema", "primary sm", () => openSystemStatus()),
       btn("Historial", "primary sm", () => openTechnicalHistory()),
       btn("Incidencias", "ghost sm", () => openIncidentsCenter()),
       btn("Coherencia", "ghost sm", () => openDataConsistency()),
@@ -3585,30 +3747,46 @@ async function viewUsers(root){
       );
       if (!ok) return;
       const r = await api.post("/api/users/bulk", { ...payload, preview_token:preview.token });
-      toast(`Aplicado a ${r.affected ?? ids.length} usuarios`);
+      const affected = r.affected ?? ids.length;
+      toast(`Aplicado a ${affected} usuarios`);
+      if (r.undo_id) showUndoAction(r.undo_id, `Aplicado a ${affected} usuario(s).`, refresh);
       selectedIds.clear();
       refresh();
     } catch (e) { toast("Error: " + (e.message || "")); }
   }
 
-  bulkBar.appendChild(btn("✅ Verificar", "sm", () => bulkAction("verify")));
-  bulkBar.appendChild(btn("❌ Desverificar", "sm", () => bulkAction("unverify")));
-  bulkBar.appendChild(btn("🚫 Suspender", "sm", () => bulkAction("suspend")));
-  bulkBar.appendChild(btn("⛔ Banear", "sm", () => bulkAction("ban", { prompt:"Motivo del baneo (opcional):" })));
-  bulkBar.appendChild(btn("🔓 Reactivar", "sm", () => bulkAction("activate")));
-  bulkBar.appendChild(btn("🏷 Añadir etiqueta", "sm", () => bulkAction("tag", { prompt:"Etiqueta a aplicar:" })));
-  bulkBar.appendChild(btn("💎 Cambiar plan", "sm", () => bulkAction("plan", { prompt:"Plan (free/premium/gold/platinum):" })));
-  bulkBar.appendChild(btn("✉️ Enviar email", "sm", async () => {
+  const rankName = ["", "Solo lectura", "Moderador", "Administrador", "Superadmin"][nivelUsuario()] || "Sin rango";
+  const permissionHint = el("span", { class:"bulk-permission", title:"Los botones muestran el rango mínimo necesario." }, `Tu rango: ${rankName}`);
+  bulkBar.appendChild(permissionHint);
+  function bulkButton(label, requiredLevel, handler, cls="sm") {
+    const node = btn(label, cls, handler);
+    if (nivelUsuario() < requiredLevel) {
+      const needed = ["", "Solo lectura", "Moderador", "Administrador", "Superadmin"][requiredLevel];
+      node.disabled = true;
+      node.title = `Necesita el rango ${needed}`;
+      node.setAttribute("aria-label", `${label}. Bloqueado: necesita el rango ${needed}`);
+    }
+    bulkBar.appendChild(node);
+    return node;
+  }
+  bulkButton("✅ Verificar", 2, () => bulkAction("verify"));
+  bulkButton("❌ Desverificar", 2, () => bulkAction("unverify"));
+  bulkButton("🚫 Suspender", 2, () => bulkAction("suspend"));
+  bulkButton("⛔ Banear", 2, () => bulkAction("ban", { prompt:"Motivo del baneo (opcional):" }));
+  bulkButton("🔓 Reactivar", 2, () => bulkAction("activate"));
+  bulkButton("🏷 Añadir etiqueta", 2, () => bulkAction("tag", { prompt:"Etiqueta a aplicar:" }));
+  bulkButton("💎 Cambiar plan", 3, () => bulkAction("plan", { prompt:"Plan (free/premium/gold/platinum):" }));
+  bulkButton("✉️ Enviar email", 3, async () => {
     const subject = prompt("Asunto:"); if (!subject) return;
     const body = prompt("Mensaje (texto):"); if (!body) return;
     await bulkAction("email", { subject, body });
-  }));
-  bulkBar.appendChild(btn("📥 Exportar selección", "sm", () => {
+  });
+  bulkButton("📥 Exportar selección", 4, () => {
     const ids = Array.from(selectedIds);
     const url = "/api/users/export?ids=" + ids.join(",") + "&adminToken=" + encodeURIComponent(localStorage.getItem("adminToken") || "");
     window.open(url, "_blank");
-  }));
-  bulkBar.appendChild(btn("🗑 Bloquear acceso", "danger sm", () => bulkAction("delete")));
+  });
+  bulkButton("🗑 Bloquear acceso", 2, () => bulkAction("delete"), "danger sm");
   bulkBar.appendChild(btn("✖ Deseleccionar", "sm", () => { selectedIds.clear(); refresh(); }));
   root.appendChild(bulkBar);
 
@@ -6512,6 +6690,16 @@ async function viewAuditLog(root) {
   }));
   root.appendChild(filters);
 
+  const reversibleWrap = el("section", { class:"reversible-actions" }, [
+    el("div", { class:"reversible-actions-head" }, [
+      el("div", {}, [el("small", {}, "RECUPERACIÓN"), el("h3", {}, "Cambios que se pueden deshacer")]),
+      el("span", { class:"muted small" }, "Acciones masivas recientes"),
+    ]),
+    el("div", { class:"reversible-actions-list" }, [el("div", { class:"loading" }, "Cargando…")]),
+  ]);
+  root.appendChild(reversibleWrap);
+  const reversibleList = reversibleWrap.querySelector(".reversible-actions-list");
+
   const wrap = el("section", { class: "mod-panel-v2" });
   root.appendChild(wrap);
 
@@ -6560,10 +6748,44 @@ async function viewAuditLog(root) {
     overlay.appendChild(el("div",{class:"ac-scrim",onclick:close}));overlay.appendChild(modal);document.body.appendChild(overlay);document.addEventListener("keydown",onKey);
   }
 
+  function renderReversibleActions(rows) {
+    reversibleList.innerHTML = "";
+    if (!rows.length) {
+      reversibleList.appendChild(el("div", { class:"reversible-empty" }, "Todavía no hay acciones masivas reversibles."));
+      return;
+    }
+    rows.slice(0, 12).forEach(item => {
+      const undone = !!item.undone_at;
+      const undo = btn(undone ? "Deshecho" : "Deshacer", undone ? "ghost sm" : "primary sm", async () => {
+        if (undone) return;
+        const ok = await askConfirm(`¿Deshacer «${item.label}»? Solo se restaurará si los usuarios no han cambiado de nuevo desde entonces.`, { okText:"Deshacer cambio" });
+        if (!ok) return;
+        undo.disabled = true;
+        try {
+          const result = await api.post(`/api/admin/reversible-actions/${item.id}/undo`, {});
+          toast(`Cambio deshecho · ${result.restored || 0} usuario(s) restaurados`, 3500);
+          await refresh();
+        } catch (e) {
+          undo.disabled = false;
+          toast(e.message || "No se pudo deshacer", 4500);
+        }
+      });
+      undo.disabled = undone;
+      const meta = undone
+        ? `Deshecho por ${item.undone_by || "administrador"} · ${fmt.date(item.undone_at)}`
+        : `${item.actor || "Administrador"} · ${fmt.date(item.created_at)}`;
+      reversibleList.appendChild(el("article", { class:`reversible-row${undone ? " undone" : ""}` }, [
+        el("div", { class:"reversible-copy" }, [el("strong", {}, item.label || item.action), el("small", {}, meta)]),
+        undo,
+      ]));
+    });
+  }
+
   async function refresh() {
     wrap.innerHTML = "";
     wrap.appendChild(el("div", { class: "loading" }, "Cargando…"));
     let rows = [];
+    let reversibleRows = [];
     try {
       const p = new URLSearchParams();
       if (stateA.actor) p.set("actor", stateA.actor);
@@ -6571,10 +6793,15 @@ async function viewAuditLog(root) {
       if (stateA.outcome) p.set("outcome", stateA.outcome);
       if (stateA.q) p.set("q", stateA.q);
       p.set("limit", "300");
-      const data = await api.get("/api/admin/audit-log?" + p.toString());
-      rows = data.rows || [];
-    } catch { rows = []; }
+      const [auditResult, reversibleResult] = await Promise.allSettled([
+        api.get("/api/admin/audit-log?" + p.toString()),
+        api.get("/api/admin/reversible-actions"),
+      ]);
+      if (auditResult.status === "fulfilled") rows = auditResult.value.rows || [];
+      if (reversibleResult.status === "fulfilled") reversibleRows = reversibleResult.value.rows || [];
+    } catch { rows = []; reversibleRows = []; }
 
+    renderReversibleActions(reversibleRows);
     wrap.innerHTML = "";
     if (!rows.length) {
       wrap.appendChild(el("div", { class: "mod-empty" }, [
@@ -21949,3 +22176,4 @@ async function viewBroadcasts(root) {
 
 /* boot */
 route("dashboard");
+initAdminLiveUpdates();
