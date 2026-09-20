@@ -1915,7 +1915,13 @@ function fmtDate(iso) {
 function pageGuide(slug) {
   const g = GUIDES.find((x) => x.slug === slug);
   if (!g) return null;
-  const related = GUIDES.filter((x) => x.slug !== slug).slice(0, 2);
+  // V966 · En vez de enlazar siempre los dos primeros artículos, cada guía
+  // apunta a las dos siguientes. Así todas reciben enlaces internos directos
+  // desde contenido editorial y ninguna depende solo del sitemap/índice.
+  const guideIndex = GUIDES.indexOf(g);
+  const related = [1, 2]
+    .map((step) => GUIDES[(guideIndex + step) % GUIDES.length])
+    .filter((x, i, arr) => x && x.slug !== slug && arr.findIndex((y) => y.slug === x.slug) === i);
   const relHtml = related.length
     ? `<h2>Sigue leyendo</h2><div class="grid">${related.map((r) => `<a class="card" href="/guias/${r.slug}"><h3>${esc(r.title)}</h3><p>${esc(r.excerpt)}</p></a>`).join("")}</div>`
     : "";
@@ -2050,12 +2056,10 @@ function register(app, deps) {
   });
 
   // Páginas de contenido (rastreables sin JS)
-  // /inicio: la portada vivió aquí hasta V930 y es la única URL que Search
-  // Console tiene indexada, así que sigue sirviendo LA MISMA página. Como
-  // pagePortada() declara `path: "/"`, sale con canonical a la raíz y consolida
-  // en ella. El 301 se pondrá cuando "/" aparezca indexada (semanas), porque un
-  // canonical se revierte en un día y un 301 más recrawl, no.
-  app.get("/inicio", (req, res) => html(res, pagePortada()));
+  // V966 · La raíz ya aparece indexada. Mantener /inicio con el mismo HTML
+  // conserva dos resultados equivalentes y diluye señales de calidad; desde
+  // ahora se consolida definitivamente con una redirección permanente.
+  app.get("/inicio", (req, res) => res.redirect(301, "/"));
   app.get("/como-funciona", (req, res) => html(res, pageComoFunciona()));
   app.get("/faq", (req, res) => html(res, pageFaq()));
   app.get("/preguntas", (req, res) => res.redirect(301, "/faq"));

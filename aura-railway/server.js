@@ -18674,6 +18674,7 @@ try {
 } catch (e) { console.warn("shell read failed:", e && e.message); }
 function sendShell(res) {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
   res.type("html").send(INDEX_HTML_BUILT || "");
 }
 app.get("/index.html", (req, res) => {
@@ -18844,6 +18845,9 @@ app.use(express.static(path.join(__dirname, "public"), {
     const rel = filePath.replace(/\\/g, "/");
     const isAsset = rel.includes("/public/assets/");
     const isAppCode = /\.(?:js|css)$/i.test(rel) || /\/(?:index\.html|sw\.js)$/i.test(rel);
+    // V966 · /index.html es la aplicación autenticada, no contenido de
+    // editor. El header cubre también crawlers que no procesan la meta robots.
+    if (/\/public\/index\.html$/i.test(rel)) res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
     if (isAsset && !isAppCode) {
       res.setHeader("Cache-Control", "public, max-age=2592000, immutable");
     } else {

@@ -1,6 +1,21 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 20 septiembre 2026 · última versión preparada: V965**
+**Fecha de este resumen: 20 septiembre 2026 · última versión preparada: V966**
+
+### V966 (20/09/2026) — Higiene de indexación para AdSense
+
+- La auditoría en vivo confirma que propiedad, `ads.txt`, `robots.txt`, sitemap,
+  canónicas y contenido SSR responden correctamente a Googlebot.
+- El shell autenticado de la app (`/index.html` y rutas internas) lleva ahora
+  `noindex`; no puede competir con las páginas editoriales ni contar como
+  contenido escaso.
+- `/inicio`, que Google todavía mostraba duplicada, redirige definitivamente a
+  la portada canónica `/`.
+- Las recomendaciones entre guías rotan para que todos los artículos reciban
+  enlaces editoriales internos, no solo los dos primeros.
+- Diagnóstico: Google solo mostraba cinco URL del dominio pese a que el sitemap
+  contiene dieciséis. No volver a solicitar revisión hasta confirmar en Search
+  Console que las seis guías y `/faq` están indexadas.
 
 ### V965 (20/09/2026) — Control operativo y acciones masivas seguras
 
