@@ -34,7 +34,11 @@
 
 const BASE = "https://citasaura.es";
 const SITE = "Aura";
-const TODAY = "2026-09-02";
+/* Fecha real del último cambio sustancial de las páginas generales. Antes el
+   sitemap seguía anunciando 02/09 aunque la portada y Cómo funciona se
+   reescribieron el 10/09. No se usa la fecha de arranque: fingir que todo cambia
+   cada día haría que Google dejase de confiar en lastmod. */
+const PAGE_LASTMOD = "2026-09-10";
 
 /* V930 · Dónde vive la app, ahora que "/" es contenido.
    --------------------------------------------------------------------
@@ -673,7 +677,8 @@ function layout(opts) {
     ${o.bodyHtml || ""}
   </div></main>
   <footer class="site"><div class="wrap">
-    <nav>${NAV.map((n) => `<a href="${n.path}">${esc(n.label)}</a>`).join("")}</nav>
+    <nav aria-label="Secciones principales">${NAV.map((n) => `<a href="${n.path}">${esc(n.label)}</a>`).join("")}</nav>
+    <nav aria-label="Recursos y páginas legales">${FOOTER_EXTRA.map((n) => `<a href="${n.path}">${esc(n.label)}</a>`).join("")}</nav>
     <div>Aura es una app de citas para mayores de 18 años. Perfiles verificados con documento y chat sólo cuando el interés es mutuo.</div>
     <div class="fine">© 2026 Aura · Hecho con ♥ en España · <a href="/">Volver al inicio</a> · <a href="${APP_URL}">Abrir la app</a>${consentPie}</div>
   </div></footer>
@@ -692,6 +697,19 @@ const NAV = [
   { label: "Preguntas frecuentes", path: "/faq" },
   { label: "Seguridad", path: "/verificacion" },
   { label: "Contacto", path: "/contacto" },
+];
+
+/* V968 · Enlaces rastreables desde todas las páginas. Las URL de ayuda y
+   legales estaban únicamente en el sitemap o enterradas dentro de algún texto;
+   las dos guías prioritarias dependían del índice y de enlaces contextuales.
+   Este segundo menú hace explícita la arquitectura sin llenar la cabecera. */
+const FOOTER_EXTRA = [
+  { label: "Algoritmo de matches", path: "/guias/como-funciona-el-algoritmo-de-matches" },
+  { label: "Seguridad en citas", path: "/guias/seguridad-en-citas-online" },
+  { label: "Centro de ayuda", path: "/ayuda" },
+  { label: "Normas", path: "/normas" },
+  { label: "Privacidad", path: "/privacidad" },
+  { label: "Términos", path: "/terminos" },
 ];
 
 // FAQ real, portada 1:1 desde screenInfoFaq() en app.js
@@ -1965,20 +1983,20 @@ function sitemapXml() {
     // V930 · La portada es "/" y sólo se lista "/". /inicio sigue respondiendo
     // 200 con la misma página, pero con canonical a "/": listar las dos sería
     // pedirle a Google que indexe dos veces lo mismo.
-    { loc: "/", pri: "1.0", freq: "weekly" },
-    { loc: "/como-funciona", pri: "0.9", freq: "monthly" },
-    { loc: "/guias", pri: "0.8", freq: "weekly" },
-    { loc: "/faq", pri: "0.8", freq: "monthly" },
-    { loc: "/verificacion", pri: "0.6", freq: "yearly" },
-    { loc: "/normas", pri: "0.6", freq: "yearly" },
-    { loc: "/ayuda", pri: "0.6", freq: "monthly" },
-    { loc: "/contacto", pri: "0.5", freq: "yearly" },
-    { loc: "/terminos", pri: "0.4", freq: "yearly" },
-    { loc: "/privacidad", pri: "0.4", freq: "yearly" },
+    { loc: "/", pri: "1.0", freq: "weekly", lastmod: PAGE_LASTMOD },
+    { loc: "/como-funciona", pri: "0.9", freq: "monthly", lastmod: PAGE_LASTMOD },
+    { loc: "/guias", pri: "0.8", freq: "weekly", lastmod: PAGE_LASTMOD },
+    { loc: "/faq", pri: "0.8", freq: "monthly", lastmod: PAGE_LASTMOD },
+    { loc: "/verificacion", pri: "0.6", freq: "yearly", lastmod: PAGE_LASTMOD },
+    { loc: "/normas", pri: "0.6", freq: "yearly", lastmod: PAGE_LASTMOD },
+    { loc: "/ayuda", pri: "0.6", freq: "monthly", lastmod: PAGE_LASTMOD },
+    { loc: "/contacto", pri: "0.5", freq: "yearly", lastmod: PAGE_LASTMOD },
+    { loc: "/terminos", pri: "0.4", freq: "yearly", lastmod: PAGE_LASTMOD },
+    { loc: "/privacidad", pri: "0.4", freq: "yearly", lastmod: PAGE_LASTMOD },
   ];
   GUIDES.forEach((g) => urls.push({ loc: "/guias/" + g.slug, pri: "0.7", freq: "monthly", lastmod: g.updated || g.date }));
   const body = urls
-    .map((u) => `  <url><loc>${BASE}${u.loc}</loc>${u.lastmod ? `<lastmod>${u.lastmod}</lastmod>` : `<lastmod>${TODAY}</lastmod>`}<changefreq>${u.freq}</changefreq><priority>${u.pri}</priority></url>`)
+    .map((u) => `  <url><loc>${BASE}${u.loc}</loc><lastmod>${u.lastmod}</lastmod><changefreq>${u.freq}</changefreq><priority>${u.pri}</priority></url>`)
     .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${body}\n</urlset>`;
 }

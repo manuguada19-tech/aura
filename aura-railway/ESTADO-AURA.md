@@ -1,6 +1,18 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 20 septiembre 2026 · última versión preparada: V967**
+**Fecha de este resumen: 21 septiembre 2026 · última versión preparada: V968**
+
+### V968 (21/09/2026) — Refuerzo de rastreo en Search Console
+
+- El sitemap mantiene sus 16 URL canónicas y deja de declarar por error el
+  02/09 como fecha de modificación de todas las páginas generales; usa la fecha
+  real de su última reescritura y conserva la fecha propia de cada guía.
+- Todas las páginas públicas enlazan permanentemente las dos guías prioritarias,
+  Ayuda, Normas, Privacidad y Términos desde un segundo menú del pie.
+- La auditoría en vivo de las siete URL marcadas como “Descubierta: actualmente
+  sin indexar” confirmó respuesta 200, canonical propio, `index,follow` y
+  contenido HTML completo. Search Console mostraba datos del 18/09, anteriores
+  a V966, y “Último rastreo: N/D”.
 
 ### V967 (20/09/2026) — Panel en vivo, despliegue y recuperación
 
