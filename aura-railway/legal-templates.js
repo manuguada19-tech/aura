@@ -58,7 +58,7 @@ Los incumplimientos pueden derivar en aviso, suspensión temporal o **baneo perm
 
 - Aura ofrece un **plan gratuito** con anuncios y planes de pago (Premium, Oro, Platino) sin anuncios y con funciones adicionales.
 - Los pagos se procesan mediante proveedores externos (Stripe, PayPal, Apple Pay, Google Pay, Bizum) sujetos a sus propios términos.
-- Las suscripciones se **renuevan automáticamente** al finalizar el período. Puedes cancelarlas en cualquier momento desde tu cuenta o el store correspondiente; conservarás el acceso hasta el final del período pagado.
+- Las suscripciones se **renuevan automáticamente** al finalizar el período. Puedes solicitar la cancelación en cualquier momento desde Contacto o escribiendo a suscripciones@citasaura.es; conservarás el acceso hasta el final del período pagado.
 - **Derecho de desistimiento:** por tratarse de contenido digital de acceso inmediato, al confirmar la suscripción aceptas expresamente que pierdes el derecho de desistimiento (art. 103.m del RDL 1/2007). Aun así, puedes solicitar la cancelación sin explicaciones.
 
 ## 7. 📢 Publicidad

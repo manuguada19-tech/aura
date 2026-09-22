@@ -1,6 +1,24 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 21 septiembre 2026 · última versión preparada: V968**
+**Fecha de este resumen: 22 septiembre 2026 · última versión preparada: V969**
+
+### V969 (22/09/2026) — FAQ completo y fiel al producto
+
+- FAQ público ampliado de 19 a 41 preguntas, con nuevas secciones de Perfil,
+  Notificaciones y Extras; cubre PWA, filtros, orden del feed, funciones del
+  chat, dispositivos, apelaciones, recompensas, Historias y Quedadas.
+- FAQ de la app revisado también: ya no promete cambio de correo, recuperación
+  mediante enlace, preferencias de email, cancelación dentro del perfil,
+  facturas automáticas ni compras desde tiendas móviles cuando esas funciones
+  no existen actualmente.
+- Términos, privacidad, ayuda y textos públicos de pagos se han alineado con el
+  flujo real: Stripe y gestión de cancelaciones, facturas y reembolsos mediante
+  soporte. `/faq` lleva su propio `lastmod` de 22/09 sin falsear el de las demás
+  páginas.
+- Pendientes funcionales detectados en la auditoría: cambio de correo
+  autoservicio, cancelación Stripe autoservicio con sincronización del webhook y
+  exportación RGPD real (la pantalla actual solo confirma visualmente la
+  solicitud). No volver a prometerlos hasta implementarlos de extremo a extremo.
 
 ### V968 (21/09/2026) — Refuerzo de rastreo en Search Console
 
