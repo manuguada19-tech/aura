@@ -1,6 +1,28 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 22 septiembre 2026 · última versión preparada: V969**
+**Fecha de este resumen: 22 septiembre 2026 · última versión preparada: V970**
+
+### V970 (22/09/2026) — Pagos y facturas autoservicio
+
+- Nueva pantalla **Perfil → Pagos y facturas**: muestra la suscripción, próxima
+  renovación, pagos completados, pendientes, fallidos y reembolsados.
+- El usuario puede descargar con sesión autenticada sus facturas, justificantes
+  y facturas rectificativas; cada descarga comprueba que el pago le pertenece.
+- Los cobros de renovación fallidos se pueden reintentar desde el movimiento. Si
+  el banco requiere autenticación, se abre la página segura de Stripe.
+- Cancelación y reactivación de la renovación conectadas a Stripe mediante
+  `cancel_at_period_end`; el acceso se conserva hasta el final del periodo.
+- El webhook sincroniza renovaciones, fallos, pagos que requieren acción,
+  cambios/cancelaciones de suscripción y reembolsos. El botón de reembolso del
+  panel ya solicita la devolución real a Stripe antes de cambiar el estado local.
+- FAQ público y de la app ampliados a 42 preguntas. Cancelación, documentos y
+  reintentos describen ahora el flujo real; las rutas visibles usan «Perfil» en
+  vez del antiguo «Yo». Términos y páginas públicas también se actualizaron.
+- Para que todos los eventos se sincronicen, el webhook de Stripe debe escuchar:
+  `checkout.session.completed`, `invoice.payment_failed`,
+  `invoice.payment_action_required`, `invoice.payment_succeeded`,
+  `invoice.finalization_failed`, `customer.subscription.updated`,
+  `customer.subscription.deleted` y `charge.refunded`.
 
 ### V969 (22/09/2026) — FAQ completo y fiel al producto
 
@@ -16,9 +38,9 @@
   soporte. `/faq` lleva su propio `lastmod` de 22/09 sin falsear el de las demás
   páginas.
 - Pendientes funcionales detectados en la auditoría: cambio de correo
-  autoservicio, cancelación Stripe autoservicio con sincronización del webhook y
-  exportación RGPD real (la pantalla actual solo confirma visualmente la
-  solicitud). No volver a prometerlos hasta implementarlos de extremo a extremo.
+  autoservicio y exportación RGPD real (la pantalla actual solo confirma
+  visualmente la solicitud). La gestión Stripe del perfil quedó resuelta en
+  V970. No volver a prometer lo restante hasta implementarlo de extremo a extremo.
 
 ### V968 (21/09/2026) — Refuerzo de rastreo en Search Console
 

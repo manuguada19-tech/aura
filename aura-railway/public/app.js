@@ -4522,9 +4522,8 @@ function applyDeepLink(dl) {
      screenBilling y screenNotifications. El typeof las convertía en null, el null
      se ignoraba abajo, y el usuario que abría /facturas o /notificaciones acababa
      en la pestaña "Yo" sin ninguna explicación. Doce alias muertos en total.
-     Destinos reales: la app no tiene pantalla de facturación aparte — planes,
-     renovación y facturas viven en screenSubscriptions (es donde llevan todos los
-     botones de suscripción, p. ej. la fila "Suscripción y pagos" de screenInfoHelp).
+     Destinos reales: desde V970 facturación y facturas abren screenBilling;
+     la comparación y compra de planes sigue en screenSubscriptions.
      Y las notificaciones de verdad (push, correo, qué tipos recibes) son
      screenNotificationSettings, la misma que abre el menú de "Yo"; screenInfoPreferences
      es sólo la página informativa sobre correos, que se queda en preferencias/preferences.
@@ -4534,8 +4533,8 @@ function applyDeepLink(dl) {
   const subViews = {
     // Inglés (legacy)
     subscription: typeof screenSubscriptions === "function" ? screenSubscriptions : null,
-    billing:     typeof screenSubscriptions === "function" ? screenSubscriptions : null,
-    invoices:    typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    billing:     typeof screenBilling === "function" ? screenBilling : null,
+    invoices:    typeof screenBilling === "function" ? screenBilling : null,
     help:        typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
     support:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
     safety:      typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
@@ -4544,8 +4543,8 @@ function applyDeepLink(dl) {
     boost:       typeof screenSubscriptions === "function" ? screenSubscriptions : null,
     // Español (canónico)
     suscripcion: typeof screenSubscriptions === "function" ? screenSubscriptions : null,
-    facturacion: typeof screenSubscriptions === "function" ? screenSubscriptions : null,
-    facturas:    typeof screenSubscriptions === "function" ? screenSubscriptions : null,
+    facturacion: typeof screenBilling === "function" ? screenBilling : null,
+    facturas:    typeof screenBilling === "function" ? screenBilling : null,
     ayuda:       typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
     soporte:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
     privacidad:  typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
@@ -14890,6 +14889,7 @@ function screenMe(root) {
       { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
       { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
       { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: (getUserPlan() === "free" ? "Plan Free · descubre Premium" : ("Plan " + planLabel(getUserPlan()))), onClick: () => render(screenSubscriptions) },
+      { icon: "🧾", title: "Pagos y facturas", sub: "Facturas, reembolsos y cobros pendientes", onClick: () => render(screenBilling) },
       { icon: "🚀", title: "Boost / Impulso", id: "meBoostRow", sub: "Destaca tu perfil y consulta el tiempo restante", onClick: () => render(screenBoost) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
@@ -17491,6 +17491,149 @@ function openDevicesSheet() {
   refresh();
 }
 
+/* ---- Pagos y facturas (V970) ---- */
+function screenBilling(root) {
+  root.classList.add("screen-billing");
+  root.appendChild(topbar("Pagos y facturas", () => render(screenMe)));
+  const body = el("div", { class: "billing-profile" }, [
+    el("div", { class: "billing-intro" }, [
+      el("strong", {}, "Todo sobre tus cobros, en un solo lugar"),
+      el("span", {}, "Consulta movimientos, descarga documentos, recupera pagos y controla la renovación."),
+    ]),
+    el("div", { class: "billing-loading" }, "Cargando tus datos de facturación…"),
+  ]);
+  root.appendChild(body);
+  hideApp();
+
+  const dateText = (value, withTime) => {
+    if (!value) return "—";
+    const d = new Date(value);
+    if (isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("es-ES", withTime ? { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" } : { day:"2-digit", month:"short", year:"numeric" });
+  };
+  const money = (amount, currency) => {
+    try { return new Intl.NumberFormat("es-ES", { style:"currency", currency: String(currency || "EUR").toUpperCase() }).format(Number(amount || 0)); }
+    catch { return Number(amount || 0).toFixed(2) + " " + (currency || "EUR"); }
+  };
+  const statusInfo = (status) => ({
+    completed: ["Pagado", "ok"], pending: ["Pendiente", "wait"],
+    failed: ["No efectuado", "bad"], refunded: ["Reembolsado", "refund"],
+    active: ["Activa", "ok"], trial: ["En prueba", "wait"],
+    past_due: ["Pago pendiente", "bad"], cancelled: ["Cancelada", "muted"],
+  }[status] || [String(status || "Desconocido"), "muted"]);
+  const api = async (url, opts) => {
+    const r = await fetch(url, { cache:"no-store", ...(opts || {}), headers: { ...authHeaders(), ...((opts && opts.headers) || {}) } });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.reason || "No se pudo completar la operación"); e.data = d; throw e; }
+    return d;
+  };
+  const downloadDocument = async (url, fallbackName) => {
+    try {
+      const r = await fetch(url, { headers: authHeaders(), cache:"no-store" });
+      if (!r.ok) throw new Error("download_failed");
+      const blob = await r.blob();
+      const cd = r.headers.get("content-disposition") || "";
+      const match = cd.match(/filename="?([^";]+)"?/i);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = (match && match[1]) || fallbackName;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch { toast("No se pudo descargar el documento"); }
+  };
+
+  async function load() {
+    try {
+      const data = await api("/api/my/billing");
+      body.innerHTML = "";
+      body.appendChild(el("div", { class: "billing-intro" }, [
+        el("strong", {}, "Todo sobre tus cobros, en un solo lugar"),
+        el("span", {}, "Consulta movimientos, descarga documentos, recupera pagos y controla la renovación."),
+      ]));
+      const sub = data.subscription;
+      const subCard = el("section", { class: "billing-card subscription-summary" });
+      subCard.appendChild(el("div", { class: "billing-section-head" }, [
+        el("div", {}, [el("small", {}, "SUSCRIPCIÓN"), el("h3", {}, sub ? (sub.plan_name || planLabel(sub.plan_code || "")) : "Plan Free")]),
+        (() => { const st = statusInfo(sub ? sub.status : "active"); return el("span", { class:"billing-status " + st[1] }, sub ? st[0] : "Sin renovación"); })(),
+      ]));
+      if (!sub) {
+        subCard.appendChild(el("p", { class:"billing-note" }, "No tienes una suscripción de pago activa."));
+        subCard.appendChild(el("button", { class:"btn btn-brand btn-block", onclick:() => render(screenSubscriptions) }, "Ver planes"));
+      } else {
+        const end = sub.current_period_end || sub.renew_at;
+        subCard.appendChild(el("div", { class:"billing-sub-grid" }, [
+          el("div", {}, [el("small", {}, sub.cancel_at_period_end ? "Acceso hasta" : "Próxima renovación"), el("strong", {}, dateText(end))]),
+          el("div", {}, [el("small", {}, "Periodo"), el("strong", {}, sub.period === "yearly" ? "Anual" : "Mensual")]),
+        ]));
+        if (sub.cancel_at_period_end) {
+          subCard.appendChild(el("div", { class:"billing-warning" }, "La renovación está cancelada. Mantendrás el plan hasta " + dateText(end) + "."));
+          subCard.appendChild(el("button", { class:"btn btn-outline btn-block", onclick:async (ev) => {
+            ev.currentTarget.disabled = true;
+            try { await api("/api/my/billing/subscription/resume", { method:"POST" }); toast("Renovación reactivada"); await load(); }
+            catch (e) { toast(e.message); ev.currentTarget.disabled = false; }
+          } }, "Reactivar renovación"));
+        } else if (["active","trial","past_due"].includes(String(sub.status))) {
+          subCard.appendChild(el("button", { class:"btn btn-outline btn-block billing-cancel", onclick:async (ev) => {
+            if (!confirm("¿Cancelar la renovación automática? Mantendrás el acceso hasta el final del periodo pagado.")) return;
+            ev.currentTarget.disabled = true;
+            try { await api("/api/my/billing/subscription/cancel", { method:"POST" }); toast("Renovación cancelada"); await load(); }
+            catch (e) { toast(e.message); ev.currentTarget.disabled = false; }
+          } }, "Cancelar renovación"));
+        }
+      }
+      body.appendChild(subCard);
+
+      body.appendChild(el("div", { class:"billing-list-title" }, [
+        el("h3", {}, "Movimientos"), el("span", {}, String((data.payments || []).length)),
+      ]));
+      const list = el("div", { class:"billing-movements" });
+      if (!(data.payments || []).length) {
+        list.appendChild(el("div", { class:"billing-empty" }, [el("strong", {}, "Todavía no hay movimientos"), el("span", {}, "Tus pagos, facturas y reembolsos aparecerán aquí.")]));
+      }
+      for (const p of (data.payments || [])) {
+        const st = statusInfo(p.status);
+        const actions = el("div", { class:"billing-actions" });
+        if (p.can_download) {
+          actions.appendChild(el("button", { class:"btn btn-outline", onclick:() => downloadDocument(`/api/my/billing/payments/${p.id}/invoice`, `factura-${p.id}.pdf`) }, p.status === "refunded" ? "Descargar justificante" : "Descargar factura"));
+        }
+        for (const rect of (p.rectifications || [])) {
+          actions.appendChild(el("button", { class:"btn btn-outline", onclick:() => downloadDocument(`/api/my/billing/payments/${p.id}/rectification/${encodeURIComponent(rect.number)}`, `rectificativa-${rect.number}.pdf`) }, "Descargar reembolso " + rect.number));
+        }
+        if (p.can_retry) {
+          actions.appendChild(el("button", { class:"btn btn-brand", onclick:async (ev) => {
+            const btn = ev.currentTarget; btn.disabled = true; btn.textContent = "Reintentando…";
+            try {
+              const d = await api(`/api/my/billing/payments/${p.id}/retry`, { method:"POST" });
+              if (d.action_url) { goToCheckout(d.action_url); return; }
+              toast(d.paid ? "Pago completado" : "El pago sigue pendiente"); await load();
+            } catch (e) {
+              if (e.data && e.data.action_url) { goToCheckout(e.data.action_url); return; }
+              toast(e.message); btn.disabled = false; btn.textContent = "Reintentar cobro";
+            }
+          } }, "Reintentar cobro"));
+        }
+        list.appendChild(el("article", { class:"billing-payment" }, [
+          el("div", { class:"billing-payment-main" }, [
+            el("div", {}, [
+              el("strong", {}, p.kind === "subscription" ? "Suscripción Aura" : p.kind === "reads_pack" ? "Pack de lecturas" : p.kind === "boost_pack" ? "Pack de Boost" : "Pago Aura"),
+              el("small", {}, dateText(p.created_at, true) + (p.fiscal_invoice_no ? " · " + p.fiscal_invoice_no : "")),
+            ]),
+            el("div", { class:"billing-payment-right" }, [el("strong", {}, money(p.amount, p.currency)), el("span", { class:"billing-status " + st[1] }, st[0])]),
+          ]),
+          p.failure_message ? el("p", { class:"billing-error" }, p.failure_message) : null,
+          actions.childNodes.length ? actions : null,
+        ].filter(Boolean)));
+      }
+      body.appendChild(list);
+      body.appendChild(el("p", { class:"billing-footnote" }, "Los pagos se procesan de forma segura mediante Stripe. Aura no almacena los datos completos de tu tarjeta."));
+    } catch (e) {
+      body.innerHTML = "";
+      body.appendChild(el("div", { class:"billing-empty" }, [el("strong", {}, "No pudimos cargar la facturación"), el("span", {}, e.message), el("button", { class:"btn btn-brand", onclick:load }, "Reintentar")]));
+    }
+  }
+  load();
+}
+
 /* ---- Subscriptions ---- */
 function screenSubscriptions(root) {
   // Plans with both monthly and annual prices (annual = 40% off, billed once/year)
@@ -17753,7 +17896,7 @@ function screenInfoHelp(root) {
     { ic: "🔐", h: "Cuenta y acceso", p: "Registro, verificación, cambio de contraseña y cierre de sesión.", action: () => render(screenInfoFaq) },
     { ic: "💬", h: "Chats y matches", p: "Cómo funcionan los likes, matches, mensajería y notificaciones.", action: () => render(screenInfoFaq) },
     { ic: "🛡️", h: "Seguridad y privacidad", p: "Bloqueos, reportes, verificación y control de datos.", action: () => render(screenInfoPrivacy) },
-    { ic: "💳", h: "Suscripción y pagos", p: "Planes, renovación, cancelación y facturas.", action: () => render(screenSubscriptions) },
+    { ic: "💳", h: "Suscripción y pagos", p: "Planes, renovación, cancelación y facturas.", action: () => render(screenBilling) },
     { ic: "📸", h: "Perfil y fotos", p: "Requisitos, verificación de fotos y ajustes visuales.", action: () => render(screenEditProfile) },
     { ic: "✉️", h: "Contactar soporte", p: "¿No encuentras lo que buscas? Escríbenos.", action: () => render(screenInfoContact) },
   ];
@@ -17841,7 +17984,7 @@ function screenInfoFaq(root) {
     { cat: "empezar", sub: "📲 Instalar la app", q: "¿Aura funciona sin conexión?", a: "La app carga al instante incluso con conexión débil gracias a su almacenamiento local, pero para ver perfiles, chatear o buscar necesitas conexión a internet." },
 
     // ----- Perfil y fotos -----
-    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Cómo edito mi perfil, fotos y biografía?", a: "En Yo → Editar perfil puedes cambiar el nombre visible, biografía, ciudad, profesión, intereses y otros datos. Las imágenes se gestionan por separado desde Yo → Mis fotos." },
+    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Cómo edito mi perfil, fotos y biografía?", a: "En Perfil → Editar perfil puedes cambiar el nombre visible, biografía, ciudad, profesión, intereses y otros datos. Las imágenes se gestionan por separado desde Perfil → Mis fotos." },
     { cat: "perfil", sub: "🧑 Tu perfil", q: "¿En qué unidades introduzco mi altura y peso?", a: "Aura elige automáticamente las unidades habituales de tu país de registro (por ejemplo cm/kg en España, o ft·in/lb en países anglosajones). Puedes escribir el valor o usar el deslizador." },
     { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Puedo cambiar de zona (orientación)?", a: "Sí, pero cada zona es una comunidad independiente, así que cambiar de zona implica eliminar tu cuenta actual y registrarte de nuevo en la otra zona. Al hacerlo pierdes todos tus datos: perfil, fotos y biografía, todos tus matches y conversaciones, los likes dados y recibidos, tu historial, tus filtros guardados y tu plan o beneficios de suscripción activos. Es un cambio irreversible: antes de confirmarlo te mostramos un aviso con todo lo que se borra." },
 
@@ -17871,7 +18014,7 @@ function screenInfoFaq(root) {
 
     // ----- Notificaciones -----
     { cat: "avisos", sub: "🔔 Canales de aviso", q: "¿Qué avisos puedo recibir?", a: "Aura muestra avisos en la campanita y puede enviar notificaciones push para matches, likes, mensajes, recompensas y comunicaciones del equipo, según el tipo de aviso y tus permisos." },
-    { cat: "avisos", sub: "⚙️ Personalizar avisos", q: "¿Cómo elijo qué notificaciones recibo?", a: "Ve a Yo → Notificaciones. Allí puedes activar o desactivar por separado los avisos dentro de la app y los push compatibles con tu dispositivo." },
+    { cat: "avisos", sub: "⚙️ Personalizar avisos", q: "¿Cómo elijo qué notificaciones recibo?", a: "Ve a Perfil → Notificaciones. Allí puedes activar o desactivar por separado los avisos dentro de la app y los push compatibles con tu dispositivo." },
     { cat: "avisos", sub: "📱 Push en el móvil", q: "Activé el push pero no me llegan avisos", a: "Comprueba que aceptaste los permisos de notificación del navegador y que tienes Aura instalada. En iPhone los avisos push solo funcionan si añades Aura a la pantalla de inicio." },
 
     // ----- Recompensas, historias y quedadas -----
@@ -17885,16 +18028,17 @@ function screenInfoFaq(root) {
     { cat: "seguridad", sub: "🚫 Reportar y bloquear", q: "¿Cómo reporto o bloqueo a alguien?", a: "Desde el perfil o el chat, pulsa el icono de menú y elige «Reportar» o «Bloquear». Revisamos cada reporte en menos de 24 h." },
     { cat: "seguridad", sub: "🚫 Reportar y bloquear", q: "¿Qué hago si detecto un bot o una estafa?", a: "Repórtalo de inmediato. Nuestro equipo antifraude actúa de forma proactiva y elimina las cuentas sospechosas." },
     { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Comparte Aura mis datos?", a: "Nunca vendemos tus datos. Solo compartimos lo mínimo necesario con proveedores certificados para hacer funcionar el servicio. Consulta la Política de privacidad." },
-    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo reviso los dispositivos con acceso a mi cuenta?", a: "Ve a Yo → Dispositivos activos. Puedes cerrar de forma remota una sesión que no reconozcas y quitar de la lista los dispositivos cuya sesión ya está cerrada." },
-    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo elimino mi cuenta y mis datos?", a: "Desde Yo → Eliminar cuenta. La acción es irreversible y tus datos se borran de forma permanente en un plazo máximo de 30 días, salvo los plazos legales aplicables." },
+    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo reviso los dispositivos con acceso a mi cuenta?", a: "Ve a Perfil → Dispositivos activos. Puedes cerrar de forma remota una sesión que no reconozcas y quitar de la lista los dispositivos cuya sesión ya está cerrada." },
+    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo elimino mi cuenta y mis datos?", a: "Desde Perfil → Eliminar cuenta. La acción es irreversible y tus datos se borran de forma permanente en un plazo máximo de 30 días, salvo los plazos legales aplicables." },
     { cat: "seguridad", sub: "⚖️ Apelaciones", q: "¿Puedo apelar una sanción?", a: "Sí. La pantalla Mi cuenta y estado muestra tus infracciones y apelaciones. También puedes abrir el formulario desde el aviso de bloqueo o desde el enlace recibido por correo." },
 
     // ----- Planes y pagos -----
     { cat: "planes", sub: "💳 Suscripciones", q: "¿Cuánto cuestan los planes de pago?", a: "Hay planes Premium, Oro y Platino con opciones mensuales y anuales (la anual con descuento). Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
-    { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Cada nivel cambia límites y funciones, como likes, chats nuevos, lecturas, perfiles cercanos, Boost y herramientas del chat. La comparación completa y vigente está en Yo → Suscripción." },
+    { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Cada nivel cambia límites y funciones, como likes, chats nuevos, lecturas, perfiles cercanos, Boost y herramientas del chat. La comparación completa y vigente está en Perfil → Suscripción." },
     { cat: "planes", sub: "⚡ Boost", q: "¿Los Boost forman parte de la suscripción?", a: "Los Boost son créditos separados que colocan temporalmente el perfil al principio del orden. Algunos planes pueden incluir una cantidad, y también existen packs cuando están habilitados." },
-    { cat: "planes", sub: "🔄 Gestionar y cancelar", q: "¿Cómo cancelo mi suscripción?", a: "La cancelación automática desde el perfil todavía no está disponible. Contacta con soporte o escribe a suscripciones@citasaura.es indicando el correo de tu cuenta; no envíes datos completos de la tarjeta." },
-    { cat: "planes", sub: "🧾 Facturas y reembolsos", q: "¿Cómo pido una factura o un reembolso?", a: "Solicítalo a soporte o en suscripciones@citasaura.es e indica el correo de la cuenta, la fecha aproximada y el importe. Cada caso se revisa según el medio de pago y la normativa aplicable." },
+    { cat: "planes", sub: "🔄 Gestionar y cancelar", q: "¿Cómo cancelo mi suscripción?", a: "Ve a Perfil → Pagos y facturas y pulsa «Cancelar renovación». La cancelación se programa automáticamente y conservarás el plan hasta el final del periodo ya pagado. Puedes reactivar la renovación desde la misma pantalla antes de esa fecha." },
+    { cat: "planes", sub: "🧾 Facturas y reembolsos", q: "¿Dónde veo y descargo mis facturas o reembolsos?", a: "Ve a Perfil → Pagos y facturas. Cada movimiento completado permite descargar su factura o justificante; si existe una factura rectificativa por un reembolso, también aparece para descargarla." },
+    { cat: "planes", sub: "⚠️ Pagos pendientes", q: "¿Cómo reintento un pago no efectuado?", a: "Ve a Perfil → Pagos y facturas. Los cobros fallidos o pendientes muestran «Reintentar cobro»; si tu banco requiere confirmación, Aura abrirá la página segura de Stripe para completarla." },
   ];
 
   const list = el("div", { class: "faq-list", id: "faqList" });
@@ -17999,11 +18143,11 @@ function screenInfoTerms(root) {
     { h: "8. Moderación, algoritmos y decisiones automatizadas",
       p: "Aura aplica sistemas automatizados de análisis de imágenes, textos, comportamiento y verificación biométrica para prevenir fraude, contenido ilegal y proteger a la comunidad. Estas decisiones pueden implicar restricciones o suspensión de cuenta. Tienes derecho a solicitar revisión humana escribiendo a <b>seguridad@citasaura.es</b> (art. 22 RGPD)." },
     { h: "9. Suscripciones, precios y renovación automática",
-      p: "Los planes Premium/Gold/Platinum se cobran por adelantado y se renuevan automáticamente al final de cada periodo (mensual o anual) por el precio vigente. Puedes solicitar la cancelación en cualquier momento desde Contacto o escribiendo a <b>suscripciones@citasaura.es</b>; conservarás el acceso hasta el final del periodo ya pagado. Los precios incluyen los impuestos aplicables (IVA)." },
+      p: "Los planes Premium/Gold/Platinum se cobran por adelantado y se renuevan automáticamente al final de cada periodo (mensual o anual) por el precio vigente. Puedes cancelar la renovación en cualquier momento desde <b>Perfil → Pagos y facturas</b>; conservarás el acceso hasta el final del periodo ya pagado y podrás reactivarla antes de esa fecha. Los precios incluyen los impuestos aplicables (IVA)." },
     { h: "10. Derecho de desistimiento",
       p: "Como servicio digital de ejecución inmediata que comienza con tu consentimiento expreso, <b>renuncias al derecho de desistimiento</b> una vez comenzada la prestación conforme al art. 103.m del Real Decreto Legislativo 1/2007 (TRLGDCU). En cualquier caso, dispones de 14 días naturales desde la compra si aún no has iniciado el uso del contenido premium." },
     { h: "11. Reembolsos",
-      p: "Las compras de Aura se procesan mediante Stripe. Para solicitar la revisión de un cobro o un posible reembolso, escribe a <b>suscripciones@citasaura.es</b> con el correo de la cuenta, la fecha y el importe, sin incluir los datos completos de la tarjeta." },
+      p: "Las compras de Aura se procesan mediante Stripe. Los pagos y reembolsos registrados pueden consultarse en <b>Perfil → Pagos y facturas</b>, donde también se descargan los documentos disponibles. Para solicitar la revisión de un cobro, contacta con soporte sin incluir los datos completos de la tarjeta." },
     { h: "12. Propiedad intelectual e industrial",
       p: "El código fuente, el diseño, la marca «Aura», los logotipos, los textos, imágenes de la interfaz y demás elementos del Servicio son propiedad del titular o de sus licenciantes y están protegidos por la normativa española y europea de propiedad intelectual e industrial (Real Decreto Legislativo 1/1996 y Ley 17/2001). Queda prohibida su reproducción, distribución, comunicación pública o transformación sin autorización expresa." },
     { h: "13. Limitación de responsabilidad",
@@ -18011,7 +18155,7 @@ function screenInfoTerms(root) {
     { h: "14. Modificación de los términos",
       p: "Podremos modificar estos Términos por razones legales, técnicas o de servicio. Comunicaremos los cambios sustanciales con al menos <b>30 días de antelación</b> por email y con un aviso destacado en la aplicación. Si continúas usando el Servicio tras la entrada en vigor, se entenderá que aceptas los nuevos términos. Si no estás de acuerdo, podrás dar de baja tu cuenta." },
     { h: "15. Suspensión, baja y bloqueo permanente",
-      p: "Podemos suspender o cerrar tu cuenta si incumples estos Términos, la Política de Privacidad o las Normas de la comunidad. Del mismo modo, tú puedes dar de baja tu cuenta en cualquier momento desde «Yo → Cuenta → Eliminar cuenta», con borrado irreversible en un plazo máximo de 30 días, salvo obligación legal de conservación." },
+      p: "Podemos suspender o cerrar tu cuenta si incumples estos Términos, la Política de Privacidad o las Normas de la comunidad. Del mismo modo, tú puedes dar de baja tu cuenta en cualquier momento desde «Perfil → Cuenta → Eliminar cuenta», con borrado irreversible en un plazo máximo de 30 días, salvo obligación legal de conservación." },
     { h: "16. Legislación aplicable y jurisdicción",
       p: "Estos Términos se rigen por la <b>legislación española y europea</b>. Las controversias que puedan surgir se someterán a los Juzgados y Tribunales del domicilio del consumidor, si eres persona consumidora. En caso contrario, a los Juzgados y Tribunales de la ciudad donde tenga su domicilio social el titular del Servicio, con renuncia expresa a cualquier otro fuero." },
     { h: "17. Resolución alternativa de litigios",
@@ -18063,7 +18207,7 @@ function screenInfoPreferences(root) {
   c.appendChild(infoSection("Ajustar mis preferencias"));
   c.appendChild(infoCard([
     el("p", { class: "info-para" }, "Puedes activar o desactivar cada tipo de correo desde tu perfil dentro de la app."),
-    el("p", { class: "info-para" }, "Inicia sesión y ve a Yo → Notificaciones para gestionar todos los canales (email, push, in-app)."),
+    el("p", { class: "info-para" }, "Inicia sesión y ve a Perfil → Notificaciones para gestionar todos los canales (email, push, in-app)."),
   ]));
 
   c.appendChild(infoSection("Darse de baja"));
@@ -18426,13 +18570,13 @@ const TICKET_KB = [
   { cat: "account", q: "No puedo iniciar sesión",                       a: "Comprueba que usas el mismo correo con el que te registraste y que tienes conexión. Completa el código por email o el 2FA si Aura te lo solicita. Si sigue sin funcionar, abre un ticket indicando el mensaje de error." },
   { cat: "account", q: "No me llega el código de verificación",         a: "Revisa la carpeta de spam o promociones. Espera 60 s y vuelve a solicitar el código. Si tu operador filtra los correos, prueba con otra dirección o contáctanos indicando el email." },
   { cat: "account", q: "Cambiar mi correo electrónico",                 a: "El cambio de correo todavía no está disponible desde el perfil. Abre un ticket para que soporte revise tu caso de forma segura." },
-  { cat: "account", q: "Cerrar sesión en todos los dispositivos",       a: "En Yo → Privacidad y seguridad → Dispositivos activos puedes ver y cerrar sesión de forma remota en cualquier dispositivo." },
+  { cat: "account", q: "Cerrar sesión en todos los dispositivos",       a: "En Perfil → Privacidad y seguridad → Dispositivos activos puedes ver y cerrar sesión de forma remota en cualquier dispositivo." },
   // profile
-  { cat: "profile", q: "Mi foto no se sube o se ve mal",                a: "Comprueba que la imagen sea JPG o PNG y menor de 8 MB. Si aparece rotada, guárdala desde tu galería antes de subirla. Puedes reintentar desde Yo → Mis fotos." },
-  { cat: "profile", q: "Cómo verificar mi perfil",                      a: "Ve a Yo → Verificar cuenta y sigue los pasos de documento, comparación facial y videoidentificación. Si el resultado no es concluyente, el caso puede pasar a revisión humana." },
-  { cat: "profile", q: "Cambiar mi biografía o intereses",              a: "Yo → Editar perfil. Puedes actualizar tu bio, altura, profesión e intereses en cualquier momento." },
+  { cat: "profile", q: "Mi foto no se sube o se ve mal",                a: "Comprueba que la imagen sea JPG o PNG y menor de 8 MB. Si aparece rotada, guárdala desde tu galería antes de subirla. Puedes reintentar desde Perfil → Mis fotos." },
+  { cat: "profile", q: "Cómo verificar mi perfil",                      a: "Ve a Perfil → Verificar cuenta y sigue los pasos de documento, comparación facial y videoidentificación. Si el resultado no es concluyente, el caso puede pasar a revisión humana." },
+  { cat: "profile", q: "Cambiar mi biografía o intereses",              a: "Perfil → Editar perfil. Puedes actualizar tu bio, altura, profesión e intereses en cualquier momento." },
   // matches
-  { cat: "matches", q: "Ya no veo nuevos perfiles",                     a: "Puede que hayas alcanzado tu límite diario de likes o que los filtros sean muy estrictos. Amplía tu rango de edad y distancia en Yo → Filtros. Con Premium los likes son ilimitados." },
+  { cat: "matches", q: "Ya no veo nuevos perfiles",                     a: "Puede que hayas alcanzado tu límite diario de likes o que los filtros sean muy estrictos. Amplía tu rango de edad y distancia en Perfil → Filtros. Con Premium los likes son ilimitados." },
   { cat: "matches", q: "Deshacer un descarte por accidente",            a: "Con un plan de pago activo, pulsa el botón \"Volver\" (la flecha ↩ a la izquierda de la fila de acciones) para revertir tu último like o descarte y volver a ver ese perfil. Solo se puede deshacer la última acción; si ya teníais match y os habíais escrito, no se puede deshacer." },
   // V925 · Decía "prioriza afinidad, cercanía y actividad reciente" y que cuanto
   // más interactúas mejores recomendaciones. Ninguna de las tres cosas es así: el
@@ -18441,7 +18585,7 @@ const TICKET_KB = [
   // el otro FAQ de esta pantalla y en features_seo_pages.js.
   { cat: "matches", q: "Cómo funciona el algoritmo",                    a: "Tus filtros deciden quién puede aparecer y el orden es siempre el mismo: primero quien tiene un Boost activo, después quien está conectado, después los perfiles verificados y el resto al azar. En Explorar la distancia sólo filtra: no adelanta a nadie (la excepción es \"Cerca de ti\", que sí ordena por proximidad cuando hay coordenadas). Y nada aprende de tus likes. Completar el perfil y verificar la cuenta es lo que te hace aparecer en más búsquedas." },
   // chats
-  { cat: "chats",   q: "No me llegan notificaciones de mensajes",       a: "Revisa que las notificaciones estén activas en Yo → Notificaciones y también en los ajustes del sistema para Aura. En modo No molestar sólo llegan resúmenes." },
+  { cat: "chats",   q: "No me llegan notificaciones de mensajes",       a: "Revisa que las notificaciones estén activas en Perfil → Notificaciones y también en los ajustes del sistema para Aura. En modo No molestar sólo llegan resúmenes." },
   // V925 · Decía que las imágenes del chat "pasan un filtro automático de
   // seguridad". No es cierto: moderatePhotoWithAI sólo se invoca al subir una foto
   // del estado "Ahora mismo" y desde el panel; POST /api/my/messages guarda el
@@ -18449,8 +18593,9 @@ const TICKET_KB = [
   { cat: "chats",   q: "Enviar imágenes o audios",                      a: "Los usuarios verificados pueden enviar imágenes y audios cortos. Toca el icono \"+\" dentro del chat. Las imágenes del chat no pasan ningún filtro automático: si recibes algo inapropiado, denuncia la conversación y la revisa una persona en menos de 24 horas." },
   { cat: "chats",   q: "Un chat ha desaparecido",                       a: "La conversación deja de estar disponible si una de las dos personas deshace el match o si la otra cuenta queda suspendida o eliminada." },
   // billing
-  { cat: "billing", q: "Cancelar mi suscripción",                       a: "La cancelación automática desde el perfil todavía no está disponible. Abre un ticket o escribe a suscripciones@citasaura.es indicando el correo de tu cuenta; no envíes datos completos de la tarjeta." },
-  { cat: "billing", q: "Solicitar factura o reembolso",                 a: "Abre un ticket con el correo de la cuenta, la fecha aproximada y el importe. Cada solicitud se revisa según el medio de pago y la normativa aplicable." },
+  { cat: "billing", q: "Cancelar mi suscripción",                       a: "Ve a Perfil → Pagos y facturas y pulsa «Cancelar renovación». Mantendrás el plan hasta el final del periodo pagado y podrás reactivarlo antes de esa fecha." },
+  { cat: "billing", q: "Descargar factura o reembolso",                 a: "Ve a Perfil → Pagos y facturas. Desde cada movimiento puedes descargar la factura, el justificante y las rectificativas de los reembolsos disponibles." },
+  { cat: "billing", q: "Reintentar un pago no efectuado",               a: "Ve a Perfil → Pagos y facturas y pulsa «Reintentar cobro» en el movimiento fallido o pendiente. Si hace falta, completa la confirmación segura de Stripe." },
   { cat: "billing", q: "Se ha cobrado dos veces",                       a: "Abre un ticket y adjunta una captura donde puedan verse las fechas y los importes. Oculta el número completo de tarjeta y cualquier dato de seguridad." },
   // safety
   { cat: "safety",  q: "Cómo reportar a un usuario",                    a: "Abre el perfil o el chat, pulsa el menú (⋯) y elige \"Reportar\". Selecciona el motivo y añade contexto. Nuestro equipo revisa reportes en menos de 24 h." },

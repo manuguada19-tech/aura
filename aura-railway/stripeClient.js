@@ -59,7 +59,7 @@ function encodeForm(obj, prefix, out) {
 }
 
 /* --- Llamada genérica a la API de Stripe ---------------------------------- */
-function apiRequest(method, apiPath, dataObj) {
+function apiRequest(method, apiPath, dataObj, extraHeaders) {
   return new Promise((resolve, reject) => {
     const sk = secretKey();
     if (!sk) return reject(new Error("stripe_not_configured"));
@@ -74,6 +74,7 @@ function apiRequest(method, apiPath, dataObj) {
           "Content-Type": "application/x-www-form-urlencoded",
           "Content-Length": Buffer.byteLength(body),
           "Stripe-Version": API_VERSION,
+          ...(extraHeaders || {}),
         },
       },
       (res) => {
@@ -109,6 +110,31 @@ async function createCheckoutSession(params) {
 /* --- Recuperar una sesión (para confirmar estado) ------------------------- */
 async function retrieveSession(id) {
   return apiRequest("GET", "/v1/checkout/sessions/" + encodeURIComponent(id), null);
+}
+
+/* --- Suscripciones y facturas --------------------------------------------
+   Estas operaciones permiten que el usuario gestione su renovación y los
+   cobros fallidos sin abandonar Aura. Todas pasan por la API autenticada de
+   Stripe; el cliente nunca recibe la clave secreta. */
+async function retrieveSubscription(id) {
+  return apiRequest("GET", "/v1/subscriptions/" + encodeURIComponent(id), null);
+}
+
+async function updateSubscription(id, params) {
+  return apiRequest("POST", "/v1/subscriptions/" + encodeURIComponent(id), params || {});
+}
+
+async function retrieveInvoice(id) {
+  return apiRequest("GET", "/v1/invoices/" + encodeURIComponent(id), null);
+}
+
+async function payInvoice(id) {
+  return apiRequest("POST", "/v1/invoices/" + encodeURIComponent(id) + "/pay", {});
+}
+
+async function createRefund(params, idempotencyKey) {
+  const headers = idempotencyKey ? { "Idempotency-Key": String(idempotencyKey).slice(0, 255) } : undefined;
+  return apiRequest("POST", "/v1/refunds", params || {}, headers);
 }
 
 /* --- Verificación de firma del webhook (esquema oficial de Stripe) --------
@@ -147,6 +173,11 @@ module.exports = {
   mode,
   createCheckoutSession,
   retrieveSession,
+  retrieveSubscription,
+  updateSubscription,
+  retrieveInvoice,
+  payInvoice,
+  createRefund,
   verifyWebhookSignature,
   _encodeForm: encodeForm, // exportado para pruebas
 };

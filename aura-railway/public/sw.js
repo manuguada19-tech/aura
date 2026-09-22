@@ -28,7 +28,9 @@
 // V957 · v96: fuerza a Chrome/PWA a retirar el CSS/JS anterior. V956 cambió
 // tickets y avisos de PC; mantener v95 permitía que una pestaña ya abierta
 // conservara la composición móvil hasta el siguiente ciclo de versión.
-const CACHE_VERSION = "aura-v96";
+// V970 · La pantalla de Pagos y facturas añade JS y CSS nuevos. Cambiar la
+// versión fuerza a las PWA ya instaladas a recibirlos sin recarga manual.
+const CACHE_VERSION = "aura-v97";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

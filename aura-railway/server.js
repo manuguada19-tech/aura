@@ -2498,10 +2498,17 @@ async function migrate() {
   for (const stmt of [
     "ALTER TABLE payments ADD COLUMN stripe_session_id VARCHAR(120) NULL",
     "ALTER TABLE payments ADD COLUMN stripe_payment_intent VARCHAR(120) NULL",
+    "ALTER TABLE payments ADD COLUMN stripe_invoice_id VARCHAR(120) NULL",
+    "ALTER TABLE payments ADD COLUMN hosted_invoice_url VARCHAR(500) NULL",
+    "ALTER TABLE payments ADD COLUMN failure_message VARCHAR(500) NULL",
     "ALTER TABLE payments ADD COLUMN kind VARCHAR(24) NULL",
     "ALTER TABLE payments ADD UNIQUE INDEX uniq_stripe_session (stripe_session_id)",
+    "ALTER TABLE payments ADD UNIQUE INDEX uniq_stripe_invoice (stripe_invoice_id)",
     "ALTER TABLE subscriptions ADD COLUMN stripe_subscription_id VARCHAR(120) NULL",
     "ALTER TABLE subscriptions ADD COLUMN stripe_customer_id VARCHAR(120) NULL",
+    "ALTER TABLE subscriptions ADD COLUMN cancel_at_period_end TINYINT(1) NOT NULL DEFAULT 0",
+    "ALTER TABLE subscriptions ADD COLUMN current_period_end TIMESTAMP NULL",
+    "ALTER TABLE subscriptions ADD UNIQUE INDEX uniq_stripe_subscription (stripe_subscription_id)",
     "ALTER TABLE users ADD COLUMN stripe_customer_id VARCHAR(120) NULL",
   ]) { try { await pool.execute(stmt); } catch {} }
   // Registro de eventos de webhook ya procesados (idempotencia estricta).
@@ -6442,7 +6449,20 @@ app.get("/api/payments/:id(\\d+)", wrap(async (req, res) => {
   res.json({ payment:rows[0], notes });
 }));
 app.post("/api/payments/:id/refund", wrap(async (req, res) => {
-  await pool.execute("UPDATE payments SET status='refunded' WHERE id=?", [req.params.id]);
+  const [[payment]] = await pool.query(
+    "SELECT id, status, method, stripe_payment_intent FROM payments WHERE id=? LIMIT 1", [req.params.id]);
+  if (!payment) return res.status(404).json({ error: "not_found" });
+  if (payment.status === "refunded") return res.json({ ok: true, already_refunded: true });
+  // Un pago Stripe no se marca como reembolsado localmente hasta que Stripe
+  // acepta la devolución. Así el panel nunca promete dinero que no se devolvió.
+  if (payment.stripe_payment_intent) {
+    try { await stripeClient.createRefund({ payment_intent: payment.stripe_payment_intent }, `aura-refund-payment-${payment.id}`); }
+    catch (e) {
+      console.error("[stripe] refund:", e.message);
+      return res.status(502).json({ error: "stripe_refund_failed", reason: e.message || "Stripe no pudo completar el reembolso" });
+    }
+  }
+  await pool.execute("UPDATE payments SET status='refunded' WHERE id=?", [payment.id]);
   await logActivity("admin", `Pago reembolsado (id ${req.params.id})`);
   res.json({ ok: true });
 }));
@@ -17980,7 +18000,7 @@ function genInvoiceNo() {
 }
 
 // Concede un plan al usuario y registra suscripción + pago (idempotente por session).
-async function grantPlanFromStripe({ uid, planCode, period, sessionId, paymentIntent, subscriptionId, customerId, amount, currency }) {
+async function grantPlanFromStripe({ uid, planCode, period, sessionId, paymentIntent, subscriptionId, customerId, invoiceId, hostedInvoiceUrl, amount, currency }) {
   if (!PLAN_CODES.has(planCode)) return;
   const [[plan]] = await pool.query("SELECT id FROM plans WHERE code=? LIMIT 1", [planCode]);
   const planId = plan ? plan.id : null;
@@ -17992,19 +18012,39 @@ async function grantPlanFromStripe({ uid, planCode, period, sessionId, paymentIn
   const renewDays = per === "yearly" ? 365 : 30;
   let subRowId = null;
   if (planId) {
-    const [r] = await pool.execute(
-      `INSERT INTO subscriptions (user_id, plan_id, period, status, started_at, renew_at, stripe_subscription_id, stripe_customer_id)
-       VALUES (?,?,?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
-      [uid, planId, per, renewDays, subscriptionId || null, customerId || null]
-    );
-    subRowId = r.insertId;
+    let existing = null;
+    if (subscriptionId) {
+      const [[row]] = await pool.query("SELECT id FROM subscriptions WHERE stripe_subscription_id=? LIMIT 1", [subscriptionId]);
+      existing = row || null;
+    }
+    if (existing) {
+      subRowId = existing.id;
+      await pool.execute(
+        `UPDATE subscriptions SET user_id=?, plan_id=?, period=?, status='active',
+                renew_at=COALESCE(current_period_end, DATE_ADD(NOW(), INTERVAL ? DAY)),
+                stripe_customer_id=?, cancel_at_period_end=0, cancelled_at=NULL
+          WHERE id=?`, [uid, planId, per, renewDays, customerId || null, subRowId]);
+    } else {
+      const [r] = await pool.execute(
+        `INSERT INTO subscriptions (user_id, plan_id, period, status, started_at, renew_at, stripe_subscription_id, stripe_customer_id)
+         VALUES (?,?,?, 'active', NOW(), DATE_ADD(NOW(), INTERVAL ? DAY), ?, ?)`,
+        [uid, planId, per, renewDays, subscriptionId || null, customerId || null]
+      );
+      subRowId = r.insertId;
+    }
   }
   // Pago (UNIQUE en stripe_session_id evita duplicados si el webhook se reintenta).
   await pool.execute(
-    `INSERT INTO payments (user_id, subscription_id, invoice_no, amount, currency, method, status, kind, stripe_session_id, stripe_payment_intent)
-     VALUES (?,?,?,?,?, 'stripe', 'completed', 'subscription', ?, ?)
-     ON DUPLICATE KEY UPDATE status='completed'`,
-    [uid, subRowId, genInvoiceNo(), amount, currency || "EUR", sessionId || null, paymentIntent || null]
+    `INSERT INTO payments (user_id, subscription_id, invoice_no, amount, currency, method, status, kind,
+                           stripe_session_id, stripe_payment_intent, stripe_invoice_id, hosted_invoice_url)
+     VALUES (?,?,?,?,?, 'stripe', 'completed', 'subscription', ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE status='completed', subscription_id=COALESCE(VALUES(subscription_id),subscription_id),
+       stripe_session_id=COALESCE(VALUES(stripe_session_id),stripe_session_id),
+       stripe_payment_intent=COALESCE(VALUES(stripe_payment_intent),stripe_payment_intent),
+       stripe_invoice_id=COALESCE(VALUES(stripe_invoice_id),stripe_invoice_id),
+       hosted_invoice_url=COALESCE(VALUES(hosted_invoice_url),hosted_invoice_url), failure_message=NULL`,
+    [uid, subRowId, genInvoiceNo(), amount, currency || "EUR", sessionId || null,
+     paymentIntent || null, invoiceId || null, hostedInvoiceUrl || null]
   );
   try { await logActivity("user", `Suscripción ${planCode} (${per}) activada vía Stripe · usuario ${uid}`); } catch {}
 }
@@ -18081,6 +18121,136 @@ app.post("/api/my/checkout/subscription", wrap(async (req, res) => {
   }
 }));
 
+/* V970 · Centro de pagos del perfil.
+   La propiedad se decide SIEMPRE con readMyUserId y payments.user_id; nunca se
+   acepta un user_id enviado por el navegador. */
+app.get("/api/my/billing", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+
+  const [subs] = await pool.query(
+    `SELECT s.id, s.status, s.period, s.started_at, s.renew_at, s.cancelled_at,
+            s.cancel_at_period_end, s.current_period_end, s.stripe_subscription_id,
+            pl.code AS plan_code, pl.name AS plan_name
+       FROM subscriptions s LEFT JOIN plans pl ON pl.id=s.plan_id
+      WHERE s.user_id=? ORDER BY s.id DESC LIMIT 1`, [me]);
+  const [payments] = await pool.query(
+    `SELECT p.id, p.invoice_no, p.amount, p.currency, p.method, p.status, p.kind,
+            p.created_at, p.failure_message, p.hosted_invoice_url,
+            p.stripe_invoice_id, pi.number AS fiscal_invoice_no, pi.issued_at
+       FROM payments p
+       LEFT JOIN payment_invoices pi ON pi.payment_id=p.id
+      WHERE p.user_id=? ORDER BY p.created_at DESC, p.id DESC LIMIT 100`, [me]);
+
+  const byPayment = new Map();
+  if (payments.length) {
+    const ids = payments.map((p) => Number(p.id)).filter(Boolean);
+    const marks = ids.map(() => "?").join(",");
+    try {
+      const [rects] = await pool.query(
+        `SELECT payment_id, number, rectifies, mode, reason, issued_at
+           FROM payment_invoice_rectifications WHERE payment_id IN (${marks})
+          ORDER BY id ASC`, ids);
+      for (const r of rects) {
+        if (!byPayment.has(Number(r.payment_id))) byPayment.set(Number(r.payment_id), []);
+        byPayment.get(Number(r.payment_id)).push(r);
+      }
+    } catch {}
+  }
+
+  res.json({
+    ok: true,
+    stripe_enabled: stripeEnabled(),
+    subscription: subs[0] || null,
+    payments: payments.map((p) => ({
+      ...p,
+      can_retry: ["failed", "pending"].includes(String(p.status)) && !!p.stripe_invoice_id,
+      can_download: ["completed", "refunded"].includes(String(p.status)),
+      rectifications: byPayment.get(Number(p.id)) || [],
+    })),
+  });
+}));
+
+app.post("/api/my/billing/subscription/cancel", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[sub]] = await pool.query(
+    `SELECT id, stripe_subscription_id FROM subscriptions
+      WHERE user_id=? AND status IN ('active','trial','past_due')
+      ORDER BY id DESC LIMIT 1`, [me]);
+  if (!sub) return res.status(404).json({ error: "subscription_not_found" });
+  if (!sub.stripe_subscription_id) {
+    return res.status(409).json({ error: "not_managed_by_stripe", reason: "Esta suscripción necesita revisión de soporte." });
+  }
+  try {
+    const remote = await stripeClient.updateSubscription(sub.stripe_subscription_id, { cancel_at_period_end: true });
+    const end = remote.current_period_end ? new Date(Number(remote.current_period_end) * 1000) : null;
+    await pool.execute(
+      `UPDATE subscriptions SET cancel_at_period_end=1,
+              current_period_end=COALESCE(?,current_period_end), renew_at=COALESCE(?,renew_at)
+        WHERE id=? AND user_id=?`, [end, end, sub.id, me]);
+    res.json({ ok: true, cancel_at_period_end: true, access_until: end });
+  } catch (e) {
+    console.error("[stripe] cancel subscription:", e.message);
+    res.status(502).json({ error: "stripe_error", reason: "No se pudo programar la cancelación. Inténtalo de nuevo." });
+  }
+}));
+
+app.post("/api/my/billing/subscription/resume", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[sub]] = await pool.query(
+    `SELECT id, stripe_subscription_id FROM subscriptions
+      WHERE user_id=? AND cancel_at_period_end=1 ORDER BY id DESC LIMIT 1`, [me]);
+  if (!sub || !sub.stripe_subscription_id) return res.status(404).json({ error: "subscription_not_found" });
+  try {
+    const remote = await stripeClient.updateSubscription(sub.stripe_subscription_id, { cancel_at_period_end: false });
+    const end = remote.current_period_end ? new Date(Number(remote.current_period_end) * 1000) : null;
+    await pool.execute(
+      `UPDATE subscriptions SET cancel_at_period_end=0, cancelled_at=NULL,
+              current_period_end=COALESCE(?,current_period_end), renew_at=COALESCE(?,renew_at)
+        WHERE id=? AND user_id=?`, [end, end, sub.id, me]);
+    res.json({ ok: true, cancel_at_period_end: false, renew_at: end });
+  } catch (e) {
+    console.error("[stripe] resume subscription:", e.message);
+    res.status(502).json({ error: "stripe_error", reason: "No se pudo reactivar la renovación. Inténtalo de nuevo." });
+  }
+}));
+
+app.post("/api/my/billing/payments/:id/retry", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10) || 0;
+  const [[payment]] = await pool.query(
+    `SELECT id, status, stripe_invoice_id, hosted_invoice_url
+       FROM payments WHERE id=? AND user_id=? LIMIT 1`, [id, me]);
+  if (!payment) return res.status(404).json({ error: "not_found" });
+  if (!['failed', 'pending'].includes(String(payment.status))) {
+    return res.status(409).json({ error: "payment_not_retryable", reason: "Este pago ya no está pendiente." });
+  }
+  if (!payment.stripe_invoice_id) {
+    return res.status(409).json({ error: "payment_not_retryable", reason: "Este cobro antiguo no admite reintento automático. Contacta con soporte." });
+  }
+  try {
+    const invoice = await stripeClient.payInvoice(payment.stripe_invoice_id);
+    const paid = invoice && (invoice.paid === true || invoice.status === "paid");
+    await pool.execute(
+      `UPDATE payments SET status=?, hosted_invoice_url=?, failure_message=?
+        WHERE id=? AND user_id=?`,
+      [paid ? "completed" : "pending", invoice.hosted_invoice_url || payment.hosted_invoice_url || null,
+       paid ? null : "El cobro necesita una confirmación adicional.", id, me]);
+    return res.json({ ok: true, paid, status: paid ? "completed" : "pending", action_url: paid ? null : (invoice.hosted_invoice_url || null) });
+  } catch (e) {
+    let invoice = null;
+    try { invoice = await stripeClient.retrieveInvoice(payment.stripe_invoice_id); } catch {}
+    const actionUrl = (invoice && invoice.hosted_invoice_url) || payment.hosted_invoice_url || null;
+    await pool.execute("UPDATE payments SET failure_message=?, hosted_invoice_url=? WHERE id=? AND user_id=?",
+      [String(e.message || "No se pudo completar el cobro").slice(0, 500), actionUrl, id, me]);
+    if (actionUrl) return res.status(409).json({ error: "payment_action_required", reason: "Confirma el pago en la página segura de Stripe.", action_url: actionUrl });
+    res.status(502).json({ error: "stripe_error", reason: "No se pudo reintentar el cobro. Revisa tu método de pago." });
+  }
+}));
+
 // POST /api/my/checkout/reads  { pack: "s"|"m"|"l" }
 // Crea una sesión de Stripe Checkout (pago único) para comprar un pack de lecturas.
 app.post("/api/my/checkout/reads", wrap(async (req, res) => {
@@ -18122,6 +18292,112 @@ app.post("/api/my/checkout/reads", wrap(async (req, res) => {
   }
 }));
 
+function stripeSubIdOf(obj) {
+  const raw = obj && (obj.subscription || obj.parent?.subscription_details?.subscription);
+  return typeof raw === "string" ? raw : (raw && raw.id) || null;
+}
+
+function localSubscriptionStatus(stripeStatus) {
+  if (stripeStatus === "active") return "active";
+  if (stripeStatus === "trialing") return "trial";
+  if (["past_due", "unpaid", "incomplete", "incomplete_expired", "paused"].includes(stripeStatus)) return "past_due";
+  return "cancelled";
+}
+
+async function findSubscriptionOwner(stripeSubId, customerId) {
+  if (stripeSubId) {
+    const [[row]] = await pool.query(
+      `SELECT s.id, s.user_id, s.plan_id, pl.code AS plan_code
+         FROM subscriptions s LEFT JOIN plans pl ON pl.id=s.plan_id
+        WHERE s.stripe_subscription_id=? ORDER BY s.id DESC LIMIT 1`, [stripeSubId]);
+    if (row) return row;
+  }
+  if (customerId) {
+    const [[u]] = await pool.query("SELECT id AS user_id FROM users WHERE stripe_customer_id=? LIMIT 1", [customerId]);
+    if (u) return u;
+  }
+  return null;
+}
+
+async function syncStripeSubscription(remote) {
+  const stripeId = remote && remote.id;
+  if (!stripeId) return;
+  const md = remote.metadata || {};
+  let owner = await findSubscriptionOwner(stripeId, remote.customer);
+  const uid = parseInt(md.user_id, 10) || (owner && Number(owner.user_id));
+  if (!uid) return;
+  const status = localSubscriptionStatus(remote.status);
+  const end = remote.current_period_end ? new Date(Number(remote.current_period_end) * 1000) : null;
+  // Un primer cobro puede fallar antes de que Checkout emita
+  // checkout.session.completed. En ese caso aún no hay fila local, pero la
+  // metadata firmada de la suscripción permite crearla y hacerla recuperable.
+  if ((!owner || !owner.id) && PLAN_CODES.has(String(md.plan || ""))) {
+    const [[plan]] = await pool.query("SELECT id, code FROM plans WHERE code=? LIMIT 1", [String(md.plan)]);
+    if (plan) {
+      await pool.execute(
+        `INSERT INTO subscriptions
+           (user_id, plan_id, period, status, started_at, renew_at, stripe_subscription_id,
+            stripe_customer_id, cancel_at_period_end, current_period_end)
+         VALUES (?,?,?,?,NOW(),?,?,?,?,?)
+         ON DUPLICATE KEY UPDATE status=VALUES(status), renew_at=VALUES(renew_at),
+           cancel_at_period_end=VALUES(cancel_at_period_end), current_period_end=VALUES(current_period_end)`,
+        [uid, plan.id, md.period === "yearly" ? "yearly" : "monthly", status, end,
+         stripeId, remote.customer || null, remote.cancel_at_period_end ? 1 : 0, end]);
+      owner = await findSubscriptionOwner(stripeId, remote.customer);
+    }
+  }
+  await pool.execute(
+    `UPDATE subscriptions SET status=?, cancel_at_period_end=?,
+            current_period_end=COALESCE(?,current_period_end), renew_at=COALESCE(?,renew_at),
+            cancelled_at=CASE WHEN ?='cancelled' THEN COALESCE(cancelled_at,NOW()) ELSE NULL END
+      WHERE stripe_subscription_id=? AND user_id=?`,
+    [status, remote.cancel_at_period_end ? 1 : 0, end, end, status, stripeId, uid]);
+  if (["active", "trial"].includes(status) && PLAN_CODES.has(String(md.plan || owner?.plan_code || ""))) {
+    await pool.execute("UPDATE users SET plan=? WHERE id=?", [String(md.plan || owner.plan_code), uid]);
+  }
+  if (status === "cancelled") {
+    const [[still]] = await pool.query(
+      "SELECT COUNT(*) n FROM subscriptions WHERE user_id=? AND status IN ('active','trial')", [uid]);
+    if (!still || Number(still.n) === 0) await pool.execute("UPDATE users SET plan='free' WHERE id=?", [uid]);
+  }
+}
+
+async function recordStripeInvoice(invoice, status) {
+  const stripeSubId = stripeSubIdOf(invoice);
+  let owner = await findSubscriptionOwner(stripeSubId, invoice.customer);
+  if ((!owner || !owner.id) && stripeSubId) {
+    try {
+      const remote = await stripeClient.retrieveSubscription(stripeSubId);
+      await syncStripeSubscription(remote);
+      owner = await findSubscriptionOwner(stripeSubId, invoice.customer);
+    } catch {}
+  }
+  if (!owner || !owner.user_id) return;
+  const amountCent = status === "completed" ? invoice.amount_paid : (invoice.amount_due ?? invoice.amount_remaining);
+  const amount = Math.max(0, Number(amountCent || 0) / 100);
+  const failure = status === "failed"
+    ? String(invoice.last_finalization_error?.message || invoice.last_payment_error?.message || "No se pudo completar el cobro").slice(0, 500)
+    : null;
+  const paymentIntent = typeof invoice.payment_intent === "string" ? invoice.payment_intent : invoice.payment_intent?.id;
+  await pool.execute(
+    `INSERT INTO payments
+       (user_id, subscription_id, invoice_no, amount, currency, method, status, kind,
+        stripe_payment_intent, stripe_invoice_id, hosted_invoice_url, failure_message)
+     VALUES (?,?,?,?,?,'stripe',?,'subscription',?,?,?,?)
+     ON DUPLICATE KEY UPDATE status=VALUES(status), amount=VALUES(amount),
+       stripe_payment_intent=VALUES(stripe_payment_intent), hosted_invoice_url=VALUES(hosted_invoice_url),
+       failure_message=VALUES(failure_message)`,
+    [owner.user_id, owner.id || null, genInvoiceNo(), amount,
+     String(invoice.currency || "eur").toUpperCase(), status, paymentIntent || null,
+     invoice.id, invoice.hosted_invoice_url || null, failure]);
+  if (status === "completed" && owner.id) {
+    await pool.execute("UPDATE subscriptions SET status='active' WHERE id=?", [owner.id]);
+    if (owner.plan_code) await pool.execute("UPDATE users SET plan=? WHERE id=?", [owner.plan_code, owner.user_id]);
+  } else if (status === "failed" && owner.id) {
+    await pool.execute("UPDATE subscriptions SET status='past_due' WHERE id=?", [owner.id]);
+  }
+}
+
 // POST /api/payments/stripe/webhook  (body BRUTO, firmado por Stripe)
 // Es la ÚNICA vía que concede plan/créditos: se verifica la firma y se aplica
 // la acción según metadata. Idempotente (tabla stripe_events + UNIQUE en payments).
@@ -18159,10 +18435,16 @@ app.post(
         const currency = (s.currency || "eur").toUpperCase();
         try {
           if (md.kind === "subscription") {
+            let initialInvoice = null;
+            if (s.invoice) {
+              try { initialInvoice = await stripeClient.retrieveInvoice(typeof s.invoice === "string" ? s.invoice : s.invoice.id); } catch {}
+            }
             await grantPlanFromStripe({
               uid, planCode: md.plan, period: md.period,
-              sessionId: s.id, paymentIntent: s.payment_intent || null,
+              sessionId: s.id, paymentIntent: s.payment_intent || initialInvoice?.payment_intent || null,
               subscriptionId: s.subscription || null, customerId: s.customer || null,
+              invoiceId: (typeof s.invoice === "string" ? s.invoice : s.invoice?.id) || initialInvoice?.id || null,
+              hostedInvoiceUrl: initialInvoice?.hosted_invoice_url || null,
               amount, currency,
             });
           } else if (md.kind === "reads_pack") {
@@ -18182,13 +18464,59 @@ app.post(
           }
         } catch (e) {
           console.error("[stripe] grant error:", e.message);
-          // 500 → Stripe reintentará el webhook más tarde.
+          // Quitamos la marca para que el 500 permita un reintento REAL.
+          try { await pool.execute("DELETE FROM stripe_events WHERE id=?", [String(event.id || "")]); } catch {}
           return res.status(500).json({ error: "grant_failed" });
         }
       }
+    } else if (event.type === "invoice.payment_failed" || event.type === "invoice.finalization_failed") {
+      try {
+        await recordStripeInvoice(event.data?.object || {}, "failed");
+      } catch (e) {
+        console.error("[stripe] invoice failed sync:", e.message);
+        try { await pool.execute("DELETE FROM stripe_events WHERE id=?", [String(event.id || "")]); } catch {}
+        return res.status(500).json({ error: "invoice_sync_failed" });
+      }
+    } else if (event.type === "invoice.payment_action_required") {
+      try {
+        await recordStripeInvoice(event.data?.object || {}, "pending");
+      } catch (e) {
+        console.error("[stripe] invoice action sync:", e.message);
+        try { await pool.execute("DELETE FROM stripe_events WHERE id=?", [String(event.id || "")]); } catch {}
+        return res.status(500).json({ error: "invoice_sync_failed" });
+      }
+    } else if (event.type === "invoice.payment_succeeded") {
+      const invoice = event.data?.object || {};
+      // El primer cargo ya se registra con checkout.session.completed; aquí
+      // guardamos renovaciones y cobros recuperados para evitar duplicados.
+      if (invoice.billing_reason !== "subscription_create") {
+        try {
+          await recordStripeInvoice(invoice, "completed");
+        } catch (e) {
+          console.error("[stripe] invoice paid sync:", e.message);
+          try { await pool.execute("DELETE FROM stripe_events WHERE id=?", [String(event.id || "")]); } catch {}
+          return res.status(500).json({ error: "invoice_sync_failed" });
+        }
+      }
+    } else if (event.type === "customer.subscription.updated" || event.type === "customer.subscription.deleted") {
+      try {
+        await syncStripeSubscription(event.data?.object || {});
+      } catch (e) {
+        console.error("[stripe] subscription sync:", e.message);
+        try { await pool.execute("DELETE FROM stripe_events WHERE id=?", [String(event.id || "")]); } catch {}
+        return res.status(500).json({ error: "subscription_sync_failed" });
+      }
+    } else if (event.type === "charge.refunded") {
+      const charge = event.data?.object || {};
+      const pi = typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+      if (pi) {
+        try { await pool.execute("UPDATE payments SET status='refunded' WHERE stripe_payment_intent=?", [pi]); }
+        catch (e) {
+          try { await pool.execute("DELETE FROM stripe_events WHERE id=?", [String(event.id || "")]); } catch {}
+          return res.status(500).json({ error: "refund_sync_failed" });
+        }
+      }
     }
-    // Otros tipos de evento (renovaciones, cancelaciones) se pueden manejar aquí
-    // en el futuro; de momento respondemos 200 para que Stripe no reintente.
     res.json({ ok: true });
   })
 );
@@ -19350,7 +19678,7 @@ webauthn.register(app, pool, { readMyUserId, wrap, requireAdmin, signUserToken, 
    módulo, para que no puedan discrepar. Las dos rutas que registra van bajo
    /api/payments/ y /api/stats/, o sea que el candado de admin del gate global
    las cubre igual que a invoices-export. */
-billing.register(app, pool, { wrap, getSetting }); // V933 · factura PDF + informe imprimible
+billing.register(app, pool, { wrap, getSetting, readMyUserId }); // V970 · facturas admin + descargas privadas del usuario
 
 // V879 · El puerto se abre YA, antes de migrar. Railway comprueba /api/health
 // y el deploy queda verde en segundo(s); las migraciones siguen por detrás.

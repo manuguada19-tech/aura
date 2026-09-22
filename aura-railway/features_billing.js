@@ -611,12 +611,13 @@ function construyePdf(datos, opciones = {}) {
 /* Rutas                                                            */
 /* ---------------------------------------------------------------- */
 function register(app, pool, helpers) {
-  const { wrap, getSetting } = helpers;
+  const { wrap, getSetting, readMyUserId } = helpers;
 
   /* ---- 1 · La factura / justificante de un pago -------------------
-     El gate global de server.js ya exige admin en /api/payments/*
-     (por cabecera o por ?adminToken), igual que en invoices-export. */
-  app.get("/api/payments/:id/invoice", wrap(async (req, res) => {
+     El panel usa /api/payments/* (gate de admin). V970 reutiliza el mismo
+     generador en /api/my/billing/*, después de comprobar que el pago pertenece
+     al usuario autenticado. */
+  const sendPaymentInvoice = wrap(async (req, res) => {
     const id = parseInt(req.params.id, 10) || 0;
     if (!id) return res.status(400).json({ error: "bad_id" });
 
@@ -772,6 +773,15 @@ function register(app, pool, helpers) {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Robots-Tag", "noindex, nofollow");
     res.send(pdf);
+  });
+  app.get("/api/payments/:id/invoice", sendPaymentInvoice);
+  app.get("/api/my/billing/payments/:id/invoice", wrap(async (req, res) => {
+    const me = readMyUserId && readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    const id = parseInt(req.params.id, 10) || 0;
+    const [[owned]] = await pool.query("SELECT id FROM payments WHERE id=? AND user_id=? LIMIT 1", [id, me]);
+    if (!owned) return res.status(404).json({ error: "not_found" });
+    return sendPaymentInvoice(req, res);
   }));
 
   /* ---- 2 · Aviso de qué hace falta para facturar ------------------
@@ -888,7 +898,7 @@ function register(app, pool, helpers) {
   }));
 
   /* ---- 2d · V934 · El PDF de una rectificativa -------------------- */
-  app.get("/api/payments/:id/rectification/:num", wrap(async (req, res) => {
+  const sendRectification = wrap(async (req, res) => {
     const id = parseInt(req.params.id, 10) || 0;
     const num = String(req.params.num || "").slice(0, 40);
     if (!id || !num) return res.status(400).json({ error: "bad_id" });
@@ -935,6 +945,15 @@ function register(app, pool, helpers) {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Robots-Tag", "noindex, nofollow");
     res.send(pdf);
+  });
+  app.get("/api/payments/:id/rectification/:num", sendRectification);
+  app.get("/api/my/billing/payments/:id/rectification/:num", wrap(async (req, res) => {
+    const me = readMyUserId && readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    const id = parseInt(req.params.id, 10) || 0;
+    const [[owned]] = await pool.query("SELECT id FROM payments WHERE id=? AND user_id=? LIMIT 1", [id, me]);
+    if (!owned) return res.status(404).json({ error: "not_found" });
+    return sendRectification(req, res);
   }));
 
   /* ---- 2e · V934 · Borrador con los datos SIN GUARDAR -------------
