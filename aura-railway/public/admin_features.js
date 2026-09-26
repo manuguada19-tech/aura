@@ -1571,11 +1571,9 @@
       ].forEach((k) => { const c = document.createElement("div"); c.className = "fx-kpi " + k.accent; c.innerHTML = `<div class="fx-kpi-label">${k.label}</div><div class="fx-kpi-value">${k.value}</div>`; kpiRow.appendChild(c); });
       outer.appendChild(kpiRow);
 
-      // position:relative + z-index:0 + isolation:isolate → crea un contexto de
-      // apilamiento propio para que las capas internas de Leaflet (panes y
-      // controles con z-index 200–1000) NO se salgan por encima del menú
-      // lateral (z-index 60) ni de la barra superior (z-index 5) del panel.
-      const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;position:relative;z-index:0;isolation:isolate;";
+      // Contexto aislado para que el canvas y los controles de MapLibre no se
+      // superpongan al menú lateral ni a la barra superior del panel.
+      const mapDiv = document.createElement("div"); mapDiv.id = "fx-adminHeatmap"; mapDiv.className = "admin-navigation-map admin-maplibre"; mapDiv.style.cssText = "height:520px;width:100%;background:#0e1220;border-radius:16px;margin:16px 0;overflow:hidden;position:relative;z-index:0;isolation:isolate;";
       outer.appendChild(mapDiv);
 
       // Tabla top 100 con checkbox (sólo lectura, no bulk aquí)
@@ -1595,20 +1593,20 @@
         actions: [],
       });
 
-      // Leaflet
+      // V972 · Heatmap vectorial MapLibre GL.
       try {
-        if (!window.L) {
-          await new Promise((res, rej) => {
-            const css = document.createElement("link"); css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"; document.head.appendChild(css);
-            const s = document.createElement("script"); s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"; s.onload = res; s.onerror = rej; document.head.appendChild(s);
-          });
-        }
-        const L = window.L;
-        const map = L.map("fx-adminHeatmap").setView([40.4, -3.7], 5);
-        if (typeof addAuraAdminMapTiles === "function") addAuraAdminMapTiles(L, map);
-        else L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom:16, maxZoom:18 }).addTo(map);
-        points.forEach((p) => {
-          L.circle([p.lat, p.lng], { radius: 500 + Math.log2((p.hits||1)+1) * 300, color: "#ff3b6b", fillOpacity: 0.35, weight: 1 }).addTo(map).bindPopup(`<b>${p.hits}</b> pings<br/>Última: ${fmtDate(p.last_seen)}`);
+        const GL = await ensureAdminMapLibre();
+        if (!GL) throw new Error("MapLibre no disponible");
+        const features=points.filter(p=>Number.isFinite(+p.lat)&&Number.isFinite(+p.lng)).map(p=>({type:"Feature",geometry:{type:"Point",coordinates:[+p.lng,+p.lat]},properties:{hits:Number(p.hits||1),last_seen:String(p.last_seen||"")}}));
+        const map=new GL.Map({container:mapDiv,style:"https://tiles.openfreemap.org/styles/liberty",center:[-3.7,40.4],zoom:5,pitch:35,bearing:-8,antialias:true});
+        map.addControl(new GL.NavigationControl({visualizePitch:true}),"bottom-right");
+        map.on("load",()=>{
+          map.addSource("gps-heat-points",{type:"geojson",data:{type:"FeatureCollection",features}});
+          map.addLayer({id:"gps-heat",type:"heatmap",source:"gps-heat-points",maxzoom:13,paint:{"heatmap-weight":["interpolate",["linear"],["get","hits"],1,.15,100,1],"heatmap-intensity":["interpolate",["linear"],["zoom"],0,.7,13,2.8],"heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(255,59,107,0)",.25,"#673ab7",.55,"#ff3b6b",.8,"#ffb020",1,"#fff4c2"],"heatmap-radius":["interpolate",["linear"],["zoom"],0,7,13,38]}});
+          map.addLayer({id:"gps-heat-cells",type:"circle",source:"gps-heat-points",minzoom:10,paint:{"circle-radius":["interpolate",["linear"],["get","hits"],1,5,100,19],"circle-color":"#ff3b6b","circle-stroke-color":"#fff","circle-stroke-width":1,"circle-opacity":["interpolate",["linear"],["zoom"],10,0,13,.85]}});
+          map.on("click","gps-heat-cells",e=>{const f=e.features&&e.features[0];if(!f)return;new GL.Popup().setLngLat(e.lngLat).setHTML(`<b>${Number(f.properties.hits||0)}</b> pings<br/>Última: ${fmtDate(f.properties.last_seen)}`).addTo(map);});
+          map.on("mouseenter","gps-heat-cells",()=>{map.getCanvas().style.cursor="pointer";});
+          map.on("mouseleave","gps-heat-cells",()=>{map.getCanvas().style.cursor="";});
         });
       } catch (e) {
         mapDiv.innerHTML = "<p style='color:#fff;padding:20px'>No se pudo cargar el mapa.</p>";

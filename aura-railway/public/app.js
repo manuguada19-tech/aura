@@ -8835,33 +8835,92 @@ function buildNowSection() {
   return sec;
 }
 
-/* ---- V758 · Mapa "Cerca de ti" (estilo Grindr) ----------------------
-   Muestra un mapa (Leaflet + OpenStreetMap) donde el usuario puede tocar o
+/* ---- V972 · Mapa "Cerca de ti" con MapLibre GL -----------------------
+   Muestra cartografía vectorial OpenFreeMap donde el usuario puede tocar o
    arrastrar para elegir un PUNTO y buscar personas cercanas a esa ubicación.
    Las coordenadas de cada persona vienen APROXIMADAS/difuminadas del backend
    (nunca exactas) y quien ocultó su ubicación no aparece. */
-let _leafletLoading = null;
-function ensureLeaflet() {
-  if (window.L) return Promise.resolve(true);
-  if (_leafletLoading) return _leafletLoading;
-  _leafletLoading = new Promise((resolve) => {
+let _mapLibreLoading = null;
+function ensureMapLibre() {
+  if (window.AuraMapGL) return Promise.resolve(true);
+  if (_mapLibreLoading) return _mapLibreLoading;
+  _mapLibreLoading = new Promise((resolve) => {
     try {
       const css = document.createElement("link");
       css.rel = "stylesheet";
-      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-      css.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+      css.href = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css";
       css.crossOrigin = "";
       document.head.appendChild(css);
       const s = document.createElement("script");
-      s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-      s.integrity = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+      s.src = "https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
       s.crossOrigin = "";
-      s.onload = () => resolve(!!window.L);
+      s.onload = () => {
+        if (!window.maplibregl) return resolve(false);
+        const GL = window.maplibregl;
+        class MapWrap {
+          constructor(container) { this.el=container; this.map=null; this.center=[0,0]; this.zoom=3; }
+          setView(latlng, zoom, opts) {
+            this.center=[Number(latlng.lng ?? latlng[1]),Number(latlng.lat ?? latlng[0])]; this.zoom=Number(zoom ?? this.zoom);
+            if (!this.map) {
+              this.map=new GL.Map({ container:this.el, style:"https://tiles.openfreemap.org/styles/liberty", center:this.center, zoom:this.zoom, pitch:48, bearing:-8, antialias:true, attributionControl:true });
+              this.map.addControl(new GL.NavigationControl({ visualizePitch:true, showCompass:true }),"bottom-right");
+              this.map.on("load",()=>{
+                try {
+                  const style=this.map.getStyle();
+                  const source=Object.keys(style.sources||{}).find(k=>style.sources[k]?.type==="vector");
+                  const before=(style.layers||[]).find(l=>l.type==="symbol")?.id;
+                  if(source&&!this.map.getLayer("aura-buildings-3d")) this.map.addLayer({ id:"aura-buildings-3d",source,"source-layer":"building",minzoom:14,type:"fill-extrusion",paint:{"fill-extrusion-color":["interpolate",["linear"],["zoom"],14,"#c7ced8",17,"#e8e9ee"],"fill-extrusion-height":["coalesce",["get","render_height"],["get","height"],8],"fill-extrusion-base":["coalesce",["get","render_min_height"],["get","min_height"],0],"fill-extrusion-opacity":.78}},before);
+                } catch {}
+              });
+            } else {
+              const fn=opts&&opts.animate?"easeTo":"jumpTo"; this.map[fn]({center:this.center,zoom:this.zoom,duration:opts&&opts.animate?650:0});
+            }
+            return this;
+          }
+          on(name,fn){ this.map.on(name,e=>fn(name==="click"?{latlng:{lat:e.lngLat.lat,lng:e.lngLat.lng},originalEvent:e.originalEvent}:e)); return this; }
+          getSize(){ const r=this.el.getBoundingClientRect(); return {x:r.width,y:r.height}; }
+          containerPointToLatLng(p){ const q=this.map.unproject([p.x,p.y]); return {lat:q.lat,lng:q.lng}; }
+          getCenter(){ const q=this.map.getCenter(); return {lat:q.lat,lng:q.lng}; }
+          getZoom(){ return this.map.getZoom(); }
+          project(ll,z){ const lng=Number(ll.lng??ll[1]),lat=Math.max(-85.0511,Math.min(85.0511,Number(ll.lat??ll[0]))),scale=512*Math.pow(2,Number.isFinite(z)?z:this.getZoom()),sin=Math.sin(lat*Math.PI/180);return{x:(lng+180)/360*scale,y:(.5-Math.log((1+sin)/(1-sin))/(4*Math.PI))*scale}; }
+          unproject(p,z){ const scale=512*Math.pow(2,Number.isFinite(z)?z:this.getZoom()),lng=p.x/scale*360-180,n=Math.PI-2*Math.PI*p.y/scale,lat=180/Math.PI*Math.atan(Math.sinh(n));return{lat,lng}; }
+          getBounds(){ return this.map.getBounds(); }
+          invalidateSize(){ try{this.map.resize();}catch{} return this; }
+          removeLayer(layer){ try{layer.remove();}catch{} return this; }
+        }
+        class MarkerWrap {
+          constructor(latlng,opts){ this.ll={lat:Number(latlng[0]),lng:Number(latlng[1])};this.opts=opts||{};this.marker=null;this.el=null;this.events={}; }
+          _mount(map){
+            const icon=this.opts.icon||{}; const node=document.createElement("div"); node.className=icon.className||""; node.innerHTML=icon.html||"";
+            if(icon.iconSize){node.style.width=icon.iconSize[0]+"px";node.style.height=icon.iconSize[1]+"px";}
+            if(this.opts.interactive===false) node.style.pointerEvents="none";
+            this.el=node; this.marker=new GL.Marker({element:node,draggable:!!this.opts.draggable,anchor:"bottom"}).setLngLat([this.ll.lng,this.ll.lat]).addTo(map.map);
+            if(this.events.click) node.addEventListener("click",e=>{e.stopPropagation();this.events.click(e);});
+            for(const n of ["drag","dragend"]) if(this.events[n]) this.marker.on(n,this.events[n]);
+            return this;
+          }
+          addTo(target){ if(target&&target._group){target._add(this);return this;} return this._mount(target); }
+          on(name,fn){this.events[name]=fn;if(this.marker){if(name==="click")this.el.addEventListener("click",e=>{e.stopPropagation();fn(e);});else this.marker.on(name,fn);}return this;}
+          getLatLng(){const q=this.marker?this.marker.getLngLat():this.ll;return{lat:q.lat,lng:q.lng};}
+          setLatLng(ll){this.ll={lat:Number(ll[0]),lng:Number(ll[1])};if(this.marker)this.marker.setLngLat([this.ll.lng,this.ll.lat]);return this;}
+          bindTooltip(text){if(this.el)this.el.title=text;else this.tooltip=text;return this;}
+          bindPopup(html){this.popup=html;return this;}
+          remove(){if(this.marker)this.marker.remove();}
+        }
+        window.AuraMapGL={
+          map:(el)=>new MapWrap(el),
+          divIcon:o=>o,
+          marker:(ll,o)=>new MarkerWrap(ll,o),
+          layerGroup:()=>({_group:true,map:null,items:[],addTo(m){this.map=m;return this;},_add(x){this.items.push(x);x._mount(this.map);},clearLayers(){this.items.forEach(x=>x.remove());this.items=[];}}),
+          point:(x,y)=>({x,y}),
+        };
+        resolve(true);
+      };
       s.onerror = () => resolve(false);
       document.head.appendChild(s);
     } catch { resolve(false); }
   });
-  return _leafletLoading;
+  return _mapLibreLoading;
 }
 
 async function fetchNearbyMap(centerLat, centerLng, radiusKm) {
@@ -9191,8 +9250,8 @@ async function openNearbyMap() {
   document.body.appendChild(overlay);
   document.body.classList.add("map-open");
 
-  const ok = await ensureLeaflet();
-  if (!ok || !window.L) {
+  const ok = await ensureMapLibre();
+  if (!ok || !window.AuraMapGL) {
     mapEl.innerHTML = "";
     mapEl.appendChild(el("div", { class: "map-error" }, [
       el("strong", {}, "No se pudo cargar el mapa"),
@@ -9201,7 +9260,7 @@ async function openNearbyMap() {
     return;
   }
 
-  const L = window.L;
+  const MapAPI = window.AuraMapGL;
   // Centro inicial: intenta la ubicación real; si no, un centro por defecto (Madrid).
   let start = { lat: 40.4168, lng: -3.7038 };
   const first = await fetchNearbyMap(null, null, mapFilters.radiusKm);
@@ -9226,54 +9285,32 @@ async function openNearbyMap() {
   const _myZone = state.zone === "lgtb" ? "lgtb" : "hetero";
   const testUser = (_demoZone === _myZone) ? makeTestMapUser(start, demoProfile) : null;
 
-  // V795 · Zoom inicial MUCHO más cercano al punto azul (17, nivel calle).
-  // Antes 15 quedaba demasiado lejano. Esri Canvas solo tiene teselas nativas
-  // hasta el nivel 16; para poder acercarnos más usamos maxNativeZoom en la
-  // capa de teselas (más abajo), que hace que Leaflet re-escale las del nivel
-  // 16 en los niveles 17-18 en lugar de mostrar hueco gris.
-  const map = L.map(mapEl, {
+  // V972 · Mapa vectorial real. El zoom cercano, la perspectiva y los edificios
+  // 3D los renderiza MapLibre GL; ya no hay teselas raster de Leaflet/Esri.
+  const map = MapAPI.map(mapEl, {
     zoomControl: false,
     attributionControl: false, // sin "publicidad"/atribución sobre el mapa
     maxZoom: 18,
   }).setView([start.lat, start.lng], 17);
-  L.control.zoom({ position: "bottomright" }).addTo(map);
-
-  // V762 · Teselas SIN clave: usamos Esri (ArcGIS) Canvas Dark/Light Gray.
-  //   CARTO empezó a exigir cuenta/API key y bloqueaba las teselas desde
-  //   citasaura.es → el mapa mostraba "API key required". Esri no requiere
-  //   clave para uso web. OJO: Esri usa el orden {z}/{y}/{x} (fila antes que
-  //   columna), NO {z}/{x}/{y} como OSM/CARTO.
-  const dark = (state.theme || "dark") === "dark";
-  const tileUrl = dark
-    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-    : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
-  // V795 · maxNativeZoom:16 = último nivel con teselas reales de Esri; maxZoom:18
-  // permite acercar más (Leaflet re-escala las teselas del nivel 16), de modo
-  // que el punto azul se ve a nivel de calle sin huecos grises.
-  const tileLayer = L.tileLayer(tileUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
-  const labelUrl = dark
-    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
-    : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
-  const labelLayer = L.tileLayer(labelUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
-  mapEl.appendChild(el("div", { class: "map-provider-credit" }, "© Esri"));
+  mapEl.appendChild(el("div", { class: "map-provider-credit" }, "© OpenFreeMap · © OpenStreetMap"));
   mapEl.appendChild(el("div", { class: "map-nav-compass", title: "Norte" }, [
     el("span", {}, "N"),
     el("svg", { viewBox:"0 0 20 20", width:"16", height:"16", html:'<path d="M10 2l4.2 12L10 11.7 5.8 14z" fill="currentColor"/>' }),
   ]));
 
-  const markers = L.layerGroup().addTo(map);
+  const markers = MapAPI.layerGroup().addTo(map);
 
   // V840 · PIN de búsqueda ARRASTRABLE (sustituye al marcador fijo del centro y al
   // círculo-zona arrastrable anterior). El usuario mueve este pin (arrastrándolo o
   // tocando el mapa) y pulsa "Buscar cerca de aquí" para buscar en su posición.
   // searchLatLng guarda la última posición del pin (= dónde se buscará).
   let searchLatLng = { lat: start.lat, lng: start.lng };
-  const searchPinIcon = L.divIcon({
+  const searchPinIcon = MapAPI.divIcon({
     className: "map-searchpin-wrap",
     html: '<div class="map-searchpin"><span class="map-searchpin-pill">Buscar aquí</span><span class="map-searchpin-body"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7z"/><circle cx="12" cy="9" r="2.6" fill="#ff3b6b"/></svg></span></span>',
     iconSize: [40, 54], iconAnchor: [20, 52],
   });
-  const searchPin = L.marker([searchLatLng.lat, searchLatLng.lng], {
+  const searchPin = MapAPI.marker([searchLatLng.lat, searchLatLng.lng], {
     icon: searchPinIcon, draggable: true, autoPan: true, zIndexOffset: 1500,
   }).addTo(map);
 
@@ -9294,7 +9331,7 @@ async function openNearbyMap() {
     // V866 · Rayo (símbolo del estado) sobre el pin cuando busca ahora.
     const bolt = hasNow ? '<span class="map-pin-bolt" title="Ahora mismo"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg></span>' : "";
     const html = `<div class="${cls.join(" ")}" style="background-image:url('${u.photo || ""}')">${dot}${bolt}${tag}<span class="map-pin-stem"></span></div>`;
-    return L.divIcon({ className: "map-pin-wrap", html, iconSize: [50, 62], iconAnchor: [25, 60] });
+    return MapAPI.divIcon({ className: "map-pin-wrap", html, iconSize: [50, 62], iconAnchor: [25, 60] });
   }
 
   // Cierra el mapa y abre el detalle del perfil (real o de prueba).
@@ -9594,7 +9631,7 @@ async function openNearbyMap() {
     markers.clearLayers();
     const list = visibleList();
     list.forEach(u => {
-      const m = L.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
+      const m = MapAPI.marker([u.lat, u.lng], { icon: pinIcon(u), riseOnHover: true }).addTo(markers);
       m.on("click", () => openUserSheet(u));
     });
     // V851 · El pin de la cuenta de PRUEBA se dibuja SIEMPRE en el mapa (aunque el
@@ -9604,7 +9641,7 @@ async function openNearbyMap() {
     // para que aparezca en la lista. Sigue respetando los filtros (género, etc.).
     if (mapFilters.showTest && testUser && Number.isFinite(testUser.lat) && Number.isFinite(testUser.lng)
         && !list.some(u => u._test) && matchesMapFilters(testUser)) {
-      const tm = L.marker([testUser.lat, testUser.lng], { icon: pinIcon(testUser), riseOnHover: true }).addTo(markers);
+      const tm = MapAPI.marker([testUser.lat, testUser.lng], { icon: pinIcon(testUser), riseOnHover: true }).addTo(markers);
       tm.on("click", () => openUserSheet(testUser));
     }
     renderPeople(list);
@@ -9613,7 +9650,7 @@ async function openNearbyMap() {
 
   // V840 · El panel de personas tiene altura VARIABLE (una fila en PC, hasta
   // ~46vh en móvil). Para que el botón "Buscar cerca de aquí", el botón de "mi
-  // ubicación" y el control de zoom de Leaflet queden SIEMPRE justo encima del
+  // ubicación" y el control de zoom queden SIEMPRE justo encima del
   // panel (y no floten a media pantalla ni queden tapados), medimos la altura
   // real del panel y la exponemos como variable CSS --map-people-h. El CSS
   // posiciona esos controles relativos a esa variable.
@@ -9675,10 +9712,10 @@ async function openNearbyMap() {
   // (GPS con consentimiento o aproximación por IP que devuelve el backend).
   // V769 · SIEMPRE visible por encima del resto (zIndexOffset alto) para que no
   // lo tapen ni los pines ni el círculo/asa. Antes iba por debajo (-1000).
-  const meIcon = L.divIcon({ className: "map-me-wrap",
+  const meIcon = MapAPI.divIcon({ className: "map-me-wrap",
     html: '<div class="map-me"><span class="map-me-pulse"></span><span class="map-me-dot"></span></div>',
     iconSize: [24, 24], iconAnchor: [12, 12] });
-  const meMarker = L.marker([myLocation.lat, myLocation.lng], {
+  const meMarker = MapAPI.marker([myLocation.lat, myLocation.lng], {
     icon: meIcon, interactive: false, keyboard: false, zIndexOffset: 2000,
   }).addTo(map);
   meMarker.bindTooltip("Tú estás aquí", { direction: "top", offset: [0, -10], className: "map-me-tip" });
@@ -9693,13 +9730,13 @@ async function openNearbyMap() {
   // punto exacto (además del arrastre). Se dibuja donde tocó.
   let pointerMarker = null;
   function pointerIcon() {
-    return L.divIcon({ className: "map-pointer-wrap",
+    return MapAPI.divIcon({ className: "map-pointer-wrap",
       html: '<div class="map-pointer"><span class="map-pointer-pulse"></span></div>',
       iconSize: [26, 26], iconAnchor: [13, 13] });
   }
   function dropPointer(lat, lng) {
     if (pointerMarker) { try { map.removeLayer(pointerMarker); } catch {} }
-    pointerMarker = L.marker([lat, lng], { icon: pointerIcon(), interactive: false, keyboard: false }).addTo(map);
+    pointerMarker = MapAPI.marker([lat, lng], { icon: pointerIcon(), interactive: false, keyboard: false }).addTo(map);
   }
 
   let searchSeq = 0; // descarta respuestas viejas si llega una nueva
@@ -9736,7 +9773,7 @@ async function openNearbyMap() {
       if (low != null) bottom = Math.min(bottom, (low - cRect.top) - 10);
       const visCenterY = (bottom > top) ? (top + bottom) / 2 : cRect.height / 2;
       const size = map.getSize();
-      return map.containerPointToLatLng(L.point(size.x / 2, visCenterY));
+      return map.containerPointToLatLng(MapAPI.point(size.x / 2, visCenterY));
     } catch {
       const c = map.getCenter(); return { lat: c.lat, lng: c.lng };
     }
@@ -9834,7 +9871,7 @@ async function openNearbyMap() {
       const visCenter = (top + bottom) / 2;
       const size = map.getSize();
       const targetPt = map.project([lat, lng], z);
-      const centerPt = L.point(targetPt.x, targetPt.y + (size.y / 2 - visCenter));
+      const centerPt = MapAPI.point(targetPt.x, targetPt.y + (size.y / 2 - visCenter));
       const newCenter = map.unproject(centerPt, z);
       map.setView(newCenter, z, { animate: !!animate });
     } catch {
@@ -10026,19 +10063,10 @@ async function openNearbyMap() {
   // fuera de la pantalla. Al pulsarlo el pin va allí, porque lo has pedido tú.
   searchHereBtn.addEventListener("click", () => { searchHere(); });
 
-  // V840 · Botón de tema dentro del mapa: cambia claro/oscuro globalmente,
-  // intercambia las teselas del mapa y repinta el icono del botón.
+  // V972 · El tema del mapa vectorial se adapta mediante el filtro visual CSS;
+  // no se intercambian ya teselas raster ni se reinicia la vista.
   themeBtn.addEventListener("click", () => {
     try { _toggleAuraTheme(); } catch {}
-    const nowDark = (state.theme || "dark") === "dark";
-    const url = nowDark
-      ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
-      : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
-    const labels = nowDark
-      ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
-      : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
-    try { tileLayer.setUrl(url); } catch {}
-    try { labelLayer.setUrl(labels); } catch {}
     paintMapThemeBtn();
   });
 

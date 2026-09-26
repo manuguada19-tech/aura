@@ -5492,7 +5492,7 @@ async function openUserDrawer(id, onChange) {
         liveBox.appendChild(reaskRow);
       })();
 
-      // Inicializar mapa Leaflet (prioriza GPS sobre geo-IP si está disponible)
+      // Inicializar MapLibre GL (prioriza GPS sobre geo-IP si está disponible)
       const useGps = gps && gps.consent_given && gps.lat != null && gps.lng != null;
       const mapLat = useGps ? gps.lat : geo.lat;
       const mapLng = useGps ? gps.lng : geo.lon;
@@ -5503,42 +5503,17 @@ async function openUserDrawer(id, onChange) {
           style: "width:100%;height:280px;margin-top:12px;border-radius:12px;overflow:hidden;background:#111;",
         });
         liveBox.appendChild(mapDiv);
-        _ensureLeaflet().then(L => {
-          if (!L) return;
+        ensureAdminMapLibre().then(GL => {
+          if (!GL) return;
           try {
             if (userMapObj) { try { userMapObj.remove(); } catch {} userMapObj = null; }
             const container = document.getElementById(mapDomId);
             if (!container) return;
-            userMapObj = L.map(container, { zoomControl: true, attributionControl: false })
-              .setView([mapLat, mapLng], useGps ? 15 : 12);
-            addAuraAdminMapTiles(L, userMapObj);
-            // Marcador principal (GPS o IP)
             const mq = useGps ? gpsQuality(gps) : null;
-            const mainIcon = L.divIcon({
-              className: "aura-marker " + (useGps ? "aura-marker-gps" : "aura-marker-ip"),
-              html: `<span class="admin-nav-pin ${useGps ? "gps" : "ip"}"><i>${useGps ? (mq.good ? "GPS" : "±GPS") : "IP"}</i></span>`,
-              iconSize: [42, 50], iconAnchor: [21, 46],
-            });
-            userMapMarker = L.marker([mapLat, mapLng], { icon: mainIcon }).addTo(userMapObj);
             const popupHtml = useGps
               ? `<strong>${ctx.user.name}</strong><br>${mq.good ? "📍" : "⚠️"} <b>${mq.label}</b> (±${gps.accuracy != null ? gps.accuracy : "?"} m)<br>${(+gps.lat).toFixed(5)}, ${(+gps.lng).toFixed(5)}<br><small>Actualizado ${gps.stale_minutes != null ? gps.stale_minutes + " min" : "—"}</small>${mq.good ? "" : `<br><small style="color:#f59e0b">${mq.note}</small>`}`
               : `<strong>${ctx.user.name}</strong><br>🌐 <b>Ubicación por IP</b><br>${geo.city || ""}, ${geo.country || ""}<br><code>${dev.ip || ""}</code>`;
-            userMapMarker.bindPopup(popupHtml).openPopup();
-            // Si tenemos AMBAS (GPS + IP), añade círculo con la IP para comparar
-            if (useGps && geo.lat != null && geo.lon != null) {
-              L.circleMarker([geo.lat, geo.lon], {
-                radius: 8, color: "#6b7280", weight: 2, fillOpacity: 0.15,
-              }).addTo(userMapObj).bindPopup(`🌐 IP aprox<br>${geo.city || ""}, ${geo.country || ""}`);
-            }
-            // Círculo de precisión GPS · ámbar si el fix no es fiable, para que
-            // se vea de un golpe lo grande que es el margen de error.
-            if (useGps && gps.accuracy) {
-              const c = mq.good ? "#ec4899" : "#f59e0b";
-              L.circle([mapLat, mapLng], {
-                radius: gps.accuracy,
-                color: c, weight: 1, fillColor: c, fillOpacity: 0.12,
-              }).addTo(userMapObj);
-            }
+            userMapObj=createAuraAdminGLMap(GL,container,{lat:+mapLat,lng:+mapLng,zoom:useGps?15:12,kind:useGps?"gps":"ip",popup:popupHtml,accuracy:useGps?Number(gps.accuracy||0):0,secondary:useGps&&geo.lat!=null&&geo.lon!=null?{lat:+geo.lat,lng:+geo.lon,popup:`IP aproximada · ${geo.city||""}, ${geo.country||""}`}:null});
           } catch (e) { console.warn("[map]", e.message); }
         });
       }
@@ -18335,32 +18310,44 @@ async function _deprecated_viewLiveMonitor_v409(root) {
    V410 — Nuevo Monitor en vivo (integrado en pestaña de Chats).
    - Lista de chats activos con avatares.
    - Panel derecho con contexto completo: dispositivos, IP, OS,
-     ubicación, mapa Leaflet, restricciones activas.
+     ubicación, mapa MapLibre GL, restricciones activas.
    - Modal de moderación con motivos estandarizados.
    - Auto-refresh cada 5s (lista) y 4s (chat abierto).
    ============================================================ */
 let __moderationReasons = null;
-// V971 · Cartografía común del panel: base y etiquetas Esri con tratamiento
-// visual tipo navegador GPS. Evita que cada módulo use un mapa OSM distinto.
-function addAuraAdminMapTiles(L, map) {
-  const dark = (document.documentElement.getAttribute("data-theme") || "dark") === "dark";
-  const tone = dark ? "Dark" : "Light";
-  const root = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_" + tone + "_Gray_";
-  L.tileLayer(root + "Base/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom:16, maxZoom:18 }).addTo(map);
-  L.tileLayer(root + "Reference/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom:16, maxZoom:18 }).addTo(map);
-  const c = map.getContainer();
-  c.classList.add("admin-navigation-map");
-  const credit = document.createElement("span");
-  credit.className = "admin-map-credit"; credit.textContent = "© Esri"; c.appendChild(credit);
-  return map;
-}
-function auraAdminMapIcon(L, kind) {
-  const ip = kind === "ip";
-  return L.divIcon({
-    className:"admin-nav-pin-wrap",
-    html:`<span class="admin-nav-pin ${ip ? "ip" : "gps"}"><i>${ip ? "IP" : "GPS"}</i></span>`,
-    iconSize:[42,50], iconAnchor:[21,46], popupAnchor:[0,-43],
+// V972 · Motor vectorial común del panel con OpenFreeMap, perspectiva y 3D.
+let _adminMapLibrePromise = null;
+function ensureAdminMapLibre() {
+  if (window.maplibregl) return Promise.resolve(window.maplibregl);
+  if (_adminMapLibrePromise) return _adminMapLibrePromise;
+  _adminMapLibrePromise = new Promise((resolve) => {
+    const css=document.createElement("link"); css.rel="stylesheet"; css.href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css"; document.head.appendChild(css);
+    const s=document.createElement("script"); s.src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js";
+    s.onload=()=>resolve(window.maplibregl||null); s.onerror=()=>resolve(null); document.head.appendChild(s);
   });
+  return _adminMapLibrePromise;
+}
+function geoCircle(lng,lat,radiusM,steps=64) {
+  const pts=[]; const d=radiusM/6378137; const p=lat*Math.PI/180;
+  for(let i=0;i<=steps;i++){const a=2*Math.PI*i/steps;const la=Math.asin(Math.sin(p)*Math.cos(d)+Math.cos(p)*Math.sin(d)*Math.cos(a));const lo=lng*Math.PI/180+Math.atan2(Math.sin(a)*Math.sin(d)*Math.cos(p),Math.cos(d)-Math.sin(p)*Math.sin(la));pts.push([lo*180/Math.PI,la*180/Math.PI]);}
+  return {type:"Feature",geometry:{type:"Polygon",coordinates:[pts]},properties:{}};
+}
+function createAuraAdminGLMap(GL,container,opts) {
+  container.classList.add("admin-navigation-map","admin-maplibre");
+  const map=new GL.Map({container,style:"https://tiles.openfreemap.org/styles/liberty",center:[opts.lng,opts.lat],zoom:opts.zoom||14,pitch:48,bearing:-8,antialias:true,attributionControl:true});
+  map.addControl(new GL.NavigationControl({visualizePitch:true}),"bottom-right");
+  const pin=document.createElement("span");pin.className="admin-nav-pin-wrap";pin.innerHTML=`<span class="admin-nav-pin ${opts.kind==="ip"?"ip":"gps"}"><i>${opts.kind==="ip"?"IP":"GPS"}</i></span>`;
+  const marker=new GL.Marker({element:pin,anchor:"bottom"}).setLngLat([opts.lng,opts.lat]).addTo(map);
+  if(opts.popup) marker.setPopup(new GL.Popup({offset:32,closeButton:false}).setHTML(opts.popup)).togglePopup();
+  if(opts.secondary&&Number.isFinite(+opts.secondary.lat)&&Number.isFinite(+opts.secondary.lng)){
+    const el=document.createElement("span");el.className="admin-nav-pin-wrap";el.innerHTML='<span class="admin-nav-pin ip"><i>IP</i></span>';
+    new GL.Marker({element:el,anchor:"bottom"}).setLngLat([+opts.secondary.lng,+opts.secondary.lat]).setPopup(new GL.Popup({offset:30}).setHTML(opts.secondary.popup||"IP aproximada")).addTo(map);
+  }
+  map.on("load",()=>{
+    try{const st=map.getStyle(),source=Object.keys(st.sources||{}).find(k=>st.sources[k]?.type==="vector"),before=(st.layers||[]).find(l=>l.type==="symbol")?.id;if(source)map.addLayer({id:"admin-buildings-3d",source,"source-layer":"building",minzoom:14,type:"fill-extrusion",paint:{"fill-extrusion-color":"#d9dee7","fill-extrusion-height":["coalesce",["get","render_height"],["get","height"],8],"fill-extrusion-base":["coalesce",["get","render_min_height"],["get","min_height"],0],"fill-extrusion-opacity":.8}},before);}catch{}
+    if(opts.accuracy>0){try{map.addSource("gps-accuracy",{type:"geojson",data:geoCircle(opts.lng,opts.lat,opts.accuracy)});map.addLayer({id:"gps-accuracy-fill",type:"fill",source:"gps-accuracy",paint:{"fill-color":"#ff496f","fill-opacity":.13}});map.addLayer({id:"gps-accuracy-line",type:"line",source:"gps-accuracy",paint:{"line-color":"#ff496f","line-width":2}});}catch{}}
+  });
+  return map;
 }
 async function _loadModerationReasons() {
   if (__moderationReasons) return __moderationReasons;
@@ -18369,20 +18356,6 @@ async function _loadModerationReasons() {
     __moderationReasons = j.reasons || [];
   } catch { __moderationReasons = []; }
   return __moderationReasons;
-}
-async function _ensureLeaflet() {
-  if (window.L) return window.L;
-  return new Promise((resolve) => {
-    const css = document.createElement("link");
-    css.rel = "stylesheet";
-    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    document.head.appendChild(css);
-    const s = document.createElement("script");
-    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    s.onload = () => resolve(window.L);
-    s.onerror = () => resolve(null);
-    document.head.appendChild(s);
-  });
 }
 async function renderLiveMonitorTab(root) {
   const E = (tag, cls, text) => {
@@ -18569,14 +18542,10 @@ async function renderLiveMonitorTab(root) {
       const mapId = "lv2map_" + u.user.id + "_" + Date.now();
       const mapEl = el("div", { class: "lv2-map", id: mapId });
       box.appendChild(mapEl);
-      _ensureLeaflet().then(L => {
-        if (!L) return;
+      ensureAdminMapLibre().then(GL => {
+        if (!GL) return;
         try {
-          const m = L.map(mapId, { zoomControl: false, attributionControl: false }).setView([liveLat, liveLng], liveGps ? 15 : 11);
-          addAuraAdminMapTiles(L, m);
-          L.marker([liveLat, liveLng], { icon:auraAdminMapIcon(L, liveGps ? "gps" : "ip") }).addTo(m)
-            .bindPopup(`${u.user.name || ""}<br>${liveGps ? "GPS real consentido" : "Ubicación aproximada por IP"}`);
-          if (liveGps && u.gps.accuracy) L.circle([liveLat, liveLng], { radius:u.gps.accuracy, color:"#ff496f", weight:1, fillOpacity:.1 }).addTo(m);
+          createAuraAdminGLMap(GL,document.getElementById(mapId),{lat:+liveLat,lng:+liveLng,zoom:liveGps?15:11,kind:liveGps?"gps":"ip",popup:`${u.user.name||""}<br>${liveGps?"GPS real consentido":"Ubicación aproximada por IP"}`,accuracy:liveGps?Number(u.gps.accuracy||0):0});
         } catch {}
       });
     }
@@ -20142,14 +20111,20 @@ async function openHeatmap() {
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
   try {
-    // Carga Leaflet bajo demanda (igual que el resto de mapas del panel)
-    const L = await _ensureLeaflet();
-    if (!L) { container.textContent = "No se pudo cargar el mapa (Leaflet)."; return; }
-    const map = L.map(container).setView([40, -3], 3);
-    addAuraAdminMapTiles(L, map);
+    const GL = await ensureAdminMapLibre();
+    if (!GL) { container.textContent = "No se pudo cargar el mapa vectorial."; return; }
     const pts = await api.get("/api/stats/geo-points");
-    (pts.items || []).forEach(p => {
-      L.circleMarker([p.lat, p.lng], { radius: Math.min(15, Math.max(3, Math.sqrt(p.count))), color: "#ff5a8a", weight: 1, fillOpacity: .6 }).addTo(map);
+    const features=(pts.items||[]).filter(p=>Number.isFinite(+p.lat)&&Number.isFinite(+p.lng)).map(p=>({type:"Feature",geometry:{type:"Point",coordinates:[+p.lng,+p.lat]},properties:{count:Number(p.count||1)}}));
+    container.classList.add("admin-navigation-map","admin-maplibre");
+    const map=new GL.Map({container,style:"https://tiles.openfreemap.org/styles/liberty",center:[-3,40],zoom:3.5,pitch:36,bearing:-8,antialias:true});
+    map.addControl(new GL.NavigationControl({visualizePitch:true}),"bottom-right");
+    map.on("load",()=>{
+      map.addSource("admin-geo-points",{type:"geojson",data:{type:"FeatureCollection",features}});
+      map.addLayer({id:"admin-geo-heat",type:"heatmap",source:"admin-geo-points",maxzoom:12,paint:{"heatmap-weight":["interpolate",["linear"],["get","count"],1,.15,100,1],"heatmap-intensity":["interpolate",["linear"],["zoom"],0,.8,12,2.5],"heatmap-color":["interpolate",["linear"],["heatmap-density"],0,"rgba(255,59,107,0)",.25,"#673ab7",.55,"#ff3b6b",.8,"#ffb020",1,"#fff4c2"],"heatmap-radius":["interpolate",["linear"],["zoom"],0,6,12,34],"heatmap-opacity":["interpolate",["linear"],["zoom"],9,.9,13,0]}});
+      map.addLayer({id:"admin-geo-circles",type:"circle",source:"admin-geo-points",minzoom:10,paint:{"circle-radius":["interpolate",["linear"],["get","count"],1,5,100,18],"circle-color":"#ff3b6b","circle-stroke-color":"#fff","circle-stroke-width":1,"circle-opacity":["interpolate",["linear"],["zoom"],10,0,13,.82]}});
+      map.on("click","admin-geo-circles",e=>{const f=e.features&&e.features[0];if(!f)return;new GL.Popup().setLngLat(e.lngLat).setHTML(`<b>${Number(f.properties.count||0)}</b> usuarios`).addTo(map);});
+      map.on("mouseenter","admin-geo-circles",()=>{map.getCanvas().style.cursor="pointer";});
+      map.on("mouseleave","admin-geo-circles",()=>{map.getCanvas().style.cursor="";});
     });
   } catch(e) { container.textContent = "Error: " + e.message; }
   appendClose();
@@ -21306,17 +21281,20 @@ async function viewDeviceIncidents(root) {
               `${new Date(p.captured_at).toLocaleString("es-ES")} · ${p.lat}, ${p.lng} · ±${p.accuracy || "?"}m`));
           });
           body.appendChild(trailBox);
-          if (typeof L !== "undefined") {
-            const mapDiv = el("div", { style: "height:240px;margin-top:8px;border-radius:10px;overflow:hidden" });
-            body.appendChild(mapDiv);
-            setTimeout(() => {
-              const map = L.map(mapDiv).setView([trail.points[0].lat, trail.points[0].lng], 14);
-              addAuraAdminMapTiles(L, map);
-              const latlngs = trail.points.map(p => [p.lat, p.lng]);
-              L.polyline(latlngs, { color: "#dc2626", weight: 3 }).addTo(map);
-              L.marker(latlngs[0], { icon:auraAdminMapIcon(L, "gps") }).addTo(map).bindPopup("Última posición");
-            }, 100);
-          }
+          const mapDiv = el("div", { class:"admin-maplibre", style: "height:240px;margin-top:8px;border-radius:10px;overflow:hidden" });
+          body.appendChild(mapDiv);
+          setTimeout(() => {
+            ensureAdminMapLibre().then(GL=>{
+              if(!GL||!mapDiv.isConnected)return;
+              const valid=trail.points.filter(p=>Number.isFinite(+p.lat)&&Number.isFinite(+p.lng));
+              if(!valid.length)return;
+              const first=valid[0],coords=valid.map(p=>[+p.lng,+p.lat]);
+              const map=createAuraAdminGLMap(GL,mapDiv,{lat:+first.lat,lng:+first.lng,zoom:14,kind:"gps",popup:"Última posición",accuracy:Number(first.accuracy||0)});
+              map.on("load",()=>{
+                try{map.addSource("device-gps-trail",{type:"geojson",data:{type:"Feature",geometry:{type:"LineString",coordinates:coords},properties:{}}});map.addLayer({id:"device-gps-trail-line",type:"line",source:"device-gps-trail",paint:{"line-color":"#dc2626","line-width":4,"line-opacity":.9}});}catch{}
+              });
+            });
+          },100);
         }
       } catch {}
 

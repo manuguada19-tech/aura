@@ -1,14 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 25 septiembre 2026 · última versión preparada: V971**
+**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V972**
+
+### V972 (26/09/2026) — Migración real a MapLibre GL
+
+- Corrige V971: aquella versión solo cambió teselas y estilos manteniendo
+  Leaflet, aunque se había anunciado MapLibre. «Cerca de ti» usa ahora el motor
+  MapLibre GL con cartografía vectorial OpenFreeMap, perspectiva, edificios 3D,
+  movimientos fluidos y marcadores interactivos.
+- La ficha y el monitor de geolocalización del panel también usan MapLibre GL,
+  con GPS/IP diferenciados, área de precisión y comparación de ubicaciones.
+- Los mapas de calor estadístico/GPS y el rastro GPS de incidencias también se
+  migran a MapLibre; ya no queda ninguna instancia Leaflet en app o panel.
 
 ### V971 (25/09/2026) — Mapas con estética de navegador GPS
 
-- «Cerca de ti» conserva su privacidad y lógica, pero añade cartografía Esri
-  con capa de etiquetas, contraste de navegación, profundidad, brújula y crédito.
-- Los mapas de administración comparten el mismo estilo claro/oscuro, marcadores
-  diferenciados GPS/IP y círculos de precisión; el monitor prioriza GPS
-  consentido sobre la ubicación aproximada por IP.
+- Primera mejora visual sobre Leaflet: cartografía Esri, contraste de navegación,
+  profundidad, brújula y marcadores GPS/IP. No fue la migración MapLibre indicada;
+  esa corrección completa corresponde a V972.
 - Mapas de distribución, calor y rastros GPS dejan de mezclar estilos OSM y
   utilizan la misma presentación visual de Aura.
 
@@ -196,7 +205,7 @@ proveedor las desactiva de verdad.
 - Backup merged importado (textos, diseño, config, emails)
 - **EmailJS** como fallback de SMTP → OTP y emails llegan a Gmail
 - **Didit KYC** completo: registro → OTP → documento → selfie → vídeo → webhook `/api/verify/id/didit-webhook` funcionando (200 OK con firma HMAC válida)
-- **Mapa Leaflet** visible en admin > detalle usuario (código modificado)
+- **Mapa MapLibre GL** visible en admin > detalle usuario
 - **Botón "🗑 Eliminar usuario"** en admin > detalle usuario (borra user + identity_verifications)
 - **Botón atrás desde T&C / Privacidad / KYC** ahora vuelve al registro (antes iba a Welcome)
 - Redirect post-Didit apunta a Railway (APP_URL / APP_PUBLIC_URL / PUBLIC_BASE_URL)
@@ -384,7 +393,7 @@ Admin panel (`admin.js`):
 - **Suscripciones**: Suscritos actuales, Churn 30d, Regalar Premium, Exportar.
 - **Pagos**: Reembolsos, Disputas, MRR & LTV & ARR, Facturas SII, Exportar CSV.
 - **Promos**: Campaña estacional, Referral, ROI, Códigos masivos (bulk-generate).
-- **Estadísticas**: Informe programado, PDF, Comparar periodos, Mapa calor (Leaflet), Cohortes.
+- **Estadísticas**: Informe programado, PDF, Comparar periodos, mapa de calor MapLibre GL, Cohortes.
 
 Backend (`server.js`):
 - Tablas nuevas: `user_auto_rules`, `mod_templates`, `mod_rules`, `ticket_macros`, `kyc_rejection_reasons`, `scheduled_reports`. ALTER en `users` (tags, internal_notes), `reports` (assigned_to, priority, internal_notes, sla_due), `tickets` (assigned_to, sla_due, internal_notes), `payments` (dispute_status, dispute_reason), `identity_verifications` (rejection_reason), `subscriptions` (gifted_by, gift_reason).
