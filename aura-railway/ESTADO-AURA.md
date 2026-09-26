@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V974**
+**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V975**
+
+### V975 (26/09/2026) — Cuadrícula y cupo visible de perfiles
+
+- Explorar muestra permanentemente el plan, el máximo de perfiles y el progreso
+  de perfiles vistos/disponibles, sin esperar a agotar el feed.
+- Selector Tarjetas/Cuadrícula con estilo Aura; la cuadrícula reutiliza perfiles
+  reales y muestra nombre, edad, distancia, conexión, verificación, Boost y
+  estado «Ahora mismo» cuando corresponda.
+- Al existir más perfiles que el cupo, aparece una tarjeta integrada «Ver más
+  perfiles» que abre la comparación de planes. En «Cerca de ti» se ha aplicado
+  el mismo patrón y el contador expresa el cupo del plan con claridad.
+- El endpoint de descubrimiento admite tandas de hasta 100 perfiles para cubrir
+  correctamente el cupo Gold (80) y el perfil centinela que detecta contenido
+  adicional; Platinum continúa sin límite funcional.
 
 ### V974 (26/09/2026) — Ahora mismo y cupos de Explorar
 

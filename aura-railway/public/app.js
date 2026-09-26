@@ -8370,7 +8370,18 @@ function screenDiscover(root) {
     pushNotice || null,
     gpsNotice || null,
   ]);
-  root.appendChild(el("div", { class: "discover" }, [
+  const stack = buildSwipeStack();
+  const actionRow = el("div", { class: "action-row" }, [
+    actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => rewindLast(), "Volver"),
+    actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
+    actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
+    actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
+    // V896 · El botón Boost refleja el estado ACTIVO del propio usuario con el
+    // tiempo restante (antes solo salía un toast momentáneo al pulsarlo, así
+    // que no se veía que el Boost seguía en marcha).
+    buildBoostAction(),
+  ]);
+  const discoverShell = el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
       el("span", {
         class: "brand-logo-mini brand-logo-crop",
@@ -8390,21 +8401,16 @@ function screenDiscover(root) {
         "Filtros",
       ]),
     ]),
+    buildDiscoverViewBar(stack, actionRow),
     el("div", { class: "discover-stack-wrap" }, [
       notices,
-      buildSwipeStack(),
+      stack,
     ]),
-    el("div", { class: "action-row" }, [
-      actionBtn("rewind sm", "M21 12a9 9 0 11-3-6.7L21 3v6h-6", () => rewindLast(), "Volver"),
-      actionBtn("pass big", "M18 6L6 18M6 6l12 12", () => swipeCurrent("left"), "No me gusta"),
-      actionBtn("super sm", "M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", () => swipeCurrent("up"), "Super Like"),
-      actionBtn("like big", "M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z", () => swipeCurrent("right"), "Me gusta"),
-      // V896 · El botón Boost refleja el estado ACTIVO del propio usuario con el
-      // tiempo restante (antes solo salía un toast momentáneo al pulsarlo, así
-      // que no se veía que el Boost seguía en marcha).
-      buildBoostAction(),
-    ]),
-  ]));
+    actionRow,
+  ]);
+  stack._discoverShell = discoverShell;
+  discoverShell.classList.toggle("is-grid", stack._viewMode === "grid");
+  root.appendChild(discoverShell);
   // Ad slot (visible only to Free plan)
   const adTop = buildAdSlot("discover");
   if (adTop) root.appendChild(adTop);
@@ -10448,8 +10454,12 @@ function buildNearbySection() {
           class: "nearby-upgrade", type: "button",
           onclick: () => openPlanLimitModal(hidden),
         }, [
-          el("strong", {}, `+${hidden} perfiles bloqueados`),
-          el("small", {}, `Mejora tu plan para ver todos los perfiles cercanos.`),
+          el("span", { class: "nearby-upgrade-icon", html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.5-3.1 2.4-5 5.5-5s5 1.9 5.5 5"/><path d="M18 8v6M15 11h6"/></svg>` }),
+          el("span", { class: "nearby-upgrade-copy" }, [
+            el("strong", {}, `Ver ${hidden} perfil${hidden === 1 ? "" : "es"} más`),
+            el("small", {}, `Has alcanzado el cupo de ${limit} de tu plan ${planLabel(getUserPlan())}`),
+          ]),
+          el("span", { class: "nearby-upgrade-arrow", "aria-hidden": "true" }, "›"),
         ]));
       }
     }
@@ -10457,8 +10467,8 @@ function buildNearbySection() {
     const countEl = wrap.querySelector("#nearbyCount");
     if (countEl) {
       const suffix = (limit === Infinity)
-        ? `${list.length} personas`
-        : `${visible.length}/${list.length} · plan ${planLabel(getUserPlan())}`;
+        ? `${list.length} visibles · ${planLabel(getUserPlan())} ilimitado`
+        : `${visible.length} de ${limit} visibles · ${planLabel(getUserPlan())}`;
       countEl.textContent = `${onlineNow} en línea · ${suffix}`;
     }
   }
@@ -10554,6 +10564,7 @@ async function syncUserPlan() {
     if (!s || !s.plan) return;
     const plan = String(s.plan).toLowerCase();
     const prevPlan = String((state.user.plan || state.user.plan_key) || "free").toLowerCase();
+    let zoneChanged = false;
     state.user.plan = plan;
     // V903 · Sincroniza la ZONA con la BD (fuente de verdad). El cliente solo la
     // fijaba al hacer login y no la persistía, así que al recargar/reabrir la PWA
@@ -10561,17 +10572,18 @@ async function syncUserPlan() {
     // en cada arranque y la guardamos en la sesión para que el chip y el mazo de
     // Explorar (que dependen de state.zone) reflejen la zona real.
     if (s.zone === "hetero" || s.zone === "lgtb") {
-      const zoneChanged = state.zone !== s.zone;
+      zoneChanged = state.zone !== s.zone;
       state.zone = s.zone;
       state.user.zone = s.zone;
-      if (zoneChanged) {
-        // Repinta la pantalla activa para que el chip de zona y el mazo de
-        // Explorar (perfiles de la zona correcta) se actualicen sin recargar.
-        try { _rerender(); } catch {}
-      }
     }
     try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
     try { updateMeTierBadge(); } catch {}
+    // V975 · Si el plan llegó después del primer pintado, el cupo de Explorar
+    // o Cerca no puede quedarse congelado en Free. Repintamos esas pantallas
+    // cuando cambia el plan; un cambio de zona conserva el comportamiento previo.
+    if (zoneChanged || (prevPlan !== plan && (state.currentTab === "discover" || state.currentTab === "nearby"))) {
+      try { _rerender(); } catch {}
+    }
     // V811 · Al detectar que el usuario ha vuelto al plan gratuito desde uno de
     // pago (cancelación / fin de suscripción), mostramos la celebración Free,
     // que tiene tono propio. Se dispara una sola vez por transición y solo si
@@ -10643,6 +10655,78 @@ function openPlanLimitModal(hiddenCount) {
   modal.open(sheet);
 }
 
+/* V975 · Explorar puede alternar entre la experiencia de tarjetas y una
+   cuadrícula propia de Aura. La misma barra deja siempre visible el cupo real
+   del plan; no hace falta agotar el feed para descubrir cuántos perfiles hay. */
+function buildDiscoverViewBar(stack, actionRow) {
+  const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
+  const plan = planLabel(getUserPlan());
+  const quotaValue = el("strong", { class: "discover-quota-value" },
+    limit === Infinity ? `${plan} · perfiles ilimitados` : `${plan} · ${limit} perfiles`);
+  const quotaUsed = el("span", { class: "discover-quota-used", "aria-live": "polite" }, "Cargando…");
+  const cardsBtn = el("button", {
+    class: "discover-view-btn", type: "button", "aria-label": "Ver como tarjetas",
+    title: "Tarjetas",
+    html: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="3"/></svg><span>Tarjetas</span>`,
+  });
+  const gridBtn = el("button", {
+    class: "discover-view-btn", type: "button", "aria-label": "Ver como cuadrícula",
+    title: "Cuadrícula",
+    html: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg><span>Cuadrícula</span>`,
+  });
+
+  function refreshQuota() {
+    const loaded = Array.isArray(stack._users) ? stack._users.length : 0;
+    const seen = Math.min(Number(stack._index) || 0, loaded);
+    if (limit === Infinity) {
+      quotaUsed.textContent = stack._viewMode === "grid"
+        ? `${Math.max(0, loaded - seen)} disponibles ahora`
+        : `${seen} vistos · sin límite`;
+    } else {
+      quotaUsed.textContent = stack._viewMode === "grid"
+        ? `${Math.max(0, loaded - seen)} disponibles · ${seen}/${limit} vistos`
+        : `${seen} de ${limit} vistos`;
+    }
+  }
+
+  function selectView(mode) {
+    const grid = mode === "grid";
+    stack._viewMode = grid ? "grid" : "cards";
+    state.discoverViewMode = stack._viewMode;
+    stack.classList.toggle("discover-grid-mode", grid);
+    cardsBtn.classList.toggle("active", !grid);
+    gridBtn.classList.toggle("active", grid);
+    cardsBtn.setAttribute("aria-pressed", String(!grid));
+    gridBtn.setAttribute("aria-pressed", String(grid));
+    actionRow.hidden = grid;
+    if (stack._discoverShell) stack._discoverShell.classList.toggle("is-grid", grid);
+    refreshQuota();
+    renderStack(stack);
+  }
+  cardsBtn.addEventListener("click", () => selectView("cards"));
+  gridBtn.addEventListener("click", () => selectView("grid"));
+  stack._refreshQuota = refreshQuota;
+
+  const initialMode = state.discoverViewMode === "grid" ? "grid" : "cards";
+  stack._viewMode = initialMode;
+  stack.classList.toggle("discover-grid-mode", initialMode === "grid");
+  actionRow.hidden = initialMode === "grid";
+  cardsBtn.classList.toggle("active", initialMode === "cards");
+  gridBtn.classList.toggle("active", initialMode === "grid");
+  cardsBtn.setAttribute("aria-pressed", String(initialMode === "cards"));
+  gridBtn.setAttribute("aria-pressed", String(initialMode === "grid"));
+  refreshQuota();
+
+  return el("div", { class: "discover-viewbar" }, [
+    el("div", { class: "discover-quota" }, [
+      el("span", { class: "discover-quota-label" }, "Cupo de Explorar"),
+      quotaValue,
+      quotaUsed,
+    ]),
+    el("div", { class: "discover-view-switch", role: "group", "aria-label": "Vista de Explorar" }, [cardsBtn, gridBtn]),
+  ]);
+}
+
 function buildSwipeStack() {
   const stack = el("div", { class: "discover-stack", id: "swipeStack" });
   // Arranca vacío con un spinner; los perfiles reales llegan de /api/discover.
@@ -10665,25 +10749,33 @@ function buildSwipeStack() {
 async function loadDiscoverInto(stack, append = false) {
   const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
   const loaded = append ? stack._users.length : 0;
-  const remaining = limit === Infinity ? 12 : Math.max(0, limit - loaded);
+  const remaining = limit === Infinity ? 100 : Math.max(0, limit - loaded);
   if (remaining <= 0) {
-    stack._limitReached = true;
+    stack._limitReached = !!stack._hasMore;
     if (stack.isConnected) renderStack(stack);
     return;
   }
-  let users = await datingApi.discover(state.zone, Math.min(12, remaining));
+  // Pedimos un perfil adicional en planes con cupo. Ese registro centinela no
+  // se muestra, pero permite saber con certeza si existe contenido bloqueado y
+  // enseñar "Ver más perfiles" solo cuando corresponde.
+  const requestLimit = limit === Infinity ? 100 : Math.min(100, remaining + 1);
+  let users = await datingApi.discover(state.zone, requestLimit);
   if (!users || users.length === 0) {
     // V637 · Sin usuarios reales → vacío en la app real; demo solo en preview.
-    users = isPreviewMode() ? generateUsers(Math.min(6, remaining), { zone: state.zone }) : [];
+    const demoCount = limit === Infinity ? 18 : Math.min(remaining + 1, 18);
+    users = isPreviewMode() ? generateUsers(demoCount, { zone: state.zone }) : [];
   }
+  const hasMore = limit !== Infinity && users.length > remaining;
   if (limit !== Infinity) users = users.slice(0, remaining);
   if (append) {
-    stack._users = stack._users.concat(users);
+    const known = new Set(stack._users.map(u => String(u.id)));
+    stack._users = stack._users.concat(users.filter(u => !known.has(String(u.id))));
   } else {
     stack._users = users;
     stack._index = 0;
   }
-  stack._limitReached = limit !== Infinity && stack._users.length >= limit;
+  stack._hasMore = hasMore;
+  stack._limitReached = hasMore;
   // Sólo re-renderiza si el stack sigue en el DOM (el usuario no ha salido).
   if (stack.isConnected) renderStack(stack);
 }
@@ -10692,6 +10784,11 @@ function renderStack(stack) {
   stack.innerHTML = "";
   const users = stack._users;
   const start = stack._index;
+  try { if (stack._refreshQuota) stack._refreshQuota(); } catch {}
+  if (stack._viewMode === "grid") {
+    renderDiscoverGrid(stack);
+    return;
+  }
   if (start >= users.length) {
     const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
     const capped = limit !== Infinity && stack._limitReached;
@@ -10715,6 +10812,70 @@ function renderStack(stack) {
   }
   const top = stack.lastChild;
   bindSwipe(top, stack);
+}
+
+function renderDiscoverGrid(stack) {
+  const allUsers = Array.isArray(stack._users) ? stack._users : [];
+  const users = allUsers.slice(Math.max(0, Number(stack._index) || 0));
+  if (!users.length && !stack._hasMore) {
+    stack.appendChild(el("div", { class: "swipe-card-stack-hint" }, [
+      el("div", { class: "discover-grid-empty" }, [
+        el("strong", {}, "Aún no hay perfiles disponibles"),
+        el("small", {}, "Prueba a ampliar tus filtros o vuelve más tarde."),
+      ]),
+    ]));
+    return;
+  }
+
+  users.forEach(u => {
+    const li = locDistanceInfo(u);
+    const distance = li.off ? "Ubicación oculta" : (li.text || u.city || "Distancia no disponible");
+    const act = activityInfo(u);
+    const badges = [];
+    if (u.boosted) badges.push(el("span", { class: "discover-grid-badge boost", title: "Perfil impulsado" }, [
+      el("svg", { viewBox: "0 0 24 24", html: `<path fill="currentColor" d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/>` }),
+    ]));
+    if (hasNowStatus(u)) badges.push(el("span", { class: "discover-grid-badge now", title: "Busca algo ahora" }, [
+      el("svg", { viewBox: "0 0 24 24", html: `<path fill="currentColor" d="M12 2c2.8 3.2 5.8 5.7 5.8 9.7A5.8 5.8 0 116.2 12c0-2.1 1-4.1 2.8-5.9.2 2.1 1 3.4 2.1 4.2C10.7 7.2 11.1 4.5 12 2z"/>` }),
+    ]));
+    const card = el("button", {
+      class: "discover-grid-card", type: "button",
+      style: `--grid-photo:url('${u.photo}')`,
+      "aria-label": `Ver perfil de ${u.name || "esta persona"}`,
+    }, [
+      el("span", { class: "discover-grid-badges" }, badges),
+      act.show ? el("span", { class: "discover-grid-online " + (act.level === "online" ? "on" : "") }, [
+        el("span", { class: "discover-grid-dot" }),
+        act.level === "online" ? "En línea" : act.text,
+      ]) : null,
+      el("span", { class: "discover-grid-info" }, [
+        el("strong", {}, [
+          `${u.name || "Perfil"}${u.age != null ? ", " + u.age : ""}`,
+          u.verified ? el("span", { class: "discover-grid-verified", title: "Perfil verificado" }, "✓") : null,
+        ]),
+        el("small", { class: li.off ? "gps-off" : "" }, [
+          el("svg", { viewBox: "0 0 24 24", html: `<path fill="currentColor" d="M12 2a7 7 0 00-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 00-7-7zm0 9.5A2.5 2.5 0 1112 6.5a2.5 2.5 0 010 5z"/>` }),
+          distance,
+        ]),
+      ]),
+    ]);
+    card.addEventListener("click", () => openProfileDetail(u));
+    stack.appendChild(card);
+  });
+
+  if (stack._hasMore) {
+    const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
+    const more = el("button", { class: "discover-more-tile", type: "button" }, [
+      el("span", { class: "discover-more-icon", html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.5-3.1 2.4-5 5.5-5s5 1.9 5.5 5"/><path d="M18 8v6M15 11h6"/></svg>` }),
+      el("span", { class: "discover-more-copy" }, [
+        el("strong", {}, "Ver más perfiles"),
+        el("small", {}, `Has alcanzado los ${limit} perfiles de tu plan ${planLabel(getUserPlan())}`),
+      ]),
+      el("span", { class: "discover-more-arrow", "aria-hidden": "true" }, "›"),
+    ]);
+    more.addEventListener("click", () => openPlanLimitModal(null));
+    stack.appendChild(more);
+  }
 }
 
 function buildSwipeCard(u, depth = 0) {

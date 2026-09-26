@@ -1100,9 +1100,10 @@ img { max-width: 100%; display: block; }
 /* -------- Discover / Swipe cards -------- */
 .discover {
   padding: 12px 14px 16px;
-  min-height: 100%;
+  min-height: 0; height: 100%;
   display: flex; flex-direction: column;
 }
+.screen.screen-discover { height: 100%; min-height: 0; overflow: hidden; }
 .discover-topbar {
   display: flex; align-items: center; justify-content: space-between;
   gap: 10px;
@@ -1154,6 +1155,52 @@ img { max-width: 100%; display: block; }
   flex: 0 0 auto;
 }
 .discover-topbar .chip { margin: 0 auto; }
+/* V975 · Cupo visible + selector Tarjetas/Cuadrícula. Es una pieza compacta de
+   producto, no una copia de otras apps: superficie translúcida, acento Aura y
+   dos niveles de lectura claros incluso en pantallas estrechas. */
+.discover-viewbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: -2px 0 10px; padding: 7px 8px 7px 11px;
+  min-height: 48px; border-radius: 16px;
+  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 7px 22px rgba(0,0,0,.08);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+.discover-quota {
+  min-width: 0; display: grid; grid-template-columns: auto auto; align-items: baseline;
+  column-gap: 6px; row-gap: 1px; line-height: 1.12;
+}
+.discover-quota-label {
+  grid-column: 1 / -1; color: var(--text-muted) !important;
+  font-size: 9px; font-weight: 800; letter-spacing: .075em; text-transform: uppercase;
+}
+.discover-quota-value {
+  color: var(--text) !important; font-size: 12px; font-weight: 800;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.discover-quota-used {
+  color: var(--text-muted) !important; font-size: 10.5px; white-space: nowrap;
+}
+.discover-view-switch {
+  flex: 0 0 auto; display: inline-flex; gap: 3px; padding: 3px;
+  border-radius: 12px; background: color-mix(in srgb, var(--bg) 76%, transparent);
+  border: 1px solid var(--border);
+}
+.discover-view-btn {
+  min-width: 42px; height: 34px; padding: 0 8px; border: 0; border-radius: 9px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  background: transparent; color: var(--text-muted); cursor: pointer;
+  font: inherit; font-size: 10px; font-weight: 700;
+  transition: background .18s ease, color .18s ease, box-shadow .18s ease, transform .12s ease;
+}
+.discover-view-btn:active { transform: scale(.96); }
+.discover-view-btn.active {
+  color: #fff; background: var(--grad-brand);
+  box-shadow: 0 5px 14px color-mix(in srgb, var(--brand-1) 30%, transparent);
+}
+.discover-view-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.9; }
+.discover-view-btn span { color: inherit !important; }
 /* Spacer invisible del mismo ancho que el logo para que el chip quede
    perfectamente centrado sin necesidad de mostrar el texto "Aura". */
 .brand-topbar-spacer {
@@ -1163,6 +1210,16 @@ img { max-width: 100%; display: block; }
 }
 @media (max-width: 420px) and ((pointer: coarse) or (hover: none)) {
   .brand-topbar-spacer { width: 28px; height: 28px; }
+}
+@media (max-width: 390px) {
+  .discover-viewbar { gap: 7px; padding-left: 9px; }
+  .discover-quota { column-gap: 4px; }
+  .discover-quota-value { font-size: 11px; }
+  .discover-quota-used { font-size: 9.5px; }
+  .discover-view-btn { min-width: 35px; padding: 0 6px; font-size: 9px; }
+}
+@media (max-width: 340px) {
+  .discover-view-btn span { display: none; }
 }
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
@@ -1181,6 +1238,105 @@ img { max-width: 100%; display: block; }
   position: relative; flex: 1 1 auto; min-height: 0;
   margin: 0 auto; width: 100%;
 }
+/* Cuadrícula de Explorar: dos columnas legibles, separación real y datos de
+   distancia dentro de cada perfil. El contenedor mantiene el mismo sitio del
+   mazo y desplaza solo su contenido, sin mover la navegación inferior. */
+.discover-stack.discover-grid-mode {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: max-content; align-content: start; gap: 10px;
+  overflow-y: auto; overscroll-behavior: contain;
+  padding: 1px 2px 10px; scrollbar-width: none;
+}
+.discover-stack.discover-grid-mode::-webkit-scrollbar { display: none; }
+.discover.is-grid .discover-notices { display: none; }
+.discover-grid-card {
+  position: relative; min-width: 0; aspect-ratio: 3 / 4; padding: 0;
+  border: 0; border-radius: 18px; overflow: hidden; cursor: pointer;
+  color: #fff; text-align: left; background-image: var(--grid-photo);
+  background-size: cover; background-position: center;
+  box-shadow: 0 8px 22px rgba(0,0,0,.20);
+  isolation: isolate; transition: transform .18s ease, box-shadow .18s ease;
+}
+.discover-grid-card::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  background: linear-gradient(180deg, rgba(8,8,14,.05) 32%, rgba(8,8,14,.88) 100%);
+}
+.discover-grid-card::after {
+  content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none;
+  border-radius: inherit; padding: 1.5px;
+  background: linear-gradient(145deg, rgba(255,255,255,.30), color-mix(in srgb, var(--brand-1) 78%, transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+.discover-grid-card:hover, .discover-grid-card:focus-visible {
+  transform: translateY(-2px); box-shadow: 0 12px 28px rgba(0,0,0,.28);
+}
+.discover-grid-online {
+  position: absolute; z-index: 2; top: 8px; left: 8px;
+  max-width: calc(100% - 54px); display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 7px; border-radius: 999px; background: rgba(12,13,19,.62);
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+  color: rgba(255,255,255,.90) !important; font-size: 9px; font-weight: 700;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.discover-grid-dot { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; flex: 0 0 auto; }
+.discover-grid-online.on .discover-grid-dot { background: #24df86; box-shadow: 0 0 0 2px rgba(36,223,134,.22); }
+.discover-grid-badges {
+  position: absolute; z-index: 3; top: 8px; right: 8px;
+  display: inline-flex; gap: 4px;
+}
+.discover-grid-badge {
+  width: 25px; height: 25px; border-radius: 9px; display: grid; place-items: center;
+  color: #fff !important; background: rgba(12,13,19,.66);
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+  border: 1px solid rgba(255,255,255,.17);
+}
+.discover-grid-badge.boost { color: #d8a8ff !important; }
+.discover-grid-badge.now { color: #ff7f9d !important; }
+.discover-grid-badge svg { width: 14px; height: 14px; }
+.discover-grid-info {
+  position: absolute; z-index: 2; left: 10px; right: 10px; bottom: 10px;
+  display: grid; gap: 4px; color: #fff !important; text-shadow: 0 1px 4px rgba(0,0,0,.8);
+}
+.discover-grid-info strong {
+  min-width: 0; display: flex; align-items: center; gap: 5px;
+  color: #fff !important; font-size: 15px; line-height: 1.15;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.discover-grid-verified {
+  flex: 0 0 auto; width: 16px; height: 16px; border-radius: 50%;
+  display: inline-grid; place-items: center; background: #398af7;
+  color: #fff !important; font-size: 10px;
+}
+.discover-grid-info small {
+  min-width: 0; display: flex; align-items: center; gap: 4px;
+  color: rgba(255,255,255,.88) !important; font-size: 10.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.discover-grid-info small.gps-off { color: #ffd66b !important; }
+.discover-grid-info small svg { width: 12px; height: 12px; flex: 0 0 auto; }
+.discover-more-tile {
+  grid-column: 1 / -1; min-height: 86px; width: 100%; padding: 14px;
+  display: grid; grid-template-columns: 46px minmax(0,1fr) 22px;
+  align-items: center; gap: 12px; border-radius: 18px; cursor: pointer;
+  color: #fff; text-align: left; font: inherit;
+  border: 1px solid color-mix(in srgb, var(--brand-1) 55%, rgba(255,255,255,.2));
+  background:
+    radial-gradient(circle at 8% 15%, rgba(255,255,255,.20), transparent 38%),
+    linear-gradient(125deg, #d92f74 0%, #ed5a52 52%, #8151d8 115%);
+  box-shadow: 0 10px 26px rgba(217,47,116,.24);
+}
+.discover-more-icon {
+  width: 46px; height: 46px; border-radius: 15px; display: grid; place-items: center;
+  color: #fff !important; background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.23);
+}
+.discover-more-icon svg { width: 25px; height: 25px; }
+.discover-more-copy { min-width: 0; display: grid; gap: 3px; color: #fff !important; }
+.discover-more-copy strong { color: #fff !important; font-size: 14px; }
+.discover-more-copy small { color: rgba(255,255,255,.86) !important; font-size: 10.5px; line-height: 1.25; }
+.discover-more-arrow { color: #fff !important; font-size: 30px; font-weight: 300; line-height: 1; }
+.discover-grid-empty { display: grid; gap: 5px; text-align: center; padding: 28px 18px; }
+.discover-grid-empty small { color: var(--text-muted) !important; }
 .swipe-card {
   position: absolute; inset: 0;
   border-radius: 22px;
@@ -2413,15 +2569,25 @@ body.account-suspended .restriction-banner .rb-close {
 }
 .nearby-upgrade {
   grid-column: 1 / -1;
-  display: grid; gap: 4px; text-align: center;
-  padding: 12px 14px; margin-top: 4px;
-  background: linear-gradient(135deg, #ff3b6b 0%, #ff8a3b 100%);
+  display: grid; grid-template-columns: 44px minmax(0,1fr) 22px;
+  align-items: center; gap: 11px; text-align: left;
+  padding: 13px 14px; margin-top: 4px;
+  background:
+    radial-gradient(circle at 8% 15%, rgba(255,255,255,.20), transparent 38%),
+    linear-gradient(125deg, #d92f74 0%, #ed5a52 52%, #8151d8 115%);
   color: white; border: none; border-radius: 14px;
   cursor: pointer; font: inherit;
   box-shadow: 0 8px 22px rgba(255,59,107,.28);
 }
-.nearby-upgrade strong { font-size: 14px; }
-.nearby-upgrade small { opacity: .95; font-size: 12px; }
+.nearby-upgrade-icon {
+  width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center;
+  background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.22);
+}
+.nearby-upgrade-icon svg { width: 24px; height: 24px; }
+.nearby-upgrade-copy { min-width: 0; display: grid; gap: 3px; }
+.nearby-upgrade strong { font-size: 14px; color: #fff !important; }
+.nearby-upgrade small { opacity: .9; font-size: 11px; color: #fff !important; }
+.nearby-upgrade-arrow { font-size: 30px; font-weight: 300; line-height: 1; color: #fff !important; }
 
 /* Plan limit modal grid */
 .plan-limit-grid {
@@ -10692,6 +10858,11 @@ body.desktop-app .screen:not([data-section="nearby"]) > * {
 body.desktop-app .discover-stack-wrap {
   max-width: 460px; width: 100%;
   margin-left: auto; margin-right: auto;
+}
+body.desktop-app .discover.is-grid .discover-stack-wrap { max-width: 860px; }
+body.desktop-app .discover.is-grid .discover-stack.discover-grid-mode {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px; padding: 2px 4px 18px;
 }
 body.desktop-app .chat-list { max-width: 760px; margin-left: auto; margin-right: auto; }
 

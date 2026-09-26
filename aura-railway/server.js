@@ -10321,7 +10321,11 @@ app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
   const me = readMyUserId(req); // puede ser null (anónimo)
   const zone = req.query.zone === "lgtb" ? "lgtb" : "hetero";
-  const limit = Math.min(30, Math.max(1, parseInt(req.query.limit, 10) || 12));
+  // V975 · La cuadrícula de Explorar puede enseñar el cupo completo del plan
+  // (Gold llega a 80) y pide un registro centinela para saber si hay más. El
+  // cliente sigue aplicando el cupo efectivo; 100 es solo el techo técnico de
+  // una tanda y evita consultas sin límite.
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 12));
 
   // Filtros guardados del usuario (edad / género). Distancia se aplica sólo si hay coords.
   let f = {};
