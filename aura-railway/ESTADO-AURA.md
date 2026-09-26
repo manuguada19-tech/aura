@@ -1,6 +1,14 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V973**
+**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V974**
+
+### V974 (26/09/2026) — Ahora mismo y cupos de Explorar
+
+- «Ahora mismo» solo muestra perfiles que hayan publicado una frase vigente;
+  estar en línea o tener Boost ya no introduce un perfil en esa sección.
+- Explorar aplica los mismos cupos por plan que Cerca de ti: Free 10,
+  Premium 30, Gold 80 y Platinum sin límite. Al agotarlos muestra el plan
+  actual y el acceso a la comparación de planes.
 
 ### V973 (26/09/2026) — Legibilidad del mapa y plan real en facturación
 

@@ -4037,18 +4037,12 @@ function activityInfo(u) {
   return { show: true, level: "old", text: "Sin actividad reciente" };
 }
 
-// V865 · ¿"Buscando ahora"? = activa en los últimos ~15 min (online o
-// last_active_secs dentro de la ventana). Se usa en el mapa y en Buscar para el
-// chip "Buscan ahora". Ventana global para que ambos coincidan.
-// V866 · Además, un estado "Ahora mismo" declarado (now_status vigente) SIEMPRE
-// cuenta como "buscando ahora", aunque la persona no esté online justo ahora.
-const NOW_ACTIVE_WINDOW_SECS = 900; // 15 min
+// V974 · "Ahora mismo" es un estado voluntario y temporal, no un sinónimo de
+// estar conectado ni de tener Boost. Solo cuenta quien haya publicado una frase
+// vigente; así las secciones y filtros no atribuyen ese estado a usuarios online.
 function hasNowStatus(u) { return !!(u && u.now_status && u.now_status.text); }
 function searchingNow(u) {
-  if (!u) return false;
-  if (hasNowStatus(u)) return true;
-  if (u.online === true || u.online === 1) return true;
-  return u.last_active_secs != null && Number.isFinite(+u.last_active_secs) && +u.last_active_secs <= NOW_ACTIVE_WINDOW_SECS;
+  return hasNowStatus(u);
 }
 
 const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
@@ -8814,15 +8808,16 @@ function buildNowSection() {
     try {
       const users = await datingApi.nearby(state.zone, 60);
       if (!Array.isArray(users)) return;
-      // Prioriza estado declarado; luego online/actividad reciente.
-      const now = users.filter(searchingNow).sort((a, b) => (hasNowStatus(b) - hasNowStatus(a)));
+      // Solo estados "Ahora mismo" publicados y vigentes. Online y Boost son
+      // señales independientes y no hacen aparecer a nadie en esta sección.
+      const now = users.filter(searchingNow);
       if (!now.length) return;
       now.slice(0, 20).forEach(u => {
-        const nowText = hasNowStatus(u) ? u.now_status.text : (u.online ? "En línea" : "Activa hace poco");
-        const cardCls = "now-card" + (hasNowStatus(u) ? " declared" : "");
+        const nowText = u.now_status.text;
+        const cardCls = "now-card declared";
         const card = el("button", { class: cardCls, type: "button", onclick: () => openProfile(u) }, [
           el("div", { class: "now-card-ava", style: `background-image:url('${u.photo}')` }, [
-            hasNowStatus(u) ? el("span", { class: "now-card-bolt", html: `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }) : null,
+            el("span", { class: "now-card-bolt", html: `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
           ]),
           el("div", { class: "now-card-name" }, u.name || "Alguien"),
           el("div", { class: "now-card-text" }, nowText),
@@ -10615,11 +10610,12 @@ function getProfilesLimit() {
 }
 function openPlanLimitModal(hiddenCount) {
   const plan = getUserPlan();
+  const hiddenCopy = Number(hiddenCount) > 0 ? ` Hay ${Number(hiddenCount)} más esperando.` : "";
   const sheet = el("div", { class: "premium-lock-sheet" });
   sheet.appendChild(el("div", { class: "plm-hero" }, [
     el("div", { class: "plm-hero-ic", html: `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
     el("h3", { class: "plm-h" }, "Has alcanzado el límite de perfiles"),
-    el("p", { class: "plm-p" }, `Tu plan ${planLabel(plan)} permite ver hasta ${getProfilesLimit() === Infinity ? "∞" : getProfilesLimit()} perfiles. Hay ${hiddenCount} más cerca de ti esperando.`),
+    el("p", { class: "plm-p" }, `Tu plan ${planLabel(plan)} permite ver hasta ${getProfilesLimit() === Infinity ? "∞" : getProfilesLimit()} perfiles.${hiddenCopy}`),
   ]));
   const tiers = [
     { key: "premium",  label: "Premium",  limit: PLAN_PROFILE_LIMITS.premium,  price: "9,99 €/mes" },
@@ -10652,6 +10648,8 @@ function buildSwipeStack() {
   // Arranca vacío con un spinner; los perfiles reales llegan de /api/discover.
   stack._users = [];
   stack._index = 0;
+  stack._profileLimit = getProfilesLimit();
+  stack._limitReached = false;
   stack.appendChild(el("div", { class: "swipe-card-stack-hint", html: `
     <div style="text-align:center;padding:30px">
       <div style="font-size:40px">💫</div>
@@ -10665,17 +10663,27 @@ function buildSwipeStack() {
 // Carga perfiles reales en el stack. En la app real, si no hay usuarios
 // reales se deja vacío (empty state). Solo la vista previa del admin usa demo.
 async function loadDiscoverInto(stack, append = false) {
-  let users = await datingApi.discover(state.zone, 12);
+  const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
+  const loaded = append ? stack._users.length : 0;
+  const remaining = limit === Infinity ? 12 : Math.max(0, limit - loaded);
+  if (remaining <= 0) {
+    stack._limitReached = true;
+    if (stack.isConnected) renderStack(stack);
+    return;
+  }
+  let users = await datingApi.discover(state.zone, Math.min(12, remaining));
   if (!users || users.length === 0) {
     // V637 · Sin usuarios reales → vacío en la app real; demo solo en preview.
-    users = isPreviewMode() ? generateUsers(6, { zone: state.zone }) : [];
+    users = isPreviewMode() ? generateUsers(Math.min(6, remaining), { zone: state.zone }) : [];
   }
+  if (limit !== Infinity) users = users.slice(0, remaining);
   if (append) {
     stack._users = stack._users.concat(users);
   } else {
     stack._users = users;
     stack._index = 0;
   }
+  stack._limitReached = limit !== Infinity && stack._users.length >= limit;
   // Sólo re-renderiza si el stack sigue en el DOM (el usuario no ha salido).
   if (stack.isConnected) renderStack(stack);
 }
@@ -10685,15 +10693,17 @@ function renderStack(stack) {
   const users = stack._users;
   const start = stack._index;
   if (start >= users.length) {
+    const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
+    const capped = limit !== Infinity && stack._limitReached;
     stack.appendChild(el("div", { class: "swipe-card-stack-hint", html: `
       <div style="text-align:center;padding:30px">
-        <div style="font-size:44px">✨</div>
-        <b style="font-size:16px">Ya has visto todo por ahora</b>
-        <p style="margin:6px 0 14px;color:var(--text-muted);font-size:13px">Vuelve pronto o amplía tu radio de búsqueda.</p>
+        <div style="font-size:44px">${capped ? "🔒" : "✨"}</div>
+        <b style="font-size:16px">${capped ? `Has visto los ${limit} perfiles de tu plan` : "Ya has visto todo por ahora"}</b>
+        <p style="margin:6px 0 14px;color:var(--text-muted);font-size:13px">${capped ? `Tu plan ${planLabel(getUserPlan())} permite ver hasta ${limit} perfiles en Explorar.` : "Vuelve pronto o amplía tu radio de búsqueda."}</p>
       </div>
     `}));
     const btn = el("button", { class: "btn btn-outline btn-sm", style: "position:absolute;bottom:24px;left:50%;transform:translateX(-50%)",
-      onclick: () => { loadDiscoverInto(stack, false); }}, "Cargar más");
+      onclick: () => { capped ? openPlanLimitModal(null) : loadDiscoverInto(stack, false); }}, capped ? "Ver planes" : "Cargar más");
     stack.appendChild(btn);
     return;
   }
