@@ -1,6 +1,14 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V976**
+**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V977**
+
+### V977 (26/09/2026) — Contador real de perfiles vistos
+
+- Abrir un perfil desde Tarjetas o Cuadrícula incrementa «vistos» y el valor se
+  conserva al volver a Explorar durante la sesión.
+- Descartar, dar Like o Super Like también registra el perfil como visto.
+- Un mismo perfil solo suma una vez y las cuentas abiertas en el mismo
+  dispositivo no comparten el contador.
 
 ### V976 (26/09/2026) — Cupo Platinum legible
 

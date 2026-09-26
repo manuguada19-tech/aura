@@ -1883,6 +1883,10 @@ const state = {
     nsfwOnly: false, notChattedToday: false,
   },
   favorites: new Set(),
+  // V977 · Perfiles consultados en Explorar durante esta sesión. Incluimos el
+  // usuario dueño de la sesión en la clave para no mezclar cuentas si alguien
+  // cierra sesión y entra con otra sin recargar la PWA.
+  discoverSeenKeys: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
   cardIndex: 0,
   chatOpen: null,
@@ -10548,6 +10552,25 @@ function planLabel(key) {
   const map = { free: "Free", premium: "Premium", gold: "Gold", platinum: "Platinum" };
   return map[key] || "Free";
 }
+function discoverSeenKey(u) {
+  const owner = state.user && state.user.id != null ? String(state.user.id) : "anon";
+  const profile = u && u.id != null
+    ? String(u.id)
+    : `${u && u.name || "perfil"}|${u && u.photo || ""}`;
+  return `${owner}:${profile}`;
+}
+function getDiscoverSeenCount() {
+  const owner = state.user && state.user.id != null ? String(state.user.id) : "anon";
+  const prefix = owner + ":";
+  let count = 0;
+  state.discoverSeenKeys.forEach(k => { if (String(k).startsWith(prefix)) count++; });
+  return count;
+}
+function markDiscoverProfileSeen(u, stack) {
+  if (!u) return;
+  state.discoverSeenKeys.add(discoverSeenKey(u));
+  try { if (stack && stack._refreshQuota) stack._refreshQuota(); } catch {}
+}
 // V801 · Sincroniza el plan REAL del usuario desde el servidor. Las distintas
 // vías de login (email, OTP, 2FA, huella, social, beta admin) guardaban
 // state.user SIN el campo `plan`, por lo que getUserPlan() devolvía siempre
@@ -10677,11 +10700,12 @@ function buildDiscoverViewBar(stack, actionRow) {
 
   function refreshQuota() {
     const loaded = Array.isArray(stack._users) ? stack._users.length : 0;
-    const seen = Math.min(Number(stack._index) || 0, loaded);
+    const seenTotal = getDiscoverSeenCount();
+    const seen = limit === Infinity ? seenTotal : Math.min(seenTotal, limit);
     if (limit === Infinity) {
       quotaUsed.textContent = stack._viewMode === "grid"
         ? `${Math.max(0, loaded - seen)} disponibles ahora`
-        : `${seen} vistos · sin límite`;
+        : `${seen} ${seen === 1 ? "visto" : "vistos"} · sin límite`;
     } else {
       quotaUsed.textContent = stack._viewMode === "grid"
         ? `${Math.max(0, loaded - seen)} disponibles · ${seen}/${limit} vistos`
@@ -10859,7 +10883,10 @@ function renderDiscoverGrid(stack) {
         ]),
       ]),
     ]);
-    card.addEventListener("click", () => openProfileDetail(u));
+    card.addEventListener("click", () => {
+      markDiscoverProfileSeen(u, stack);
+      openProfileDetail(u);
+    });
     stack.appendChild(card);
   });
 
@@ -10934,7 +10961,11 @@ function buildSwipeCard(u, depth = 0) {
     class: "swipe-info-btn",
     type: "button",
     "aria-label": "Ver perfil completo",
-    onclick: (ev) => { ev.stopPropagation(); openProfileDetail(u); },
+    onclick: (ev) => {
+      ev.stopPropagation();
+      markDiscoverProfileSeen(u, card.closest(".discover-stack"));
+      openProfileDetail(u);
+    },
     html: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg><span class="swipe-info-txt">Ver perfil</span>`
   });
   card.appendChild(infoBtn);
@@ -11025,6 +11056,8 @@ function fly(card, dir, stack) {
   card.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
   card.style.opacity = "0";
   const currentUser = stack._users[stack._index];
+  // Descartar, dar like o Super Like también implica haber visto esa tarjeta.
+  markDiscoverProfileSeen(currentUser, stack);
   // Registra la reacción en el servidor (like/super/pass) para usuarios reales.
   const type = dir === "up" ? "super" : dir === "right" ? "like" : "pass";
   reactToUser(currentUser, type, dir);
