@@ -18336,6 +18336,22 @@ function createAuraAdminGLMap(GL,container,opts) {
   container.classList.add("admin-navigation-map","admin-maplibre");
   const map=new GL.Map({container,style:"https://tiles.openfreemap.org/styles/liberty",center:[opts.lng,opts.lat],zoom:opts.zoom||14,pitch:48,bearing:-8,antialias:true,attributionControl:true});
   map.addControl(new GL.NavigationControl({visualizePitch:true}),"bottom-right");
+  const dimensionBtn=document.createElement("button");
+  dimensionBtn.type="button";
+  dimensionBtn.className="admin-map-dimension-toggle";
+  dimensionBtn.textContent="2D";
+  dimensionBtn.title="Cambiar a mapa 2D";
+  dimensionBtn.setAttribute("aria-label",dimensionBtn.title);
+  dimensionBtn.setAttribute("aria-pressed","false");
+  dimensionBtn.addEventListener("click",()=>{
+    const switchTo2D=map.getPitch()>1||Math.abs(map.getBearing())>1;
+    map.easeTo({pitch:switchTo2D?0:48,bearing:switchTo2D?0:-8,duration:550});
+    dimensionBtn.textContent=switchTo2D?"3D":"2D";
+    dimensionBtn.title=switchTo2D?"Cambiar a mapa 3D":"Cambiar a mapa 2D";
+    dimensionBtn.setAttribute("aria-label",dimensionBtn.title);
+    dimensionBtn.setAttribute("aria-pressed",switchTo2D?"true":"false");
+  });
+  container.appendChild(dimensionBtn);
   const pin=document.createElement("span");pin.className="admin-nav-pin-wrap";pin.innerHTML=`<span class="admin-nav-pin ${opts.kind==="ip"?"ip":"gps"}"><i>${opts.kind==="ip"?"IP":"GPS"}</i></span>`;
   const marker=new GL.Marker({element:pin,anchor:"bottom"}).setLngLat([opts.lng,opts.lat]).addTo(map);
   if(opts.popup) marker.setPopup(new GL.Popup({offset:32,closeButton:false}).setHTML(opts.popup)).togglePopup();

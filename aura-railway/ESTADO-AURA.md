@@ -1,6 +1,16 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V972**
+**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V973**
+
+### V973 (26/09/2026) — Legibilidad del mapa y plan real en facturación
+
+- Los mapas de la app y del panel fuerzan contraste legible en las fichas y en
+  los controles de zoom; los símbolos `+` y `−` ya no se pierden en tema oscuro.
+- Ambos mapas incorporan un selector visible 2D/3D que restablece también la
+  orientación al entrar en 2D.
+- Perfil → Pagos y facturas lee el plan efectivo desde `users.plan`, igual que
+  el panel administrativo, y sincroniza el resto de la sesión. Un Platinum
+  asignado sin suscripción Stripe ya no aparece como Free.
 
 ### V972 (26/09/2026) — Migración real a MapLibre GL
 

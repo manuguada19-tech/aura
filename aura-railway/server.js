@@ -18128,6 +18128,10 @@ app.get("/api/my/billing", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
 
+  // V973 · El plan efectivo vive en users.plan. Una cuenta puede tener un plan
+  // asignado por administración, una migración o una promoción sin una fila de
+  // suscripción Stripe; en ese caso la pantalla no debe degradarla a Free.
+  const [[account]] = await pool.query("SELECT plan FROM users WHERE id=? LIMIT 1", [me]);
   const [subs] = await pool.query(
     `SELECT s.id, s.status, s.period, s.started_at, s.renew_at, s.cancelled_at,
             s.cancel_at_period_end, s.current_period_end, s.stripe_subscription_id,
@@ -18161,6 +18165,12 @@ app.get("/api/my/billing", wrap(async (req, res) => {
   res.json({
     ok: true,
     stripe_enabled: stripeEnabled(),
+    current_plan: (() => {
+      const labels = { free: "Free", premium: "Premium", gold: "Gold", platinum: "Platinum" };
+      const raw = String((account && account.plan) || (subs[0] && subs[0].plan_code) || "free").toLowerCase();
+      const code = Object.prototype.hasOwnProperty.call(labels, raw) ? raw : "free";
+      return { code, name: labels[code] };
+    })(),
     subscription: subs[0] || null,
     payments: payments.map((p) => ({
       ...p,

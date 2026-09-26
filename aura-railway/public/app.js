@@ -9293,6 +9293,24 @@ async function openNearbyMap() {
     maxZoom: 18,
   }).setView([start.lat, start.lng], 17);
   mapEl.appendChild(el("div", { class: "map-provider-credit" }, "© OpenFreeMap · © OpenStreetMap"));
+  const dimensionBtn = el("button", {
+    class: "map-dimension-toggle",
+    type: "button",
+    title: "Cambiar a mapa 2D",
+    "aria-label": "Cambiar a mapa 2D",
+    "aria-pressed": "false",
+  }, "2D");
+  dimensionBtn.addEventListener("click", () => {
+    const glMap = map.map;
+    if (!glMap) return;
+    const switchTo2D = glMap.getPitch() > 1 || Math.abs(glMap.getBearing()) > 1;
+    glMap.easeTo({ pitch: switchTo2D ? 0 : 48, bearing: switchTo2D ? 0 : -8, duration: 550 });
+    dimensionBtn.textContent = switchTo2D ? "3D" : "2D";
+    dimensionBtn.title = switchTo2D ? "Cambiar a mapa 3D" : "Cambiar a mapa 2D";
+    dimensionBtn.setAttribute("aria-label", dimensionBtn.title);
+    dimensionBtn.setAttribute("aria-pressed", switchTo2D ? "true" : "false");
+  });
+  mapEl.appendChild(dimensionBtn);
   mapEl.appendChild(el("div", { class: "map-nav-compass", title: "Norte" }, [
     el("span", {}, "N"),
     el("svg", { viewBox:"0 0 20 20", width:"16", height:"16", html:'<path d="M10 2l4.2 12L10 11.7 5.8 14z" fill="currentColor"/>' }),
@@ -17592,14 +17610,31 @@ function screenBilling(root) {
         el("span", {}, "Consulta movimientos, descarga documentos, recupera pagos y controla la renovación."),
       ]));
       const sub = data.subscription;
+      const currentPlanCode = String((data.current_plan && data.current_plan.code) || (sub && sub.plan_code) || getUserPlan() || "free").toLowerCase();
+      const currentPlanName = (data.current_plan && data.current_plan.name) || planLabel(currentPlanCode);
+      const hasPaidPlan = currentPlanCode !== "free";
+      // La respuesta de facturación procede de users.plan, la misma fuente de
+      // verdad que usa el panel. Mantiene también el resto de la app sincronizado.
+      if (state.user && currentPlanCode) {
+        state.user.plan = currentPlanCode;
+        try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+        try { updateMeTierBadge(); } catch {}
+      }
       const subCard = el("section", { class: "billing-card subscription-summary" });
       subCard.appendChild(el("div", { class: "billing-section-head" }, [
-        el("div", {}, [el("small", {}, "SUSCRIPCIÓN"), el("h3", {}, sub ? (sub.plan_name || planLabel(sub.plan_code || "")) : "Plan Free")]),
-        (() => { const st = statusInfo(sub ? sub.status : "active"); return el("span", { class:"billing-status " + st[1] }, sub ? st[0] : "Sin renovación"); })(),
+        el("div", {}, [el("small", {}, "PLAN ACTUAL"), el("h3", {}, "Plan " + currentPlanName)]),
+        (() => {
+          if (!sub) return el("span", { class:"billing-status " + (hasPaidPlan ? "ok" : "muted") }, hasPaidPlan ? "Activo" : "Sin renovación");
+          const st = statusInfo(sub.status); return el("span", { class:"billing-status " + st[1] }, st[0]);
+        })(),
       ]));
       if (!sub) {
-        subCard.appendChild(el("p", { class:"billing-note" }, "No tienes una suscripción de pago activa."));
-        subCard.appendChild(el("button", { class:"btn btn-brand btn-block", onclick:() => render(screenSubscriptions) }, "Ver planes"));
+        if (hasPaidPlan) {
+          subCard.appendChild(el("p", { class:"billing-note" }, "Tu plan " + currentPlanName + " está activo y no tiene una renovación automática asociada."));
+        } else {
+          subCard.appendChild(el("p", { class:"billing-note" }, "No tienes una suscripción de pago activa."));
+          subCard.appendChild(el("button", { class:"btn btn-brand btn-block", onclick:() => render(screenSubscriptions) }, "Ver planes"));
+        }
       } else {
         const end = sub.current_period_end || sub.renew_at;
         subCard.appendChild(el("div", { class:"billing-sub-grid" }, [

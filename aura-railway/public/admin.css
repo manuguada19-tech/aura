@@ -3693,8 +3693,22 @@ textarea.input { resize: vertical; min-height: 60px; }
 .admin-maplibre .maplibregl-canvas { filter:saturate(.88) contrast(1.08) brightness(.68); }
 [data-theme="light"] .admin-maplibre .maplibregl-canvas { filter:saturate(.98) contrast(1.02) brightness(1.02); }
 .admin-maplibre .maplibregl-ctrl-group { border:0;border-radius:12px;overflow:hidden;background:rgba(17,24,39,.9);box-shadow:0 8px 22px rgba(0,0,0,.28); }
-.admin-maplibre .maplibregl-ctrl-group button { width:34px;height:34px; }
+.admin-maplibre .maplibregl-ctrl-group button { width:34px;height:34px;background:#111827;color:#fff; }
+.admin-maplibre .maplibregl-ctrl-group button:hover { background:#202a3b; }
+.admin-maplibre .maplibregl-ctrl-icon { filter:invert(1) brightness(1.8);opacity:1; }
+[data-theme="light"] .admin-maplibre .maplibregl-ctrl-group button { background:#fff;color:#111827; }
+[data-theme="light"] .admin-maplibre .maplibregl-ctrl-icon { filter:none; }
 .admin-maplibre .maplibregl-ctrl-attrib { font-size:8px;background:rgba(255,255,255,.72); }
+.admin-maplibre .maplibregl-popup-content {
+  min-width:190px;padding:14px 16px;border-radius:14px;background:#fff;color:#111827!important;
+  box-shadow:0 12px 34px rgba(15,23,42,.3);font-size:13px;line-height:1.45;
+}
+.admin-maplibre .maplibregl-popup-content * { color:inherit!important;opacity:1!important; }
+.admin-maplibre .maplibregl-popup-close-button { color:#111827!important;font-size:20px;line-height:24px; }
+.admin-maplibre .maplibregl-popup-anchor-bottom .maplibregl-popup-tip { border-top-color:#fff; }
+.admin-maplibre .maplibregl-popup-anchor-top .maplibregl-popup-tip { border-bottom-color:#fff; }
+.admin-maplibre .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color:#fff; }
+.admin-maplibre .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color:#fff; }
 .admin-navigation-map::after {
   content:""; position:absolute; inset:0; z-index:650; pointer-events:none;
   box-shadow:inset 0 18px 30px rgba(4,7,18,.2),inset 0 -28px 45px rgba(4,7,18,.3);
@@ -3704,6 +3718,12 @@ textarea.input { resize: vertical; min-height: 60px; }
   background:rgba(8,11,22,.62);color:rgba(255,255,255,.72);font-size:8px;letter-spacing:.04em;
   backdrop-filter:blur(5px);pointer-events:none;
 }
+.admin-map-dimension-toggle {
+  position:absolute;right:12px;top:12px;z-index:900;min-width:42px;height:36px;padding:0 10px;
+  border:1px solid rgba(255,255,255,.2);border-radius:12px;background:rgba(17,24,39,.92);
+  color:#fff;font-size:12px;font-weight:900;box-shadow:0 8px 22px rgba(0,0,0,.3);backdrop-filter:blur(10px);
+}
+.admin-map-dimension-toggle:active { transform:scale(.96); }
 .admin-nav-pin-wrap,.aura-marker { background:none!important;border:0!important; }
 .admin-nav-pin {
   width:38px;height:38px;display:grid;place-items:center;position:relative;border-radius:50% 50% 50% 10%;

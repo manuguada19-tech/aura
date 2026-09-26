@@ -30,7 +30,7 @@
 // conservara la composición móvil hasta el siguiente ciclo de versión.
 // V970 · La pantalla de Pagos y facturas añade JS y CSS nuevos. Cambiar la
 // versión fuerza a las PWA ya instaladas a recibirlos sin recarga manual.
-const CACHE_VERSION = "aura-v99"; // V972 · migración real del mapa a MapLibre GL
+const CACHE_VERSION = "aura-v100"; // V973 · contraste, selector 2D/3D y plan de facturación real
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
