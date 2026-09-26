@@ -1605,7 +1605,8 @@
         }
         const L = window.L;
         const map = L.map("fx-adminHeatmap").setView([40.4, -3.7], 5);
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap" }).addTo(map);
+        if (typeof addAuraAdminMapTiles === "function") addAuraAdminMapTiles(L, map);
+        else L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom:16, maxZoom:18 }).addTo(map);
         points.forEach((p) => {
           L.circle([p.lat, p.lng], { radius: 500 + Math.log2((p.hits||1)+1) * 300, color: "#ff3b6b", fillOpacity: 0.35, weight: 1 }).addTo(map).bindPopup(`<b>${p.hits}</b> pings<br/>Última: ${fmtDate(p.last_seen)}`);
         });

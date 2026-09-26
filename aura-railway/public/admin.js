@@ -5511,13 +5511,13 @@ async function openUserDrawer(id, onChange) {
             if (!container) return;
             userMapObj = L.map(container, { zoomControl: true, attributionControl: false })
               .setView([mapLat, mapLng], useGps ? 15 : 12);
-            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(userMapObj);
+            addAuraAdminMapTiles(L, userMapObj);
             // Marcador principal (GPS o IP)
             const mq = useGps ? gpsQuality(gps) : null;
             const mainIcon = L.divIcon({
               className: "aura-marker " + (useGps ? "aura-marker-gps" : "aura-marker-ip"),
-              html: useGps ? (mq.good ? "📍" : "⚠️") : "🌐",
-              iconSize: [34, 34], iconAnchor: [17, 17],
+              html: `<span class="admin-nav-pin ${useGps ? "gps" : "ip"}"><i>${useGps ? (mq.good ? "GPS" : "±GPS") : "IP"}</i></span>`,
+              iconSize: [42, 50], iconAnchor: [21, 46],
             });
             userMapMarker = L.marker([mapLat, mapLng], { icon: mainIcon }).addTo(userMapObj);
             const popupHtml = useGps
@@ -18340,6 +18340,28 @@ async function _deprecated_viewLiveMonitor_v409(root) {
    - Auto-refresh cada 5s (lista) y 4s (chat abierto).
    ============================================================ */
 let __moderationReasons = null;
+// V971 · Cartografía común del panel: base y etiquetas Esri con tratamiento
+// visual tipo navegador GPS. Evita que cada módulo use un mapa OSM distinto.
+function addAuraAdminMapTiles(L, map) {
+  const dark = (document.documentElement.getAttribute("data-theme") || "dark") === "dark";
+  const tone = dark ? "Dark" : "Light";
+  const root = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_" + tone + "_Gray_";
+  L.tileLayer(root + "Base/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom:16, maxZoom:18 }).addTo(map);
+  L.tileLayer(root + "Reference/MapServer/tile/{z}/{y}/{x}", { maxNativeZoom:16, maxZoom:18 }).addTo(map);
+  const c = map.getContainer();
+  c.classList.add("admin-navigation-map");
+  const credit = document.createElement("span");
+  credit.className = "admin-map-credit"; credit.textContent = "© Esri"; c.appendChild(credit);
+  return map;
+}
+function auraAdminMapIcon(L, kind) {
+  const ip = kind === "ip";
+  return L.divIcon({
+    className:"admin-nav-pin-wrap",
+    html:`<span class="admin-nav-pin ${ip ? "ip" : "gps"}"><i>${ip ? "IP" : "GPS"}</i></span>`,
+    iconSize:[42,50], iconAnchor:[21,46], popupAnchor:[0,-43],
+  });
+}
 async function _loadModerationReasons() {
   if (__moderationReasons) return __moderationReasons;
   try {
@@ -18539,17 +18561,22 @@ async function renderLiveMonitorTab(root) {
     ]);
     box.appendChild(devPanel);
 
-    // Map
-    if (u.geo && u.geo.lat != null && u.geo.lon != null) {
+    // Mapa: prioriza GPS consentido; la IP queda como respaldo orientativo.
+    const liveGps = u.gps && u.gps.consent_given && u.gps.lat != null && u.gps.lng != null;
+    const liveLat = liveGps ? u.gps.lat : u.geo?.lat;
+    const liveLng = liveGps ? u.gps.lng : u.geo?.lon;
+    if (liveLat != null && liveLng != null) {
       const mapId = "lv2map_" + u.user.id + "_" + Date.now();
       const mapEl = el("div", { class: "lv2-map", id: mapId });
       box.appendChild(mapEl);
       _ensureLeaflet().then(L => {
         if (!L) return;
         try {
-          const m = L.map(mapId, { zoomControl: false, attributionControl: false }).setView([u.geo.lat, u.geo.lon], 11);
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(m);
-          L.marker([u.geo.lat, u.geo.lon]).addTo(m).bindPopup(`${u.user.name || ""}<br>${u.geo.city || ""}, ${u.geo.country || ""}`);
+          const m = L.map(mapId, { zoomControl: false, attributionControl: false }).setView([liveLat, liveLng], liveGps ? 15 : 11);
+          addAuraAdminMapTiles(L, m);
+          L.marker([liveLat, liveLng], { icon:auraAdminMapIcon(L, liveGps ? "gps" : "ip") }).addTo(m)
+            .bindPopup(`${u.user.name || ""}<br>${liveGps ? "GPS real consentido" : "Ubicación aproximada por IP"}`);
+          if (liveGps && u.gps.accuracy) L.circle([liveLat, liveLng], { radius:u.gps.accuracy, color:"#ff496f", weight:1, fillOpacity:.1 }).addTo(m);
         } catch {}
       });
     }
@@ -20119,7 +20146,7 @@ async function openHeatmap() {
     const L = await _ensureLeaflet();
     if (!L) { container.textContent = "No se pudo cargar el mapa (Leaflet)."; return; }
     const map = L.map(container).setView([40, -3], 3);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "OSM" }).addTo(map);
+    addAuraAdminMapTiles(L, map);
     const pts = await api.get("/api/stats/geo-points");
     (pts.items || []).forEach(p => {
       L.circleMarker([p.lat, p.lng], { radius: Math.min(15, Math.max(3, Math.sqrt(p.count))), color: "#ff5a8a", weight: 1, fillOpacity: .6 }).addTo(map);
@@ -21284,10 +21311,10 @@ async function viewDeviceIncidents(root) {
             body.appendChild(mapDiv);
             setTimeout(() => {
               const map = L.map(mapDiv).setView([trail.points[0].lat, trail.points[0].lng], 14);
-              L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
+              addAuraAdminMapTiles(L, map);
               const latlngs = trail.points.map(p => [p.lat, p.lng]);
               L.polyline(latlngs, { color: "#dc2626", weight: 3 }).addTo(map);
-              L.marker(latlngs[0]).addTo(map).bindPopup("Última posición");
+              L.marker(latlngs[0], { icon:auraAdminMapIcon(L, "gps") }).addTo(map).bindPopup("Última posición");
             }, 100);
           }
         }

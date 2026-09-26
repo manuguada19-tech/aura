@@ -9104,7 +9104,7 @@ async function openNearbyMap() {
   ]);
   overlay.appendChild(filterbar);
 
-  const mapEl = el("div", { class: "map-canvas", id: "nearbyMapCanvas" });
+  const mapEl = el("div", { class: "map-canvas aura-navigation-map", id: "nearbyMapCanvas" });
   overlay.appendChild(mapEl);
 
   // V764 · Buscador por ciudad/provincia (geocodificación sin clave con
@@ -9251,6 +9251,15 @@ async function openNearbyMap() {
   // permite acercar más (Leaflet re-escala las teselas del nivel 16), de modo
   // que el punto azul se ve a nivel de calle sin huecos grises.
   const tileLayer = L.tileLayer(tileUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
+  const labelUrl = dark
+    ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+    : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
+  const labelLayer = L.tileLayer(labelUrl, { maxNativeZoom: 16, maxZoom: 18, attribution: "" }).addTo(map);
+  mapEl.appendChild(el("div", { class: "map-provider-credit" }, "© Esri"));
+  mapEl.appendChild(el("div", { class: "map-nav-compass", title: "Norte" }, [
+    el("span", {}, "N"),
+    el("svg", { viewBox:"0 0 20 20", width:"16", height:"16", html:'<path d="M10 2l4.2 12L10 11.7 5.8 14z" fill="currentColor"/>' }),
+  ]));
 
   const markers = L.layerGroup().addTo(map);
 
@@ -10025,7 +10034,11 @@ async function openNearbyMap() {
     const url = nowDark
       ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}"
       : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}";
+    const labels = nowDark
+      ? "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}"
+      : "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
     try { tileLayer.setUrl(url); } catch {}
+    try { labelLayer.setUrl(labels); } catch {}
     paintMapThemeBtn();
   });
 

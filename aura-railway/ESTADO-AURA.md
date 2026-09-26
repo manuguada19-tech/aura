@@ -1,6 +1,16 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 22 septiembre 2026 · última versión preparada: V970**
+**Fecha de este resumen: 25 septiembre 2026 · última versión preparada: V971**
+
+### V971 (25/09/2026) — Mapas con estética de navegador GPS
+
+- «Cerca de ti» conserva su privacidad y lógica, pero añade cartografía Esri
+  con capa de etiquetas, contraste de navegación, profundidad, brújula y crédito.
+- Los mapas de administración comparten el mismo estilo claro/oscuro, marcadores
+  diferenciados GPS/IP y círculos de precisión; el monitor prioriza GPS
+  consentido sobre la ubicación aproximada por IP.
+- Mapas de distribución, calor y rastros GPS dejan de mezclar estilos OSM y
+  utilizan la misma presentación visual de Aura.
 
 ### V970 (22/09/2026) — Pagos y facturas autoservicio
 

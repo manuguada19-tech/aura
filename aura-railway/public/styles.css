@@ -9989,6 +9989,28 @@ body.map-open { overflow: hidden; }
    (z-index 30) ni la leyenda. Antes, al inicializarse Leaflet, esos paneles
    subían por encima y "hacían desaparecer" el buscador tras cargar el mapa. */
 .map-canvas { position: relative; z-index: 0; flex: 1; width: 100%; min-height: 0; background: var(--bg); }
+/* V971 · Estética de navegador GPS: cartografía más legible, profundidad en
+   bordes y controles propios sin alterar coordenadas ni precisión. */
+.aura-navigation-map { isolation:isolate; }
+.aura-navigation-map .leaflet-tile-pane { filter:saturate(.72) contrast(1.13) brightness(.82); }
+[data-theme="light"] .aura-navigation-map .leaflet-tile-pane { filter:saturate(.82) contrast(1.08) brightness(1.04); }
+.aura-navigation-map::after {
+  content:""; position:absolute; inset:0; z-index:650; pointer-events:none;
+  box-shadow:inset 0 22px 34px rgba(4,7,18,.22), inset 0 -34px 55px rgba(4,7,18,.28);
+}
+.map-provider-credit {
+  position:absolute; left:7px; bottom:5px; z-index:850; padding:2px 6px;
+  border-radius:5px; color:rgba(255,255,255,.72); background:rgba(8,11,22,.58);
+  font-size:8px; letter-spacing:.04em; backdrop-filter:blur(5px); pointer-events:none;
+}
+.map-nav-compass {
+  position:absolute; right:14px; top:14px; z-index:850; width:39px; height:39px;
+  display:grid; place-items:center; border-radius:13px; color:#ff496f;
+  background:color-mix(in srgb,var(--surface) 86%,transparent); border:1px solid color-mix(in srgb,var(--border) 70%,transparent);
+  box-shadow:0 8px 24px rgba(0,0,0,.25); backdrop-filter:blur(12px); pointer-events:none;
+}
+.map-nav-compass span { position:absolute; top:2px; font-size:8px; font-weight:900; color:var(--text); }
+.map-nav-compass svg { margin-top:7px; filter:drop-shadow(0 2px 3px rgba(255,59,107,.35)); }
 
 /* V832 · Marcador FIJO en el centro del lienzo = centro de la zona de búsqueda.
    El círculo rosa se centra siempre en el centro del mapa; al panear (arrastrar)

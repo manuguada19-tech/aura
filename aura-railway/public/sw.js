@@ -30,7 +30,7 @@
 // conservara la composición móvil hasta el siguiente ciclo de versión.
 // V970 · La pantalla de Pagos y facturas añade JS y CSS nuevos. Cambiar la
 // versión fuerza a las PWA ya instaladas a recibirlos sin recarga manual.
-const CACHE_VERSION = "aura-v97";
+const CACHE_VERSION = "aura-v98"; // V971 · nueva cartografía visual de app y panel
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
