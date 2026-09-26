@@ -1,6 +1,12 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V975**
+**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V976**
+
+### V976 (26/09/2026) — Cupo Platinum legible
+
+- La tarjeta superior de Explorar abrevia el cupo ilimitado como
+  «Platinum · ∞ perfiles» y reserva espacio prioritario al nombre del plan;
+  el texto ya no se corta en móviles estrechos.
 
 ### V975 (26/09/2026) — Cuadrícula y cupo visible de perfiles
 

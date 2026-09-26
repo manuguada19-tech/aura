@@ -10662,7 +10662,7 @@ function buildDiscoverViewBar(stack, actionRow) {
   const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
   const plan = planLabel(getUserPlan());
   const quotaValue = el("strong", { class: "discover-quota-value" },
-    limit === Infinity ? `${plan} · perfiles ilimitados` : `${plan} · ${limit} perfiles`);
+    limit === Infinity ? `${plan} · ∞ perfiles` : `${plan} · ${limit} perfiles`);
   const quotaUsed = el("span", { class: "discover-quota-used", "aria-live": "polite" }, "Cargando…");
   const cardsBtn = el("button", {
     class: "discover-view-btn", type: "button", "aria-label": "Ver como tarjetas",

@@ -1168,8 +1168,8 @@ img { max-width: 100%; display: block; }
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }
 .discover-quota {
-  min-width: 0; display: grid; grid-template-columns: auto auto; align-items: baseline;
-  column-gap: 6px; row-gap: 1px; line-height: 1.12;
+  min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: baseline;
+  row-gap: 1px; line-height: 1.08;
 }
 .discover-quota-label {
   grid-column: 1 / -1; color: var(--text-muted) !important;
@@ -1177,10 +1177,11 @@ img { max-width: 100%; display: block; }
 }
 .discover-quota-value {
   color: var(--text) !important; font-size: 12px; font-weight: 800;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .discover-quota-used {
-  color: var(--text-muted) !important; font-size: 10.5px; white-space: nowrap;
+  min-width: 0; color: var(--text-muted) !important; font-size: 10.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .discover-view-switch {
   flex: 0 0 auto; display: inline-flex; gap: 3px; padding: 3px;
