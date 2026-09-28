@@ -4476,7 +4476,15 @@ function showApp() {
   // Ensure the current user is registered in DB for real chat + start heartbeat.
   // Auth.refresh() consigue un token de sesión firmado de forma silenciosa para
   // las sesiones antiguas que aún no lo tienen (migración previa al modo estricto).
-  (async () => { try { await chatApi.ensure(); await Auth.refresh(); startHeartbeat(); await syncUserPlan(); } catch {} })();
+  (async () => {
+    try {
+      await chatApi.ensure();
+      await Auth.refresh();
+      startHeartbeat();
+      await syncUserPlan();
+      await syncOwnIdentityForFilters(true); // V984 · filtros acordes al género/orientación propios
+    } catch {}
+  })();
   // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
   setTimeout(() => { try { maybePromptForPush(); } catch {} }, 2500);
   // Función 5 · Aviso de retorno de pago (Stripe). El plan/los créditos los
@@ -11871,6 +11879,59 @@ const GENDER_FILTER_OPTS = {
     { label: "Género fluido", value: "Género fluido" },
   ],
 };
+
+// V984 · Algunas orientaciones determinan un único género compatible. En esos
+// casos Explorar/Buscar/Cerca no deben ofrecer filtros que contradigan el perfil
+// propio (p. ej. Mujeres o Todos para un hombre gay, ni Hombres para una mujer
+// lesbiana). Bisexual, pansexual y demás mantienen todas las alternativas.
+function exclusiveTargetGender(genderValue, orientationValue) {
+  const gender = genderLabel(genderValue);
+  const orientation = canonicalOrientation(orientationValue);
+  if (orientation === "Lesbiana" && gender === "Mujer") return "Mujer";
+  if (orientation === "Gay" && gender === "Hombre") return "Hombre";
+  if (orientation === "Heterosexual" && gender === "Hombre") return "Mujer";
+  if (orientation === "Heterosexual" && gender === "Mujer") return "Hombre";
+  return "";
+}
+function ownIdentityForFilters() {
+  const profile = state.myProfile || {};
+  const user = state.user || {};
+  return {
+    gender: profile.gender || user.gender || "",
+    orientation: profile.orientation || user.orientation || "",
+  };
+}
+function genderFilterOptionsForViewer(zone) {
+  const base = (GENDER_FILTER_OPTS[zone] || GENDER_FILTER_OPTS.hetero).slice();
+  const identity = ownIdentityForFilters();
+  const only = exclusiveTargetGender(identity.gender, identity.orientation);
+  return only ? base.filter(opt => opt.value === only) : base;
+}
+let ownIdentitySyncPromise = null;
+async function syncOwnIdentityForFilters(force = false) {
+  if (!datingApi._authed()) return ownIdentityForFilters();
+  const cached = ownIdentityForFilters();
+  if (!force && cached.gender && cached.orientation) return cached;
+  if (ownIdentitySyncPromise) return ownIdentitySyncPromise;
+  ownIdentitySyncPromise = (async () => {
+    const data = await datingApi.myProfile();
+    if (data && data.ok && data.profile) {
+      const p = data.profile;
+      state.myProfile = Object.assign({}, state.myProfile || {}, p, {
+        gender: genderLabel(p.gender),
+        orientation: canonicalOrientation(p.orientation),
+      });
+      if (state.user) {
+        state.user.gender = state.myProfile.gender;
+        state.user.orientation = state.myProfile.orientation;
+      }
+      try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+    }
+    return ownIdentityForFilters();
+  })().finally(() => { ownIdentitySyncPromise = null; });
+  return ownIdentitySyncPromise;
+}
 // V791 · Slider de doble mango reutilizable para rangos (edad, peso, altura).
 // Evita tener que escribir números a mano: se arrastra. Devuelve el nodo y
 // getters getLo()/getHi() con los valores actuales (enteros, mín ≤ máx).
@@ -12040,7 +12101,10 @@ function makeUnitSingle({ metric, defaultUnitId, valCanon, presetsCanon }) {
   node.appendChild(presetRow);
   return { node, getCanon: () => unit.toCanon(+rangeInp.value) };
 }
-function openFilters() {
+async function openFilters() {
+  // Carga la identidad real antes de decidir qué géneros tienen sentido. La
+  // copia local permite que las siguientes aperturas sean instantáneas.
+  await syncOwnIdentityForFilters();
   const wrap = el("div", { class: "filters-body" });
   wrap.appendChild(el("div", { class: "sheet-titlebar" }, [
     el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros"),
@@ -12061,8 +12125,9 @@ function openFilters() {
   // usaba el primero. Ahora es selección ÚNICA: al pulsar un chip se activa solo
   // ese y se desmarcan los demás. "Todos" equivale a AMBOS (mujeres y hombres)
   // en hetero, y a todas las identidades en la zona LGTB.
-  const genderOpts = GENDER_FILTER_OPTS[zone] || GENDER_FILTER_OPTS.hetero;
-  let selectedGenderFilter = genderOpts.find(opt => opt.value !== "todos" && state.filters.genders.includes(opt.value))?.value || "todos";
+  const genderOpts = genderFilterOptionsForViewer(zone);
+  const defaultGenderFilter = genderOpts.some(opt => opt.value === "todos") ? "todos" : (genderOpts[0]?.value || "todos");
+  let selectedGenderFilter = genderOpts.find(opt => opt.value !== "todos" && state.filters.genders.includes(opt.value))?.value || defaultGenderFilter;
   let refreshOrientationFilter = () => {};
   const genderChips = [];
   const grpGenderRow = el("div", { class: "chip-row" });
@@ -12082,7 +12147,9 @@ function openFilters() {
   wrap.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, zone === "lgtb" ? "Género e identidad" : "Género"),
     el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
-      zone === "lgtb" ? "Elige una identidad o «Todos» para verlas todas." : "«Todos» muestra mujeres y hombres."),
+      genderOpts.length === 1
+        ? `Según tu perfil, buscas ${genderOpts[0].label.toLowerCase()}.`
+        : (zone === "lgtb" ? "Elige una identidad o «Todos» para verlas todas." : "«Todos» muestra mujeres y hombres.")),
     grpGenderRow,
   ]));
 
@@ -13830,7 +13897,8 @@ function openNearbyFilters(onApply) {
 // mapFilters (estado local del mapa abierto) y una función onApply que repinta.
 // Reutiliza makeUnitRange (edad/altura/peso) y los chips de "Buscar" para que la
 // experiencia sea idéntica. Al aplicar, escribe en mapFilters y llama onApply.
-function openMapFilters(mf, onApply) {
+async function openMapFilters(mf, onApply) {
+  await syncOwnIdentityForFilters();
   const _cc = myCountry();
   const sheet = el("div", { class: "nearby-filters-sheet" });
   sheet.appendChild(el("div", { class: "sheet-titlebar" }, [
@@ -13846,8 +13914,9 @@ function openMapFilters(mf, onApply) {
   // en Explorar/Buscar. Antes era un segmento en la barra del mapa que, en Zona
   // LGTB+ (varias identidades), se salía y hacía scroll horizontal en móviles
   // estrechos. Opciones coherentes con la zona. "Todos" = sin filtro.
-  const genderOpts = GENDER_FILTER_OPTS[_mfZone] || GENDER_FILTER_OPTS.hetero;
-  const genderRef = { value: genderOpts.some(o => o.value === mf.gender) ? mf.gender : "todos" };
+  const genderOpts = genderFilterOptionsForViewer(_mfZone);
+  const defaultGenderFilter = genderOpts.some(o => o.value === "todos") ? "todos" : (genderOpts[0]?.value || "todos");
+  const genderRef = { value: genderOpts.some(o => o.value === mf.gender) ? mf.gender : defaultGenderFilter };
   let refreshMapOrientationFilter = () => {};
   const genderChips = [];
   const genderRow = el("div", { class: "chip-row" });
@@ -13865,7 +13934,9 @@ function openMapFilters(mf, onApply) {
   sheet.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, _mfZone === "lgtb" ? "Género e identidad" : "Género"),
     el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
-      _mfZone === "lgtb" ? "Elige una identidad o «Todos» para verlas todas." : "«Todos» muestra mujeres y hombres."),
+      genderOpts.length === 1
+        ? `Según tu perfil, buscas ${genderOpts[0].label.toLowerCase()}.`
+        : (_mfZone === "lgtb" ? "Elige una identidad o «Todos» para verlas todas." : "«Todos» muestra mujeres y hombres.")),
     genderRow,
   ]));
 
@@ -16141,6 +16212,13 @@ function screenEditProfile(root) {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) { toast("No se pudo guardar"); return; }
+      state.myProfile = Object.assign({}, state.myProfile || {}, payload);
+      if (state.user) {
+        state.user.gender = payload.gender;
+        state.user.orientation = payload.orientation;
+      }
+      try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       if (state.user && payload.name) state.user.name = payload.name;
       toast(T("content.me.saved") || "Cambios guardados");
       render(screenMe);
@@ -16404,6 +16482,15 @@ function screenEditProfile(root) {
       // V983 · "gay" heredado selecciona la opción canónica "Gay" sin añadir
       // un duplicado; también aplica la compatibilidad Hombre/Mujer.
       syncProfileOrientation(p.orientation, genderInp.value);
+      state.myProfile = Object.assign({}, state.myProfile || {}, p, {
+        gender: genderLabel(p.gender), orientation: canonicalOrientation(p.orientation),
+      });
+      if (state.user) {
+        state.user.gender = state.myProfile.gender;
+        state.user.orientation = state.myProfile.orientation;
+      }
+      try { localStorage.setItem("aura-my-profile", JSON.stringify(state.myProfile)); } catch {}
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
       // V776 · Rellena los grupos de estilo de vida (selección única).
       const setSingle = (wrapEl, ref, options, id) => {

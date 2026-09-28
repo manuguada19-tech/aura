@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V983**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V984**
+
+### V984 (28/09/2026) — Filtros coherentes con la orientación propia
+
+- Los perfiles de hombre gay solo pueden filtrar y recibir hombres; desaparecen
+  `Todos` y `Mujeres` de Explorar/Buscar y Cerca de ti.
+- Los perfiles de mujer lesbiana solo pueden filtrar y recibir mujeres; se
+  eliminan `Todos` y `Hombres` en esas pantallas.
+- En perfiles heterosexuales binarios se aplica el género opuesto. Bisexual,
+  pansexual y orientaciones no exclusivas mantienen todas las alternativas.
+- El servidor aplica la misma regla aunque queden filtros antiguos guardados,
+  evitando resultados incoherentes antes de volver a abrir el panel de filtros.
 
 ### V983 (28/09/2026) — Orientación sin duplicados y coherente con género
 

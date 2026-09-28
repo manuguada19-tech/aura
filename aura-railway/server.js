@@ -56,6 +56,27 @@ function canonicalOrientation(value, fallback = null) {
   return (found || raw).slice(0, 40);
 }
 
+// V984 · Si la combinación género/orientación expresa atracción exclusiva por
+// un género, ese género prevalece sobre un filtro antiguo o manipulado. Así un
+// hombre gay nunca recibe mujeres, una mujer lesbiana nunca recibe hombres y
+// una persona heterosexual binaria recibe el género opuesto. Las orientaciones
+// no exclusivas no se fuerzan.
+function canonicalGender(value) {
+  const key = value == null ? "" : String(value).trim().toLocaleLowerCase("es");
+  if (["hombre", "male", "m", "man"].includes(key)) return "Hombre";
+  if (["mujer", "female", "f", "woman"].includes(key)) return "Mujer";
+  return value == null ? "" : String(value).trim();
+}
+function exclusiveTargetGender(genderValue, orientationValue) {
+  const gender = canonicalGender(genderValue);
+  const orientation = canonicalOrientation(orientationValue, "");
+  if (orientation === "Lesbiana" && gender === "Mujer") return "Mujer";
+  if (orientation === "Gay" && gender === "Hombre") return "Hombre";
+  if (orientation === "Heterosexual" && gender === "Hombre") return "Mujer";
+  if (orientation === "Heterosexual" && gender === "Mujer") return "Hombre";
+  return "";
+}
+
 // V879 · Estado del arranque. Antes app.listen() era LO ÚLTIMO, después de
 // migrate() (~224 sentencias DDL), el backfill de geoip (hasta 5000 UPDATEs en
 // serie) y 13 phaseN.migrate(). Hasta que todo eso acababa el puerto estaba
@@ -10399,6 +10420,29 @@ function applyPreferenceFilters(where, params, f) {
   }
 }
 
+// V984 · Lee los filtros junto con la identidad del propietario y corrige en
+// memoria cualquier selección incompatible. No modifica sus filtros guardados:
+// simplemente impide que una petición antigua con "todos" contradiga una
+// orientación exclusiva.
+async function loadDiscoveryFilters(userId) {
+  if (!userId) return {};
+  const [[row]] = await pool.query(
+    `SELECT uf.payload, u.gender AS own_gender, u.orientation AS own_orientation
+       FROM users u
+       LEFT JOIN user_filters uf ON uf.user_id=u.id
+      WHERE u.id=? LIMIT 1`,
+    [userId]
+  );
+  if (!row) return {};
+  let filters = {};
+  try { filters = row.payload ? (typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload) : {}; }
+  catch { filters = {}; }
+  if (!filters || typeof filters !== "object" || Array.isArray(filters)) filters = {};
+  const forcedGender = exclusiveTargetGender(row.own_gender, row.own_orientation);
+  if (forcedGender) filters.gender = forcedGender;
+  return filters;
+}
+
 app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
   const me = readMyUserId(req); // puede ser null (anónimo)
@@ -10412,10 +10456,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   // Filtros guardados del usuario (edad / género). Distancia se aplica sólo si hay coords.
   let f = {};
   if (me) {
-    try {
-      const [[row]] = await pool.query("SELECT payload FROM user_filters WHERE user_id=? LIMIT 1", [me]);
-      if (row && row.payload) f = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
-    } catch { f = {}; }
+    try { f = await loadDiscoveryFilters(me); } catch { f = {}; }
   }
 
   const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
@@ -10644,10 +10685,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
 
   // Filtros guardados del usuario (edad / género / distancia).
   let f = {};
-  try {
-    const [[row]] = await pool.query("SELECT payload FROM user_filters WHERE user_id=? LIMIT 1", [me]);
-    if (row && row.payload) f = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
-  } catch { f = {}; }
+  try { f = await loadDiscoveryFilters(me); } catch { f = {}; }
 
   const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
   const params = [zone];
@@ -10776,10 +10814,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
 
   // Filtros guardados (edad / género / ubicación / etnia / preferencias).
   let f = {};
-  try {
-    const [[row]] = await pool.query("SELECT payload FROM user_filters WHERE user_id=? LIMIT 1", [me]);
-    if (row && row.payload) f = typeof row.payload === "string" ? JSON.parse(row.payload) : row.payload;
-  } catch { f = {}; }
+  try { f = await loadDiscoveryFilters(me); } catch { f = {}; }
 
   // Centro del mapa: punto elegido (query) o, si no, la ubicación del usuario.
   // V872 · Devolvemos también el ORIGEN del centro (`center_source`):
