@@ -10938,6 +10938,9 @@ function buildSwipeCard(u, depth = 0) {
       el("span", { class: "sb-txt" }, "Impulsado"),
     ]));
   }
+  // V979 · Favoritos accesibles también desde la vista principal de Tarjetas.
+  // Antes solo existía el control en Cuadrícula y dentro del perfil completo.
+  card.appendChild(buildFavoriteButton(u, "swipe-favorite-btn"));
   // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
   // profesión; se omiten con elegancia en lugar de mostrar "null".
   // V744 · Ubicación: distancia real o aviso "GPS no permitido" (ubicación
@@ -11635,6 +11638,10 @@ function buildFavoriteButton(u, className = "heart") {
     await toggleFav(u, btn);
     btn.disabled = false;
   });
+  // En las tarjetas deslizables, impedir que el gesto que pulsa Guardar se
+  // interprete también como un swipe o como un cambio de fotografía.
+  btn.addEventListener("mousedown", (e) => e.stopPropagation());
+  btn.addEventListener("touchstart", (e) => e.stopPropagation(), { passive: true });
   return btn;
 }
 async function toggleFav(u, btn) {

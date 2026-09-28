@@ -1,6 +1,14 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V978**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V979**
+
+### V979 (28/09/2026) — Guardar desde las tarjetas de Explorar
+
+- La vista principal Tarjetas de Explorar muestra ahora el control
+  «Guardar»/«Guardado» directamente sobre cada perfil; ya no obliga a abrir el
+  perfil completo ni a cambiar a Cuadrícula.
+- Pulsar el control no cambia de foto ni inicia accidentalmente el gesto de
+  deslizar, y el estado se persiste y sincroniza con el resto de la app.
 
 ### V978 (28/09/2026) — Favoritos claros y eliminables
 

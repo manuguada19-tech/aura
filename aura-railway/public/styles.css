@@ -4362,6 +4362,40 @@ body.info-open .theme-toggle { display: none; }
   transform: scale(1.04);
 }
 
+/* V979 · Guardar/Guardado directamente en Explorar → Tarjetas. */
+.swipe-favorite-btn {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 4;
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,.35);
+  background: rgba(0,0,0,.48);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.28);
+  transition: transform .15s ease, background .15s ease, box-shadow .15s ease;
+}
+.swipe-favorite-btn .fav-icon { display: grid; place-items: center; }
+.swipe-favorite-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.swipe-favorite-btn.on {
+  background: linear-gradient(135deg, #ff3b6b, #ff7043);
+  border-color: transparent;
+  box-shadow: 0 5px 16px rgba(255,59,107,.36);
+}
+.swipe-favorite-btn:hover,
+.swipe-favorite-btn:active { transform: scale(1.04); }
+
 /* ============================================================
    V742 · Interruptores de privacidad del perfil
    ============================================================ */
