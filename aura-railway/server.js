@@ -1344,6 +1344,7 @@ const ESCRITURA = [
   [/^(POST|PATCH) \/api\/users$/, 3],
   [/^PATCH \/api\/users\/[^/]+$/, 3],
   [/^DELETE \/api\/users\/[^/]+\/activity$/, 3],
+  [/^(POST|PUT|DELETE) \/api\/admin\/users\/[^/]+\/(profile-views|favorites)(\/|$)/, 3],
   // Los catálogos con los que trabaja el equipo de moderación
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/(deletion-reasons|kyc-reasons|mod-rules|mod-templates|user-rules|ticket-macros)(\/|$)/, 3],
 ];
@@ -1611,6 +1612,19 @@ async function migrate() {
       target_id INT NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uniq_fav (user_id, target_id)
+    )`,
+    // V980 · Historial persistente de perfiles vistos. La fila única por pareja
+    // conserva tanto el consumo del cupo como el número de visualizaciones.
+    `CREATE TABLE IF NOT EXISTS profile_views (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      viewer_id INT NOT NULL,
+      target_id INT NOT NULL,
+      view_count INT UNSIGNED NOT NULL DEFAULT 1,
+      first_viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_profile_view (viewer_id, target_id),
+      INDEX idx_profile_view_target (target_id),
+      INDEX idx_profile_view_last (last_viewed_at)
     )`,
     `CREATE TABLE IF NOT EXISTS blocks (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3770,6 +3784,7 @@ async function purgeUserData(id, { keepBilling = true } = {}) {
     ["DELETE FROM likes WHERE from_user=? OR to_user=?", [uid, uid]],
     ["DELETE FROM matches WHERE user_a=? OR user_b=?", [uid, uid]],
     ["DELETE FROM favorites WHERE user_id=? OR target_id=?", [uid, uid]],
+    ["DELETE FROM profile_views WHERE viewer_id=? OR target_id=?", [uid, uid]],
     ["DELETE FROM blocks WHERE user_id=? OR target_id=?", [uid, uid]],
     ["DELETE FROM notifications WHERE user_id=?", [uid]],
     ["DELETE FROM devices WHERE user_id=?", [uid]],
@@ -11116,6 +11131,128 @@ app.post("/api/my/favorites", wrap(async (req, res) => {
   res.json({ ok: true, favorite: true });
 }));
 
+/* ---- Perfiles vistos (persistentes) ---- V980 */
+// El cliente usa los ids únicos para conservar el cupo entre aperturas; el
+// contador por pareja queda disponible para la ficha del usuario en Admin.
+app.get("/api/my/profile-views", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT pv.target_id, pv.view_count, pv.first_viewed_at, pv.last_viewed_at
+       FROM profile_views pv
+       JOIN users u ON u.id=pv.target_id AND u.status='active'
+      WHERE pv.viewer_id=?
+      ORDER BY pv.last_viewed_at DESC LIMIT 5000`,
+    [me]
+  );
+  res.json({
+    total_unique: rows.length,
+    total_views: rows.reduce((n, row) => n + Number(row.view_count || 0), 0),
+    rows,
+  });
+}));
+
+app.post("/api/my/profile-views", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const target = parseInt(req.body?.target_id, 10);
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+  const [[user]] = await pool.query("SELECT id FROM users WHERE id=? AND status='active' LIMIT 1", [target]);
+  if (!user) return res.status(404).json({ error: "target_not_found" });
+  await pool.execute(
+    `INSERT INTO profile_views (viewer_id,target_id,view_count,first_viewed_at,last_viewed_at)
+     VALUES (?,?,1,NOW(),NOW())
+     ON DUPLICATE KEY UPDATE view_count=view_count+1,last_viewed_at=NOW()`,
+    [me, target]
+  );
+  const [[row]] = await pool.query(
+    "SELECT target_id,view_count,first_viewed_at,last_viewed_at FROM profile_views WHERE viewer_id=? AND target_id=? LIMIT 1",
+    [me, target]
+  );
+  res.json({ ok: true, view: row });
+}));
+
+/* ---- Administración de vistos y favoritos por usuario ---- V980 */
+app.get("/api/admin/users/:uid/profile-relations", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [views, favorites] = await Promise.all([
+    pool.query(
+      `SELECT pv.target_id, pv.view_count, pv.first_viewed_at, pv.last_viewed_at,
+              u.name, u.age, u.email, u.status,
+              COALESCE(NULLIF(u.photo_url,''),
+                (SELECT COALESCE(NULLIF(p.crop_url,''),p.url) FROM photos p
+                  WHERE p.user_id=u.id AND COALESCE(p.is_now_photo,0)=0
+                  ORDER BY p.is_primary DESC,p.id ASC LIMIT 1)) AS photo_url
+         FROM profile_views pv
+         JOIN users u ON u.id=pv.target_id
+        WHERE pv.viewer_id=? ORDER BY pv.last_viewed_at DESC LIMIT 500`,
+      [uid]
+    ),
+    pool.query(
+      `SELECT fav.target_id, fav.created_at, u.name, u.age, u.email, u.status,
+              COALESCE(NULLIF(u.photo_url,''),
+                (SELECT COALESCE(NULLIF(p.crop_url,''),p.url) FROM photos p
+                  WHERE p.user_id=u.id AND COALESCE(p.is_now_photo,0)=0
+                  ORDER BY p.is_primary DESC,p.id ASC LIMIT 1)) AS photo_url
+         FROM favorites fav
+         JOIN users u ON u.id=fav.target_id
+        WHERE fav.user_id=? ORDER BY fav.created_at DESC LIMIT 500`,
+      [uid]
+    ),
+  ]);
+  const viewRows = views[0] || [];
+  res.json({
+    views: viewRows,
+    favorites: favorites[0] || [],
+    totals: {
+      unique_profiles: viewRows.length,
+      view_events: viewRows.reduce((n, row) => n + Number(row.view_count || 0), 0),
+      favorites: (favorites[0] || []).length,
+    },
+  });
+}));
+
+app.delete("/api/admin/users/:uid/profile-views/:target", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  const target = parseInt(req.params.target, 10);
+  if (!uid || !target) return res.status(400).json({ error: "invalid_user" });
+  const [result] = await pool.execute("DELETE FROM profile_views WHERE viewer_id=? AND target_id=?", [uid, target]);
+  await logActivity(req.admin?.email || "admin", `Vistas de perfil ${target} restablecidas para usuario ${uid}`);
+  res.json({ ok: true, deleted: result.affectedRows || 0 });
+}));
+
+app.delete("/api/admin/users/:uid/profile-views", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [result] = await pool.execute("DELETE FROM profile_views WHERE viewer_id=?", [uid]);
+  await logActivity(req.admin?.email || "admin", `Todas las vistas de perfiles restablecidas para usuario ${uid}`);
+  res.json({ ok: true, deleted: result.affectedRows || 0 });
+}));
+
+app.put("/api/admin/users/:uid/favorites/:target", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  const target = parseInt(req.params.target, 10);
+  if (!uid || !target || uid === target) return res.status(400).json({ error: "invalid_user" });
+  const [[owner], [profile]] = await Promise.all([
+    pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [uid]).then(([rows]) => rows),
+    pool.query("SELECT id FROM users WHERE id=? LIMIT 1", [target]).then(([rows]) => rows),
+  ]);
+  if (!owner || !profile) return res.status(404).json({ error: "user_not_found" });
+  await pool.execute("INSERT IGNORE INTO favorites (user_id,target_id) VALUES (?,?)", [uid, target]);
+  await logActivity(req.admin?.email || "admin", `Favorito ${target} añadido al usuario ${uid}`);
+  res.json({ ok: true, favorite: true });
+}));
+
+app.delete("/api/admin/users/:uid/favorites/:target", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  const target = parseInt(req.params.target, 10);
+  if (!uid || !target) return res.status(400).json({ error: "invalid_user" });
+  const [result] = await pool.execute("DELETE FROM favorites WHERE user_id=? AND target_id=?", [uid, target]);
+  await logActivity(req.admin?.email || "admin", `Favorito ${target} retirado del usuario ${uid}`);
+  res.json({ ok: true, favorite: false, deleted: result.affectedRows || 0 });
+}));
+
 /* ============================================================
    Denunciar / Bloquear  (función 3)
    ------------------------------------------------------------
@@ -15939,7 +16076,7 @@ app.post("/api/admin/reset-stats", wrap(async (req, res) => {
   const candidates = [
     "messages", "conversations", "reports", "payments",
     "promotions", "notification_campaigns", "logs", "activity",
-    "verifications", "likes", "favorites", "blocks", "matches",
+    "verifications", "likes", "favorites", "profile_views", "blocks", "matches",
     "user_devices", "user_restrictions", "user_ip_log", "login_attempts",
     "appeals", "tickets", "email_outbox", "otp_codes",
     "users",

@@ -4571,6 +4571,133 @@ async function openUserDrawer(id, onChange) {
     form.appendChild(el("div", { class: "table-scroll" }, [ dtable ]));
   }
 
+  // --- Perfiles vistos y Favoritos --- V980
+  // Se cargan aparte para poder refrescar solo este bloque al restablecer una
+  // vista o modificar Favoritos, sin cerrar la ficha ni disparar el autosave.
+  const relationsHeader = el("div", { class: "section-header profile-relations-head" }, [
+    el("h3", {}, "Perfiles vistos y Favoritos"),
+  ]);
+  const relationsBox = el("div", { class: "profile-relations-admin" }, [
+    el("div", { class: "empty small" }, "Cargando relaciones…"),
+  ]);
+  form.appendChild(relationsHeader);
+  form.appendChild(relationsBox);
+
+  const openRelatedUser = (targetId) => {
+    drawer.close();
+    setTimeout(() => openUserDrawer(targetId, onChange), 60);
+  };
+
+  async function loadProfileRelations() {
+    relationsBox.innerHTML = "";
+    relationsBox.appendChild(el("div", { class: "empty small" }, "Cargando relaciones…"));
+    try {
+      const data = await api.get(`/api/admin/users/${id}/profile-relations`);
+      const views = Array.isArray(data.views) ? data.views : [];
+      const favorites = Array.isArray(data.favorites) ? data.favorites : [];
+      const totals = data.totals || {};
+      relationsBox.innerHTML = "";
+
+      relationsBox.appendChild(el("div", { class: "profile-relations-stats" }, [
+        el("div", {}, [el("strong", {}, String(totals.unique_profiles || 0)), el("span", {}, "Perfiles vistos")]),
+        el("div", {}, [el("strong", {}, String(totals.view_events || 0)), el("span", {}, "Visualizaciones")]),
+        el("div", {}, [el("strong", {}, String(totals.favorites || 0)), el("span", {}, "Favoritos")]),
+      ]));
+
+      const viewsHead = el("div", { class: "section-header compact" }, [
+        el("h4", {}, "Historial de perfiles vistos"),
+      ]);
+      if (views.length) {
+        viewsHead.appendChild(btn("Restablecer todas", "ghost xs danger", async () => {
+          if (!(await askConfirm("¿Restablecer todas las vistas de perfiles de este usuario? Recuperará todo su cupo de Explorar.", { okText: "Restablecer", danger: true }))) return;
+          try {
+            await api.del(`/api/admin/users/${id}/profile-views`);
+            toast("Vistas restablecidas");
+            await loadProfileRelations();
+          } catch (e) { toast("No se pudieron restablecer las vistas"); }
+        }));
+      }
+      relationsBox.appendChild(viewsHead);
+      if (!views.length) {
+        relationsBox.appendChild(el("div", { class: "empty small" }, "Este usuario aún no ha visto ningún perfil."));
+      } else {
+        const table = el("table", { class: "data-table" });
+        table.appendChild(el("thead", {}, el("tr", {}, [
+          el("th", {}, "Perfil"), el("th", {}, "Veces"), el("th", {}, "Última vista"), el("th", {}, ""),
+        ])));
+        const body = el("tbody");
+        views.forEach(view => {
+          body.appendChild(el("tr", {}, [
+            el("td", {}, el("button", { type: "button", class: "profile-relation-user", onclick: () => openRelatedUser(view.target_id) }, [
+              avatar(view.photo_url, 30),
+              el("span", {}, [el("strong", {}, view.name || `#${view.target_id}`), el("small", {}, `#${view.target_id}`)]),
+            ])),
+            el("td", {}, el("strong", { class: "profile-view-count" }, String(view.view_count || 0))),
+            el("td", {}, fmt.reldate(view.last_viewed_at)),
+            el("td", {}, btn("Restablecer", "ghost xs danger", async () => {
+              if (!(await askConfirm(`¿Restablecer las vistas de ${view.name || "este perfil"}?`, { okText: "Restablecer", danger: true }))) return;
+              try {
+                await api.del(`/api/admin/users/${id}/profile-views/${view.target_id}`);
+                toast("Vista restablecida");
+                await loadProfileRelations();
+              } catch (e) { toast("No se pudo restablecer la vista"); }
+            })),
+          ]));
+        });
+        table.appendChild(body);
+        relationsBox.appendChild(el("div", { class: "table-scroll profile-relations-table" }, [table]));
+      }
+
+      relationsBox.appendChild(el("div", { class: "section-header compact favorites-admin-head" }, [
+        el("h4", {}, "Favoritos guardados"),
+      ]));
+      const picker = userPicker({ placeholder: "Buscar perfil por nombre o email…" });
+      picker.wrap.addEventListener("input", e => e.stopPropagation());
+      picker.wrap.addEventListener("change", e => e.stopPropagation());
+      const addFavorite = btn("Añadir a Favoritos", "primary sm", async () => {
+        const targetId = Number(picker.getId());
+        if (!targetId) { toast("Selecciona un perfil"); return; }
+        if (targetId === Number(id)) { toast("Un usuario no puede guardarse a sí mismo"); return; }
+        try {
+          await api.put(`/api/admin/users/${id}/favorites/${targetId}`, {});
+          toast("Favorito añadido");
+          await loadProfileRelations();
+        } catch (e) { toast("No se pudo añadir el favorito"); }
+      });
+      relationsBox.appendChild(el("div", { class: "profile-favorite-add" }, [picker.wrap, addFavorite]));
+
+      if (!favorites.length) {
+        relationsBox.appendChild(el("div", { class: "empty small" }, "No tiene perfiles guardados en Favoritos."));
+      } else {
+        const list = el("div", { class: "profile-favorites-list" });
+        favorites.forEach(fav => {
+          list.appendChild(el("div", { class: "profile-favorite-row" }, [
+            el("button", { type: "button", class: "profile-relation-user", onclick: () => openRelatedUser(fav.target_id) }, [
+              avatar(fav.photo_url, 36),
+              el("span", {}, [
+                el("strong", {}, `${fav.name || "Perfil"}${fav.age != null ? ", " + fav.age : ""}`),
+                el("small", {}, `#${fav.target_id} · guardado ${fmt.reldate(fav.created_at)}`),
+              ]),
+            ]),
+            btn("Quitar", "ghost xs danger", async () => {
+              if (!(await askConfirm(`¿Quitar a ${fav.name || "este perfil"} de sus Favoritos?`, { okText: "Quitar", danger: true }))) return;
+              try {
+                await api.del(`/api/admin/users/${id}/favorites/${fav.target_id}`);
+                toast("Favorito retirado");
+                await loadProfileRelations();
+              } catch (e) { toast("No se pudo retirar el favorito"); }
+            }),
+          ]));
+        });
+        relationsBox.appendChild(list);
+      }
+    } catch (e) {
+      relationsBox.innerHTML = "";
+      relationsBox.appendChild(el("div", { class: "empty small" }, "No se pudieron cargar las vistas y Favoritos."));
+    }
+  }
+  loadProfileRelations();
+
   // --- Actividad reciente ---
   const activityHeader = el("div", { class: "section-header" }, [
     el("h3", {}, "Actividad reciente"),

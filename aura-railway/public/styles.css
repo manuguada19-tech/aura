@@ -1300,6 +1300,17 @@ img { max-width: 100%; display: block; }
   background: linear-gradient(135deg, #ff3b6b, #ff7043); border-color: transparent;
   box-shadow: 0 5px 14px rgba(255,59,107,.34);
 }
+.discover-grid-seen {
+  position: absolute; z-index: 3; top: 43px; left: 8px;
+  height: 25px; padding: 0 7px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 4px;
+  color: #fff; background: rgba(19,108,79,.84);
+  border: 1px solid rgba(125,255,202,.36);
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+  font-size: 9px; font-weight: 800;
+}
+.discover-grid-seen[hidden] { display: none; }
+.discover-grid-seen svg { width: 14px; height: 14px; }
 .discover-grid-badge {
   width: 25px; height: 25px; border-radius: 9px; display: grid; place-items: center;
   color: #fff !important; background: rgba(12,13,19,.66);
@@ -4395,6 +4406,28 @@ body.info-open .theme-toggle { display: none; }
 }
 .swipe-favorite-btn:hover,
 .swipe-favorite-btn:active { transform: scale(1.04); }
+.swipe-seen-badge {
+  position: absolute;
+  top: 56px;
+  left: 14px;
+  z-index: 4;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #fff;
+  background: rgba(19,108,79,.84);
+  border: 1px solid rgba(125,255,202,.38);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(0,0,0,.22);
+  font-size: 11px;
+  font-weight: 800;
+}
+.swipe-seen-badge[hidden] { display: none; }
+.swipe-seen-badge svg { width: 16px; height: 16px; }
 
 /* ============================================================
    V742 · Interruptores de privacidad del perfil

@@ -21,6 +21,81 @@
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
+
+/* V980 · Gestión de perfiles vistos y Favoritos dentro de la ficha de usuario. */
+.profile-relations-admin {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 92%, var(--accent, #ff3b6b) 8%);
+}
+.profile-relations-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.profile-relations-stats > div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.profile-relations-stats strong,
+.profile-relations-stats span { display: block; }
+.profile-relations-stats strong { font-size: 20px; line-height: 1; }
+.profile-relations-stats span { margin-top: 5px; color: var(--muted); font-size: 11px; }
+.profile-relations-admin .section-header.compact { margin: 2px 0 0; }
+.profile-relations-admin .section-header.compact h4 { margin: 0; font-size: 14px; }
+.profile-relations-table { max-height: 260px; }
+.profile-relation-user {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.profile-relation-user > span { display: grid; min-width: 0; }
+.profile-relation-user small { color: var(--muted); }
+.profile-view-count {
+  display: inline-grid;
+  min-width: 30px;
+  height: 28px;
+  place-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #fff;
+  background: linear-gradient(135deg, #ff3b6b, #ff7043);
+}
+.profile-favorite-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+.profile-favorites-list { display: grid; gap: 7px; }
+.profile-favorite-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+@media (max-width: 560px) {
+  .profile-relations-stats { grid-template-columns: 1fr; }
+  .profile-favorite-add { grid-template-columns: 1fr; }
+}
 .autosave-indicator.visible { opacity: 1; transform: translateY(0); }
 .autosave-indicator.saving  { background: rgba(20, 22, 29, .92); }
 .autosave-indicator.saved   { background: linear-gradient(90deg, #22c55e, #10b981); }

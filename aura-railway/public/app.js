@@ -1883,10 +1883,11 @@ const state = {
     nsfwOnly: false, notChattedToday: false,
   },
   favorites: new Set(),
-  // V977 · Perfiles consultados en Explorar durante esta sesión. Incluimos el
-  // usuario dueño de la sesión en la clave para no mezclar cuentas si alguien
-  // cierra sesión y entra con otra sin recargar la PWA.
+  // V980 · Perfiles consultados en Explorar, sincronizados con el servidor para
+  // conservar tanto el cupo como la marca «Visto» al cerrar y volver a entrar.
   discoverSeenKeys: new Set(),
+  discoverViewCounts: new Map(),
+  discoverViewRecordedKeys: new Set(),
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
   cardIndex: 0,
   chatOpen: null,
@@ -2321,6 +2322,26 @@ const datingApi = {
       if (!r.ok) return null;
       const rows = await r.json();
       return Array.isArray(rows) ? rows.map(mapApiUser) : null;
+    } catch { return null; }
+  },
+  async profileViews() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/profile-views", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async recordProfileView(targetId) {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/profile-views", {
+        method: "POST", headers: this.headers(),
+        body: JSON.stringify({ target_id: targetId }),
+        keepalive: true,
+      });
+      if (!r.ok) return null;
+      return await r.json();
     } catch { return null; }
   },
   async saveFilters(filters) {
@@ -10567,10 +10588,74 @@ function getDiscoverSeenCount() {
   state.discoverSeenKeys.forEach(k => { if (String(k).startsWith(prefix)) count++; });
   return count;
 }
+function hasSeenProfile(u) {
+  return !!u && state.discoverSeenKeys.has(discoverSeenKey(u));
+}
+function paintSeenBadge(badge, seen) {
+  if (!badge) return;
+  badge.hidden = !seen;
+  badge.setAttribute("aria-hidden", String(!seen));
+}
+function refreshSeenBadges(userId) {
+  document.querySelectorAll(".discover-seen-badge").forEach(badge => {
+    if (String(badge.dataset.seenId || "") === String(userId)) paintSeenBadge(badge, true);
+  });
+}
+function buildSeenBadge(u, className) {
+  const badge = el("span", {
+    class: `${className} discover-seen-badge`,
+    "data-seen-id": u && u.id,
+  }, [
+    el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", html: `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>` }),
+    el("span", {}, "Visto"),
+  ]);
+  paintSeenBadge(badge, hasSeenProfile(u));
+  return badge;
+}
+let discoverSeenSyncPromise = null;
+async function syncDiscoverSeenState() {
+  if (!state.user || !state.user.id) return false;
+  if (discoverSeenSyncPromise) return discoverSeenSyncPromise;
+  discoverSeenSyncPromise = (async () => {
+    const data = await datingApi.profileViews();
+    if (!data || !Array.isArray(data.rows)) return false;
+    const ownerPrefix = String(state.user.id) + ":";
+    state.discoverSeenKeys.clear();
+    state.discoverViewCounts.clear();
+    state.discoverViewRecordedKeys.forEach(key => {
+      if (String(key).startsWith(ownerPrefix)) state.discoverViewRecordedKeys.delete(key);
+    });
+    data.rows.forEach(row => {
+      const targetId = Number(row.target_id);
+      if (!Number.isFinite(targetId)) return;
+      state.discoverSeenKeys.add(discoverSeenKey({ id: targetId }));
+      state.discoverViewCounts.set(targetId, Number(row.view_count || 0));
+    });
+    document.querySelectorAll(".discover-seen-badge").forEach(badge => {
+      paintSeenBadge(badge, hasSeenProfile({ id: Number(badge.dataset.seenId) }));
+    });
+    return true;
+  })();
+  try { return await discoverSeenSyncPromise; }
+  finally { discoverSeenSyncPromise = null; }
+}
 function markDiscoverProfileSeen(u, stack) {
   if (!u) return;
-  state.discoverSeenKeys.add(discoverSeenKey(u));
+  const seenKey = discoverSeenKey(u);
+  state.discoverSeenKeys.add(seenKey);
+  refreshSeenBadges(u.id);
   try { if (stack && stack._refreshQuota) stack._refreshQuota(); } catch {}
+  const isReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
+  // Una tarjeta cuenta una vez por apertura de la aplicación. Abrir su detalle
+  // y después deslizarla no duplica artificialmente la visualización.
+  const shouldRecord = !state.discoverViewRecordedKeys.has(seenKey);
+  if (shouldRecord) state.discoverViewRecordedKeys.add(seenKey);
+  if (isReal && shouldRecord) {
+    datingApi.recordProfileView(u.id).then(result => {
+      const view = result && result.view;
+      if (view) state.discoverViewCounts.set(Number(u.id), Number(view.view_count || 0));
+    }).catch(() => {});
+  }
 }
 // V801 · Sincroniza el plan REAL del usuario desde el servidor. Las distintas
 // vías de login (email, OTP, 2FA, huella, social, beta admin) guardaban
@@ -10700,16 +10785,18 @@ function buildDiscoverViewBar(stack, actionRow) {
   });
 
   function refreshQuota() {
-    const loaded = Array.isArray(stack._users) ? stack._users.length : 0;
     const seenTotal = getDiscoverSeenCount();
     const seen = limit === Infinity ? seenTotal : Math.min(seenTotal, limit);
+    const availableNow = Array.isArray(stack._users)
+      ? stack._users.filter(u => !hasSeenProfile(u)).length
+      : 0;
     if (limit === Infinity) {
       quotaUsed.textContent = stack._viewMode === "grid"
-        ? `${Math.max(0, loaded - seen)} disponibles ahora`
+        ? `${availableNow} disponibles ahora`
         : `${seen} ${seen === 1 ? "visto" : "vistos"} · sin límite`;
     } else {
       quotaUsed.textContent = stack._viewMode === "grid"
-        ? `${Math.max(0, loaded - seen)} disponibles · ${seen}/${limit} vistos`
+        ? `${availableNow} disponibles · ${seen}/${limit} vistos`
         : `${seen} de ${limit} vistos`;
     }
   }
@@ -10773,29 +10860,34 @@ function buildSwipeStack() {
 // reales se deja vacío (empty state). Solo la vista previa del admin usa demo.
 async function loadDiscoverInto(stack, append = false) {
   const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
-  const loaded = append ? stack._users.length : 0;
-  const remaining = limit === Infinity ? 100 : Math.max(0, limit - loaded);
-  if (remaining <= 0) {
-    stack._limitReached = !!stack._hasMore;
-    if (stack.isConnected) renderStack(stack);
-    return;
-  }
-  // Pedimos un perfil adicional en planes con cupo. Ese registro centinela no
-  // se muestra, pero permite saber con certeza si existe contenido bloqueado y
-  // enseñar "Ver más perfiles" solo cuando corresponde.
-  const requestLimit = limit === Infinity ? 100 : Math.min(100, remaining + 1);
+  // V980 · Pedimos una tanda amplia porque los perfiles ya vistos no consumen
+  // cupo otra vez. El filtro se hace después de sincronizar el historial real.
+  const requestLimit = 100;
   const [discoverUsers] = await Promise.all([
     datingApi.discover(state.zone, requestLimit),
     syncFavoriteState(),
+    syncDiscoverSeenState(),
   ]);
   let users = discoverUsers;
   if (!users || users.length === 0) {
     // V637 · Sin usuarios reales → vacío en la app real; demo solo en preview.
+    const remaining = limit === Infinity ? 18 : Math.max(0, limit - getDiscoverSeenCount());
     const demoCount = limit === Infinity ? 18 : Math.min(remaining + 1, 18);
     users = isPreviewMode() ? generateUsers(demoCount, { zone: state.zone }) : [];
   }
-  const hasMore = limit !== Infinity && users.length > remaining;
-  if (limit !== Infinity) users = users.slice(0, remaining);
+  let hasMore = false;
+  if (limit !== Infinity) {
+    const unseenAllowance = Math.max(0, limit - getDiscoverSeenCount());
+    let acceptedUnseen = 0;
+    let blockedUnseen = 0;
+    users = users.filter(u => {
+      if (hasSeenProfile(u)) return true;
+      if (acceptedUnseen < unseenAllowance) { acceptedUnseen++; return true; }
+      blockedUnseen++;
+      return false;
+    });
+    hasMore = blockedUnseen > 0;
+  }
   if (append) {
     const known = new Set(stack._users.map(u => String(u.id)));
     stack._users = stack._users.concat(users.filter(u => !known.has(String(u.id))));
@@ -10841,6 +10933,9 @@ function renderStack(stack) {
   }
   const top = stack.lastChild;
   bindSwipe(top, stack);
+  // La tarjeta superior ya está visible aunque el usuario cierre la app sin
+  // deslizar ni abrir el detalle: se registra en ese momento y no se pierde.
+  markDiscoverProfileSeen(users[start], stack);
 }
 
 function renderDiscoverGrid(stack) {
@@ -10873,6 +10968,7 @@ function renderDiscoverGrid(stack) {
       "aria-label": `Ver perfil de ${u.name || "esta persona"}`,
     }, [
       buildFavoriteButton(u, "discover-grid-favorite"),
+      buildSeenBadge(u, "discover-grid-seen"),
       el("span", { class: "discover-grid-badges" }, badges),
       act.show ? el("span", { class: "discover-grid-online " + (act.level === "online" ? "on" : "") }, [
         el("span", { class: "discover-grid-dot" }),
@@ -10941,6 +11037,7 @@ function buildSwipeCard(u, depth = 0) {
   // V979 · Favoritos accesibles también desde la vista principal de Tarjetas.
   // Antes solo existía el control en Cuadrícula y dentro del perfil completo.
   card.appendChild(buildFavoriteButton(u, "swipe-favorite-btn"));
+  card.appendChild(buildSeenBadge(u, "swipe-seen-badge"));
   // Los perfiles reales pueden no tener distancia (GPS aún no persiste) ni
   // profesión; se omiten con elegancia en lugar de mostrar "null".
   // V744 · Ubicación: distancia real o aviso "GPS no permitido" (ubicación

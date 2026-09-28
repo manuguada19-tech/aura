@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V979**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V980**
+
+### V980 (28/09/2026) — Vistas persistentes y gestión desde Admin
+
+- Los perfiles vistos se guardan por usuario en la base de datos y el contador
+  de Explorar ya no vuelve a cero al cerrar o recargar la aplicación.
+- Tarjetas y Cuadrícula muestran una insignia «Visto» en perfiles ya consultados;
+  volver a verlos no consume otro perfil del cupo.
+- La ficha de cada usuario en Administración muestra perfiles únicos vistos,
+  visualizaciones totales, veces que vio cada perfil y fecha de última vista.
+- Administración permite restablecer una vista concreta o todas, recuperando el
+  cupo correspondiente, y añadir o quitar perfiles de sus Favoritos.
 
 ### V979 (28/09/2026) — Guardar desde las tarjetas de Explorar
 
