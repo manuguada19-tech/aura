@@ -1888,6 +1888,7 @@ const state = {
   discoverSeenKeys: new Set(),
   discoverViewCounts: new Map(),
   discoverViewRecordedKeys: new Set(),
+  profileRelationsSnapshot: null,
   myProfile: (() => { try { return JSON.parse(localStorage.getItem("aura-my-profile") || "null") || null; } catch { return null; } })(),
   cardIndex: 0,
   chatOpen: null,
@@ -3140,6 +3141,12 @@ function startHeartbeat() {
         // ejemplo, sólo se editó el motivo o la duración).
         refreshRestrictions(true);
       });
+      _restrictionSSE.addEventListener("profile_relations", (event) => {
+        let change = {};
+        try { change = JSON.parse(event.data || "{}"); } catch {}
+        const reset = change.type === "views_reset" || change.type === "views_reset_all";
+        refreshProfileRelationsFromServer({ views: true, favorites: true, reset });
+      });
       _restrictionSSE.addEventListener("open", () => {
         try { console.log("[SSE] conectado a", url); } catch(_){}
       });
@@ -3176,6 +3183,32 @@ async function refreshRestrictions(force) {
       state.user.name = data.user_name;
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
     }
+    // V982 · El mismo sondeo detecta cambios hechos desde Administración. Así,
+    // aunque el proxy interrumpa SSE, desaparecen la marca «Visto» y el consumo
+    // del cupo sin que el usuario tenga que recargar o cerrar la aplicación.
+    try {
+      const rel = data.profile_relations;
+      if (rel) {
+        const server = {
+          views_unique: Number(rel.views_unique || 0),
+          view_events: Number(rel.view_events || 0),
+          favorites: Number(rel.favorites || 0),
+          favorites_checksum: Number(rel.favorites_checksum || 0),
+        };
+        const localUnique = getDiscoverSeenCount();
+        let localEvents = 0;
+        state.discoverViewCounts.forEach(n => { localEvents += Number(n || 0); });
+        let localFavoriteChecksum = 0;
+        state.favorites.forEach(targetId => { localFavoriteChecksum += Number(targetId || 0); });
+        const viewsChanged = server.views_unique !== localUnique || server.view_events !== localEvents;
+        const favoritesChanged = server.favorites !== state.favorites.size || server.favorites_checksum !== localFavoriteChecksum;
+        const reset = server.views_unique < localUnique || server.view_events < localEvents;
+        state.profileRelationsSnapshot = server;
+        if (viewsChanged || favoritesChanged) {
+          refreshProfileRelationsFromServer({ views: viewsChanged, favorites: favoritesChanged, reset });
+        }
+      }
+    } catch {}
     // Deduplica por feature — se queda con la que vence más tarde (o la indefinida).
     const raw = data.restrictions || [];
     const map = new Map();
@@ -10622,12 +10655,8 @@ async function syncDiscoverSeenState() {
   discoverSeenSyncPromise = (async () => {
     const data = await datingApi.profileViews();
     if (!data || !Array.isArray(data.rows)) return false;
-    const ownerPrefix = String(state.user.id) + ":";
     state.discoverSeenKeys.clear();
     state.discoverViewCounts.clear();
-    state.discoverViewRecordedKeys.forEach(key => {
-      if (String(key).startsWith(ownerPrefix)) state.discoverViewRecordedKeys.delete(key);
-    });
     data.rows.forEach(row => {
       const targetId = Number(row.target_id);
       if (!Number.isFinite(targetId)) return;
@@ -10641,6 +10670,31 @@ async function syncDiscoverSeenState() {
   })();
   try { return await discoverSeenSyncPromise; }
   finally { discoverSeenSyncPromise = null; }
+}
+let profileRelationsRefreshPromise = null;
+async function refreshProfileRelationsFromServer(opts = {}) {
+  if (!state.user || !state.user.id) return false;
+  if (profileRelationsRefreshPromise) return profileRelationsRefreshPromise;
+  profileRelationsRefreshPromise = (async () => {
+    const jobs = [];
+    if (opts.views !== false) jobs.push(syncDiscoverSeenState());
+    if (opts.favorites !== false) jobs.push(syncFavoriteState());
+    await Promise.all(jobs);
+    const stack = document.getElementById("swipeStack");
+    if (stack && opts.views !== false) {
+      try { stack._refreshQuota?.(); } catch {}
+      // Si el usuario estaba en la pantalla de límite, vuelve a cargar perfiles
+      // disponibles. Se omite la impresión inmediata para que el reset del
+      // administrador no vuelva a crear la misma vista en el mismo instante.
+      if (opts.reset && Number(stack._index || 0) >= (stack._users || []).length) {
+        stack._suppressNextImpression = true;
+        await loadDiscoverInto(stack, false);
+      }
+    }
+    return true;
+  })();
+  try { return await profileRelationsRefreshPromise; }
+  finally { profileRelationsRefreshPromise = null; }
 }
 function markDiscoverProfileSeen(u, stack) {
   if (!u) return;
@@ -10938,7 +10992,8 @@ function renderStack(stack) {
   bindSwipe(top, stack);
   // La tarjeta superior ya está visible aunque el usuario cierre la app sin
   // deslizar ni abrir el detalle: se registra en ese momento y no se pierde.
-  markDiscoverProfileSeen(users[start], stack);
+  if (stack._suppressNextImpression) stack._suppressNextImpression = false;
+  else markDiscoverProfileSeen(users[start], stack);
 }
 
 function renderDiscoverGrid(stack) {

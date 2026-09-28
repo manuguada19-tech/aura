@@ -1,6 +1,14 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V981**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V982**
+
+### V982 (28/09/2026) — Restablecimiento sincronizado con la app
+
+- Restablecer una vista o todas desde Administración actualiza la sesión abierta
+  del usuario: corrige el contador y retira la insignia verde «Visto» sin recarga.
+- Los cambios administrativos de Favoritos también se sincronizan con la app.
+- Se usa actualización inmediata y el sondeo ya existente como respaldo cuando
+  el alojamiento interrumpe el canal en tiempo real.
 
 ### V981 (28/09/2026) — Icono visible en «Visto»
 

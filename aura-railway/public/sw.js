@@ -30,7 +30,7 @@
 // conservara la composición móvil hasta el siguiente ciclo de versión.
 // V970 · La pantalla de Pagos y facturas añade JS y CSS nuevos. Cambiar la
 // versión fuerza a las PWA ya instaladas a recibirlos sin recarga manual.
-const CACHE_VERSION = "aura-v108"; // V981 · Icono de ojo visible en la marca Visto
+const CACHE_VERSION = "aura-v109"; // V982 · Reset de vistos/favoritos sincronizado en vivo
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

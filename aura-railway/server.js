@@ -9346,7 +9346,26 @@ app.get("/api/my/restrictions", wrap(async (req, res) => {
   // y mostrar el aviso, sin necesidad de una llamada extra.
   let kyc_gate = { required: false, status: "none" };
   try { kyc_gate = await getKycGateState(me); } catch {}
-  res.json({ ok: true, restrictions: list, user_email: email, user_name: name, kyc_gate });
+  // V982 · Firma ligera de vistas/favoritos. Aprovecha el sondeo que ya existe
+  // para detectar cambios del panel incluso cuando el proxy corta el SSE.
+  let profile_relations = { views_unique: 0, view_events: 0, favorites: 0, favorites_checksum: 0 };
+  try {
+    const [[rel]] = await pool.query(
+      `SELECT
+        (SELECT COUNT(*) FROM profile_views WHERE viewer_id=?) AS views_unique,
+        (SELECT COALESCE(SUM(view_count),0) FROM profile_views WHERE viewer_id=?) AS view_events,
+        (SELECT COUNT(*) FROM favorites WHERE user_id=?) AS favorites,
+        (SELECT COALESCE(SUM(target_id),0) FROM favorites WHERE user_id=?) AS favorites_checksum`,
+      [me, me, me, me]
+    );
+    if (rel) profile_relations = {
+      views_unique: Number(rel.views_unique || 0),
+      view_events: Number(rel.view_events || 0),
+      favorites: Number(rel.favorites || 0),
+      favorites_checksum: Number(rel.favorites_checksum || 0),
+    };
+  } catch {}
+  res.json({ ok: true, restrictions: list, user_email: email, user_name: name, kyc_gate, profile_relations });
 }));
 
 /* — Estado de la cuenta del usuario —
@@ -9670,12 +9689,19 @@ async function touchUserDevice(req, uid) {
    actualiza al instante — sin polling. */
 const _sseClients = new Map(); // uid -> Set<res>
 function ssePushRestrictions(uid) {
+  ssePushUserEvent(uid, "restrictions", Date.now());
+}
+function ssePushUserEvent(uid, eventName, data) {
   const set = _sseClients.get(String(uid));
   if (!set) return;
-  const payload = `event: restrictions\ndata: ${Date.now()}\n\n`;
+  const safeEvent = String(eventName || "update").replace(/[^a-z0-9_-]/gi, "");
+  const payload = `event: ${safeEvent}\ndata: ${JSON.stringify(data == null ? Date.now() : data)}\n\n`;
   for (const res of set) {
     try { res.write(payload); } catch {}
   }
+}
+function ssePushProfileRelations(uid, change) {
+  ssePushUserEvent(uid, "profile_relations", { ...(change || {}), at: Date.now() });
 }
 app.get("/api/my/restrictions/stream", (req, res) => {
   const me = readMyUserId(req);
@@ -11219,6 +11245,7 @@ app.delete("/api/admin/users/:uid/profile-views/:target", requireAdmin, wrap(asy
   if (!uid || !target) return res.status(400).json({ error: "invalid_user" });
   const [result] = await pool.execute("DELETE FROM profile_views WHERE viewer_id=? AND target_id=?", [uid, target]);
   await logActivity(req.admin?.email || "admin", `Vistas de perfil ${target} restablecidas para usuario ${uid}`);
+  ssePushProfileRelations(uid, { type: "views_reset", target_id: target });
   res.json({ ok: true, deleted: result.affectedRows || 0 });
 }));
 
@@ -11227,6 +11254,7 @@ app.delete("/api/admin/users/:uid/profile-views", requireAdmin, wrap(async (req,
   if (!uid) return res.status(400).json({ error: "invalid_uid" });
   const [result] = await pool.execute("DELETE FROM profile_views WHERE viewer_id=?", [uid]);
   await logActivity(req.admin?.email || "admin", `Todas las vistas de perfiles restablecidas para usuario ${uid}`);
+  ssePushProfileRelations(uid, { type: "views_reset_all" });
   res.json({ ok: true, deleted: result.affectedRows || 0 });
 }));
 
@@ -11241,6 +11269,7 @@ app.put("/api/admin/users/:uid/favorites/:target", requireAdmin, wrap(async (req
   if (!owner || !profile) return res.status(404).json({ error: "user_not_found" });
   await pool.execute("INSERT IGNORE INTO favorites (user_id,target_id) VALUES (?,?)", [uid, target]);
   await logActivity(req.admin?.email || "admin", `Favorito ${target} añadido al usuario ${uid}`);
+  ssePushProfileRelations(uid, { type: "favorite_added", target_id: target });
   res.json({ ok: true, favorite: true });
 }));
 
@@ -11250,6 +11279,7 @@ app.delete("/api/admin/users/:uid/favorites/:target", requireAdmin, wrap(async (
   if (!uid || !target) return res.status(400).json({ error: "invalid_user" });
   const [result] = await pool.execute("DELETE FROM favorites WHERE user_id=? AND target_id=?", [uid, target]);
   await logActivity(req.admin?.email || "admin", `Favorito ${target} retirado del usuario ${uid}`);
+  ssePushProfileRelations(uid, { type: "favorite_removed", target_id: target });
   res.json({ ok: true, favorite: false, deleted: result.affectedRows || 0 });
 }));
 
