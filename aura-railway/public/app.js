@@ -10606,7 +10606,10 @@ function buildSeenBadge(u, className) {
     class: `${className} discover-seen-badge`,
     "data-seen-id": u && u.id,
   }, [
-    el("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", html: `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/>` }),
+    // Se inserta el SVG completo dentro de un span para que el navegador lo
+    // cree en el namespace SVG correcto; createElement("svg") dejaba el hueco
+    // reservado pero no pintaba el ojo en algunos WebView/PWA.
+    el("span", { class: "seen-eye-icon", "aria-hidden": "true", html: `<svg viewBox="0 0 24 24" focusable="false"><path d="M2.4 12s3.5-6 9.6-6 9.6 6 9.6 6-3.5 6-9.6 6-9.6-6-9.6-6Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>` }),
     el("span", {}, "Visto"),
   ]);
   paintSeenBadge(badge, hasSeenProfile(u));

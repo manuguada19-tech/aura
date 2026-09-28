@@ -1310,6 +1310,7 @@ img { max-width: 100%; display: block; }
   font-size: 9px; font-weight: 800;
 }
 .discover-grid-seen[hidden] { display: none; }
+.discover-seen-badge .seen-eye-icon { display: grid; place-items: center; flex: 0 0 auto; }
 .discover-grid-seen svg { width: 14px; height: 14px; }
 .discover-grid-badge {
   width: 25px; height: 25px; border-radius: 9px; display: grid; place-items: center;

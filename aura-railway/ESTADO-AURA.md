@@ -1,6 +1,11 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V980**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V981**
+
+### V981 (28/09/2026) — Icono visible en «Visto»
+
+- La insignia «Visto» de Explorar crea ahora el ojo como SVG real y compatible
+  con WebView/PWA, evitando el hueco vacío que aparecía antes del texto.
 
 ### V980 (28/09/2026) — Vistas persistentes y gestión desde Admin
 
