@@ -1,6 +1,19 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 26 septiembre 2026 · última versión preparada: V977**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V978**
+
+### V978 (28/09/2026) — Favoritos claros y eliminables
+
+- Buscar, Explorar en cuadrícula y Cerca de ti muestran un control de favorito
+  más grande, con icono y texto «Guardar»/«Guardado».
+- El detalle del perfil incorpora una cuarta acción grande para añadir o quitar
+  el perfil de Favoritos, adaptada también a móviles estrechos.
+- Likes → Favoritos añade un botón visible «Quitar» en cada tarjeta; la retirada
+  se guarda en el servidor, elimina la tarjeta sin abrir el perfil y muestra el
+  estado vacío al retirar la última.
+- Explorar, Buscar y Cerca de ti sincronizan los favoritos persistentes antes de
+  pintar sus controles, evitando estados incorrectos al cambiar de pantalla o
+  volver a iniciar sesión.
 
 ### V977 (26/09/2026) — Contador real de perfiles vistos
 

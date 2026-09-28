@@ -9268,7 +9268,12 @@ async function openNearbyMap() {
   const MapAPI = window.AuraMapGL;
   // Centro inicial: intenta la ubicación real; si no, un centro por defecto (Madrid).
   let start = { lat: 40.4168, lng: -3.7038 };
-  const first = await fetchNearbyMap(null, null, mapFilters.radiusKm);
+  // V978 · Sincroniza Favoritos antes de pintar corazones. Así Cerca de ti no
+  // muestra «Guardar» para perfiles que ya estaban guardados en otra sesión.
+  const [first] = await Promise.all([
+    fetchNearbyMap(null, null, mapFilters.radiusKm),
+    syncFavoriteState(),
+  ]);
   if (first && first.center && Number.isFinite(first.center.lat)) {
     start = { lat: first.center.lat, lng: first.center.lng };
   }
@@ -9596,7 +9601,6 @@ async function openNearbyMap() {
     let distTxt = li.text;
     if (pinAway && distTxt && !li.off) distTxt = "a " + distTxt + " del pin";
     const meta = [u.city || "", (distTxt || (u.age != null ? `${u.age} años` : ""))].filter(Boolean).join(" · ");
-    const isFav = !isTest && state.favorites && state.favorites.has(u.id);
     const showNew = !isTest && isNewUser(u);
     const card = el("div", { class: "result-card" + (isTest ? " test" : ""),
       style: `background-image:url('${u.photo || ""}')` }, [
@@ -9604,10 +9608,7 @@ async function openNearbyMap() {
       showNew ? el("span", { class: "map-new-tag" }, "Nuevo") : null,
       isTest
         ? el("span", { class: "map-person-tag" }, "Prueba")
-        : el("button", { class: "heart" + (isFav ? " on" : ""),
-            onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
-            el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
-          ]),
+        : buildFavoriteButton(u, "heart"),
       el("div", { class: "info" }, [
         el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
         meta ? el("small", { class: li.off ? "gps-off" : "" }, meta) : null,
@@ -10783,7 +10784,11 @@ async function loadDiscoverInto(stack, append = false) {
   // se muestra, pero permite saber con certeza si existe contenido bloqueado y
   // enseñar "Ver más perfiles" solo cuando corresponde.
   const requestLimit = limit === Infinity ? 100 : Math.min(100, remaining + 1);
-  let users = await datingApi.discover(state.zone, requestLimit);
+  const [discoverUsers] = await Promise.all([
+    datingApi.discover(state.zone, requestLimit),
+    syncFavoriteState(),
+  ]);
+  let users = discoverUsers;
   if (!users || users.length === 0) {
     // V637 · Sin usuarios reales → vacío en la app real; demo solo en preview.
     const demoCount = limit === Infinity ? 18 : Math.min(remaining + 1, 18);
@@ -10862,11 +10867,12 @@ function renderDiscoverGrid(stack) {
     if (hasNowStatus(u)) badges.push(el("span", { class: "discover-grid-badge now", title: "Busca algo ahora" }, [
       el("svg", { viewBox: "0 0 24 24", html: `<path fill="currentColor" d="M12 2c2.8 3.2 5.8 5.7 5.8 9.7A5.8 5.8 0 116.2 12c0-2.1 1-4.1 2.8-5.9.2 2.1 1 3.4 2.1 4.2C10.7 7.2 11.1 4.5 12 2z"/>` }),
     ]));
-    const card = el("button", {
-      class: "discover-grid-card", type: "button",
+    const card = el("div", {
+      class: "discover-grid-card", role: "button", tabindex: "0",
       style: `--grid-photo:url('${u.photo}')`,
       "aria-label": `Ver perfil de ${u.name || "esta persona"}`,
     }, [
+      buildFavoriteButton(u, "discover-grid-favorite"),
       el("span", { class: "discover-grid-badges" }, badges),
       act.show ? el("span", { class: "discover-grid-online " + (act.level === "online" ? "on" : "") }, [
         el("span", { class: "discover-grid-dot" }),
@@ -10884,6 +10890,13 @@ function renderDiscoverGrid(stack) {
       ]),
     ]);
     card.addEventListener("click", () => {
+      markDiscoverProfileSeen(u, stack);
+      openProfileDetail(u);
+    });
+    card.addEventListener("keydown", (e) => {
+      if (e.target !== card) return;
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
       markDiscoverProfileSeen(u, stack);
       openProfileDetail(u);
     });
@@ -11513,7 +11526,11 @@ async function populateResults(grid, filter = "") {
   // se muestra el estado vacío; solo la vista previa del admin usa demo.
   if (!grid._pool) {
     grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Buscando…</h3></div>`;
-    let users = await datingApi.discover(state.zone, 30);
+    const [discoverUsers] = await Promise.all([
+      datingApi.discover(state.zone, 30),
+      syncFavoriteState(),
+    ]);
+    let users = discoverUsers;
     if (!users || users.length === 0) users = isPreviewMode() ? generateUsers(14, { zone: state.zone }) : []; // V637
     grid._pool = users;
   }
@@ -11535,7 +11552,6 @@ function renderResults(grid, filter = "") {
     return;
   }
   filtered.forEach(u => {
-    const isFav = state.favorites.has(u.id);
     // V744 · Distancia real o "GPS no permitido" por tarjeta (ubicación desactivada).
     const li = locDistanceInfo(u);
     // V888 · Etiqueta breve: tribu o, en su defecto, tipo de cuerpo (si los declaró).
@@ -11554,9 +11570,7 @@ function renderResults(grid, filter = "") {
     ]) : null;
     const card = el("div", { class: "result-card" + (nowText ? " has-now" : ""), style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
-      el("button", { class: "heart" + (isFav ? " on" : ""), onclick: (e) => { e.stopPropagation(); toggleFav(u, e.currentTarget); } }, [
-        el("span", { html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` })
-      ]),
+      buildFavoriteButton(u, "heart"),
       boostBadge,
       nowBadge,
       el("div", { class: "info" }, [
@@ -11572,21 +11586,81 @@ function filterSearch(v) {
   const grid = $("#resultsGrid");
   if (grid) renderResults(grid, v);
 }
-function toggleFav(u, btn) {
+function paintFavoriteControl(btn, on) {
+  if (!btn) return;
+  btn.classList.toggle("on", !!on);
+  btn.setAttribute("aria-pressed", String(!!on));
+  btn.setAttribute("aria-label", on ? "Quitar de favoritos" : "Añadir a favoritos");
+  btn.title = on ? "Quitar de favoritos" : "Añadir a favoritos";
+  const label = btn.querySelector(".fav-label");
+  if (label) label.textContent = on ? "Guardado" : "Guardar";
+}
+function refreshFavoriteControls(userId, on) {
+  document.querySelectorAll(".aura-favorite-control").forEach(btn => {
+    if (String(btn.dataset.favoriteId || "") === String(userId)) paintFavoriteControl(btn, on);
+  });
+}
+let favoriteSyncPromise = null;
+async function syncFavoriteState() {
+  if (!state.user || !state.user.id) return false;
+  // Comparte la misma petición si varias vistas se están preparando a la vez.
+  if (favoriteSyncPromise) return favoriteSyncPromise;
+  favoriteSyncPromise = (async () => {
+    const favorites = await datingApi.favorites();
+    if (!Array.isArray(favorites)) return false;
+    state.favorites.clear();
+    favorites.forEach(u => state.favorites.add(u.id));
+    document.querySelectorAll(".aura-favorite-control").forEach(btn => {
+      const id = btn.dataset.favoriteId;
+      paintFavoriteControl(btn, state.favorites.has(Number(id)) || state.favorites.has(id));
+    });
+    return true;
+  })();
+  try { return await favoriteSyncPromise; }
+  finally { favoriteSyncPromise = null; }
+}
+function buildFavoriteButton(u, className = "heart") {
+  const isFav = state.favorites.has(u.id);
+  const btn = el("button", {
+    class: `${className} aura-favorite-control${isFav ? " on" : ""}`,
+    type: "button", "data-favorite-id": u.id,
+  }, [
+    el("span", { class: "fav-icon", html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>` }),
+    el("span", { class: "fav-label" }, isFav ? "Guardado" : "Guardar"),
+  ]);
+  paintFavoriteControl(btn, isFav);
+  btn.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    btn.disabled = true;
+    await toggleFav(u, btn);
+    btn.disabled = false;
+  });
+  return btn;
+}
+async function toggleFav(u, btn) {
   const isReal = u && u._real && typeof u.id === "number" && Number.isFinite(u.id);
   const wasFav = state.favorites.has(u.id);
   // Optimista: actualiza la UI y el estado local al instante.
-  if (wasFav) { state.favorites.delete(u.id); if (btn) btn.classList.remove("on"); }
-  else { state.favorites.add(u.id); if (btn) btn.classList.add("on"); }
+  if (wasFav) state.favorites.delete(u.id);
+  else state.favorites.add(u.id);
+  refreshFavoriteControls(u.id, !wasFav);
+  if (btn) paintFavoriteControl(btn, !wasFav);
   toast(wasFav ? "Eliminado de favoritos" : "Añadido a favoritos ♥");
-  if (!isReal) return; // demo/anónimo → sólo en memoria
+  if (!isReal) return !wasFav; // demo/anónimo → sólo en memoria
   // Persiste en el servidor; si falla o el estado difiere, reconcilia.
-  datingApi.toggleFavorite(u.id).then((res) => {
-    if (!res) return; // sin sesión / error de red → conserva el optimista
-    const nowFav = !!res.favorite;
-    if (nowFav) state.favorites.add(u.id); else state.favorites.delete(u.id);
-    if (btn) btn.classList.toggle("on", nowFav);
-  });
+  const res = await datingApi.toggleFavorite(u.id);
+  if (!res) {
+    // Si el servidor no confirma el cambio, restauramos el estado anterior para
+    // no enseñar una eliminación/alta que en realidad no se guardó.
+    if (wasFav) state.favorites.add(u.id); else state.favorites.delete(u.id);
+    refreshFavoriteControls(u.id, wasFav);
+    toast("No se pudo actualizar Favoritos");
+    return wasFav;
+  }
+  const nowFav = !!res.favorite;
+  if (nowFav) state.favorites.add(u.id); else state.favorites.delete(u.id);
+  refreshFavoriteControls(u.id, nowFav);
+  return nowFav;
 }
 
 /* ---- Filters modal ---- V748 · rediseño completo ---- */
@@ -12349,6 +12423,47 @@ function screenLikes(root) {
     return wrap;
   }
 
+  // V978 · Favorito con una acción de retirada explícita. Antes toda la tarjeta
+  // solo abría el perfil y no existía ninguna forma visible de quitarlo.
+  function favoriteCard(u) {
+    const card = el("div", { class: "like-card", style: `background-image:url('${u.photo}')` });
+    const removeBtn = el("button", {
+      class: "favorite-remove", type: "button",
+      "aria-label": `Quitar a ${u.name} de favoritos`,
+      title: "Quitar de favoritos",
+      html: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg><span>Quitar</span>`,
+    });
+    const wrap = el("div", {
+      class: "like-unlocked-wrap favorite-card-wrap", role: "button", tabindex: "0",
+      "aria-label": `Ver perfil de ${u.name}`,
+    }, [
+      card,
+      removeBtn,
+      el("strong", { class: "favorite-card-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+    ]);
+    const open = () => openProfileDetail(u, { backTo: "likes" });
+    wrap.addEventListener("click", open);
+    wrap.addEventListener("keydown", (e) => {
+      if (e.target !== wrap) return;
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault(); open();
+    });
+    removeBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      removeBtn.disabled = true;
+      const stillFavorite = await toggleFav(u, null);
+      if (stillFavorite) { removeBtn.disabled = false; return; }
+      wrap.classList.add("removing");
+      setTimeout(() => {
+        wrap.remove();
+        if (!grid.querySelector(".favorite-card-wrap")) {
+          grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Usa el botón Guardar de cualquier perfil para añadirlo aquí.</p></div>`;
+        }
+      }, 180);
+    });
+    return wrap;
+  }
+
   async function renderLikesTab() {
     // V755 · El botón "Actualiza a Premium" se ocultaba/mostraba mal: aparecía
     // ya DURANTE el "Cargando…" (antes de saber si hay likes) y también cuando
@@ -12390,11 +12505,10 @@ function screenLikes(root) {
         grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
         return;
       }
-      generateUsers(state.favorites.size).forEach(u => {
-        const c = el("div", { class: "like-card", style: `background-image:url('${u.photo}')` });
-        grid.appendChild(el("div", { style: "position:relative" }, [ c,
-          el("strong", { style: "color:white;position:absolute;left:10px;bottom:10px;z-index:2" }, `${u.name}, ${u.age}`) ]));
-      });
+      const demos = generateUsers(state.favorites.size);
+      state.favorites.clear();
+      demos.forEach(u => state.favorites.add(u.id));
+      demos.forEach(u => grid.appendChild(favoriteCard(u)));
       return;
     }
     grid.innerHTML = "";
@@ -12402,20 +12516,11 @@ function screenLikes(root) {
       grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Sin favoritos aún</h3><p>Toca el ♥ en cualquier perfil para guardarlo aquí.</p></div>`;
       return;
     }
-    // Mantén el Set en memoria sincronizado con el servidor.
+    // Mantén el Set en memoria sincronizado con el servidor. La respuesta GET
+    // es la fuente de verdad, así que también retiramos IDs que ya no estén.
+    state.favorites.clear();
     favs.forEach(u => state.favorites.add(u.id));
-    favs.forEach(u => {
-      const wrap = el("button", {
-        class: "like-unlocked-wrap",
-        type: "button",
-        "aria-label": `Ver perfil de ${u.name}`,
-        onclick: () => openProfileDetail(u, { backTo: "likes" }),
-      }, [
-        el("div", { class: "like-card", style: `background-image:url('${u.photo}')` }),
-        el("strong", { style: "color:white;position:absolute;left:10px;bottom:10px;z-index:2" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
-      ]);
-      grid.appendChild(wrap);
-    });
+    favs.forEach(u => grid.appendChild(favoriteCard(u)));
   }
 
   renderLikesTab();
@@ -14137,6 +14242,21 @@ function screenProfileDetail(root, u, opts = {}) {
   const pdActItem = (btn, label) => el("div", { class: "pd-act-item" }, [
     btn, el("span", { class: "pd-act-cap" }, label),
   ]);
+  const pdFavOn = state.favorites.has(u.id);
+  const pdFavCap = el("span", { class: "pd-act-cap" }, pdFavOn ? "Guardado" : "Guardar");
+  const pdFavBtn = el("button", {
+    class: "pd-act pd-act-fav aura-favorite-control" + (pdFavOn ? " on" : ""),
+    type: "button", "data-favorite-id": u.id,
+    onclick: async (e) => {
+      e.stopPropagation();
+      pdFavBtn.disabled = true;
+      const nowFav = await toggleFav(u, pdFavBtn);
+      pdFavCap.textContent = nowFav ? "Guardado" : "Guardar";
+      pdFavBtn.disabled = false;
+    },
+    html: `<svg viewBox="0 0 24 24" width="29" height="29" aria-hidden="true"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`,
+  });
+  paintFavoriteControl(pdFavBtn, pdFavOn);
   wrap.appendChild(el("div", { class: "pd-actions" }, [
     pdActItem(el("button", {
       class: "pd-act pd-act-pass",
@@ -14195,6 +14315,7 @@ function screenProfileDetail(root, u, opts = {}) {
       },
       html: `<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`
     }), "Me gusta"),
+    el("div", { class: "pd-act-item" }, [pdFavBtn, pdFavCap]),
   ]));
 
   root.appendChild(wrap);
@@ -15014,6 +15135,7 @@ function openProfile(u) {
         ]),
       ]),
       el("div", { class: "profile-actions" }, [
+        buildFavoriteButton(u, "btn btn-favorite-wide"),
         el("button", { class: "btn btn-outline", onclick: () => {
           if (u._real && typeof u.id === "number") datingApi.react(u.id, "pass");
           routeTab("search");

@@ -1283,8 +1283,22 @@ img { max-width: 100%; display: block; }
 .discover-grid-dot { width: 7px; height: 7px; border-radius: 50%; background: #fbbf24; flex: 0 0 auto; }
 .discover-grid-online.on .discover-grid-dot { background: #24df86; box-shadow: 0 0 0 2px rgba(36,223,134,.22); }
 .discover-grid-badges {
-  position: absolute; z-index: 3; top: 8px; right: 8px;
+  position: absolute; z-index: 3; top: 44px; right: 8px;
   display: inline-flex; gap: 4px;
+}
+.discover-grid-favorite {
+  position: absolute; z-index: 3; top: 8px; right: 8px;
+  height: 29px; padding: 0 8px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid rgba(255,255,255,.22); background: rgba(12,13,19,.66);
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+  color: #fff; font: inherit; font-size: 9px; font-weight: 800; cursor: pointer;
+}
+.discover-grid-favorite .fav-icon { display: grid; place-items: center; }
+.discover-grid-favorite svg { width: 17px; height: 17px; fill: currentColor; }
+.discover-grid-favorite.on {
+  background: linear-gradient(135deg, #ff3b6b, #ff7043); border-color: transparent;
+  box-shadow: 0 5px 14px rgba(255,59,107,.34);
 }
 .discover-grid-badge {
   width: 25px; height: 25px; border-radius: 9px; display: grid; place-items: center;
@@ -1887,11 +1901,20 @@ img { max-width: 100%; display: block; }
 }
 .result-card .heart {
   position: absolute; top: 10px; left: 10px; z-index: 2;
-  width: 32px; height: 32px; border-radius: 50%;
-  background: rgba(0,0,0,.35); backdrop-filter: blur(4px);
-  border: 0; color: white; display: grid; place-items: center;
+  width: auto; min-width: 38px; height: 38px; padding: 0 10px;
+  border-radius: 999px; gap: 6px;
+  background: rgba(0,0,0,.55); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.22); color: white;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: inherit; font-size: 10.5px; font-weight: 800; cursor: pointer;
 }
-.result-card .heart.on { color: #ff3b6b; }
+.result-card .heart .fav-icon { display: grid; place-items: center; }
+.result-card .heart svg { width: 21px; height: 21px; fill: currentColor; }
+.result-card .heart.on {
+  color: #fff; background: linear-gradient(135deg, #ff3b6b, #ff7043);
+  border-color: transparent; box-shadow: 0 5px 16px rgba(255,59,107,.34);
+}
+.aura-favorite-control:disabled { opacity: .65; cursor: wait; }
 
 /* Filters sheet content */
 .filters-body { padding: 8px 20px 24px; }
@@ -2920,6 +2943,18 @@ body.account-suspended .restriction-banner .rb-close {
 .profile-photo { aspect-ratio: 3/4; border-radius: 14px; background-size: cover; background-position: center; }
 .profile-actions { display: flex; gap: 10px; margin-top: 20px; }
 .profile-actions .btn { flex: 1; }
+.btn-favorite-wide {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  color: #ff3b6b; background: var(--surface, #fff);
+  border: 1px solid rgba(255,59,107,.42);
+}
+.btn-favorite-wide.on {
+  color: #fff; border-color: transparent;
+  background: linear-gradient(135deg, #ff3b6b, #ff7043);
+  box-shadow: 0 7px 18px rgba(255,59,107,.25);
+}
+.btn-favorite-wide .fav-icon { display: grid; place-items: center; }
+.btn-favorite-wide svg { width: 20px; height: 20px; fill: currentColor; }
 
 /* -------- Me / Settings / Subscriptions -------- */
 .me-hero {
@@ -4674,6 +4709,26 @@ body.info-open .theme-toggle { display: none; }
 .pd-act-pass { background: #fff; color: #ff3b6b; border: 1px solid #ff3b6b; }
 .pd-act-super { background: linear-gradient(135deg, #4a9eff, #2b7cff); color: #fff; width: 48px; height: 48px; }
 .pd-act-like { background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; }
+.pd-act-fav {
+  color: #ff3b6b;
+  background: #fff;
+  border: 1px solid rgba(255,59,107,.42);
+  box-shadow: 0 7px 18px rgba(255,59,107,.12);
+}
+.pd-act-fav svg { fill: currentColor; }
+.pd-act-fav.on {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #ff3b6b, #ff7043);
+  box-shadow: 0 8px 22px rgba(255,59,107,.32);
+}
+.pd-act:disabled { opacity: .62; cursor: wait; transform: none; }
+
+@media (max-width: 360px) {
+  .pd-actions { gap: 10px; padding-inline: 12px; }
+  .pd-act { width: 50px; height: 50px; }
+  .pd-act-super { width: 46px; height: 46px; }
+}
 
 /* Hide the fixed theme toggle over profile-detail to avoid overlap */
 body:has(.screen-profile-detail) .theme-toggle,
@@ -4997,6 +5052,27 @@ body:has(#modal:not([hidden])) #restrictionBanner { display: none; }
 .lqa:active { transform: scale(.9); }
 .lqa-pass { background: rgba(0,0,0,.55); }
 .lqa-like { background: linear-gradient(135deg, #ff3b6b, #ff8a3b); }
+
+/* V978 · Acción inequívoca para retirar perfiles desde la pestaña Favoritos. */
+.favorite-card-name {
+  position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 2;
+  color: #fff !important; font-size: 14px; line-height: 1.15;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.favorite-remove {
+  position: absolute; z-index: 4; top: 9px; right: 9px;
+  height: 36px; padding: 0 10px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid rgba(255,255,255,.28);
+  background: rgba(14,15,21,.72); color: #fff; cursor: pointer;
+  -webkit-backdrop-filter: blur(7px); backdrop-filter: blur(7px);
+  font: inherit; font-size: 10.5px; font-weight: 800;
+  box-shadow: 0 5px 14px rgba(0,0,0,.28);
+}
+.favorite-remove svg { width: 20px; height: 20px; fill: #ff4d78; }
+.favorite-remove:disabled { opacity: .58; cursor: wait; }
+.favorite-card-wrap.removing { opacity: 0; transform: scale(.92); }
 
 /* Cabecera de hoja de filtros con botón X */
 .sheet-titlebar {
