@@ -3714,12 +3714,30 @@ function genderOptionsForZone(zone, currentValue) {
 // V904 · Orientaciones según la zona (mismo criterio que los géneros): en Zona
 // Hetero la única orientación coherente es "Heterosexual"; en Zona LGTB+ se
 // ofrece la lista completa. Se usa en el registro, el editor de perfil y los
-// filtros. Si el valor guardado no está en la lista de su zona, se conserva.
+// filtros.
+// V983 · Los valores históricos se comparan sin distinguir mayúsculas para que
+// "gay" no cree una segunda opción junto a "Gay". Además, Hombre no ofrece
+// "Lesbiana" y Mujer no ofrece "Gay"; el resto de identidades conserva toda la
+// lista porque no permite inferir esa incompatibilidad de forma segura.
 const ORIENTATION_LGTB = ["Lesbiana", "Gay", "Bisexual", "Pansexual", "Asexual", "Demisexual", "Queer", "Prefiero no decirlo"];
-function orientationOptionsForZone(zone, currentValue) {
-  const base = (zone === "lgtb") ? ORIENTATION_LGTB.slice() : ["Heterosexual"];
-  const cur = currentValue ? String(currentValue) : "";
-  if (cur && !base.includes(cur)) base.push(cur);
+const ORIENTATION_CANONICAL = ["Heterosexual", ...ORIENTATION_LGTB];
+function canonicalOrientation(value) {
+  const raw = value == null ? "" : String(value).trim();
+  if (!raw) return "";
+  const key = raw.toLocaleLowerCase("es");
+  if (["todas", "todos", "any", "all"].includes(key)) return "";
+  const found = ORIENTATION_CANONICAL.find(o => o.toLocaleLowerCase("es") === key);
+  return found || raw;
+}
+function orientationOptionsForZone(zone, currentValue, genderValue) {
+  let base = (zone === "lgtb") ? ORIENTATION_LGTB.slice() : ["Heterosexual"];
+  const gender = genderLabel(genderValue);
+  if (zone === "lgtb" && gender === "Hombre") base = base.filter(o => o !== "Lesbiana");
+  if (zone === "lgtb" && gender === "Mujer") base = base.filter(o => o !== "Gay");
+  const cur = canonicalOrientation(currentValue);
+  // Conserva textos personalizados antiguos, pero nunca reintroduce una opción
+  // canónica que se haya ocultado por ser incompatible con el género elegido.
+  if (cur && !ORIENTATION_CANONICAL.includes(cur) && !base.includes(cur)) base.push(cur);
   return base;
 }
 // V757 · Etnias seleccionables (mismo listado que en el registro). El usuario
@@ -7537,9 +7555,18 @@ function screenRegisterProfile(root) {
   const fGender = el("select", { required: true },
     genderOptionsForZone(state.zone, state.registration.gender)
       .map(g => el("option", { value: g, selected: g === state.registration.gender || undefined }, g)));
+  const regOrient = canonicalOrientation(state.registration.orientation);
   const fOrient = el("select", { required: true },
-    orientationOptionsForZone(state.zone, state.registration.orientation)
-      .map(o => el("option", { value: o, selected: o === state.registration.orientation || undefined }, o)));
+    orientationOptionsForZone(state.zone, regOrient, state.registration.gender)
+      .map(o => el("option", { value: o, selected: o === regOrient || undefined }, o)));
+  // Mantiene ambas listas coherentes si el género cambia durante el registro.
+  fGender.addEventListener("change", () => {
+    const current = canonicalOrientation(fOrient.value);
+    const options = orientationOptionsForZone(state.zone, current, fGender.value);
+    fOrient.replaceChildren(...options.map(o => el("option", {
+      value: o, selected: o === current || undefined,
+    }, o)));
+  });
 
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Nombre"), fName ]));
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Fecha de nacimiento"), fBirth ]));
@@ -12035,17 +12062,19 @@ function openFilters() {
   // ese y se desmarcan los demás. "Todos" equivale a AMBOS (mujeres y hombres)
   // en hetero, y a todas las identidades en la zona LGTB.
   const genderOpts = GENDER_FILTER_OPTS[zone] || GENDER_FILTER_OPTS.hetero;
+  let selectedGenderFilter = genderOpts.find(opt => opt.value !== "todos" && state.filters.genders.includes(opt.value))?.value || "todos";
+  let refreshOrientationFilter = () => {};
   const genderChips = [];
   const grpGenderRow = el("div", { class: "chip-row" });
   genderOpts.forEach(opt => {
-    const active = opt.value === "todos"
-      ? (!state.filters.genders.length || state.filters.genders.includes("Todos"))
-      : state.filters.genders.includes(opt.value);
+    const active = opt.value === selectedGenderFilter;
     const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
     c._value = opt.value;
     c.addEventListener("click", () => {
       // Radio: solo un chip activo a la vez.
+      selectedGenderFilter = opt.value;
       genderChips.forEach(x => x.classList.toggle("active", x === c));
+      refreshOrientationFilter();
     });
     genderChips.push(c);
     grpGenderRow.appendChild(c);
@@ -12062,23 +12091,27 @@ function openFilters() {
   // cuando estabas en Zona Hetero). Las opciones dependen de la zona:
   // orientationOptionsForZone → en Hetero solo "Heterosexual"; en LGTB la lista
   // completa. "Todas" = sin filtro.
-  const orientOpts = orientationOptionsForZone(zone, state.filters.orientation);
   const orientChips = [];
-  const _curOrient = state.filters.orientation || "todas";
-  const orientRef = { value: orientOpts.includes(_curOrient) ? _curOrient : "todas" };
+  const _curOrient = canonicalOrientation(state.filters.orientation) || "todas";
+  const orientRef = { value: _curOrient };
   {
     const grpOrientRow = el("div", { class: "chip-row" });
-    [{ label: "Todas", value: "todas" }, ...orientOpts.map(o => ({ label: o, value: o }))].forEach(opt => {
-      const active = opt.value === orientRef.value;
-      const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
-      c._value = opt.value;
-      c.addEventListener("click", () => {
-        orientRef.value = opt.value;
-        orientChips.forEach(x => x.classList.toggle("active", x === c));
-      });
-      orientChips.push(c);
-      grpOrientRow.appendChild(c);
-    });
+    refreshOrientationFilter = () => {
+      const orientOpts = orientationOptionsForZone(zone, orientRef.value, selectedGenderFilter);
+      if (orientRef.value !== "todas" && !orientOpts.includes(orientRef.value)) orientRef.value = "todas";
+      orientChips.length = 0;
+      grpOrientRow.replaceChildren(...[{ label: "Todas", value: "todas" }, ...orientOpts.map(o => ({ label: o, value: o }))].map(opt => {
+        const c = el("button", { class: "chip selectable" + (opt.value === orientRef.value ? " active" : ""), type: "button" }, opt.label);
+        c._value = opt.value;
+        c.addEventListener("click", () => {
+          orientRef.value = opt.value;
+          orientChips.forEach(x => x.classList.toggle("active", x === c));
+        });
+        orientChips.push(c);
+        return c;
+      }));
+    };
+    refreshOrientationFilter();
     wrap.appendChild(el("div", { class: "filter-group" }, [
       el("h5", {}, "Orientación"),
       el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
@@ -13814,7 +13847,8 @@ function openMapFilters(mf, onApply) {
   // LGTB+ (varias identidades), se salía y hacía scroll horizontal en móviles
   // estrechos. Opciones coherentes con la zona. "Todos" = sin filtro.
   const genderOpts = GENDER_FILTER_OPTS[_mfZone] || GENDER_FILTER_OPTS.hetero;
-  const genderRef = { value: mf.gender || "todos" };
+  const genderRef = { value: genderOpts.some(o => o.value === mf.gender) ? mf.gender : "todos" };
+  let refreshMapOrientationFilter = () => {};
   const genderChips = [];
   const genderRow = el("div", { class: "chip-row" });
   genderOpts.forEach(opt => {
@@ -13823,6 +13857,7 @@ function openMapFilters(mf, onApply) {
     c.addEventListener("click", () => {
       genderRef.value = opt.value;
       genderChips.forEach(x => x.classList.toggle("active", x === c));
+      refreshMapOrientationFilter();
     });
     genderChips.push(c);
     genderRow.appendChild(c);
@@ -13837,20 +13872,24 @@ function openMapFilters(mf, onApply) {
   // V908 · Orientación (selección única) en el mapa, con paridad con
   // Explorar/Buscar. Opciones según la zona: Hetero → solo "Heterosexual";
   // LGTB → lista completa. "Todas" = sin filtro.
-  const orientOpts = orientationOptionsForZone(_mfZone, mf.orientation);
-  const orientRef = { value: orientOpts.includes(mf.orientation) ? mf.orientation : "todas" };
+  const orientRef = { value: canonicalOrientation(mf.orientation) || "todas" };
   const orientChips = [];
   const orientRow = el("div", { class: "chip-row" });
-  [{ label: "Todas", value: "todas" }, ...orientOpts.map(o => ({ label: o, value: o }))].forEach(opt => {
-    const active = opt.value === orientRef.value;
-    const c = el("button", { class: "chip selectable" + (active ? " active" : ""), type: "button" }, opt.label);
-    c.addEventListener("click", () => {
-      orientRef.value = opt.value;
-      orientChips.forEach(x => x.classList.toggle("active", x === c));
-    });
-    orientChips.push(c);
-    orientRow.appendChild(c);
-  });
+  refreshMapOrientationFilter = () => {
+    const orientOpts = orientationOptionsForZone(_mfZone, orientRef.value, genderRef.value);
+    if (orientRef.value !== "todas" && !orientOpts.includes(orientRef.value)) orientRef.value = "todas";
+    orientChips.length = 0;
+    orientRow.replaceChildren(...[{ label: "Todas", value: "todas" }, ...orientOpts.map(o => ({ label: o, value: o }))].map(opt => {
+      const c = el("button", { class: "chip selectable" + (opt.value === orientRef.value ? " active" : ""), type: "button" }, opt.label);
+      c.addEventListener("click", () => {
+        orientRef.value = opt.value;
+        orientChips.forEach(x => x.classList.toggle("active", x === c));
+      });
+      orientChips.push(c);
+      return c;
+    }));
+  };
+  refreshMapOrientationFilter();
   sheet.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, "Orientación"),
     el("small", { class: "filter-hint", style: "display:block;color:var(--text-muted);margin:-2px 0 8px;line-height:1.35" },
@@ -16072,7 +16111,7 @@ function screenEditProfile(root) {
       height: heightInp.value ? (peHeight.u === "ftin" ? inToCm(heightInp.value) : (parseInt(heightInp.value, 10) || null)) : null,
       weight: weightInp.value ? unitToKg(weightInp.value, peWeight.u) : null, // V791 · siempre kg
       gender: genderInp.value,
-      orientation: orientInp.value || null, // V904 · orientación editable
+      orientation: canonicalOrientation(orientInp.value) || null, // V983 · valor canónico, sin duplicados por mayúsculas
       ethnicity: ethInp.value || null,
       looking_for: lookingRef.id,
       relationship: relRef.id,
@@ -16147,10 +16186,18 @@ function screenEditProfile(root) {
   // LGTB → lista completa). Antes solo existía el interruptor "Ocultar
   // orientación" pero no se podía ver ni editar el valor. Se prerrellena al
   // cargar el perfil real (más abajo).
-  const curOrient = (u.orientation && String(u.orientation)) || "";
+  const curOrient = canonicalOrientation(u.orientation);
   const orientInp = el("select", {},
-    orientationOptionsForZone(state.zone, curOrient)
+    orientationOptionsForZone(state.zone, curOrient, curGender)
       .map(o => el("option", { value: o, selected: o === curOrient || undefined }, o)));
+  const syncProfileOrientation = (value, gender) => {
+    const current = canonicalOrientation(value);
+    const options = orientationOptionsForZone(state.zone, current, gender);
+    orientInp.replaceChildren(...options.map(o => el("option", {
+      value: o, selected: o === current || undefined,
+    }, o)));
+  };
+  genderInp.addEventListener("change", () => syncProfileOrientation(orientInp.value, genderInp.value));
   const orientField = el("div", { class: "field" });
   orientField.appendChild(el("label", {}, "Orientación"));
   orientField.appendChild(orientInp); form.appendChild(orientField);
@@ -16354,15 +16401,9 @@ function screenEditProfile(root) {
       if (p.height != null) heightInp.value = peHeight.u === "ftin" ? cmToIn(p.height) : p.height; // V792
       if (p.weight != null) weightInp.value = kgToUnit(p.weight, peWeight.u); // V791
       if (p.gender != null) genderInp.value = genderLabel(p.gender); // V741
-      // V904 · Orientación: si el valor guardado no está entre las opciones de la
-      // zona, se añade para no perderlo antes de asignarlo al select.
-      if (p.orientation != null && String(p.orientation)) {
-        const ov = String(p.orientation);
-        if (!Array.from(orientInp.options).some(o => o.value === ov)) {
-          orientInp.appendChild(el("option", { value: ov }, ov));
-        }
-        orientInp.value = ov;
-      }
+      // V983 · "gay" heredado selecciona la opción canónica "Gay" sin añadir
+      // un duplicado; también aplica la compatibilidad Hombre/Mujer.
+      syncProfileOrientation(p.orientation, genderInp.value);
       if (p.ethnicity != null) ethInp.value = String(p.ethnicity); // V757
       // V776 · Rellena los grupos de estilo de vida (selección única).
       const setSingle = (wrapEl, ref, options, id) => {

@@ -1,6 +1,16 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V982**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V983**
+
+### V983 (28/09/2026) — Orientación sin duplicados y coherente con género
+
+- Los valores históricos como `gay` se normalizan a `Gay`, por lo que Editar
+  perfil ya no muestra dos opciones y mantiene seleccionada la forma correcta.
+- Un perfil con género Hombre no ve `Lesbiana` entre sus orientaciones y uno con
+  género Mujer no ve `Gay`; las demás identidades mantienen la lista completa.
+- Los filtros de Explorar/Buscar y Cerca de ti aplican la misma compatibilidad
+  al elegir Hombres o Mujeres, y aceptan datos antiguos sin distinguir
+  mayúsculas/minúsculas.
 
 ### V982 (28/09/2026) — Restablecimiento sincronizado con la app
 

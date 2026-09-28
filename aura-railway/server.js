@@ -42,6 +42,20 @@ app.set("trust proxy", true);
 // y el filtro de radio desde un punto a ~1,3 km del real).
 const GPS_GOOD_ACCURACY_M = 300;
 
+// V983 · Un único formato para orientaciones conocidas. Evita que datos
+// históricos como "gay" reaparezcan como una opción distinta de "Gay" y hace
+// que altas, edición propia, administración y filtros hablen el mismo idioma.
+const ORIENTATION_CANONICAL = [
+  "Heterosexual", "Lesbiana", "Gay", "Bisexual", "Pansexual",
+  "Asexual", "Demisexual", "Queer", "Prefiero no decirlo",
+];
+function canonicalOrientation(value, fallback = null) {
+  const raw = value == null ? "" : String(value).trim();
+  if (!raw) return fallback;
+  const found = ORIENTATION_CANONICAL.find((item) => item.toLocaleLowerCase("es") === raw.toLocaleLowerCase("es"));
+  return (found || raw).slice(0, 40);
+}
+
 // V879 · Estado del arranque. Antes app.listen() era LO ÚLTIMO, después de
 // migrate() (~224 sentencias DDL), el backfill de geoip (hasta 5000 UPDATEs en
 // serie) y 13 phaseN.migrate(). Hasta que todo eso acababa el puerto estaba
@@ -2706,6 +2720,30 @@ async function migrate() {
       );
     }
   } catch (e) { /* additivo: si falla, no bloquea el arranque */ }
+
+  // V983 · Corrige una sola vez las variantes históricas de mayúsculas y
+  // espacios (por ejemplo "gay") para que la base conserve siempre la etiqueta
+  // canónica que usa la interfaz. No altera orientaciones personalizadas.
+  try {
+    const [[flag]] = await pool.query("SELECT v FROM settings WHERE k='orientation_case_v983'");
+    if (!flag || flag.v !== "1") {
+      await pool.execute(`UPDATE users SET orientation = CASE LOWER(TRIM(orientation))
+        WHEN 'heterosexual' THEN 'Heterosexual'
+        WHEN 'lesbiana' THEN 'Lesbiana'
+        WHEN 'gay' THEN 'Gay'
+        WHEN 'bisexual' THEN 'Bisexual'
+        WHEN 'pansexual' THEN 'Pansexual'
+        WHEN 'asexual' THEN 'Asexual'
+        WHEN 'demisexual' THEN 'Demisexual'
+        WHEN 'queer' THEN 'Queer'
+        WHEN 'prefiero no decirlo' THEN 'Prefiero no decirlo'
+        ELSE orientation END
+        WHERE orientation IS NOT NULL AND TRIM(orientation) <> ''`);
+      await pool.execute(
+        "INSERT INTO settings (k, v) VALUES ('orientation_case_v983','1') ON DUPLICATE KEY UPDATE v='1'"
+      );
+    }
+  } catch (e) { /* normalización additiva: no bloquea el arranque */ }
 }
 
 /* ---------- Seed data (only if empty) ---------- */
@@ -3360,7 +3398,7 @@ app.post("/api/users", wrap(async (req, res) => {
   const name = String(b.name || email.split("@")[0]).trim().slice(0, 60);
   const age = parseInt(b.age, 10) || 25;
   const gender = String(b.gender || "Otro").slice(0, 24);
-  const orientation = String(b.orientation || "Heterosexual").slice(0, 24);
+  const orientation = canonicalOrientation(b.orientation, "Heterosexual").slice(0, 24);
   const zone = String(b.zone || "hetero").slice(0, 16);
   const city = String(b.city || "Madrid").slice(0, 60);
   const country = String(b.country || "España").slice(0, 60);
@@ -3507,7 +3545,10 @@ app.patch("/api/users/:id", wrap(async (req, res) => {
       `Cambio de zona DENEGADO: ${prev.name || prev.email || ("id " + prev.id)} (${prev.zone} → ${req.body.zone}) — lo intentó ${req.admin?.email || "desconocido"}`);
     return res.status(403).json({ error: "zone_change_forbidden", detail: "Solo el administrador principal puede cambiar la zona de un usuario." });
   }
-  for (const f of fields) if (f in req.body) { updates.push(`${f}=?`); params.push(req.body[f]); }
+  for (const f of fields) if (f in req.body) {
+    updates.push(`${f}=?`);
+    params.push(f === "orientation" ? canonicalOrientation(req.body[f]) : req.body[f]);
+  }
   // V776 · prompts (JSON): admite array o string JSON. Se sanea a [{q,a}].
   if ("prompts" in req.body) {
     let arr = req.body.prompts;
@@ -10293,7 +10334,7 @@ function applyPreferenceFilters(where, params, f) {
   //   Solo tiene efecto en la Zona LGTB+ (en Hetero todas son "Heterosexual").
   const ori = f.orientation;
   if (ori && ori !== "todas" && ori !== "todos" && ori !== "any" && String(ori).trim()) {
-    where.push("u.orientation = ?"); params.push(String(ori).trim());
+    where.push("LOWER(TRIM(u.orientation)) = LOWER(?)"); params.push(canonicalOrientation(ori, String(ori).trim()));
   }
   let ints = Array.isArray(f.interests) ? f.interests : (f.interests != null ? [f.interests] : []);
   ints = ints.map(v => String(v == null ? "" : v).trim()).filter(Boolean).slice(0, 30);
@@ -11960,6 +12001,7 @@ app.get("/api/my/profile", wrap(async (req, res) => {
   try { healthPractices = u.health_practices ? JSON.parse(u.health_practices) : []; } catch { healthPractices = []; }
   u.health_practices = Array.isArray(healthPractices) ? healthPractices : [];
   u.nsfw_ok = !!u.nsfw_ok;
+  u.orientation = canonicalOrientation(u.orientation, "");
   // V742 · privacidad: devolvemos el objeto {campo:true} para pintar los toggles.
   const privacy = parsePrivacy(u.privacy_hidden);
   delete u.privacy_hidden;
@@ -12015,7 +12057,7 @@ app.post("/api/my/profile", wrap(async (req, res) => {
   // V741 · Género editable desde el perfil (etiquetas en español).
   if ("gender" in b) { sets.push("gender=?"); vals.push(b.gender ? String(b.gender).slice(0, 30) : null); }
   // V904 · Orientación editable desde el perfil (coherente con la zona).
-  if ("orientation" in b) { sets.push("orientation=?"); vals.push(b.orientation ? String(b.orientation).slice(0, 40) : null); }
+  if ("orientation" in b) { sets.push("orientation=?"); vals.push(canonicalOrientation(b.orientation)); }
   // V757 · Etnia editable desde el perfil (alimenta el filtro de etnia).
   if ("ethnicity" in b) { sets.push("ethnicity=?"); vals.push(b.ethnicity ? String(b.ethnicity).slice(0, 40) : null); }
   if ("looking_for" in b) { sets.push("looking_for=?"); vals.push(b.looking_for ? String(b.looking_for).slice(0, 30) : null); }
