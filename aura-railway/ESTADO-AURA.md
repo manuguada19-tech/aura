@@ -1,6 +1,15 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V985**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V986**
+
+### V986 (28/09/2026) — Apelaciones solo cuando corresponden
+
+- El Centro de seguridad ya no muestra «Nueva apelación» por defecto.
+- El servidor habilita la acción únicamente si existe una decisión concreta y
+  apelable sobre la cuenta: infracción sancionada, restricción activa, suspensión,
+  baneo o denegación de un caso de dispositivo.
+- Mientras haya una apelación abierta o en revisión se impiden nuevas solicitudes
+  desde la interfaz; el usuario conserva visible el historial y su estado.
 
 ### V985 (28/09/2026) — Privacidad, sesiones y seguridad en la app
 

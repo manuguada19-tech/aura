@@ -17655,7 +17655,7 @@ function screenSafetyCenter(root) {
     { id: "appeals", label: "Apelaciones" },
   ];
   let activeTab = "blocks";
-  let model = { blocks: [], reports: [], appeals: [] };
+  let model = { blocks: [], reports: [], appeals: [], canAppeal: false, pendingAppeal: false, appealable: [] };
   tabDefs.forEach((t) => {
     const btn = el("button", { type: "button", class: "safety-tab" + (t.id === activeTab ? " active" : ""), role: "tab" }, t.label);
     btn.addEventListener("click", () => {
@@ -17749,14 +17749,38 @@ function screenSafetyCenter(root) {
 
   function renderAppeals() {
     content.innerHTML = "";
-    const newBtn = el("button", { class: "btn btn-brand btn-sm", type: "button" }, "Nueva apelación");
-    newBtn.addEventListener("click", renderAppealForm);
-    content.appendChild(el("div", { class: "safety-section-intro with-action" }, [
-      el("span", {}, [el("strong", {}, "Apelaciones"), el("small", {}, "Solicita una revisión de una decisión sobre tu cuenta.")]),
-      newBtn,
-    ]));
+    const intro = el("div", { class: "safety-section-intro" + (model.canAppeal ? " with-action" : "") }, [
+      el("span", {}, [
+        el("strong", {}, "Apelaciones"),
+        el("small", {}, model.canAppeal
+          ? "Tienes una decisión que admite revisión."
+          : (model.pendingAppeal
+            ? "Ya tienes una apelación pendiente de revisión."
+            : "No hay decisiones apelables en este momento.")),
+      ]),
+    ]);
+    if (model.canAppeal) {
+      const newBtn = el("button", { class: "btn btn-brand btn-sm", type: "button" }, "Nueva apelación");
+      newBtn.addEventListener("click", renderAppealForm);
+      intro.appendChild(newBtn);
+    }
+    content.appendChild(intro);
+    if (model.canAppeal && model.appealable.length) {
+      const eligible = el("div", { class: "safety-appealable" }, [
+        el("strong", {}, "Decisión disponible para revisión"),
+      ]);
+      model.appealable.slice(0, 3).forEach((item) => {
+        eligible.appendChild(el("span", {}, [
+          el("b", {}, item.label || "Decisión de moderación"),
+          item.reason ? el("small", {}, item.reason) : null,
+        ].filter(Boolean)));
+      });
+      content.appendChild(eligible);
+    }
     if (!model.appeals.length) {
-      content.appendChild(emptyState("No has enviado apelaciones", "Si recibes una restricción, puedes pedir aquí una revisión humana."));
+      content.appendChild(emptyState("No has enviado apelaciones", model.canAppeal
+        ? "Puedes solicitar una revisión humana de la decisión indicada."
+        : "El botón aparecerá cuando una infracción, restricción o caso admita apelación."));
       return;
     }
     model.appeals.forEach((item) => {
@@ -17771,6 +17795,7 @@ function screenSafetyCenter(root) {
   }
 
   function renderAppealForm() {
+    if (!model.canAppeal) { renderAppeals(); return; }
     content.innerHTML = "";
     const message = el("textarea", { class: "appeal-textarea", rows: 6, maxlength: 3000, placeholder: "Explica qué decisión quieres que revisemos y por qué…" });
     const contact = el("input", { class: "appeal-input", type: "text", maxlength: 180, placeholder: "Contacto alternativo (opcional)" });
@@ -17829,6 +17854,9 @@ function screenSafetyCenter(root) {
         blocks: Array.isArray(blocks) ? blocks : [],
         reports: reports.items || [],
         appeals: account.appeals || [],
+        canAppeal: account.appealability?.can_appeal === true,
+        pendingAppeal: account.appealability?.pending_appeal === true,
+        appealable: Array.isArray(account.appealability?.items) ? account.appealability.items : [],
       };
       tabs.querySelectorAll(".safety-tab").forEach((x, i) => x.classList.toggle("active", tabDefs[i].id === activeTab));
       renderActive();

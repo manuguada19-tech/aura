@@ -9504,6 +9504,7 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
 
   // ---- Apelaciones ----
   let appeals = [];
+  let hasPendingAppeal = false;
   try {
     const [arows] = await pool.query(
       `SELECT id, restriction_reason, account_status, status, created_at
@@ -9513,6 +9514,7 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
       [me, email]
     );
     const stMap = { open: "open", review: "reviewed", resolved: "accepted", rejected: "rejected" };
+    hasPendingAppeal = arows.some((a) => a.status === "open" || a.status === "review");
     appeals = arows.map((a) => ({
       id: a.id,
       subject: a.restriction_reason || ("Apelación #" + a.id),
@@ -9523,6 +9525,7 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
 
   // ---- Infracciones / avisos de moderación ----
   let infractions = [];
+  let appealableInfractions = [];
   try {
     const [irows] = await pool.query(
       `SELECT id, kind, score, flags, status, created_at
@@ -9550,6 +9553,54 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
         created_at: i.created_at,
       };
     });
+    appealableInfractions = irows
+      .filter((i) => i.status === "warned" || i.status === "banned")
+      .map((i) => ({
+        source: "moderation",
+        id: i.id,
+        label: kindLabel[i.kind] || (i.kind || "Decisión de moderación"),
+        reason: i.flags || null,
+        created_at: i.created_at,
+      }));
+  } catch {}
+
+  // ---- Decisiones que admiten apelación ----
+  // El cliente nunca decide por su cuenta si una acción es recurrible. Solo se
+  // habilita el botón cuando el servidor encuentra una medida concreta sobre
+  // esta cuenta. Una apelación ya abierta bloquea duplicados hasta su resolución.
+  const appealable = [...appealableInfractions];
+  try {
+    const restrictions = await getActiveRestrictions(me);
+    for (const item of restrictions) {
+      appealable.push({
+        source: item.report_id ? "report_decision" : "restriction",
+        id: item.id,
+        label: RESTRICTION_FEATURES.find((f) => f.id === item.feature)?.label || "Restricción de cuenta",
+        reason: item.reason || null,
+        created_at: item.created_at || null,
+      });
+    }
+  } catch {}
+  if ((uStatus === "suspended" || uStatus === "banned") && !appealable.some((x) => x.source === "restriction" || x.source === "report_decision")) {
+    appealable.push({ source: "account", id: me, label: uStatus === "banned" ? "Baneo de cuenta" : "Suspensión de cuenta", reason: null, created_at: null });
+  }
+  try {
+    const [deviceRows] = await pool.query(
+      `SELECT id,type,deny_reason,reviewed_at
+         FROM device_incidents
+        WHERE user_id=? AND status='denied'
+        ORDER BY reviewed_at DESC,id DESC LIMIT 20`,
+      [me]
+    );
+    for (const item of deviceRows) {
+      appealable.push({
+        source: "device_case",
+        id: item.id,
+        label: `Caso de dispositivo #${item.id} denegado`,
+        reason: item.deny_reason || null,
+        created_at: item.reviewed_at || null,
+      });
+    }
   } catch {}
 
   res.json({
@@ -9559,6 +9610,11 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
     kyc_updated_at,
     appeals,
     infractions,
+    appealability: {
+      can_appeal: appealable.length > 0 && !hasPendingAppeal,
+      pending_appeal: hasPendingAppeal,
+      items: appealable,
+    },
   });
 }));
 
