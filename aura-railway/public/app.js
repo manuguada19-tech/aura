@@ -4215,6 +4215,7 @@ const SECTION_MAP = {
   screenSubscription: "profile", screenSubscriptions: "profile",
   screenMyPhotos: "profile", screenVerifyAccount: "profile",
   screenInvisibleMode: "profile", screenSecurity: "profile",
+  screenSessionSecurity: "profile", screenSafetyCenter: "profile",
   screenBlockedUsers: "profile", screenDataExport: "profile",
   screenAbout: "profile", screenOffers: "profile", screenAccountStatus: "profile",
   screenNotificationSettings: "profile", screenBoost: "profile",
@@ -4615,7 +4616,7 @@ function applyDeepLink(dl) {
     invoices:    typeof screenBilling === "function" ? screenBilling : null,
     help:        typeof screenInfoHelp     === "function" ? screenInfoHelp     : null,
     support:     typeof screenSupportTicket=== "function" ? screenSupportTicket: null,
-    safety:      typeof screenInfoPrivacy  === "function" ? screenInfoPrivacy  : null,
+    safety:      typeof screenSafetyCenter === "function" ? screenSafetyCenter : null,
     notifications: typeof screenNotificationSettings === "function" ? screenNotificationSettings : null,
     premium:     typeof screenSubscriptions === "function" ? screenSubscriptions : null,
     boost:       typeof screenSubscriptions === "function" ? screenSubscriptions : null,
@@ -4644,8 +4645,11 @@ function applyDeepLink(dl) {
     preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotificationSettings === "function" ? screenNotificationSettings : null),
     preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotificationSettings === "function" ? screenNotificationSettings : null),
     notificaciones: typeof screenNotificationSettings === "function" ? screenNotificationSettings : null,
-    seguridad:      typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
-    security:       typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
+    seguridad:      typeof screenSessionSecurity === "function" ? screenSessionSecurity : null,
+    security:       typeof screenSessionSecurity === "function" ? screenSessionSecurity : null,
+    "centro-seguridad": typeof screenSafetyCenter === "function" ? screenSafetyCenter : null,
+    "controles-privacidad": typeof screenInvisibleMode === "function" ? screenInvisibleMode : null,
+    visibilidad:    typeof screenInvisibleMode === "function" ? screenInvisibleMode : null,
     dispositivo:    typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
     "dispositivo-perdido": typeof screenDeviceSecurity === "function" ? screenDeviceSecurity : null,
   };
@@ -15632,31 +15636,9 @@ function screenMe(root) {
       })(),
     ]},
     { title: T("content.me.group_privacy") || "Privacidad y seguridad", items: [
-      { icon: "🕶️", title: T("content.me.item_invisible") || "Modo invisible", sub: (INVISIBLE_PLANS.has(getUserPlan()) ? "Incluido en tu plan" : (T("content.me.item_invisible_sub") || "Solo Premium")), onClick: () => render(screenInvisibleMode) },
-      /* V932 · Vuelve. V931 la había retirado porque la pantalla prometía un flujo
-         que el servidor no tenía: ninguna de las 8 rutas existía y todo moría en un
-         error nada más abrirlo. Ya están construidas (server.js, bloque
-         "Dispositivo perdido o robado"), con lo que faltaba de verdad:
-           · verify_selfie_url pasó a LONGTEXT, así que el selfie cabe;
-           · el bloqueo lo aplica AHORA el servidor (guardián de /api/my/* → 423),
-             no una pantalla que la app se dibujaba a sí misma y que quien tuviera
-             el móvil esquivaba sin conexión;
-           · confirmar "no soy yo" exige token firmado, no la cabecera X-User-Id;
-           · una cuenta de app.access_admin_emails no puede quedar bloqueada;
-           · el selfie y el rastro GPS se borran a los 90 días de cerrarse el caso.
-         La regla que trajo esto sigue en pie: si mañana algo de este flujo se queda
-         a medias, la fila se retira otra vez antes de prometerlo.
-
-         Sobre el idioma: esta fila y la de «Abrir un ticket» eran las dos únicas
-         del menú (de ~15) que seguían en español fijo, sin clave de traducción,
-         mientras las otras trece sí la tenían. Ya la tienen: content.me.item_device
-         e item_ticket, en los SEIS idiomas del proyecto (es, en, fr, de, it, pt).
-         Los textos en español son idénticos a los que había, así que nada de lo que
-         ya se veía ha cambiado. */
-      { icon: "🛡", title: T("content.me.item_device") || "Dispositivo perdido o robado", sub: T("content.me.item_device_sub") || "Alarma, mensaje o bloqueo remoto con denuncia", onClick: () => render(screenDeviceSecurity) },
-      { icon: "🔒", title: T("content.me.item_security") || "Contraseña y 2FA", onClick: () => render(screenSecurity) },
-      { icon: "🚫", title: T("content.me.item_blocked") || "Usuarios bloqueados", onClick: () => render(screenBlockedUsers) },
-      { icon: "📱", title: T("content.me.item_devices") || "Dispositivos activos", onClick: () => openDevicesSheet() },
+      { icon: "◉", title: "Privacidad y visibilidad", sub: (INVISIBLE_PLANS.has(getUserPlan()) ? "Perfil, distancia y actividad" : "Controles básicos · Invisible desde Premium"), onClick: () => render(screenInvisibleMode) },
+      { icon: "◇", title: "Seguridad y dispositivos", sub: "Sesiones, 2FA y bloqueo remoto", onClick: () => render(screenSessionSecurity) },
+      { icon: "△", title: "Centro de seguridad", sub: "Bloqueos, denuncias y apelaciones", onClick: () => render(screenSafetyCenter) },
       {
         icon: "📍",
         title: T("content.me.item_gps") || "Ubicación (GPS)",
@@ -17033,91 +17015,126 @@ function renderVerifyCta(wrap) {
   ]));
 }
 
-/* — Modo invisible —
-   Función Premium (incluida en Premium, Gold y Platinum). La pantalla es
-   consciente del plan del usuario: si su plan no la incluye, se muestra
-   BLOQUEADA con el plan actual y un CTA para mejorar; en cuanto el usuario
-   sube de plan, la misma pantalla queda desbloqueada y los interruptores
-   funcionan. El estado se recuerda en el dispositivo (localStorage). */
+/* — V985 · Privacidad y visibilidad —
+   Sustituye el antiguo estado local (que solo cambiaba interruptores) por
+   preferencias persistidas y aplicadas por el servidor en todos los equipos. */
 const INVISIBLE_PLANS = new Set(["premium", "gold", "platinum"]);
-function invisiblePrefs() {
-  try { return JSON.parse(localStorage.getItem("aura-invisible") || "{}") || {}; }
-  catch { return {}; }
-}
-function saveInvisiblePrefs(p) {
-  try { localStorage.setItem("aura-invisible", JSON.stringify(p || {})); } catch {}
-}
 function screenInvisibleMode(root) {
-  meSubHeader(root, T("content.me.item_invisible") || "Modo invisible");
-  const wrap = el("div", { class: "info-wrap" });
+  meSubHeader(root, "Privacidad y visibilidad");
+  root.classList.add("privacy-hub-screen");
+  const wrap = el("div", { class: "info-wrap privacy-hub" });
   wrap.appendChild(infoHero(
     `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10 10 0 0112 20c-7 0-11-8-11-8a19.8 19.8 0 015.06-5.94M9.9 4.24A10 10 0 0112 4c7 0 11 8 11 8a19.8 19.8 0 01-3.16 4.19M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`,
-    T("content.me.invisible_h") || "Navega sin ser visto",
-    T("content.me.invisible_p") || "Aparece solo para quienes tú elijas y explora perfiles sin dejar rastro."
+    "Tú decides qué compartes",
+    "Controla dónde aparece tu perfil, la distancia y las señales de actividad desde cualquier dispositivo."
   ));
 
   const plan = getUserPlan();
   const unlocked = INVISIBLE_PLANS.has(plan);
-
-  // Banner con el plan actual del usuario (siempre visible, para que sepa
-  // qué plan tiene y si la función está o no incluida).
-  wrap.appendChild(el("div", { class: "plan-status-banner" + (unlocked ? " ok" : " locked") }, [
+  const planBanner = el("div", { class: "plan-status-banner" + (unlocked ? " ok" : " locked") }, [
     el("span", { class: "psb-ic", html: unlocked
       ? `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`
       : `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
     el("div", { class: "psb-txt" }, [
       el("strong", {}, `Tu plan: ${planLabel(plan)}`),
       el("small", {}, unlocked
-        ? "Modo invisible incluido en tu plan · configúralo abajo"
-        : "El modo invisible se incluye desde el plan Premium"),
+        ? "Visibilidad avanzada incluida y sincronizada"
+        : "El perfil invisible y el estado oculto se incluyen desde Premium"),
     ]),
-  ]));
+  ]);
+  wrap.appendChild(planBanner);
 
-  const opts = [
-    { key: "invisible", title: T("content.me.invisible_opt1") || "Activar modo invisible", sub: T("content.me.invisible_opt1_sub") || "Tu perfil no aparecerá en la lista de descubrir", def: false },
-    { key: "hide_age", title: T("content.me.invisible_opt2") || "Ocultar mi edad", def: false },
-    { key: "hide_distance", title: T("content.me.invisible_opt3") || "Ocultar mi distancia", def: false },
-    { key: "hide_online", title: T("content.me.invisible_opt4") || "Ocultar mi actividad online", def: true },
-  ];
-  const prefs = invisiblePrefs();
-  const card = el("div", { class: "info-card" + (unlocked ? "" : " is-locked") });
+  const status = el("div", { class: "privacy-sync-status", role: "status" }, "Cargando tus preferencias…");
+  const visibilityCard = el("div", { class: "privacy-hub-card" });
+  const dataCard = el("div", { class: "privacy-hub-card" });
+  wrap.appendChild(el("h3", { class: "info-section" }, "Visibilidad"));
+  wrap.appendChild(visibilityCard);
+  wrap.appendChild(el("h3", { class: "info-section" }, "Datos del perfil"));
+  wrap.appendChild(dataCard);
+  wrap.appendChild(status);
 
-  opts.forEach(o => {
-    const current = (o.key in prefs) ? !!prefs[o.key] : o.def;
-    if (unlocked) {
-      card.appendChild(switchRow(o.title, current, (checked) => {
-        const p = invisiblePrefs();
-        p[o.key] = checked;
-        saveInvisiblePrefs(p);
-        toast(T("content.me.saved_short") || "Guardado");
-      }));
-    } else {
-      // Fila bloqueada: interruptor deshabilitado + candado. Al tocar, invita a mejorar.
-      const inp = el("input", { type: "checkbox", disabled: true });
-      const row = el("div", { class: "switch-row switch-row-locked", onclick: () => render(screenSubscriptions) }, [
-        el("span", { style: "font-size:14px;display:flex;align-items:center;gap:8px" }, [
-          el("span", { class: "lock-mini", html: `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>` }),
-          o.title,
-        ]),
-        el("label", { class: "switch" }, [ inp, el("span") ]),
-      ]);
-      card.appendChild(row);
+  const controls = [];
+  const addControl = (card, cfg) => {
+    const input = el("input", { type: "checkbox", disabled: true });
+    const toggle = el("label", { class: "switch" }, [input, el("span")]);
+    const row = el("div", { class: "privacy-control-row" }, [
+      el("span", { class: "privacy-control-icon", html: cfg.icon }),
+      el("span", { class: "privacy-control-copy" }, [
+        el("strong", {}, cfg.title),
+        el("small", {}, cfg.sub),
+      ]),
+      toggle,
+    ]);
+    if (cfg.paid) {
+      row.classList.toggle("is-locked", !unlocked);
+      row.addEventListener("click", (e) => {
+        if (!input.disabled || e.target === input) return;
+        render(screenSubscriptions);
+      });
     }
-  });
-  wrap.appendChild(card);
+    input.addEventListener("change", async () => {
+      const previous = !input.checked;
+      input.disabled = true;
+      status.textContent = "Guardando…";
+      try {
+        const r = await fetch("/api/my/privacy", {
+          method: "PUT",
+          headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+          body: JSON.stringify({ [cfg.key]: input.checked }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.ok) throw new Error(d.error || "save_failed");
+        const privacy = Object.assign({}, state.myProfile?.privacy || {});
+        const storedKey = ({ hide_age: "age", hide_distance: "distance", hide_online: "online" })[cfg.key] || cfg.key;
+        if (input.checked) privacy[storedKey] = true; else delete privacy[storedKey];
+        state.myProfile = Object.assign({}, state.myProfile || {}, { privacy });
+        status.textContent = "Guardado y sincronizado en todos tus dispositivos";
+        toast("Privacidad actualizada");
+      } catch (e) {
+        input.checked = previous;
+        status.textContent = e.message === "premium_required" ? "Esta opción requiere Premium" : "No se pudo guardar el cambio";
+      } finally {
+        input.disabled = !!(cfg.paid && !unlocked);
+      }
+    });
+    card.appendChild(row);
+    controls.push({ cfg, input, row });
+  };
 
-  if (unlocked) {
-    wrap.appendChild(el("p", { class: "info-hero-sub", style: "margin-top:12px" },
-      "Los cambios se guardan automáticamente en este dispositivo."));
-  } else {
-    // CTA de mejora de plan.
-    wrap.appendChild(el("button", {
-      class: "btn btn-brand btn-block", style: "margin-top:14px",
-      onclick: () => render(screenSubscriptions),
-    }, "Mejorar a Premium para activarlo"));
-    wrap.appendChild(el("p", { class: "info-hero-sub", style: "margin-top:10px" },
-      T("content.me.invisible_note") || "Nota: Modo invisible solo está disponible con suscripción Premium."));
-  }
+  const eyeOff = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 10.6A2 2 0 0012 14c.5 0 1-.2 1.4-.6M9.9 4.2A10 10 0 0112 4c7 0 10 8 10 8a17 17 0 01-3 4.3M6.2 6.2C3.5 8.1 2 12 2 12s3 8 10 8c1.5 0 2.8-.4 4-1"/></svg>`;
+  const pin = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1116 0Z"/><circle cx="12" cy="10" r="2.5"/></svg>`;
+  const clock = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+  addControl(visibilityCard, { key: "invisible", paid: true, title: "Perfil invisible", sub: "No apareces en Explorar ni Cerca; sí ante personas a las que des like.", icon: eyeOff });
+  addControl(visibilityCard, { key: "hide_online", paid: true, title: "Ocultar estado online", sub: "No muestra el indicador de conexión en tiempo real.", icon: clock });
+  addControl(dataCard, { key: "hide_distance", title: "Ocultar distancia y mapa", sub: "Tu distancia y tu marcador dejan de mostrarse a otras personas.", icon: pin });
+  addControl(dataCard, { key: "hide_age", title: "Ocultar edad", sub: "Tu edad no aparecerá en tarjetas ni en el perfil público.", icon: eyeOff });
+
+  const gpsBtn = el("button", { class: "privacy-gps-button", type: "button", onclick: () => openGpsPrivacySheet() }, [
+    el("span", { html: pin }),
+    el("span", {}, [el("strong", {}, "Permiso de ubicación del dispositivo"), el("small", {}, "Activar, revisar o revocar el acceso GPS")]),
+    el("span", { class: "chev" }, "›"),
+  ]);
+  wrap.appendChild(gpsBtn);
+
+  (async () => {
+    try {
+      const r = await fetch("/api/my/privacy", {
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }), cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error("load_failed");
+      controls.forEach(({ cfg, input, row }) => {
+        input.checked = !!d.settings?.[cfg.key];
+        input.disabled = !!(cfg.paid && !d.entitlements?.invisible);
+        row.classList.toggle("is-locked", input.disabled);
+      });
+      try { localStorage.removeItem("aura-invisible"); } catch {}
+      status.textContent = "Preferencias sincronizadas";
+    } catch {
+      status.textContent = "No se pudieron cargar tus preferencias";
+    }
+  })();
+
   root.appendChild(wrap);
   hideApp();
 }
@@ -17463,6 +17480,117 @@ function renderTwoFactorQR(container, otpauth) {
   document.head.appendChild(s);
 }
 
+/* — V985 · Seguridad y sesiones — */
+function screenSessionSecurity(root) {
+  meSubHeader(root, "Seguridad y dispositivos");
+  root.classList.add("security-hub-screen");
+  const wrap = el("div", { class: "info-wrap security-hub" });
+  wrap.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4Z"/><path d="M9 12l2 2 4-4"/></svg>`,
+    "Control de acceso",
+    "Revisa dónde está abierta tu cuenta y corta inmediatamente cualquier sesión que no reconozcas."
+  ));
+
+  const summary = el("div", { class: "security-summary" }, [
+    el("div", { class: "security-summary-number" }, "—"),
+    el("div", {}, [el("strong", {}, "Sesiones activas"), el("small", {}, "Comprobando dispositivos…")]),
+  ]);
+  const devices = el("div", { class: "security-device-list" }, [el("p", { class: "muted" }, "Cargando…")]);
+  wrap.appendChild(summary);
+  wrap.appendChild(el("h3", { class: "info-section" }, "Tus dispositivos"));
+  wrap.appendChild(devices);
+
+  const allBtn = el("button", { class: "btn btn-outline btn-block security-logout-all", type: "button", disabled: true }, "Cerrar todas las demás sesiones");
+  allBtn.addEventListener("click", async () => {
+    if (!confirm("Se cerrarán todas las sesiones excepto la de este dispositivo. ¿Continuar?")) return;
+    allBtn.disabled = true;
+    try {
+      const r = await fetch("/api/my/devices/logout-all", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+        body: JSON.stringify({ keep_current: true }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error("logout_failed");
+      if (d.auth_token) Auth.set(d.auth_token);
+      toast("Sesiones remotas cerradas");
+      loadDevices();
+    } catch { toast("No se pudieron cerrar las sesiones"); allBtn.disabled = false; }
+  });
+  wrap.appendChild(allBtn);
+
+  wrap.appendChild(el("h3", { class: "info-section" }, "Protección adicional"));
+  const actions = el("div", { class: "security-action-grid" }, [
+    el("button", { type: "button", onclick: () => render(screenSecurity) }, [
+      el("strong", {}, "Verificación en 2 pasos"), el("small", {}, "App autenticadora y biometría"),
+    ]),
+    el("button", { type: "button", onclick: () => render(screenDeviceSecurity) }, [
+      el("strong", {}, "Dispositivo perdido o robado"), el("small", {}, "Alarma, mensaje y bloqueo remoto"),
+    ]),
+  ]);
+  wrap.appendChild(actions);
+  root.appendChild(wrap);
+  hideApp();
+
+  async function logoutDevice(id, button) {
+    if (!confirm("¿Cerrar la sesión de este dispositivo?")) return;
+    button.disabled = true;
+    try {
+      const r = await fetch(`/api/my/devices/${id}/logout`, {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user?.id || "") }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error("logout_failed");
+      toast("Sesión cerrada");
+      loadDevices();
+    } catch { toast("No se pudo cerrar esa sesión"); button.disabled = false; }
+  }
+
+  async function loadDevices() {
+    try {
+      const r = await fetch("/api/my/devices", {
+        headers: Auth.apply({ "X-User-Id": String(state.user?.id || "") }), cache: "no-store",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) throw new Error("load_failed");
+      const items = d.items || [];
+      const live = items.filter(x => !x.session_closed);
+      const others = live.filter(x => !(x.is_current === 1 || x.is_current === true));
+      summary.querySelector(".security-summary-number").textContent = String(live.length);
+      summary.querySelector("small").textContent = others.length
+        ? `${others.length} sesión(es) abierta(s) en otros dispositivos`
+        : "Solo está activa esta sesión";
+      allBtn.disabled = !others.length;
+      devices.innerHTML = "";
+      if (!items.length) {
+        devices.appendChild(el("p", { class: "muted" }, "Todavía no hay dispositivos registrados."));
+        return;
+      }
+      items.forEach((item) => {
+        const current = item.is_current === 1 || item.is_current === true;
+        const closed = !!item.session_closed;
+        const action = !current && !closed
+          ? el("button", { class: "btn btn-sm btn-outline", type: "button" }, "Cerrar sesión")
+          : el("span", { class: "security-device-state " + (closed ? "closed" : "current") }, closed ? "Cerrada" : "Actual");
+        if (!current && !closed) action.addEventListener("click", () => logoutDevice(item.id, action));
+        devices.appendChild(el("div", { class: "security-device" + (closed ? " is-closed" : "") }, [
+          el("span", { class: "security-device-icon" }, deviceIcon(item)),
+          el("span", { class: "security-device-copy" }, [
+            el("strong", {}, deviceLabel(item)),
+            el("small", {}, [deviceWhen(item.last_seen), item.location || item.ip].filter(Boolean).join(" · ")),
+          ]),
+          action,
+        ]));
+      });
+    } catch {
+      devices.innerHTML = "";
+      devices.appendChild(el("p", { class: "muted" }, "No se pudieron cargar los dispositivos."));
+    }
+  }
+  loadDevices();
+}
+
 /* — Usuarios bloqueados — */
 function screenBlockedUsers(root) {
   meSubHeader(root, T("content.me.item_blocked") || "Usuarios bloqueados");
@@ -17504,6 +17632,212 @@ function screenBlockedUsers(root) {
     if (Array.isArray(list)) renderList(list);
     else renderEmpty(); // sin sesión/red → vacío en lugar de datos falsos
   }).catch(() => renderEmpty());
+}
+
+/* — V985 · Centro de seguridad —
+   Unifica bloqueos, denuncias enviadas y apelaciones sin mezclar los tres
+   conceptos ni exponer información interna de moderación. */
+function screenSafetyCenter(root) {
+  meSubHeader(root, "Centro de seguridad");
+  root.classList.add("safety-center-screen");
+  const wrap = el("div", { class: "info-wrap safety-center" });
+  wrap.appendChild(infoHero(
+    `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4Z"/><path d="M8.5 12l2.2 2.2 4.8-5"/></svg>`,
+    "Tu espacio seguro",
+    "Consulta las medidas que has tomado y el estado de los casos enviados al equipo de Aura."
+  ));
+
+  const tabs = el("div", { class: "safety-tabs", role: "tablist" });
+  const content = el("div", { class: "safety-content" }, [el("p", { class: "muted" }, "Cargando…")]);
+  const tabDefs = [
+    { id: "blocks", label: "Bloqueos" },
+    { id: "reports", label: "Denuncias" },
+    { id: "appeals", label: "Apelaciones" },
+  ];
+  let activeTab = "blocks";
+  let model = { blocks: [], reports: [], appeals: [] };
+  tabDefs.forEach((t) => {
+    const btn = el("button", { type: "button", class: "safety-tab" + (t.id === activeTab ? " active" : ""), role: "tab" }, t.label);
+    btn.addEventListener("click", () => {
+      activeTab = t.id;
+      tabs.querySelectorAll(".safety-tab").forEach(x => x.classList.toggle("active", x === btn));
+      renderActive();
+    });
+    tabs.appendChild(btn);
+  });
+  wrap.appendChild(tabs);
+  wrap.appendChild(content);
+  root.appendChild(wrap);
+  hideApp();
+
+  const emptyState = (title, body) => el("div", { class: "safety-empty" }, [
+    el("strong", {}, title), el("p", {}, body),
+  ]);
+  const fmtDate = (value) => {
+    if (!value) return "";
+    try { return new Date(value).toLocaleString(); } catch { return ""; }
+  };
+  const reportReason = (reason) => ({
+    fake_profile: "Perfil falso", inappropriate: "Contenido inapropiado", minor: "Posible menor",
+    spam: "Spam", harassment: "Acoso", offensive: "Contenido ofensivo",
+    scam: "Posible estafa", other: "Otro motivo",
+  })[reason] || reason || "Denuncia";
+  const caseStatus = (status) => ({
+    open: "Recibida", reviewing: "En revisión", escalated: "Escalada",
+    resolved: "Resuelta", dismissed: "Cerrada", review: "En revisión",
+    reviewed: "Revisada", accepted: "Aceptada", rejected: "Rechazada",
+  })[status] || status || "Pendiente";
+
+  function renderBlocks() {
+    content.innerHTML = "";
+    content.appendChild(el("div", { class: "safety-section-intro" }, [
+      el("strong", {}, `${model.blocks.length} usuario(s) bloqueado(s)`),
+      el("small", {}, "No pueden encontrarte, escribirte ni interactuar contigo."),
+    ]));
+    if (!model.blocks.length) {
+      content.appendChild(emptyState("No has bloqueado a nadie", "Puedes bloquear desde cualquier perfil o conversación."));
+      return;
+    }
+    model.blocks.forEach((b) => {
+      const remove = el("button", { class: "btn btn-sm btn-outline", type: "button" }, "Desbloquear");
+      remove.addEventListener("click", async () => {
+        remove.disabled = true;
+        try {
+          const r = await fetch("/api/my/unblock", {
+            method: "POST", headers: datingApi.headers(), body: JSON.stringify({ target_id: b.id }),
+          });
+          if (!r.ok) throw new Error("unblock_failed");
+          model.blocks = model.blocks.filter(x => Number(x.id) !== Number(b.id));
+          toast("Usuario desbloqueado"); renderBlocks();
+        } catch { toast("No se pudo desbloquear"); remove.disabled = false; }
+      });
+      content.appendChild(el("div", { class: "safety-person-row" }, [
+        b.photo_url
+          ? el("img", { src: b.photo_url, alt: "", class: "safety-avatar" })
+          : el("span", { class: "safety-avatar fallback" }, (b.name || "U").slice(0, 1).toUpperCase()),
+        el("span", { class: "safety-person-copy" }, [
+          el("strong", {}, b.name || "Usuario"),
+          el("small", {}, `Bloqueado ${fmtDate(b.created_at)}`),
+        ]),
+        remove,
+      ]));
+    });
+  }
+
+  function renderReports() {
+    content.innerHTML = "";
+    content.appendChild(el("div", { class: "safety-section-intro" }, [
+      el("strong", {}, "Denuncias enviadas"),
+      el("small", {}, "Por privacidad, mostramos el estado general, no las notas internas."),
+    ]));
+    if (!model.reports.length) {
+      content.appendChild(emptyState("No has enviado denuncias", "Para denunciar, abre el perfil o la conversación de esa persona."));
+      return;
+    }
+    model.reports.forEach((item) => {
+      content.appendChild(el("div", { class: "safety-case-card" }, [
+        el("div", { class: "safety-case-head" }, [
+          el("strong", {}, item.target_name || "Perfil no disponible"),
+          el("span", { class: `safety-case-status status-${item.status || "open"}` }, caseStatus(item.status)),
+        ]),
+        el("div", { class: "safety-case-reason" }, reportReason(item.reason)),
+        item.details ? el("p", {}, item.details) : null,
+        el("small", {}, `Caso #${item.id} · ${fmtDate(item.created_at)}`),
+      ].filter(Boolean)));
+    });
+  }
+
+  function renderAppeals() {
+    content.innerHTML = "";
+    const newBtn = el("button", { class: "btn btn-brand btn-sm", type: "button" }, "Nueva apelación");
+    newBtn.addEventListener("click", renderAppealForm);
+    content.appendChild(el("div", { class: "safety-section-intro with-action" }, [
+      el("span", {}, [el("strong", {}, "Apelaciones"), el("small", {}, "Solicita una revisión de una decisión sobre tu cuenta.")]),
+      newBtn,
+    ]));
+    if (!model.appeals.length) {
+      content.appendChild(emptyState("No has enviado apelaciones", "Si recibes una restricción, puedes pedir aquí una revisión humana."));
+      return;
+    }
+    model.appeals.forEach((item) => {
+      content.appendChild(el("div", { class: "safety-case-card" }, [
+        el("div", { class: "safety-case-head" }, [
+          el("strong", {}, item.subject || `Apelación #${item.id}`),
+          el("span", { class: `safety-case-status status-${item.status || "open"}` }, caseStatus(item.status)),
+        ]),
+        el("small", {}, `Referencia #${item.id} · ${fmtDate(item.created_at)}`),
+      ]));
+    });
+  }
+
+  function renderAppealForm() {
+    content.innerHTML = "";
+    const message = el("textarea", { class: "appeal-textarea", rows: 6, maxlength: 3000, placeholder: "Explica qué decisión quieres que revisemos y por qué…" });
+    const contact = el("input", { class: "appeal-input", type: "text", maxlength: 180, placeholder: "Contacto alternativo (opcional)" });
+    const send = el("button", { class: "btn btn-brand btn-block", type: "submit" }, "Enviar apelación");
+    const form = el("form", { class: "safety-appeal-form" }, [
+      el("div", { class: "safety-section-intro" }, [el("strong", {}, "Nueva apelación"), el("small", {}, state.user?.email || "Cuenta actual")]),
+      el("label", { class: "appeal-label" }, "Motivo de la revisión"), message,
+      el("div", { class: "appeal-helper" }, "Mínimo 10 caracteres. No incluyas contraseñas ni códigos de acceso."),
+      el("label", { class: "appeal-label" }, "Contacto adicional"), contact,
+      send,
+      el("button", { class: "btn btn-ghost btn-block", type: "button", onclick: renderAppeals }, "Cancelar"),
+    ]);
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const body = message.value.trim();
+      if (body.length < 10) { toast("Describe el caso con algo más de detalle"); return; }
+      send.disabled = true; send.textContent = "Enviando…";
+      try {
+        const r = await fetch("/api/appeal", {
+          method: "POST",
+          headers: Auth.apply({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ email: state.user?.email || "", message: body, contact: contact.value.trim() }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || "appeal_failed");
+        toast(`Apelación #${d.id || ""} enviada`);
+        await loadSafety("appeals");
+      } catch (e) {
+        toast(e.message === "rate_limited" ? "Demasiadas solicitudes; inténtalo más tarde" : "No se pudo enviar la apelación");
+        send.disabled = false; send.textContent = "Enviar apelación";
+      }
+    });
+    content.appendChild(form);
+  }
+
+  function renderActive() {
+    if (activeTab === "blocks") renderBlocks();
+    else if (activeTab === "reports") renderReports();
+    else renderAppeals();
+  }
+
+  async function loadSafety(forceTab) {
+    if (forceTab) activeTab = forceTab;
+    content.innerHTML = "";
+    content.appendChild(el("p", { class: "muted" }, "Actualizando…"));
+    try {
+      const headers = Auth.apply({ "X-User-Id": String(state.user?.id || "") });
+      const [br, rr, ar] = await Promise.all([
+        fetch("/api/my/blocks", { headers, cache: "no-store" }),
+        fetch("/api/my/reports", { headers, cache: "no-store" }),
+        fetch("/api/my/account-status", { headers, cache: "no-store" }),
+      ]);
+      if (!br.ok || !rr.ok || !ar.ok) throw new Error("load_failed");
+      const [blocks, reports, account] = await Promise.all([br.json(), rr.json(), ar.json()]);
+      model = {
+        blocks: Array.isArray(blocks) ? blocks : [],
+        reports: reports.items || [],
+        appeals: account.appeals || [],
+      };
+      tabs.querySelectorAll(".safety-tab").forEach((x, i) => x.classList.toggle("active", tabDefs[i].id === activeTab));
+      renderActive();
+    } catch {
+      content.innerHTML = "";
+      content.appendChild(emptyState("No se pudo cargar", "Comprueba la conexión e inténtalo de nuevo."));
+    }
+  }
+  loadSafety();
 }
 
 /* — Exportar datos — */

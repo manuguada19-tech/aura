@@ -697,6 +697,7 @@ async function revokeAllSessions(uid) {
   try { await pool.execute("UPDATE users SET sessions_revoked_at=NOW() WHERE id=?", [uid]); } catch {}
   try { await pool.execute("UPDATE devices SET is_current=0 WHERE user_id=?", [uid]); } catch {}
   _revokeAllAt.set(Number(uid), now);
+  return now;
 }
 
 // V919 · Si quien llama no dice cuánto dura, manda el ajuste (30 días por
@@ -10279,7 +10280,15 @@ const PRIVACY_FIELDS = [
 // disponible para todos, sino una función exclusiva del plan más alto (platinum)
 // que se pinta con su propio interruptor bloqueado en el resto de planes. Aun
 // así debe ser una clave válida/persistible en users.privacy_hidden.
-const PRIVACY_KEYS = new Set([...PRIVACY_FIELDS.map((f) => f.key), "last_seen"]);
+// V985 · `invisible` y `online` son preferencias de visibilidad de pago. Se
+// guardan en el mismo documento para que el cambio sea atómico y no requiera
+// otra tabla/columna. El servidor comprueba siempre el plan efectivo: una
+// preferencia antigua no conserva ventajas si la suscripción termina.
+const PRIVACY_KEYS = new Set([
+  ...PRIVACY_FIELDS.map((f) => f.key),
+  "last_seen", "invisible", "online",
+]);
+const INVISIBLE_PLAN_CODES = new Set(["premium", "gold", "platinum"]);
 
 // Parsea el JSON almacenado en users.privacy_hidden → objeto {key:true}.
 function parsePrivacy(raw) {
@@ -10298,6 +10307,28 @@ function serializePrivacy(input) {
   return JSON.stringify(clean);
 }
 
+function hasInvisiblePlan(plan) {
+  return INVISIBLE_PLAN_CODES.has(String(plan || "free").toLowerCase());
+}
+
+// Excluye del descubrimiento a quien haya activado el modo invisible con un
+// plan compatible. Si ese perfil dio like/super al visitante, sí aparece: es
+// la elección explícita que materializa «solo para quienes tú elijas».
+function applyInvisibleDiscoveryFilter(where, params, viewerId) {
+  const storedInvisible =
+    "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'";
+  const entitled = "LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')";
+  if (viewerId) {
+    where.push(`(NOT (${storedInvisible} AND ${entitled}) OR EXISTS (
+      SELECT 1 FROM likes iv
+       WHERE iv.from_user=u.id AND iv.to_user=? AND iv.type IN ('like','super')
+    ))`);
+    params.push(viewerId);
+  } else {
+    where.push(`NOT (${storedInvisible} AND ${entitled})`);
+  }
+}
+
 // Aplica la privacidad a una fila de perfil que se enviará a OTROS usuarios:
 // pone a null los campos que el dueño ha marcado como ocultos. NO se usa para
 // el propio usuario ni para el admin (ellos ven todo).
@@ -10312,6 +10343,9 @@ function applyPrivacyToPublicRow(row) {
   if (hidden.ethnicity) row.ethnicity = null;
   if (hidden.orientation) row.orientation = null;
   if (hidden.job) row.job = null;
+  if (hidden.online && hasInvisiblePlan(row.plan)) {
+    if ("online" in row) row.online = false;
+  }
   // V799 · Ocultar "última conexión": SOLO tiene efecto si el dueño está en el
   // plan más alto (platinum) EN ESTE MOMENTO. Si bajó de plan, se muestra igual
   // ("de lo contrario se desactiva y se muestra"). Se aplica poniendo a null
@@ -10461,6 +10495,11 @@ app.get("/api/discover", wrap(async (req, res) => {
 
   const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
   const params = [zone];
+
+  // V985 · El modo invisible se aplica en servidor, también ante clientes
+  // antiguos. Un perfil invisible solo reaparece ante personas a las que él
+  // haya elegido mediante like/super.
+  applyInvisibleDiscoveryFilter(where, params, me);
 
   if (me) {
     // No mostrarme a mí mismo
@@ -10622,6 +10661,10 @@ app.get("/api/discover/facets", wrap(async (req, res) => {
       `SELECT u.city AS value, COUNT(*) AS count
          FROM users u
         WHERE u.zone=? AND u.status='active' AND (u.role='user' OR u.role IS NULL)
+          AND NOT (
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
+            AND LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')
+          )
           AND u.city IS NOT NULL AND TRIM(u.city) <> ''
         GROUP BY u.city ORDER BY count DESC, u.city ASC LIMIT 200`,
       [zone]
@@ -10633,6 +10676,10 @@ app.get("/api/discover/facets", wrap(async (req, res) => {
       `SELECT u.ethnicity AS value, COUNT(*) AS count
          FROM users u
         WHERE u.zone=? AND u.status='active' AND (u.role='user' OR u.role IS NULL)
+          AND NOT (
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
+            AND LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')
+          )
           AND u.ethnicity IS NOT NULL AND TRIM(u.ethnicity) <> ''
         GROUP BY u.ethnicity ORDER BY count DESC, u.ethnicity ASC LIMIT 60`,
       [zone]
@@ -10689,6 +10736,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
 
   const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
   const params = [zone];
+  applyInvisibleDiscoveryFilter(where, params, me);
   where.push("u.id <> ?"); params.push(me);
   where.push("u.id NOT IN (SELECT target_id FROM blocks WHERE user_id = ?)"); params.push(me);
   where.push("u.id NOT IN (SELECT user_id FROM blocks WHERE target_id = ?)"); params.push(me);
@@ -10857,6 +10905,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
 
   const where = ["u.zone = ?", "u.status = 'active'", "(u.role = 'user' OR u.role IS NULL)"];
   const params = [zone];
+  applyInvisibleDiscoveryFilter(where, params, me);
   where.push("u.id <> ?"); params.push(me);
   where.push("u.id NOT IN (SELECT target_id FROM blocks WHERE user_id = ?)"); params.push(me);
   where.push("u.id NOT IN (SELECT user_id FROM blocks WHERE target_id = ?)"); params.push(me);
@@ -10874,7 +10923,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
 
   const distExpr = "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(gps.lat, u.lat))) * COS(RADIANS(COALESCE(gps.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(gps.lat, u.lat))))), 1)";
   const sql =
-    `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.photo_url, u.verified, u.online,
+    `SELECT u.id, u.name, u.age, u.gender, u.orientation, u.city, u.photo_url, u.verified, u.online, u.plan,
             u.privacy_hidden, u.bio, u.job, u.height, u.weight, u.ethnicity,
             u.looking_for, u.relationship, u.interests,
             u.pets, u.smoke, u.drink, u.education, u.exercise, u.prompts,
@@ -10920,7 +10969,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       city: (hidden.city ? null : (r.city || "")),
       photo: r.photo_url || null,
       verified: !!r.verified,
-      online: !!r.online,
+      online: (hidden.online && hasInvisiblePlan(r.plan)) ? false : !!r.online,
       gps_ok: !!r.gps_ok,
       distance: (r.distance == null ? null : Number(r.distance)),
       // V776 · Campos opcionales para que el detalle abierto desde el mapa
@@ -11170,7 +11219,7 @@ app.get("/api/my/likes", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [rows] = await pool.query(
-    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, l.type, l.created_at,
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, u.plan, u.privacy_hidden, l.type, l.created_at,
             EXISTS(SELECT 1 FROM matches m WHERE (m.user_a=LEAST(?,u.id) AND m.user_b=GREATEST(?,u.id))) AS is_match
        FROM likes l
        JOIN users u ON u.id = l.from_user
@@ -11180,6 +11229,7 @@ app.get("/api/my/likes", wrap(async (req, res) => {
       ORDER BY l.created_at DESC LIMIT 100`,
     [me, me, me, me, me]
   );
+  rows.forEach(applyPrivacyToPublicRow);
   res.json(rows);
 }));
 
@@ -11188,13 +11238,14 @@ app.get("/api/my/matches", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [rows] = await pool.query(
-    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, m.created_at
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, u.plan, u.privacy_hidden, m.created_at
        FROM matches m
        JOIN users u ON u.id = (CASE WHEN m.user_a=? THEN m.user_b ELSE m.user_a END)
       WHERE (m.user_a=? OR m.user_b=?) AND u.status='active'
       ORDER BY m.created_at DESC LIMIT 100`,
     [me, me, me]
   );
+  rows.forEach(applyPrivacyToPublicRow);
   res.json(rows);
 }));
 
@@ -11204,13 +11255,21 @@ app.get("/api/my/favorites", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const [rows] = await pool.query(
-    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, fav.created_at
+    `SELECT u.id, u.name, u.age, u.city, u.photo_url, u.verified, u.online, u.plan, u.privacy_hidden, fav.created_at
        FROM favorites fav
        JOIN users u ON u.id = fav.target_id
       WHERE fav.user_id = ? AND u.status='active'
+        AND (
+          NOT (
+            COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
+            AND LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')
+          )
+          OR EXISTS (SELECT 1 FROM likes iv WHERE iv.from_user=u.id AND iv.to_user=? AND iv.type IN ('like','super'))
+        )
       ORDER BY fav.created_at DESC LIMIT 200`,
-    [me]
+    [me, me]
   );
+  rows.forEach(applyPrivacyToPublicRow);
   res.json(rows);
 }));
 
@@ -11440,6 +11499,23 @@ app.post("/api/my/unblock", wrap(async (req, res) => {
     } catch {}
   }
   res.json({ ok: true, blocked: false });
+}));
+
+// V985 · Historial de denuncias enviadas por el propio usuario. Solo devuelve
+// sus casos y datos públicos mínimos del perfil denunciado; nunca notas internas.
+app.get("/api/my/reports", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [rows] = await pool.query(
+    `SELECT r.id,r.target_id,r.reason,r.details,r.status,r.created_at,r.resolved_at,
+            u.name AS target_name,u.photo_url AS target_photo
+       FROM reports r
+       LEFT JOIN users u ON u.id=r.target_id
+      WHERE r.reporter_id=?
+      ORDER BY r.created_at DESC LIMIT 100`,
+    [me]
+  );
+  res.json({ ok: true, items: rows });
 }));
 
 // POST /api/my/report  { target_id, reason, details? }  → denuncia a moderación
@@ -11988,12 +12064,15 @@ app.post("/api/my/devices/logout-all", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
   const keepCurrent = !!req.body?.keep_current;
-  await revokeAllSessions(me);
+  const revokedAt = await revokeAllSessions(me);
   let auth_token = null;
   if (keepCurrent) {
     // Reactiva ESTE dispositivo y emítele un token nuevo (iat > revocación),
     // de modo que "cerrar todas" saca a los demás pero no a mí.
     const _did = await touchUserDevice(req, me);
+    // La validez exige iat > revocación. En máquinas rápidas ambos Date.now()
+    // podían coincidir y el token recién emitido nacía revocado.
+    if (Date.now() <= revokedAt) await new Promise(resolve => setTimeout(resolve, 2));
     auth_token = signUserToken(me, undefined, _did);
   }
   try { await logStream(me, "device_logout_all_self", { req }); } catch {}
@@ -12101,12 +12180,86 @@ app.post("/api/my/profile", wrap(async (req, res) => {
     const arr = Array.isArray(b.interests) ? b.interests.filter((x) => typeof x === "string").slice(0, 30) : [];
     sets.push("interests=?"); vals.push(JSON.stringify(arr));
   }
-  // V742 · privacidad por campo: se guarda el JSON saneado {campo:true}.
-  if ("privacy" in b) { sets.push("privacy_hidden=?"); vals.push(serializePrivacy(b.privacy)); }
+  // V742/V985 · privacidad por campo. Las funciones de pago se validan también
+  // aquí para que no puedan activarse llamando directamente al endpoint.
+  if ("privacy" in b) {
+    const privacy = parsePrivacy(b.privacy);
+    const [[owner]] = await pool.query("SELECT plan FROM users WHERE id=? LIMIT 1", [me]);
+    const ownerPlan = String(owner?.plan || "free").toLowerCase();
+    if (!hasInvisiblePlan(ownerPlan)) { delete privacy.invisible; delete privacy.online; }
+    if (ownerPlan !== "platinum") delete privacy.last_seen;
+    sets.push("privacy_hidden=?"); vals.push(serializePrivacy(privacy));
+  }
   if (!sets.length) return res.json({ ok: true, updated: 0 });
   vals.push(me);
   await pool.execute(`UPDATE users SET ${sets.join(", ")} WHERE id=?`, vals);
   res.json({ ok: true, updated: sets.length });
+}));
+
+/* V985 · Centro de privacidad de la app.
+   Expone y guarda solo preferencias de visibilidad; las demás claves históricas
+   del documento se conservan. La aplicación del modo invisible y del estado
+   online ocurre en servidor, no depende de que el cliente sea reciente. */
+app.get("/api/my/privacy", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[u]] = await pool.query("SELECT plan,privacy_hidden FROM users WHERE id=? LIMIT 1", [me]);
+  if (!u) return res.status(404).json({ error: "not_found" });
+  const hidden = parsePrivacy(u.privacy_hidden);
+  const plan = String(u.plan || "free").toLowerCase();
+  let gpsActive = false;
+  try {
+    const [[gps]] = await pool.query(
+      "SELECT consent_given,revoked_at FROM user_gps WHERE user_id=? LIMIT 1", [me]
+    );
+    gpsActive = !!gps?.consent_given && !gps?.revoked_at;
+  } catch {}
+  res.json({
+    ok: true,
+    plan,
+    entitlements: { invisible: hasInvisiblePlan(plan), hide_online: hasInvisiblePlan(plan) },
+    settings: {
+      invisible: !!hidden.invisible && hasInvisiblePlan(plan),
+      hide_age: !!hidden.age,
+      hide_distance: !!hidden.distance,
+      hide_online: !!hidden.online && hasInvisiblePlan(plan),
+    },
+    gps_active: gpsActive,
+  });
+}));
+
+app.put("/api/my/privacy", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const [[u]] = await pool.query("SELECT plan,privacy_hidden FROM users WHERE id=? LIMIT 1", [me]);
+  if (!u) return res.status(404).json({ error: "not_found" });
+  const plan = String(u.plan || "free").toLowerCase();
+  const next = parsePrivacy(u.privacy_hidden);
+  const body = req.body || {};
+  const requestedPaid = body.invisible === true || body.hide_online === true;
+  if (requestedPaid && !hasInvisiblePlan(plan)) {
+    return res.status(403).json({ error: "premium_required" });
+  }
+  const assign = (bodyKey, storedKey) => {
+    if (!(bodyKey in body)) return;
+    if (body[bodyKey]) next[storedKey] = true;
+    else delete next[storedKey];
+  };
+  assign("invisible", "invisible");
+  assign("hide_age", "age");
+  assign("hide_distance", "distance");
+  assign("hide_online", "online");
+  if (!hasInvisiblePlan(plan)) { delete next.invisible; delete next.online; }
+  await pool.execute("UPDATE users SET privacy_hidden=? WHERE id=?", [serializePrivacy(next), me]);
+  res.json({
+    ok: true,
+    settings: {
+      invisible: !!next.invisible,
+      hide_age: !!next.age,
+      hide_distance: !!next.distance,
+      hide_online: !!next.online,
+    },
+  });
 }));
 
 /* ----------------------------------------------------------------------------
@@ -17714,6 +17867,7 @@ app.get("/api/my/conversations", wrap(async (req, res) => {
     `SELECT c.id, c.status, c.last_message_at, c.created_at,
             CASE WHEN c.user_a=? THEN c.user_b ELSE c.user_a END AS peer_id,
             up.name AS peer_name, up.photo_url AS peer_photo, up.online AS peer_online,
+            up.plan AS peer_plan, up.privacy_hidden AS peer_privacy,
             (SELECT body FROM messages m WHERE m.conversation_id=c.id ORDER BY id DESC LIMIT 1) AS last_body,
             (SELECT created_at FROM messages m WHERE m.conversation_id=c.id ORDER BY id DESC LIMIT 1) AS last_time,
             (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id AND m.sender_id<>? AND m.read_at IS NULL) AS unread
@@ -17724,6 +17878,12 @@ app.get("/api/my/conversations", wrap(async (req, res) => {
      LIMIT 100`,
     [me, me, me, me, me]
   );
+  for (const row of rows) {
+    const hidden = parsePrivacy(row.peer_privacy);
+    if (hidden.online && hasInvisiblePlan(row.peer_plan)) row.peer_online = false;
+    delete row.peer_plan;
+    delete row.peer_privacy;
+  }
   res.json(rows);
 }));
 

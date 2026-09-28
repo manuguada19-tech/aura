@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V984**
+**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V985**
+
+### V985 (28/09/2026) — Privacidad, sesiones y seguridad en la app
+
+- Perfil incorpora un centro de Privacidad y visibilidad sincronizado entre
+  dispositivos. El modo invisible ya no es un interruptor local: el servidor
+  retira el perfil de Explorar, Cerca y mapa, salvo ante personas a las que el
+  propio usuario haya dado Like o Super Like.
+- Ocultar edad, distancia/mapa y estado online se aplica en las respuestas
+  del servidor. Las funciones Premium se validan contra el plan real aunque un
+  cliente antiguo intente activarlas directamente.
+- Nueva pantalla Seguridad y dispositivos con sesiones reales, cierre remoto
+  individual o conjunto, acceso a 2FA/biometría y al flujo de móvil perdido.
+- Nuevo Centro de seguridad con bloqueos, historial y estado de denuncias, y
+  consulta o envío de apelaciones desde una única pantalla.
 
 ### V984 (28/09/2026) — Filtros coherentes con la orientación propia
 
