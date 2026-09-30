@@ -77,6 +77,22 @@ function exclusiveTargetGender(genderValue, orientationValue) {
   return "";
 }
 
+// V987 · La cuenta de demostración es una herramienta de comprobación, no una
+// recomendación real. Debe poder reaparecer después de usar el botón de
+// Administración aunque V984 fuerce un género por la orientación del usuario.
+// Se mantiene el aislamiento por zona y el resto de protecciones (estado,
+// bloqueos y reacciones); la excepción afecta únicamente al filtro de género.
+function testUserSql(alias = "u") {
+  const a = String(alias || "u").replace(/[^a-zA-Z0-9_]/g, "") || "u";
+  return `(${a}.email='prueba@aura.app' OR LOWER(${a}.name) LIKE '%usuario de prueba%' OR LOWER(${a}.name) LIKE '%usuario prueba%')`;
+}
+function applyDiscoveryGenderFilter(where, params, gender, alias = "u") {
+  if (!gender || gender === "todos" || gender === "all") return;
+  const a = String(alias || "u").replace(/[^a-zA-Z0-9_]/g, "") || "u";
+  where.push(`(${testUserSql(a)} OR ${a}.gender = ?)`);
+  params.push(String(gender));
+}
+
 // V879 · Estado del arranque. Antes app.listen() era LO ÚLTIMO, después de
 // migrate() (~224 sentencias DDL), el backfill de geoip (hasta 5000 UPDATEs en
 // serie) y 13 phaseN.migrate(). Hasta que todo eso acababa el puerto estaba
@@ -8783,7 +8799,7 @@ app.post("/api/admin/read-credits/:uid/reset-free", wrap(async (req, res) => {
 // reafirma su zona/orientación para que vuelva a aparecer limpio.
 app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
   const [rows] = await pool.query(
-    `SELECT id, name, email, zone FROM users
+    `SELECT id, name, email, zone, status, role, privacy_hidden FROM users
        WHERE email='prueba@aura.app'
           OR LOWER(name) LIKE '%usuario de prueba%'
           OR LOWER(name) LIKE '%usuario prueba%'
@@ -8795,6 +8811,10 @@ app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
   const cleared = {};
   try { const [r] = await pool.execute("DELETE FROM likes WHERE from_user=? OR to_user=?", [testId, testId]); cleared.likes = r.affectedRows || 0; } catch { cleared.likes = 0; }
   try { const [r] = await pool.execute("DELETE FROM matches WHERE user_a=? OR user_b=?", [testId, testId]); cleared.matches = r.affectedRows || 0; } catch { cleared.matches = 0; }
+  // V987 · Un bloqueo en cualquiera de los dos sentidos también excluye el
+  // perfil. El antiguo botón lo dejaba intacto y anunciaba éxito aunque la
+  // cuenta siguiera sin aparecer.
+  try { const [r] = await pool.execute("DELETE FROM blocks WHERE user_id=? OR target_id=?", [testId, testId]); cleared.blocks = r.affectedRows || 0; } catch { cleared.blocks = 0; }
   // V918 · Antes esto hacía "UPDATE users SET zone='lgtb'" a secas, sin condición:
   // si desde el panel se movía al usuario de prueba a la zona hetero, el primer
   // restablecimiento lo devolvía a lgtb sin decir nada, y parecía que el cambio de
@@ -8807,8 +8827,21 @@ app.post("/api/admin/test-user/reset", requireAdmin, wrap(async (req, res) => {
     try { await pool.execute("UPDATE users SET zone='lgtb' WHERE id=?", [testId]); zone = "lgtb"; } catch {}
   }
 
-  await logActivity("admin", `Restablecido usuario de prueba (id ${testId}) — likes:${cleared.likes} matches:${cleared.matches} · zona respetada: ${zone}`);
-  res.json({ ok: true, testId, name: rows[0].name, zone, cleared });
+  // La cuenta de prueba puede haberse quedado suspendida, con un rol interno o
+  // en modo invisible. Cualquiera de esos estados hace inútil borrar los likes.
+  // Restauramos solo su descubribilidad y conservamos el resto del perfil.
+  let privacy = {};
+  try { privacy = parsePrivacy(rows[0].privacy_hidden); } catch { privacy = {}; }
+  delete privacy.invisible;
+  try {
+    await pool.execute(
+      "UPDATE users SET status='active', role='user', privacy_hidden=? WHERE id=?",
+      [serializePrivacy(privacy), testId]
+    );
+  } catch {}
+
+  await logActivity("admin", `Restablecido usuario de prueba (id ${testId}) — likes:${cleared.likes} matches:${cleared.matches} bloqueos:${cleared.blocks} · visible y activo · zona respetada: ${zone}`);
+  res.json({ ok: true, testId, name: rows[0].name, zone, visible: true, cleared });
 }));
 
 // V913/V916 · Restablecer CUALQUIER usuario por id de forma SELECTIVA. El panel
@@ -10587,9 +10620,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
 
   // Filtro de género (básico) — acepta un valor o "todos"
-  if (f.gender && f.gender !== "todos" && f.gender !== "all") {
-    where.push("u.gender = ?"); params.push(String(f.gender));
-  }
+  applyDiscoveryGenderFilter(where, params, f.gender);
 
   // V748 · Filtro de ubicación (ciudad) — buscador basado en usuarios reales.
   //        Acepta `cities` (array, multi) o `city` (string). Vacío = sin filtro.
@@ -10801,7 +10832,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   const ageMax = parseInt(f.age_max, 10);
   if (Number.isFinite(ageMin) && ageMin > 0) { where.push("(u.age IS NULL OR u.age >= ?)"); params.push(ageMin); }
   if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
-  if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
+  applyDiscoveryGenderFilter(where, params, f.gender);
   // V748 · Mismos filtros de ubicación/etnia que /api/discover.
   applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
@@ -10972,7 +11003,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
   const ageMax = parseInt(f.age_max, 10);
   if (Number.isFinite(ageMin) && ageMin > 0) { where.push("(u.age IS NULL OR u.age >= ?)"); params.push(ageMin); }
   if (Number.isFinite(ageMax) && ageMax > 0) { where.push("(u.age IS NULL OR u.age <= ?)"); params.push(ageMax); }
-  if (f.gender && f.gender !== "todos" && f.gender !== "all") { where.push("u.gender = ?"); params.push(String(f.gender)); }
+  applyDiscoveryGenderFilter(where, params, f.gender);
   applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
   applyPreferenceFilters(where, params, f);

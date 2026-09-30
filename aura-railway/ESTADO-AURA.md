@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 28 septiembre 2026 · última versión preparada: V986**
+**Fecha de este resumen: 29 septiembre 2026 · última versión preparada: V987**
+
+### V987 (29/09/2026) — Restablecimiento visible y efectivo del usuario de prueba
+
+- El control «Restablecer y volver a mostrar» aparece al principio de Ajustes,
+  antes de cargar el formulario completo; un fallo de esa carga ya no oculta el
+  botón ni obliga a recorrer toda la página.
+- El restablecimiento elimina también bloqueos, reactiva la cuenta de prueba y
+  desactiva su modo invisible, conservando su perfil y su zona.
+- El filtro automático de género introducido en V984 deja pasar exclusivamente
+  a la cuenta de prueba. Los perfiles reales mantienen intacta la coherencia con
+  la orientación del usuario.
 
 ### V986 (28/09/2026) — Apelaciones solo cuando corresponden
 

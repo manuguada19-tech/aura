@@ -9552,7 +9552,10 @@ async function openNearbyMap() {
   // declaran fuera del rango. Es el mismo criterio que el filtro de "Buscar".
   function matchesMapFilters(u) {
     const f = mapFilters;
-    if (!mapGenderMatches(f.gender, u.gender)) return false;
+    // V987 · El perfil ficticio es una herramienta de prueba: V984 no debe
+    // ocultarlo por el género forzado de la orientación propia. Conserva zona
+    // y distancia, pero ignora solo este filtro igual que el backend.
+    if (!u._test && !mapGenderMatches(f.gender, u.gender)) return false;
     // V908 · Orientación (selección única). "todas" = sin filtro. Coincidencia
     // exacta con la orientación declarada del perfil.
     if (f.orientation && f.orientation !== "todas" && u.orientation && u.orientation !== f.orientation) return false;

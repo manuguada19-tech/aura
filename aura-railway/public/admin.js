@@ -9876,6 +9876,40 @@ async function viewNotifications(root){
     ]));
   }
 }
+// V987 · El restablecimiento estaba al final de una pantalla de Ajustes muy
+// larga y, además, se pintaba solo después de que /api/settings respondiera.
+// Si esa carga fallaba o quedaba pendiente, el botón no llegaba a existir.
+// Este panel se crea antes de cualquier petición y queda visible al entrar.
+function testUserResetPanel() {
+  const tt = panel("Usuario de prueba", [], []);
+  const ttBody = tt.querySelector(".panel-body");
+  ttBody.appendChild(el("p", { class: "muted small" },
+    "Restaura la cuenta de prueba para que vuelva a aparecer en Explorar y Buscar dentro de su zona."));
+  ttBody.appendChild(el("p", { class: "small", style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 10px;margin:0 0 10px" },
+    "Borra sus reacciones, matches y bloqueos. También reactiva la cuenta y desactiva su modo invisible. No borra el perfil ni cambia su zona."));
+  const resetBtn = el("button", { type: "button", class: "btn primary" }, "Restablecer y volver a mostrar");
+  resetBtn.addEventListener("click", async () => {
+    if (!confirm("Se borrarán las reacciones, matches y bloqueos del usuario de prueba para que vuelva a mostrarse.\n\nNo se borrará su perfil ni se cambiará de zona.\n\n¿Continuar?")) return;
+    resetBtn.disabled = true;
+    resetBtn.textContent = "Restableciendo…";
+    try {
+      const r = await api.post("/api/admin/test-user/reset", {});
+      const c = r.cleared || {};
+      const z = r.zone === "hetero" ? "Hetero" : r.zone === "lgtb" ? "LGTB+" : "actual";
+      toast(`Usuario de prueba visible de nuevo en ${z} (reacciones: ${c.likes || 0}, matches: ${c.matches || 0}, bloqueos: ${c.blocks || 0}).`);
+    } catch (e) {
+      toast(e && e.status === 404 ? "No se encontró el usuario de prueba" : "No se pudo restablecer el usuario de prueba");
+    } finally {
+      resetBtn.disabled = false;
+      resetBtn.textContent = "Restablecer y volver a mostrar";
+    }
+  });
+  ttBody.appendChild(resetBtn);
+  ttBody.appendChild(el("p", { class: "muted small", style: "margin-top:10px" },
+    "La cuenta de prueba ignora únicamente el filtro automático de género de V984; los usuarios reales mantienen intactas sus preferencias."));
+  return tt;
+}
+
 async function viewSettings(root){
   // V520 — Pro Hero de configuración
   root.appendChild(proHero({
@@ -9900,6 +9934,9 @@ async function viewSettings(root){
     ["👁", "Ver / mostrar valor oculto (contraseña, API key)"],
     ["📄", "Ver documentación relacionada"],
   ]));
+
+  // Visible de inmediato y antes de cargar el formulario completo.
+  root.appendChild(testUserResetPanel());
 
   const s = await api.get("/api/settings");
   // V891 · Modo real/prueba de Stripe. Lo expone /api/public-config como
@@ -10375,46 +10412,6 @@ async function viewSettings(root){
   ]));
 
   root.appendChild(form);
-
-  // V911 · Herramientas de prueba — restablecer el usuario de prueba. Si se le
-  // dio super-like (deslizar hacia arriba) desaparece de Explorar y Buscar porque
-  // /api/discover excluye a los usuarios ya reaccionados. Este botón borra esas
-  // reacciones/matches para que vuelva a aparecer.
-  const tt = panel("Herramientas de prueba", [], []);
-  const ttBody = tt.querySelector(".panel-body");
-  ttBody.appendChild(el("p", { class: "muted small" },
-    "Restablece el usuario de prueba: borra los likes y matches que lo afectan " +
-    "para que vuelva a aparecer en Explorar y en Buscar. No borra su cuenta."));
-  // V918 · Este botón borra TODAS las reacciones del usuario de prueba, dadas y
-  // recibidas (server.js: DELETE FROM likes WHERE from_user=? OR to_user=?). El
-  // aviso anterior no decía que con ello se pierde su historial de actividad,
-  // que se calcula de esa misma tabla.
-  ttBody.appendChild(el("p", { class: "small", style: "background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:8px 10px;margin:0 0 10px" },
-    "⚠️ Borra sus reacciones dadas Y recibidas. Como el historial de «Actividad por usuario» se calcula de esas mismas filas, después aparecerá vacío: los likes que había dado ya no se podrán consultar."));
-  ttBody.appendChild(el("p", { class: "muted small", style: "margin:0 0 10px" },
-    "Su zona no se toca: si lo has cambiado a Hetero, se queda en Hetero."));
-  const resetBtn = el("button", { type: "button", class: "btn" }, "Restablecer usuario de prueba");
-  resetBtn.addEventListener("click", async () => {
-    if (!confirm("Se borrarán los likes/superlikes/no-me-gusta y matches del usuario de prueba (dados Y recibidos) para que reaparezca en Explorar y Buscar.\n\nSu historial de actividad quedará vacío y no se puede recuperar.\n\n¿Continuar?")) return;
-    resetBtn.disabled = true; resetBtn.textContent = "Restableciendo…";
-    try {
-      const r = await api.post("/api/admin/test-user/reset", {});
-      const c = r.cleared || {};
-      // V918 · Se dice en qué zona se ha quedado. Antes este botón la forzaba a
-      // LGTB sin avisar, así que si se le había cambiado a Hetero volvía atrás
-      // en silencio. Ahora la respeta y se confirma en el aviso.
-      const z = r.zone === "hetero" ? "Hetero" : r.zone === "lgtb" ? "LGTB+" : null;
-      toast(`Usuario de prueba restablecido (likes: ${c.likes||0}, matches: ${c.matches||0})`
-        + (z ? `. Sigue en zona ${z}.` : "."));
-    } catch (e) {
-      toast(e && e.status === 404 ? "No se encontró el usuario de prueba" : "Error al restablecer");
-    }
-    resetBtn.disabled = false; resetBtn.textContent = "Restablecer usuario de prueba";
-  });
-  ttBody.appendChild(resetBtn);
-  ttBody.appendChild(el("p", { class: "muted small", style: "margin-top:10px" },
-    "Para restablecer a cualquier otro usuario y ver sus reacciones/gasto, usa «Actividad por usuario» en el menú."));
-  root.appendChild(tt);
 
   // Danger zone — outside the settings form so submit doesn't trigger it
   const dz = panel("Zona de peligro", [], []);
