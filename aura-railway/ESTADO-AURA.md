@@ -1,8 +1,8 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1005 (`4dd4e9f`, build `3d76eec35d98`) · siguiente preparada: V1006**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1006 (`f1f2cd6`, build `5d6fab064a92`)**
 
-### V1006 (preparada, sin commit ni publicación) — Detalle administrativo de visitas
+### V1006 (02/10/2026) — Detalle administrativo de visitas
 
 - «Visitas de perfiles» muestra si visitante y perfil visitado ya hablaron,
   cuántos mensajes existen y si la visita se hizo con modo invisible.
@@ -12,6 +12,8 @@
   de personas que visitaron al usuario y perfiles que este abrió.
 - Validada sintaxis de servidor y panel, comportamiento con datos simulados y
   vistas de 390 y 1440 píxeles sin desbordamiento. No se modificaron datos reales.
+- Publicada en commit `f1f2cd6`, build `5d6fab064a92`; Railway finalizó
+  correctamente y `/api/health` respondió `ready:true`.
 
 ### V1005 (02/10/2026) — Visitas reales de perfiles
 
