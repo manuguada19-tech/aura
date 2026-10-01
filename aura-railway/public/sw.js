@@ -33,7 +33,8 @@
 // V991 · El perfil reorganiza sus secciones y añade una vista previa propia;
 // invalida el menú anterior en instalaciones que sigan abiertas.
 // V996 · elimina la atribución empresarial incorrecta de «Acerca de Aura».
-const CACHE_VERSION = "aura-v120";
+// V1002 · incorpora la interfaz unificada de llamadas de voz y vídeo.
+const CACHE_VERSION = "aura-v121";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

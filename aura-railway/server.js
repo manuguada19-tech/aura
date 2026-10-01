@@ -1535,8 +1535,8 @@ const FEATURE_CATALOG_V997 = Object.freeze([
   { key: "traveler_current", label: "Modo viajero actual", description: "Duración máxima de un viaje activo.", group: "Modo viajero", kind: "quota", unit: "días", status: "operational", next_phase: null },
   { key: "traveler_future", label: "Viajes futuros", description: "Viajes que se pueden dejar programados.", group: "Modo viajero", kind: "quota", unit: "viajes", status: "operational", next_phase: null },
   { key: "traveler_city_limit", label: "Ciudades por itinerario", description: "Ciudades admitidas dentro de un mismo viaje.", group: "Modo viajero", kind: "quota", unit: "ciudades", status: "operational", next_phase: null },
-  { key: "audio_calls", label: "Llamadas de voz", description: "Llamadas de audio dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
-  { key: "video_calls", label: "Videollamadas", description: "Videollamadas dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
+  { key: "audio_calls", label: "Llamadas de voz", description: "Llamadas de audio dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: null },
+  { key: "video_calls", label: "Videollamadas", description: "Videollamadas dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "priority_support", label: "Soporte prioritario", description: "Prioridad de atención en soporte.", group: "Soporte", kind: "boolean", unit: null, status: "operational", next_phase: null },
 ]);
 const FEATURE_BY_KEY_V997 = new Map(FEATURE_CATALOG_V997.map((feature) => [feature.key, feature]));
@@ -21120,7 +21120,7 @@ const billing = require("./features_billing"); // V933 · factura en PDF + infor
 phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage, enforceKycGate, reserveNewChatV998, releaseNewChatV998 }); // V591 · +notifyNewMessage · V731 · +enforceKycGate · V998 cuotas
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase3.register(app, pool, { readMyUserId, wrap, requireAdmin, getUserEntitlementV998 });
-phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase4.register(app, pool, { readMyUserId, wrap, requireAdmin, getUserEntitlementV998 }); // V1002 · llamadas gobernadas por la matriz real
 phase5.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase7.register(app, pool, { readMyUserId, wrap, requireAdmin, pushToUser, notifPrefAllows }); // V589+V592

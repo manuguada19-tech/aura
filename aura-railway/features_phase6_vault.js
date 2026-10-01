@@ -144,6 +144,7 @@ function register(app, pool, helpers) {
   app.post("/api/admin/vault/access-requests", requireAdmin, wrap(async (req, res) => {
     const kind = String(req.body?.kind || "").toLowerCase();
     if (!["call","voice_note"].includes(kind)) return res.status(400).json({ error: "invalid_kind" });
+    if (kind === "call") return res.status(410).json({ error: "call_recording_disabled", message: "Aura no permite acceder al contenido de las llamadas." });
     const targetId = parseInt(req.body?.target_id, 10);
     if (!targetId) return res.status(400).json({ error: "target_required" });
     const reason = String(req.body?.reason || "").toLowerCase();
@@ -168,6 +169,7 @@ function register(app, pool, helpers) {
     const ttlHours = Math.min(72, Math.max(1, parseInt(req.body?.ttl_hours, 10) || 24));
     const [[r]] = await pool.query("SELECT * FROM vault_access_requests WHERE id=? LIMIT 1", [id]).then((rr)=>[rr[0]]);
     if (!r) return res.status(404).json({ error: "not_found" });
+    if (r.kind === "call") return res.status(410).json({ error: "call_recording_disabled", message: "Aura no permite acceder al contenido de las llamadas." });
     if (r.status !== "pending") return res.status(400).json({ error: "already_"+r.status });
     if (String(r.requester_email || "").toLowerCase() === String(email || "").toLowerCase()) {
       return res.status(403).json({ error: "same_admin_forbidden", hint: "Un segundo administrador debe aprobar." });
@@ -208,12 +210,13 @@ function register(app, pool, helpers) {
     res.json({ ok: true });
   }));
 
-  // -- Reproducir/descargar contenido cifrado con token ------------
-  //   GET /api/admin/vault/media/:reqId?item=caller|callee|main
+  // -- Reproducir una nota de voz cifrada con token ----------------
+  // Las solicitudes heredadas de llamadas se rechazan: V1002 solo expone sus metadatos.
   app.get("/api/admin/vault/media/:reqId", requireAdmin, wrap(async (req, res) => {
     const reqId = parseInt(req.params.reqId, 10);
     const [[ar]] = await pool.query("SELECT * FROM vault_access_requests WHERE id=? LIMIT 1", [reqId]).then((rr)=>[rr[0]]);
     if (!ar) return res.status(404).end();
+    if (ar.kind === "call") return res.status(410).json({ error: "call_recording_disabled", message: "Aura no permite acceder al contenido de las llamadas." });
     if (ar.status !== "approved") return res.status(403).json({ error: "not_approved" });
     if (ar.expires_at && new Date(ar.expires_at).getTime() < Date.now()) {
       await pool.execute("UPDATE vault_access_requests SET status='expired' WHERE id=?", [reqId]);
@@ -245,27 +248,6 @@ function register(app, pool, helpers) {
       }
       res.setHeader("Content-Type", m.audio_mime || "audio/webm");
       res.setHeader("Content-Disposition", `inline; filename="voice_${m.id}.webm"`);
-      return res.end(buf);
-    }
-    if (ar.kind === "call") {
-      const side = String(req.query?.side || "caller").toLowerCase();
-      const [recs] = await pool.query(
-        "SELECT * FROM call_recordings WHERE call_id=? AND role=? ORDER BY id ASC",
-        [ar.target_id, side === "callee" ? "callee" : "caller"]
-      );
-      if (!recs.length) return res.status(404).json({ error: "recording_missing" });
-      const rr = recs[0];
-      const abs = rr.encrypted
-        ? path.join(baseDir, "public", rr.url.replace(/^\/+/, "")) + ".enc"
-        : path.join(baseDir, "public", rr.url.replace(/^\/+/, ""));
-      if (!fs.existsSync(abs)) return res.status(404).json({ error: "file_missing" });
-      let buf = fs.readFileSync(abs);
-      if (rr.encrypted && rr.iv && rr.tag) {
-        try { buf = decryptBuffer(buf, rr.iv, rr.tag, rr.id, "call"); }
-        catch (e) { return res.status(500).json({ error: "decrypt_failed" }); }
-      }
-      res.setHeader("Content-Type", rr.mime || "video/webm");
-      res.setHeader("Content-Disposition", `inline; filename="call_${rr.call_id}_${rr.role}.webm"`);
       return res.end(buf);
     }
     res.status(400).json({ error: "invalid_kind" });

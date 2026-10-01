@@ -2688,7 +2688,7 @@ body.account-suspended .restriction-banner .rb-close {
 /* -------- Chat window -------- */
 .chat-header {
   position: sticky; top: 0; z-index: 4;
-  display: grid; grid-template-columns: 42px 48px 1fr auto auto; align-items: center;
+  display: grid; grid-template-columns: 42px 48px minmax(0,1fr) auto auto auto; align-items: center;
   gap: 10px; padding: 8px 12px; height: 62px;
   background: var(--surface); border-bottom: 1px solid var(--border);
 }
@@ -12101,4 +12101,89 @@ body.desktop-app .notif-modal .modal-actions { margin-top: 0; }
   .traveler-limits > div { padding-inline: 3px; }
   .traveler-trip { grid-template-columns: 1fr; }
   .traveler-trip-actions { grid-template-columns: 1fr 1fr; }
+}
+
+/* V1002 · Llamadas WebRTC 1-a-1. */
+.call-entry-v1002.locked { position: relative; color: var(--text-muted); opacity: .62; }
+.call-entry-v1002.locked::after {
+  content: ""; position: absolute; right: 5px; bottom: 5px; width: 6px; height: 6px;
+  border: 1.5px solid var(--surface); border-radius: 50%; background: #f59e0b;
+}
+.call-v1002-backdrop {
+  position: fixed; inset: 0; z-index: 100020; display: grid; place-items: center;
+  padding: max(18px,env(safe-area-inset-top)) 16px max(18px,env(safe-area-inset-bottom));
+  background: rgba(5,7,12,.86); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+}
+.call-v1002-card {
+  width: min(100%,720px); min-height: min(680px,calc(100dvh - 36px)); display: grid;
+  grid-template-rows: auto minmax(230px,1fr) auto auto; gap: 16px; padding: 24px;
+  overflow: hidden; color: #f7f8fc; border: 1px solid rgba(255,255,255,.13); border-radius: 28px;
+  background: radial-gradient(circle at 50% 25%,rgba(255,59,107,.2),transparent 34%),linear-gradient(155deg,#202232,#10121a 66%);
+  box-shadow: 0 30px 90px rgba(0,0,0,.55);
+}
+.call-v1002-card.video { background: linear-gradient(160deg,#202230,#090a0e 72%); }
+.call-v1002-head { display: grid; justify-items: center; gap: 5px; text-align: center; }
+.call-v1002-kind {
+  display: inline-flex; width: max-content; padding: 5px 10px; border-radius: 999px;
+  color: #ff9bb4; background: rgba(255,59,107,.13); font-size: 10px; font-weight: 900;
+  letter-spacing: .1em; text-transform: uppercase;
+}
+.call-v1002-head h2 { margin: 2px 0 0; font-size: clamp(22px,4vw,32px); line-height: 1.1; }
+.call-v1002-state { font-size: 13px; color: #d4d8e4; }
+.call-v1002-duration { font: 750 12px/1 ui-monospace,monospace; color: #9ca5b8; letter-spacing: .08em; }
+.call-v1002-stage {
+  position: relative; min-height: 0; overflow: hidden; display: grid; place-items: center;
+  border: 1px solid rgba(255,255,255,.09); border-radius: 22px; background: #090a0f;
+}
+.call-v1002-card.audio .call-v1002-stage::before {
+  content: ""; width: 112px; height: 112px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%,#ffb2c5,#ff3b6b 46%,#7a2350 100%);
+  box-shadow: 0 0 0 18px rgba(255,59,107,.09),0 0 0 40px rgba(255,59,107,.035),0 20px 50px rgba(0,0,0,.42);
+}
+.call-v1002-remote-video { width: 100%; height: 100%; object-fit: cover; background: #08090d; }
+.call-v1002-local-video {
+  position: absolute; right: 14px; bottom: 14px; width: min(28%,150px); aspect-ratio: 3/4;
+  object-fit: cover; border: 2px solid rgba(255,255,255,.72); border-radius: 16px; background: #1b1d28;
+  box-shadow: 0 12px 30px rgba(0,0,0,.42);
+}
+.call-v1002-remote-audio { position: absolute; width: 1px; height: 1px; opacity: .01; }
+.call-v1002-privacy { margin: 0; color: #aeb6c8; font-size: 11.5px; line-height: 1.45; text-align: center; }
+.call-v1002-controls { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.call-v1002-card.audio .call-v1002-controls { grid-template-columns: repeat(2,minmax(0,180px)); justify-content: center; }
+.call-v1002-control {
+  min-height: 52px; padding: 10px; border: 1px solid rgba(255,255,255,.14); border-radius: 16px;
+  color: #f5f6fa; background: rgba(255,255,255,.09); font: inherit; font-size: 12px; font-weight: 800; cursor: pointer;
+}
+.call-v1002-control.off { color: #fbbf24; background: rgba(245,158,11,.14); border-color: rgba(245,158,11,.34); }
+.call-v1002-control.danger { color: #fff; background: #dc304f; border-color: #f45a72; }
+.call-v1002-incoming {
+  width: min(100%,360px); padding: 28px 22px 22px; color: #f7f8fc; text-align: center;
+  border: 1px solid rgba(255,255,255,.13); border-radius: 26px;
+  background: linear-gradient(155deg,#242738,#11131c); box-shadow: 0 28px 80px rgba(0,0,0,.55);
+}
+.call-v1002-incoming-icon {
+  display: grid; place-items: center; width: 78px; height: 78px; margin: 0 auto 14px;
+  border-radius: 24px; background: rgba(255,59,107,.13); font-size: 37px;
+  box-shadow: 0 0 0 12px rgba(255,59,107,.045);
+}
+.call-v1002-incoming h2 { margin: 10px 0 5px; font-size: 23px; }
+.call-v1002-incoming p { margin: 0; color: #d9ddea; font-size: 14px; }
+.call-v1002-incoming small { display: block; margin: 9px 0 22px; color: #949daf; font-size: 10.5px; }
+.call-v1002-incoming-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.call-v1002-incoming-action { min-height: 50px; border: 0; border-radius: 15px; color: #fff; font: inherit; font-weight: 850; cursor: pointer; }
+.call-v1002-incoming-action.reject { background: #dc304f; }
+.call-v1002-incoming-action.accept { background: #159f76; }
+
+@media (max-width: 430px) {
+  .chat-header { grid-template-columns: 34px 36px minmax(0,1fr) 34px 34px 34px; gap: 4px; padding-inline: 7px; }
+  .chat-header .avatar { width: 34px; height: 34px; }
+  .chat-header .icon-btn { width: 34px; height: 34px; }
+  .chat-header .name strong,.chat-header .name small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-header .name strong { font-size: 13px; }
+  .chat-header .name small { font-size: 10px; }
+  .call-v1002-backdrop { padding-inline: 10px; }
+  .call-v1002-card { min-height: calc(100dvh - 20px); gap: 12px; padding: 18px 14px; border-radius: 22px; }
+  .call-v1002-stage { border-radius: 18px; }
+  .call-v1002-local-video { right: 10px; bottom: 10px; width: 29%; border-radius: 13px; }
+  .call-v1002-control { min-height: 50px; padding-inline: 5px; font-size: 11px; }
 }

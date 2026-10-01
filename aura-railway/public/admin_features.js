@@ -2178,16 +2178,15 @@
     async function view_video(container) {
       const DEPT_LABEL = { safety: "🛡️ Seguridad", quality: "⚙️ Calidad", legal: "⚖️ Legal", support: "🎧 Soporte", none: "—" };
       DataView(container, {
-        title: "Video-llamadas", subtitle: "Historial + grabaciones monitorizadas (V567)", icon: "📹",
+        title: "Llamadas", subtitle: "Historial técnico de voz y vídeo. Aura no graba el contenido.", icon: "📹",
         fetch: async () => (await api("/api/admin/video/calls")).data?.items || [],
         rowId: (r) => r.id,
         kpis: (rows) => [
           { label: "Total", value: rows.length, accent: "blue" },
-          { label: "Con grabación", value: rows.filter((r) => r.recording_caller_url || r.recording_callee_url).length, accent: "green" },
-          { label: "Seguridad", value: rows.filter((r) => r.department === "safety").length, accent: "red" },
-          { label: "Calidad", value: rows.filter((r) => r.department === "quality").length, accent: "amber" },
-          { label: "Legal", value: rows.filter((r) => r.department === "legal").length, accent: "purple" },
-          { label: "Soporte", value: rows.filter((r) => r.department === "support").length, accent: "blue" },
+          { label: "Voz", value: rows.filter((r) => r.mode === "audio").length, accent: "green" },
+          { label: "Vídeo", value: rows.filter((r) => r.mode !== "audio").length, accent: "purple" },
+          { label: "Finalizadas", value: rows.filter((r) => r.status === "ended").length, accent: "blue" },
+          { label: "Sin respuesta", value: rows.filter((r) => r.status === "missed" || r.status === "rejected").length, accent: "amber" },
         ],
         filters: [
           { key: "status", label: "Estado", type: "select", options: [ { value: "ringing", label: "Sonando" }, { value: "accepted", label: "Aceptada" }, { value: "ended", label: "Finalizada" }, { value: "missed", label: "Perdida" }, { value: "rejected", label: "Rechazada" } ] },
@@ -2199,37 +2198,50 @@
           { key: "mode", label: "Tipo", render: (r) => r.mode === "audio" ? "📞 Voz" : "📹 Vídeo" },
           { key: "caller", label: "Llamante", render: (r) => r.caller_name || `#${r.caller_id}` },
           { key: "callee", label: "Receptor", render: (r) => r.callee_name || `#${r.callee_id}` },
-          { key: "status", label: "Estado" },
-          { key: "department", label: "Depto.", render: (r) => DEPT_LABEL[r.department || "none"] },
-          { key: "recording", label: "Grabación", render: (r) => {
-            const has = (r.recording_caller_url ? 1 : 0) + (r.recording_callee_url ? 1 : 0);
-            if (!has) return "—";
-            return `<span class="fx-badge purple">🔒 Cifrada (${has} pista${has>1?"s":""})</span>`;
+          { key: "status", label: "Estado", render: (r) => ({ ringing: "Sonando", accepted: "Aceptada", rejected: "Rechazada", ended: "Finalizada", missed: "Perdida" }[r.status] || r.status || "—") },
+          { key: "duration", label: "Duración", render: (r) => {
+            const seconds = Math.max(0, Number(r.duration_seconds || 0));
+            if (!r.accepted_at) return "—";
+            return `${String(Math.floor(seconds / 60)).padStart(2,"0")}:${String(seconds % 60).padStart(2,"0")}`;
           } },
+          { key: "result", label: "Resultado", render: (r) => ({ hangup: "Finalizada", cancelled: "Cancelada", rejected: "Rechazada", no_answer: "Sin respuesta", connection_lost: "Conexión interrumpida" }[r.ended_reason] || r.ended_reason || "—") },
           { key: "created_at", label: "Inicio", sortable: true, render: (r) => fmtDate(r.created_at) },
           { key: "ended_at", label: "Fin", render: (r) => fmtDate(r.ended_at) },
         ],
         actions: [
           { label: "Detalle", icon: "🔍", title: "Ver detalle", onClick: async (r) => {
             const det = await api(`/api/admin/video/calls/${r.id}`);
-            const c = det.data?.call; const recs = det.data?.recordings || [];
+            const c = det.data?.call;
+            if (!c) { toast("No se pudo cargar el detalle", "err"); return; }
+            const legacyCount = Number(det.data?.legacy_recordings_count || 0);
+            const statusLabel = { ringing: "Sonando", accepted: "Aceptada", rejected: "Rechazada", ended: "Finalizada", missed: "Perdida" }[c.status] || c.status || "—";
+            const resultLabel = { hangup: "Finalizada por un participante", cancelled: "Cancelada antes de responder", rejected: "Rechazada", no_answer: "Sin respuesta", connection_lost: "Conexión interrumpida" }[c.ended_reason] || c.ended_reason || "—";
+            const seconds = Math.max(0, Number(c.duration_seconds || 0));
+            const durationLabel = c.accepted_at ? `${String(Math.floor(seconds / 60)).padStart(2,"0")}:${String(seconds % 60).padStart(2,"0")}` : "—";
+            const participant = (name, id, email) => `${escapeHtml(name || ("Usuario #" + id))}<span class="fx-muted"> #${Number(id) || "—"}${email ? " · " + escapeHtml(email) : ""}</span>`;
             const body = document.createElement("div");
             body.innerHTML = `
-              <p><b>Llamada #${c.id}</b> · ${c.mode || "video"} · ${c.status}</p>
-              <p>Llamante: ${c.caller_name || c.caller_id} (${c.caller_email || ""})<br>
-                 Receptor: ${c.callee_name || c.callee_id} (${c.callee_email || ""})</p>
-              <p>Inicio: ${fmtDate(c.created_at)} · Fin: ${fmtDate(c.ended_at) || "—"}</p>
-              <p>Triage: <b>${DEPT_LABEL[c.department || "none"]}</b> · score ${c.triage_score || 0} · flags: ${c.triage_flags || "—"}</p>
-              <div style="margin:10px 0;padding:10px;background:#0e1020;border:1px solid #333;border-radius:8px">
-                <div style="font-weight:600;margin-bottom:4px">🔒 Grabaciones cifradas en reposo</div>
-                <div style="font-size:12px;opacity:0.8;margin-bottom:8px">Las grabaciones están cifradas con AES-256-GCM. Ni administración ni el equipo de Aura tienen acceso libre a las mismas. El contenido solo puede ser reproducido tras una solicitud de acceso motivada (denuncia de usuario, orden judicial/policial o emergencia de seguridad) y aprobada por un segundo administrador distinto del que la solicita.</div>
-                ${recs.map((rr) => `
-                  <div style="margin:4px 0;padding:6px;background:rgba(255,255,255,0.05);border-radius:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-                    <span><b>${rr.role}</b> · ${(rr.bytes/1024|0)} KB · ${rr.duration_ms ? (rr.duration_ms/1000|0)+"s" : "?"} · ${rr.encrypted ? "🔒 cifrada" : "⚠️ sin cifrar (antiguo)"}</span>
-                  </div>
-                `).join("") || "<i>Sin grabaciones</i>"}
-                <button data-vault-req="call" data-vault-target="${c.id}" class="fx-btn" style="margin-top:8px;background:#ff8a3b;color:#fff">🔐 Solicitar acceso a estas grabaciones</button>
+              <div class="fx-call-detail-head">
+                <div><span class="fx-badge ${c.mode === "audio" ? "ok" : "blue"}">${c.mode === "audio" ? "Voz" : "Vídeo"}</span></div>
+                <div><b>Llamada #${Number(c.id) || "—"}</b><div class="fx-muted">${escapeHtml(statusLabel)}</div></div>
               </div>
+              <div class="fx-call-detail-grid">
+                <div><span>Llamante</span><strong>${participant(c.caller_name, c.caller_id, c.caller_email)}</strong></div>
+                <div><span>Receptor</span><strong>${participant(c.callee_name, c.callee_id, c.callee_email)}</strong></div>
+                <div><span>Inicio</span><strong>${escapeHtml(fmtDate(c.created_at) || "—")}</strong></div>
+                <div><span>Aceptación</span><strong>${escapeHtml(fmtDate(c.accepted_at) || "—")}</strong></div>
+                <div><span>Fin</span><strong>${escapeHtml(fmtDate(c.ended_at) || "—")}</strong></div>
+                <div><span>Duración</span><strong>${durationLabel}</strong></div>
+                <div><span>Resultado</span><strong>${escapeHtml(resultLabel)}</strong></div>
+                <div><span>Última señal</span><strong>${escapeHtml(fmtDate(c.last_signal_at) || "—")}</strong></div>
+                <div><span>Clasificación</span><strong>${DEPT_LABEL[c.department || "none"] || "—"}</strong></div>
+                <div><span>Diagnóstico</span><strong>${escapeHtml(c.triage_flags || "Sin incidencias técnicas")}</strong></div>
+              </div>
+              <div class="fx-call-privacy">
+                <b>Aura no graba las llamadas.</b>
+                <span>Administración solo conserva metadatos técnicos de estado y duración.</span>
+              </div>
+              ${legacyCount > 0 ? `<p class="fx-call-legacy">Esta llamada conserva ${legacyCount} registro${legacyCount === 1 ? "" : "s"} heredado${legacyCount === 1 ? "" : "s"} de una versión anterior. Su contenido no se muestra aquí.</p>` : ""}
               <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
                 <button data-d="safety" class="fx-btn">🛡️ Seguridad</button>
                 <button data-d="quality" class="fx-btn">⚙️ Calidad</button>
@@ -2237,13 +2249,12 @@
                 <button data-d="support" class="fx-btn">🎧 Soporte</button>
                 <button data-d="none" class="fx-btn">— Sin clasificar</button>
                 <button data-retry class="fx-btn">🔄 Re-triage</button>
-                <button data-delrec class="fx-btn" style="background:#e53950;color:#fff">🗑️ Borrar grabaciones</button>
               </div>`;
             const back = document.createElement("div");
             back.className = "fx-modal-back";
             back.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px";
             const card = document.createElement("div");
-            card.style.cssText = "background:#1c1e2e;color:#fff;max-width:640px;width:100%;max-height:90vh;overflow:auto;padding:16px;border-radius:12px";
+            card.className = "fx-call-detail-card";
             card.appendChild(body);
             const close = document.createElement("button"); close.textContent = "Cerrar"; close.className = "fx-btn"; close.onclick = () => back.remove();
             card.appendChild(close);
@@ -2260,14 +2271,6 @@
               await api(`/api/admin/video/calls/${r.id}/triage`, { method: "POST" });
               toast("Triage recalculado", "ok"); back.remove();
             };
-            body.querySelector("[data-delrec]").onclick = async () => {
-              const ok = await confirmDialog({ title: "Borrar grabaciones", message: `Se eliminarán todas las grabaciones de la llamada #${r.id}. No se puede deshacer.`, danger: true, confirmLabel: "Borrar" });
-              if (!ok) return;
-              await api(`/api/admin/video/calls/${r.id}/recordings`, { method: "DELETE" });
-              toast("Grabaciones borradas", "ok"); back.remove();
-            };
-            const reqBtn = body.querySelector("[data-vault-req]");
-            if (reqBtn) reqBtn.onclick = () => openVaultRequestModal("call", r.id, () => back.remove());
           } },
         ],
         bulkEndpoint: "/api/admin/video/calls/bulk-delete",
@@ -2428,8 +2431,8 @@
       const REASON_LABEL = { user_report: "Denuncia usuario", police_order: "Orden policial", court_order: "Orden judicial", safety_emergency: "Emergencia seguridad" };
       const STATUS_LABEL = { pending: "⏳ Pendiente", approved: "✅ Aprobada", rejected: "❌ Rechazada", revoked: "🚫 Revocada", expired: "⌛ Expirada" };
       DataView(container, {
-        title: "Bóveda cifrada", subtitle: "Solicitudes de acceso a grabaciones (V569)", icon: "🔐",
-        fetch: async () => (await api("/api/admin/vault/access-requests")).data?.items || [],
+        title: "Bóveda cifrada", subtitle: "Accesos auditados a notas de voz. Las llamadas no se graban.", icon: "🔐",
+        fetch: async () => ((await api("/api/admin/vault/access-requests")).data?.items || []).filter((r) => r.kind === "voice_note"),
         rowId: (r) => r.id,
         kpis: (rows) => [
           { label: "Total", value: rows.length, accent: "blue" },
@@ -2440,12 +2443,12 @@
         ],
         filters: [
           { key: "effective_status", label: "Estado", type: "select", options: Object.keys(STATUS_LABEL).map((v) => ({ value: v, label: STATUS_LABEL[v] })) },
-          { key: "kind", label: "Tipo", type: "select", options: [ { value: "call", label: "Llamada" }, { value: "voice_note", label: "Nota de voz" } ] },
+          { key: "kind", label: "Tipo", type: "select", options: [ { value: "voice_note", label: "Nota de voz" } ] },
           { key: "reason", label: "Motivo", type: "select", options: Object.keys(REASON_LABEL).map((v) => ({ value: v, label: REASON_LABEL[v] })) },
         ],
         columns: [
           { key: "id", label: "ID", sortable: true },
-          { key: "kind", label: "Tipo", render: (r) => r.kind === "call" ? "📹 Llamada" : "🎤 Nota de voz" },
+          { key: "kind", label: "Tipo", render: () => "🎤 Nota de voz" },
           { key: "target_id", label: "Objetivo" },
           { key: "reason", label: "Motivo", render: (r) => REASON_LABEL[r.reason] || r.reason },
           { key: "reference", label: "Referencia", render: (r) => r.reference || "—" },
@@ -2488,24 +2491,11 @@
             card.style.cssText = "background:#1c1e2e;color:#fff;max-width:640px;width:100%;padding:16px;border-radius:12px";
             const tok = readTok();
             const auth = tok ? `?adminToken=${encodeURIComponent(tok)}` : "";
-            if (r.kind === "voice_note") {
-              card.innerHTML = `
-                <h3>▶ Nota de voz #${r.target_id}</h3>
-                <p style="opacity:0.7;font-size:12px">Acceso concedido bajo solicitud #${r.id} · aprobado por ${r.approver_email} · expira ${fmtDate(r.expires_at)}</p>
-                <audio controls autoplay style="width:100%" src="/api/admin/vault/media/${r.id}${auth}"></audio>
-                <button data-close class="fx-btn" style="margin-top:8px">Cerrar</button>`;
-            } else {
-              card.innerHTML = `
-                <h3>▶ Llamada #${r.target_id}</h3>
-                <p style="opacity:0.7;font-size:12px">Acceso concedido bajo solicitud #${r.id} · aprobado por ${r.approver_email} · expira ${fmtDate(r.expires_at)}</p>
-                <div>
-                  <div style="margin:6px 0"><b>Pista llamante</b></div>
-                  <video controls style="width:100%;max-height:280px" src="/api/admin/vault/media/${r.id}${auth}&side=caller"></video>
-                  <div style="margin:10px 0 6px"><b>Pista receptor</b></div>
-                  <video controls style="width:100%;max-height:280px" src="/api/admin/vault/media/${r.id}${auth}&side=callee"></video>
-                </div>
-                <button data-close class="fx-btn" style="margin-top:8px">Cerrar</button>`;
-            }
+            card.innerHTML = `
+              <h3>▶ Nota de voz #${r.target_id}</h3>
+              <p style="opacity:0.7;font-size:12px">Acceso concedido bajo solicitud #${r.id} · aprobado por ${escapeHtml(r.approver_email || "—")} · expira ${escapeHtml(fmtDate(r.expires_at))}</p>
+              <audio controls autoplay style="width:100%" src="/api/admin/vault/media/${r.id}${auth}"></audio>
+              <button data-close class="fx-btn" style="margin-top:8px">Cerrar</button>`;
             back.appendChild(card);
             back.onclick = (e) => { if (e.target === back) back.remove(); };
             card.querySelector("[data-close]").onclick = () => back.remove();
@@ -3512,6 +3502,24 @@
   .fx-badge.rose { background: rgba(255,59,107,0.16); color:#ff6b8f; }
   .fx-badge.gold { background: rgba(250,204,21,0.16); color:#facc15; }
   .fx-badge.teal { background: rgba(20,184,166,0.15); color:#2dd4bf; }
+
+  .fx-call-detail-card { background:#121729; color:#e8ebf5; width:min(640px,100%); max-height:90vh; overflow:auto; padding:20px; border:1px solid rgba(255,255,255,.1); border-radius:18px; box-shadow:0 28px 80px rgba(0,0,0,.5); }
+  .fx-call-detail-head { display:flex; align-items:center; gap:12px; padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,.08); }
+  .fx-call-detail-head b { display:block; font-size:17px; }
+  .fx-call-detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin:14px 0; }
+  .fx-call-detail-grid>div { min-width:0; padding:10px 11px; border:1px solid rgba(255,255,255,.07); border-radius:11px; background:rgba(255,255,255,.035); }
+  .fx-call-detail-grid span,.fx-call-detail-grid strong { display:block; overflow-wrap:anywhere; }
+  .fx-call-detail-grid>div>span { margin-bottom:4px; color:#96a0b8; font-size:9.5px; font-weight:800; letter-spacing:.07em; text-transform:uppercase; }
+  .fx-call-detail-grid strong { font-size:12.5px; line-height:1.4; }
+  .fx-call-detail-grid strong .fx-muted { margin-top:2px; font-size:10.5px; font-weight:500; }
+  .fx-call-privacy,.fx-call-legacy { display:grid; gap:3px; padding:11px 12px; border-radius:11px; font-size:11.5px; line-height:1.4; }
+  .fx-call-privacy { color:#bcebdc; border:1px solid rgba(16,185,129,.24); background:rgba(16,185,129,.08); }
+  .fx-call-legacy { color:#fcd98a; border:1px solid rgba(245,158,11,.26); background:rgba(245,158,11,.08); }
+  @media (max-width:560px) {
+    .fx-call-detail-card { padding:15px; border-radius:15px; }
+    .fx-call-detail-grid { grid-template-columns:1fr; }
+    .fx-call-detail-card>.fx-btn { width:100%; justify-content:center; margin-top:12px; min-height:42px; }
+  }
 
   .fx-plan { display:inline-block; padding:3px 9px; border-radius:6px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
   .fx-plan-free { background: rgba(148,163,184,0.15); color:#94a3b8; }

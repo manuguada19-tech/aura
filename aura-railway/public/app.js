@@ -15044,12 +15044,20 @@ function screenChat(root, u, isNew, opts = {}) {
   stopChatPolling();
   document.body.classList.add("chat-open");
   const openProfileFromChat = () => { document.body.classList.remove("chat-open"); openProfileDetail(u, { backTo: "chat" }); };
+  const planRankV1002 = { free: 0, premium: 1, gold: 2, platinum: 3 };
+  const callAllowedV1002 = (key, minimum) => {
+    const entitlement = state.entitlements?.[key];
+    if (entitlement && typeof entitlement.enabled === "boolean") return entitlement.enabled;
+    return (planRankV1002[String(state.user?.plan || "free").toLowerCase()] || 0) >= planRankV1002[minimum];
+  };
+  const audioCallAllowed = callAllowedV1002("audio_calls", "gold");
+  const videoCallAllowed = callAllowedV1002("video_calls", "platinum");
   root.appendChild(el("div", { class: "chat-header" }, [
     el("button", { class: "icon-btn", onclick: () => { stopChatPolling(); document.body.classList.remove("chat-open"); routeTab("chats"); }, html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }),
     el("div", { class: "avatar clickable", style: `background-image:url('${u.photo || ("https://i.pravatar.cc/80?u="+(u.id||u.name))}')`, role: "button", tabindex: "0", title: "Ver perfil", "aria-label": "Ver perfil", onclick: openProfileFromChat }),
     el("div", { class: "name clickable", role: "button", tabindex: "0", title: "Ver perfil", "aria-label": "Ver perfil", onclick: openProfileFromChat }, [ el("strong", {}, u.name), el("small", { class: u.online ? "status-online" : "status-offline" }, u.online ? "Online" : "Última vez hace 12min") ]),
-    el("button", { class: "icon-btn", title: "Llamada de voz", onclick: () => startCallFromChat(u, "audio"), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 15.5c-1.25 0-2.45-.2-3.57-.57a1 1 0 00-1.02.24l-2.2 2.2a15.05 15.05 0 01-6.59-6.58l2.2-2.21a1 1 0 00.25-1.02A11.36 11.36 0 018.5 4c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1 0 9.39 7.61 17 17 17 .55 0 1-.45 1-1v-3.5c0-.55-.45-1-1-1z"/></svg>` }),
-    el("button", { class: "icon-btn", title: "Videollamada", onclick: () => startCallFromChat(u, "video"), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/></svg>` }),
+    el("button", { class: `icon-btn call-entry-v1002${audioCallAllowed ? "" : " locked"}`, title: audioCallAllowed ? "Llamada de voz" : "Llamada de voz · disponible con Oro", "aria-label": audioCallAllowed ? "Iniciar llamada de voz" : "Llamada de voz, requiere plan Oro", onclick: () => startCallFromChat(u, "audio"), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M20 15.5c-1.25 0-2.45-.2-3.57-.57a1 1 0 00-1.02.24l-2.2 2.2a15.05 15.05 0 01-6.59-6.58l2.2-2.21a1 1 0 00.25-1.02A11.36 11.36 0 018.5 4c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1 0 9.39 7.61 17 17 17 .55 0 1-.45 1-1v-3.5c0-.55-.45-1-1-1z"/></svg>` }),
+    el("button", { class: `icon-btn call-entry-v1002${videoCallAllowed ? "" : " locked"}`, title: videoCallAllowed ? "Videollamada" : "Videollamada · disponible con Platino", "aria-label": videoCallAllowed ? "Iniciar videollamada" : "Videollamada, requiere plan Platino", onclick: () => startCallFromChat(u, "video"), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 10.5V7a1 1 0 00-1-1H4a1 1 0 00-1 1v10a1 1 0 001 1h12a1 1 0 001-1v-3.5l4 4v-11l-4 4z"/></svg>` }),
     el("button", { class: "icon-btn", title: "Más", onclick: () => openChatMenu(u), html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>` }),
   ]));
 
@@ -15644,126 +15652,12 @@ async function startCallFromChat(peer, mode) {
   mode = mode === "audio" ? "audio" : "video";
   const peerId = peer && (peer.id || peer.user_id);
   if (!peerId) { toast("No se puede llamar a este usuario"); return; }
-  try {
-    const headers = (typeof chatApi !== "undefined" && chatApi.headers) ? chatApi.headers() : {};
-    const r = await fetch("/api/my/video/start", {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ callee_id: peerId, mode }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (r.status === 402 || j.error === "plan_required") {
-      const required = j.required_plan || (mode === "audio" ? "gold" : "platinum");
-      if (typeof openPlanLockModal === "function") openPlanLockModal(required, mode === "audio" ? "Llamada de voz" : "Videollamada");
-      else toast(`Necesitas plan ${required} para ${mode === "audio" ? "llamar" : "videollamar"}`);
-      return;
-    }
-    if (!r.ok || !j.ok) throw new Error(j.error || "call_failed");
-    // Backend listo. Ahora abrimos WebRTC con o sin video.
-    if (window.aura2 && typeof window.aura2.startVideoCall === "function" && mode === "video") {
-      // Usa la implementación existente (video+audio) reutilizando el room ya creado
-      window.aura2.startVideoCall(peerId);
-      return;
-    }
-    // Implementación local mínima audio/video-agnóstica
-    const { room_id, call_id, ice_servers } = j;
-    const pc = new RTCPeerConnection({ iceServers: ice_servers || [{ urls: "stun:stun.l.google.com:19302" }] });
-    const constraints = mode === "audio" ? { audio: true } : { audio: true, video: true };
-    const localStream = await navigator.mediaDevices.getUserMedia(constraints);
-    localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
-    const remoteEl = mode === "audio"
-      ? el("audio", { autoplay: true, controls: true, style: "width:100%" })
-      : el("video", { autoplay: true, playsinline: true, style: "width:100%;background:#000;border-radius:12px" });
-    const localEl = mode === "audio"
-      ? null
-      : el("video", { autoplay: true, playsinline: true, muted: true, style: "width:120px;position:absolute;bottom:12px;right:12px;border-radius:8px" });
-    if (localEl) localEl.srcObject = localStream;
-    // V567 · Grabación de la pista local para monitorización y auditoría.
-    // El usuario ve un banner "🔴 REC" durante toda la llamada. Al colgar
-    // se sube el archivo al backend.
-    let recorder = null;
-    const recChunks = [];
-    const recStartAt = Date.now();
-    try {
-      const rMime = mode === "audio"
-        ? (MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm")
-        : (MediaRecorder.isTypeSupported("video/webm;codecs=vp8,opus") ? "video/webm;codecs=vp8,opus" : "video/webm");
-      recorder = new MediaRecorder(localStream, { mimeType: rMime, bitsPerSecond: mode === "audio" ? 96000 : 800000 });
-      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recChunks.push(e.data); };
-      recorder.start(1000);
-    } catch (e) { console.warn("[rec] not started", e); }
-    pc.ontrack = (ev) => { remoteEl.srcObject = ev.streams[0]; };
-    const tokenParam = (typeof chatApi !== "undefined" && chatApi.headers) ? (chatApi.headers().Authorization || "").replace(/^Bearer\s+/, "") : "";
-    pc.onicecandidate = (ev) => {
-      if (ev.candidate) fetch(`/api/my/video/room/${room_id}/signal`, {
-        method: "POST", headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "ice", candidate: ev.candidate }),
-      }).catch(()=>{});
-    };
-    let sseUrl = `/api/my/video/room/${room_id}/signal` + (tokenParam ? `?adminToken=${encodeURIComponent(tokenParam)}` : "");
-    const _vtk = Auth.get(); if (_vtk) sseUrl += (sseUrl.includes("?") ? "&" : "?") + "auth_token=" + encodeURIComponent(_vtk);
-    const sse = new EventSource(sseUrl);
-    sse.onmessage = async (m) => {
-      try {
-        const msg = JSON.parse(m.data);
-        if (msg.type === "answer") await pc.setRemoteDescription(msg.sdp);
-        else if (msg.type === "ice" && msg.candidate) await pc.addIceCandidate(msg.candidate);
-        else if (msg.type === "ended") endCall();
-      } catch {}
-    };
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await fetch(`/api/my/video/room/${room_id}/signal`, {
-      method: "POST", headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "offer", sdp: offer }),
-    });
-    let ending = false;
-    async function endCall() {
-      if (ending) return; ending = true;
-      const duration_ms = Date.now() - recStartAt;
-      // Parar recorder y subir el archivo
-      const stopPromise = new Promise((resolve) => {
-        if (!recorder || recorder.state === "inactive") return resolve(null);
-        recorder.onstop = () => resolve(new Blob(recChunks, { type: recorder.mimeType || (mode === "audio" ? "audio/webm" : "video/webm") }));
-        try { recorder.stop(); } catch { resolve(null); }
-      });
-      try { pc.close(); } catch {}
-      try { localStream.getTracks().forEach((t) => t.stop()); } catch {}
-      try { sse.close(); } catch {}
-      fetch(`/api/my/video/${call_id}/end`, { method: "POST", headers }).catch(()=>{});
-      backdrop.remove();
-      // Sube en background (no bloquea al usuario)
-      (async () => {
-        try {
-          const blob = await stopPromise;
-          if (!blob || blob.size < 500) return;
-          const dataUrl = await new Promise((res) => { const r = new FileReader(); r.onloadend = () => res(r.result); r.readAsDataURL(blob); });
-          await fetch(`/api/my/video/${call_id}/recording`, {
-            method: "POST", headers: { ...headers, "Content-Type": "application/json" },
-            body: JSON.stringify({ data_url: dataUrl, duration_ms }),
-          });
-        } catch (e) { console.warn("[rec upload]", e); }
-      })();
-    }
-    const recBanner = el("div", { class: "call-rec-banner", style: "display:flex;align-items:flex-start;gap:8px;background:#e53950;color:#fff;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px;font-weight:600;line-height:1.35" }, [
-      el("span", { style: "width:10px;height:10px;background:#fff;border-radius:50%;display:inline-block;animation:aura-blink 1s infinite;margin-top:4px;flex-shrink:0" }, ""),
-      el("span", {}, "🔴 REC · Esta llamada se graba y almacena cifrada (AES-256). El equipo de Aura NO tiene acceso a la grabación salvo por denuncia de usuario o requerimiento de las autoridades, en cuyo caso se abrirá un plazo de revisión con acceso auditado."),
-    ]);
-    const title = (mode === "audio" ? "📞 Llamada a " : "📹 Videollamada con ") + (peer.name || "usuario");
-    const kids = mode === "audio"
-      ? [el("h3", {}, title), recBanner, el("p", { class: "muted" }, "Llamando… (esperando a que acepte)"), remoteEl,
-         el("div", { class: "modal-actions" }, [el("button", { class: "btn danger", onclick: endCall }, "Colgar")])]
-      : [el("h3", {}, title), recBanner,
-         el("div", { class: "video-call-wrap", style: "position:relative" }, [remoteEl, localEl]),
-         el("div", { class: "modal-actions" }, [el("button", { class: "btn danger", onclick: endCall }, "Colgar")])];
-    const backdrop = el("div", { class: "modal-backdrop", onclick: (e) => { if (e.target === e.currentTarget) endCall(); } }, [
-      el("div", { class: "modal-card call-modal" }, kids),
-    ]);
-    document.body.appendChild(backdrop);
-  } catch (e) {
-    console.error("[call] error", e);
-    toast("No se pudo iniciar la llamada.");
+  // V1002 · Un único controlador crea y gestiona la llamada. Antes app.js
+  // creaba una sala y, para vídeo, features_ui.js creaba otra distinta.
+  if (window.aura2 && typeof window.aura2.startCall === "function") {
+    return window.aura2.startCall(peer, mode);
   }
+  toast("Las llamadas no están disponibles en este momento.");
 }
 function openChatMenu(u) {
   const sheet = el("div", {}, [

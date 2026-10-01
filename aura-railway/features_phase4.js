@@ -9,9 +9,6 @@ const { planAtLeast } = require("./features_phase1");
 // V558 · grants por función (permite acceso individual sin cambiar de plan)
 let __phase5 = null;
 try { __phase5 = require("./features_phase5"); } catch {}
-// V569 · Bóveda cifrada
-let __vault = null;
-try { __vault = require("./features_phase6_vault"); } catch {}
 async function canUse(pool, userId, feature, minPlan) {
   if (__phase5 && typeof __phase5.hasFeature === "function") {
     try { return await __phase5.hasFeature(pool, userId, feature); } catch {}
@@ -77,10 +74,8 @@ async function migrate(pool) {
     INDEX idx_callee (callee_id), INDEX idx_caller (caller_id)
   )`);
 
-  // V567 · Grabación de llamadas para monitorización y auditoría.
-  //   Cada participante sube su pista local (audio+video propio).
-  //   Legalmente, el usuario acepta al iniciar/aceptar la llamada con
-  //   el banner "🔴 REC" siempre visible + cláusula en términos.
+  // Columnas y tabla heredadas de versiones anteriores. V1002 no escribe
+  // contenido nuevo; se mantienen para no borrar datos existentes al migrar.
   await q(`ALTER TABLE video_calls ADD COLUMN recording_caller_url VARCHAR(500) NULL`);
   await q(`ALTER TABLE video_calls ADD COLUMN recording_callee_url VARCHAR(500) NULL`);
   await q(`ALTER TABLE video_calls ADD COLUMN recording_bytes INT NULL`);
@@ -89,6 +84,10 @@ async function migrate(pool) {
   await q(`ALTER TABLE video_calls ADD COLUMN triage_score INT DEFAULT 0`);
   await q(`ALTER TABLE video_calls ADD COLUMN notes TEXT NULL`);
   await q(`ALTER TABLE video_calls ADD COLUMN mode VARCHAR(10) DEFAULT 'video'`);
+  // V1002 · Ciclo de vida y diagnóstico sin guardar el contenido de la llamada.
+  await q(`ALTER TABLE video_calls ADD COLUMN accepted_at TIMESTAMP NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN last_signal_at TIMESTAMP NULL`);
+  await q(`ALTER TABLE video_calls ADD COLUMN ended_reason VARCHAR(40) NULL`);
 
   await q(`CREATE TABLE IF NOT EXISTS call_recordings (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -125,16 +124,82 @@ async function getUserPlan(pool, userId) {
 // Signaling en memoria (para no depender de infra Socket.io)
 // Nota: apto para instancia única. Para varias replicas necesitarías Redis.
 const signalingRooms = new Map(); // roomId -> [{userId, res}] SSE listeners
+const signalingBacklog = new Map(); // roomId -> señales recientes para evitar carreras offer/answer
+const callEventStreams = new Map(); // userId -> Set<res> para llamadas entrantes inmediatas
 
 function pushSignal(roomId, msg) {
+  const backlog = signalingBacklog.get(roomId) || [];
+  backlog.push(msg);
+  signalingBacklog.set(roomId, backlog.slice(-80));
   const list = signalingRooms.get(roomId) || [];
   for (const s of list) {
+    if (msg.from && Number(msg.from) === Number(s.userId)) continue;
     try { s.res.write(`data: ${JSON.stringify(msg)}\n\n`); } catch {}
   }
 }
 
+function pushCallEvent(userId, payload) {
+  const streams = callEventStreams.get(Number(userId)) || new Set();
+  for (const res of streams) {
+    try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {}
+  }
+}
+
+function cleanupCallRoomV1002(roomId, delay = 5000) {
+  const timer = setTimeout(() => {
+    signalingBacklog.delete(roomId);
+    const listeners = signalingRooms.get(roomId) || [];
+    for (const listener of listeners) { try { listener.res.end(); } catch {} }
+    signalingRooms.delete(roomId);
+  }, delay);
+  timer.unref?.();
+}
+
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
+  const getUserEntitlement = typeof helpers.getUserEntitlementV998 === "function"
+    ? helpers.getUserEntitlementV998 : null;
+
+  async function callAllowedV1002(userId, mode) {
+    const legacyKey = mode === "audio" ? "audio_call" : "video_call";
+    const matrixKey = mode === "audio" ? "audio_calls" : "video_calls";
+    const minPlan = mode === "audio" ? "gold" : "platinum";
+    let grants = [];
+    try {
+      [grants] = await pool.query(
+        `SELECT mode FROM user_feature_grants
+          WHERE user_id=? AND feature=? AND revoked_at IS NULL
+            AND (expires_at IS NULL OR expires_at>NOW())
+          ORDER BY CASE WHEN mode='deny' THEN 0 ELSE 1 END`,
+        [userId, legacyKey]
+      );
+    } catch {}
+    if (grants.some((row) => row.mode === "deny")) return { allowed: false, denied: true };
+    if (getUserEntitlement) {
+      const entitlement = await getUserEntitlement(userId, matrixKey);
+      if (entitlement?.enabled) return { allowed: true, denied: false };
+      return { allowed: grants.some((row) => row.mode === "allow"), denied: false };
+    }
+    if (grants.some((row) => row.mode === "allow")) return { allowed: true, denied: false };
+    return { allowed: await canUse(pool, userId, legacyKey, minPlan), denied: false };
+  }
+
+  function iceServersV1002() {
+    const servers = [{ urls: "stun:stun.l.google.com:19302" }];
+    const urls = String(process.env.AURA_TURN_URL || "").trim();
+    const username = String(process.env.AURA_TURN_USERNAME || "").trim();
+    const credential = String(process.env.AURA_TURN_CREDENTIAL || "").trim();
+    if (urls && username && credential) servers.push({ urls: urls.split(",").map((v) => v.trim()).filter(Boolean), username, credential });
+    return servers;
+  }
+
+  async function callByRoomForUserV1002(roomId, userId) {
+    const [[call]] = await pool.query(
+      "SELECT * FROM video_calls WHERE room_id=? AND (caller_id=? OR callee_id=?) LIMIT 1",
+      [roomId, userId, userId]
+    ).then((result) => [result[0]]);
+    return call || null;
+  }
 
   // ==== Moderación IA (aplicable a mensajes) ====================
   // El backend antiguo mantiene POST /api/my/messages sin cambios.
@@ -208,38 +273,95 @@ function register(app, pool, helpers) {
     res.json({ ok: true, translated, cached: false });
   }));
 
-  // ==== Video-llamada WebRTC (Platino) ==========================
-  // Iniciar llamada: crea sala, notifica al callee vía SSE.
+  // ==== V1002 · Llamadas WebRTC 1-a-1 (voz y vídeo) =============
+  // La matriz de planes es la fuente de verdad. El llamante y el receptor
+  // deben compartir una conversación abierta y no estar bloqueados.
   app.post("/api/my/video/start", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
-    // V558 · audio-only también soportado. mode: "video"|"audio"
     const mode = req.body?.mode === "audio" ? "audio" : "video";
-    const feature = mode === "audio" ? "audio_call" : "video_call";
     const minPlan = mode === "audio" ? "gold" : "platinum";
-    if (!(await canUse(pool, me, feature, minPlan))) {
-      return res.status(402).json({ error: "plan_required", required_plan: minPlan, feature });
+    const access = await callAllowedV1002(me, mode);
+    if (!access.allowed && access.denied) {
+      return res.status(403).json({ error: "feature_denied", message: "Esta función no está disponible para tu cuenta." });
+    }
+    if (!access.allowed) {
+      return res.status(402).json({ error: "plan_required", required_plan: minPlan, feature: mode === "audio" ? "audio_calls" : "video_calls" });
     }
     const callee = parseInt(req.body?.callee_id, 10);
-    if (!callee) return res.status(400).json({ error: "callee_required" });
-    const roomId = `room_${me}_${callee}_${Date.now().toString(36)}`;
-    const [r] = await pool.execute(
-      "INSERT INTO video_calls (caller_id,callee_id,room_id,status,mode) VALUES (?,?,?, 'ringing', ?)",
-      [me, callee, roomId, mode]
-    );
-    // V565 · Nombre del caller para mostrar en el modal del callee
-    let callerName = null;
+    if (!callee || callee === me) return res.status(400).json({ error: "invalid_callee", message: "No puedes llamarte a ti mismo." });
+    const [[peer]] = await pool.query("SELECT id,status,name FROM users WHERE id=? LIMIT 1", [callee]).then((rr) => [rr[0]]);
+    if (!peer || peer.status !== "active") return res.status(404).json({ error: "callee_unavailable", message: "Esta persona no está disponible." });
+    const [[conversation]] = await pool.query(
+      `SELECT id FROM conversations
+        WHERE ((user_a=? AND user_b=?) OR (user_a=? AND user_b=?))
+          AND status='open' LIMIT 1`,
+      [me, callee, callee, me]
+    ).then((rr) => [rr[0]]);
+    if (!conversation) return res.status(403).json({ error: "conversation_required", message: "Solo puedes llamar desde una conversación activa." });
+    const [[blocked]] = await pool.query(
+      "SELECT id FROM blocks WHERE (user_id=? AND target_id=?) OR (user_id=? AND target_id=?) LIMIT 1",
+      [me, callee, callee, me]
+    ).then((rr) => [rr[0]]);
+    if (blocked) return res.status(403).json({ error: "call_blocked", message: "La llamada no está disponible." });
+
+    const conn = await pool.getConnection();
+    let callId;
+    let roomId;
     try {
-      const [[cu]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]).then((rr)=>[rr[0]]);
-      callerName = cu?.name || null;
-    } catch {}
-    // Push contextual al callee (incluye modo)
+      await conn.beginTransaction();
+      await conn.query("SELECT id FROM users WHERE id IN (?,?) ORDER BY id FOR UPDATE", [me, callee]);
+      await conn.execute(
+        "UPDATE video_calls SET status='missed',ended_at=NOW(),ended_reason='no_answer' WHERE status='ringing' AND created_at<DATE_SUB(NOW(),INTERVAL 60 SECOND) AND (caller_id IN (?,?) OR callee_id IN (?,?))",
+        [me, callee, me, callee]
+      );
+      await conn.execute(
+        "UPDATE video_calls SET status='ended',ended_at=NOW(),ended_reason='connection_lost' WHERE status='accepted' AND COALESCE(last_signal_at,accepted_at,created_at)<DATE_SUB(NOW(),INTERVAL 12 HOUR) AND (caller_id IN (?,?) OR callee_id IN (?,?))",
+        [me, callee, me, callee]
+      );
+      const [[busy]] = await conn.query(
+        "SELECT id FROM video_calls WHERE status IN ('ringing','accepted') AND (caller_id IN (?,?) OR callee_id IN (?,?)) LIMIT 1 FOR UPDATE",
+        [me, callee, me, callee]
+      );
+      if (busy) {
+        await conn.rollback();
+        return res.status(409).json({ error: "user_busy", message: "Uno de los dos ya está en otra llamada." });
+      }
+      roomId = `room_${me}_${callee}_${Date.now().toString(36)}`;
+      const [insert] = await conn.execute(
+        "INSERT INTO video_calls (caller_id,callee_id,room_id,status,mode,last_signal_at) VALUES (?,?,?,'ringing',?,NOW())",
+        [me, callee, roomId, mode]
+      );
+      callId = Number(insert.insertId);
+      await conn.commit();
+    } catch (error) {
+      try { await conn.rollback(); } catch {}
+      throw error;
+    } finally {
+      conn.release();
+    }
+    const [[caller]] = await pool.query("SELECT name FROM users WHERE id=? LIMIT 1", [me]).then((rr) => [rr[0]]);
+    const payload = { room_id: roomId, caller_id: me, call_id: callId, mode, caller_name: caller?.name || null };
     await pool.execute(
-      "INSERT INTO push_context_events (user_id,kind,payload) VALUES (?,?, ?)",
-      [callee, "video_call_incoming", JSON.stringify({ room_id: roomId, caller_id: me, call_id: r.insertId, mode, caller_name: callerName })]
+      "INSERT INTO push_context_events (user_id,kind,payload) VALUES (?,?,?)",
+      [callee, "video_call_incoming", JSON.stringify(payload)]
     );
-    pushSignal(roomId, { type: "incoming", caller_id: me, callee_id: callee, room_id: roomId, mode });
-    res.json({ ok: true, call_id: r.insertId, room_id: roomId, mode, ice_servers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    pushCallEvent(callee, { type: "incoming", ...payload });
+    const timeout = setTimeout(async () => {
+      try {
+        const [update] = await pool.execute(
+          "UPDATE video_calls SET status='missed',ended_at=NOW(),ended_reason='no_answer' WHERE id=? AND status='ringing'",
+          [callId]
+        );
+        if (update.affectedRows) {
+          const event = { type: "missed", call_id: callId, room_id: roomId };
+          pushSignal(roomId, event); pushCallEvent(me, event); pushCallEvent(callee, event);
+          cleanupCallRoomV1002(roomId);
+        }
+      } catch {}
+    }, 60000);
+    timeout.unref?.();
+    res.json({ ok: true, call_id: callId, room_id: roomId, mode, ice_servers: iceServersV1002(), relay_available: iceServersV1002().length > 1 });
   }));
 
   app.post("/api/my/video/:call_id/accept", wrap(async (req, res) => {
@@ -248,9 +370,30 @@ function register(app, pool, helpers) {
     const cid = parseInt(req.params.call_id, 10);
     const [[c]] = await pool.query("SELECT * FROM video_calls WHERE id=? AND callee_id=?", [cid, me]).then((rr)=>[rr[0]]);
     if (!c) return res.status(404).json({ error: "not_found" });
-    await pool.execute("UPDATE video_calls SET status='accepted' WHERE id=?", [cid]);
+    if (c.status !== "ringing") return res.status(409).json({ error: "call_not_ringing", status: c.status });
+    if (Date.now() - new Date(c.created_at).getTime() > 60000) {
+      await pool.execute("UPDATE video_calls SET status='missed',ended_at=NOW(),ended_reason='no_answer' WHERE id=? AND status='ringing'", [cid]);
+      return res.status(410).json({ error: "call_expired", message: "La llamada ya ha finalizado." });
+    }
+    const [accepted] = await pool.execute("UPDATE video_calls SET status='accepted',accepted_at=NOW(),last_signal_at=NOW() WHERE id=? AND status='ringing'", [cid]);
+    if (!accepted.affectedRows) return res.status(409).json({ error: "call_not_ringing" });
     pushSignal(c.room_id, { type: "accepted", by: me });
-    res.json({ ok: true, room_id: c.room_id, ice_servers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    pushCallEvent(c.caller_id, { type: "accepted", call_id: cid, room_id: c.room_id });
+    res.json({ ok: true, room_id: c.room_id, mode: c.mode || "video", ice_servers: iceServersV1002(), relay_available: iceServersV1002().length > 1 });
+  }));
+
+  app.post("/api/my/video/:call_id/reject", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    const cid = parseInt(req.params.call_id, 10);
+    const [[c]] = await pool.query("SELECT * FROM video_calls WHERE id=? AND callee_id=?", [cid, me]).then((rr) => [rr[0]]);
+    if (!c) return res.status(404).json({ error: "not_found" });
+    if (c.status !== "ringing") return res.status(409).json({ error: "call_not_ringing", status: c.status });
+    await pool.execute("UPDATE video_calls SET status='rejected',ended_at=NOW(),ended_reason='rejected' WHERE id=?", [cid]);
+    const event = { type: "rejected", by: me, call_id: cid, room_id: c.room_id };
+    pushSignal(c.room_id, event); pushCallEvent(c.caller_id, event);
+    cleanupCallRoomV1002(c.room_id);
+    res.json({ ok: true });
   }));
 
   app.post("/api/my/video/:call_id/end", wrap(async (req, res) => {
@@ -259,112 +402,129 @@ function register(app, pool, helpers) {
     const cid = parseInt(req.params.call_id, 10);
     const [[c]] = await pool.query("SELECT * FROM video_calls WHERE id=? AND (caller_id=? OR callee_id=?)", [cid, me, me]).then((rr)=>[rr[0]]);
     if (!c) return res.status(404).json({ error: "not_found" });
-    await pool.execute("UPDATE video_calls SET status='ended', ended_at=NOW() WHERE id=?", [cid]);
+    if (["ended", "rejected", "missed"].includes(c.status)) return res.json({ ok: true, status: c.status });
+    const reason = c.status === "ringing" ? "cancelled" : "hangup";
+    await pool.execute("UPDATE video_calls SET status='ended',ended_at=NOW(),ended_reason=? WHERE id=?", [reason, cid]);
     pushSignal(c.room_id, { type: "ended", by: me });
-    // V567 · triage inicial al cerrar (aunque las grabaciones aún no hayan subido).
-    // Se re-ejecuta al recibir cada grabación para refinar.
+    const peerId = Number(c.caller_id) === Number(me) ? c.callee_id : c.caller_id;
+    pushCallEvent(peerId, { type: "ended", by: me, call_id: cid, room_id: c.room_id });
+    cleanupCallRoomV1002(c.room_id);
     setTimeout(() => { autoTriageCall(pool, cid).catch(()=>{}); }, 500);
     res.json({ ok: true });
   }));
 
-  // SSE signaling: escuchar señales de una sala
-  app.get("/api/my/video/room/:room_id/signal", (req, res) => {
-    const me = require("./features_phase1"); // dummy import
-    const uid = helpers.readMyUserId(req);
-    if (!uid) return res.status(401).end();
-    const roomId = String(req.params.room_id).slice(0,120);
+  // Canal inmediato de llamadas entrantes. La tabla sigue siendo el respaldo
+  // persistente; este SSE evita esperar al sondeo periódico de notificaciones.
+  app.get("/api/my/video/events", async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).end();
     res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders?.();
-    const list = signalingRooms.get(roomId) || [];
-    list.push({ userId: uid, res });
-    signalingRooms.set(roomId, list);
+    const streams = callEventStreams.get(Number(me)) || new Set();
+    streams.add(res); callEventStreams.set(Number(me), streams);
+    res.write(`data: ${JSON.stringify({ type: "connected" })}\n\n`);
+    const keepalive = setInterval(() => { try { res.write(": keepalive\n\n"); } catch {} }, 25000);
     req.on("close", () => {
-      const cur = signalingRooms.get(roomId) || [];
-      signalingRooms.set(roomId, cur.filter((s) => s.res !== res));
+      clearInterval(keepalive);
+      streams.delete(res);
+      if (!streams.size) callEventStreams.delete(Number(me));
     });
   });
 
-  // Signaling: enviar SDP/ICE al otro
+  app.get("/api/my/video/pending", wrap(async (req, res) => {
+    const me = readMyUserId(req);
+    if (!me) return res.status(401).json({ error: "unauthorized" });
+    await pool.execute(
+      "UPDATE video_calls SET status='missed',ended_at=NOW(),ended_reason='no_answer' WHERE callee_id=? AND status='ringing' AND created_at<DATE_SUB(NOW(),INTERVAL 60 SECOND)",
+      [me]
+    );
+    const [rows] = await pool.query(
+      `SELECT v.id AS call_id,v.room_id,v.caller_id,v.mode,v.created_at,u.name AS caller_name
+         FROM video_calls v LEFT JOIN users u ON u.id=v.caller_id
+        WHERE v.callee_id=? AND v.status='ringing' AND v.created_at>=DATE_SUB(NOW(),INTERVAL 60 SECOND)
+        ORDER BY v.created_at DESC LIMIT 1`,
+      [me]
+    );
+    res.set("Cache-Control", "no-store");
+    res.json({ ok: true, call: rows[0] || null });
+  }));
+
+  // Señalización: cada acceso comprueba en BD que el usuario pertenece a la
+  // llamada. Las señales recientes se reproducen al conectar para que una
+  // oferta no se pierda si el receptor tarda unas décimas en abrir su SSE.
+  app.get("/api/my/video/room/:room_id/signal", async (req, res) => {
+    try {
+      const uid = readMyUserId(req);
+      if (!uid) return res.status(401).end();
+      const roomId = String(req.params.room_id || "").slice(0, 120);
+      const call = await callByRoomForUserV1002(roomId, uid);
+      if (!call || !["ringing", "accepted"].includes(call.status)) return res.status(403).end();
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      const list = signalingRooms.get(roomId) || [];
+      list.push({ userId: uid, res });
+      signalingRooms.set(roomId, list);
+      for (const msg of signalingBacklog.get(roomId) || []) {
+        if (!msg.from || Number(msg.from) !== Number(uid)) res.write(`data: ${JSON.stringify(msg)}\n\n`);
+      }
+      const keepalive = setInterval(() => { try { res.write(": keepalive\n\n"); } catch {} }, 25000);
+      req.on("close", () => {
+        clearInterval(keepalive);
+        const cur = signalingRooms.get(roomId) || [];
+        const next = cur.filter((s) => s.res !== res);
+        if (next.length) signalingRooms.set(roomId, next); else signalingRooms.delete(roomId);
+      });
+    } catch (error) {
+      if (!res.headersSent) res.status(500).end(); else res.end();
+    }
+  });
+
   app.post("/api/my/video/room/:room_id/signal", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
-    const roomId = String(req.params.room_id).slice(0,120);
-    const msg = { from: me, ...(req.body || {}) };
+    const roomId = String(req.params.room_id || "").slice(0,120);
+    const call = await callByRoomForUserV1002(roomId, me);
+    if (!call || !["ringing", "accepted"].includes(call.status)) return res.status(403).json({ error: "not_call_participant" });
+    const type = String(req.body?.type || "");
+    if (!new Set(["offer", "answer", "ice"]).has(type)) return res.status(400).json({ error: "invalid_signal" });
+    if (call.status !== "accepted") return res.status(409).json({ error: "call_not_accepted" });
+    if (type === "offer" && Number(call.caller_id) !== Number(me)) return res.status(403).json({ error: "invalid_signal_role" });
+    if (type === "answer" && Number(call.callee_id) !== Number(me)) return res.status(403).json({ error: "invalid_signal_role" });
+    const msg = { type, from: me };
+    if (type === "offer" || type === "answer") {
+      const sdp = req.body?.sdp;
+      if (!sdp || typeof sdp !== "object" || sdp.type !== type || typeof sdp.sdp !== "string" || sdp.sdp.length > 100000) {
+        return res.status(400).json({ error: "invalid_signal_payload" });
+      }
+      msg.sdp = { type, sdp: sdp.sdp };
+    }
+    if (type === "ice") {
+      const candidate = req.body?.candidate;
+      if (!candidate || typeof candidate !== "object" || typeof candidate.candidate !== "string" || candidate.candidate.length > 4096) {
+        return res.status(400).json({ error: "invalid_signal_payload" });
+      }
+      msg.candidate = {
+        candidate: candidate.candidate,
+        sdpMid: candidate.sdpMid == null ? null : String(candidate.sdpMid).slice(0, 64),
+        sdpMLineIndex: Number.isInteger(candidate.sdpMLineIndex) ? candidate.sdpMLineIndex : null,
+        usernameFragment: candidate.usernameFragment == null ? null : String(candidate.usernameFragment).slice(0, 256),
+      };
+    }
+    if ((type !== "ice" && !msg.sdp) || (type === "ice" && !msg.candidate)) return res.status(400).json({ error: "invalid_signal_payload" });
+    await pool.execute("UPDATE video_calls SET last_signal_at=NOW() WHERE id=?", [call.id]);
     pushSignal(roomId, msg);
     res.json({ ok: true });
   }));
 
-  // V567 · Subir grabación local del participante al colgar.
-  // Body: { data_url: "data:video/webm;base64,...", duration_ms }
-  // Guarda archivo en /uploads/calls/YYYY/MM/callId_role_hash.webm
+  // Compatibilidad segura: clientes antiguos reciben un rechazo explícito y
+  // no pueden subir contenido de llamadas.
   app.post("/api/my/video/:call_id/recording", wrap(async (req, res) => {
-    const me = readMyUserId(req);
-    if (!me) return res.status(401).json({ error: "unauthorized" });
-    const cid = parseInt(req.params.call_id, 10);
-    const [[c]] = await pool.query(
-      "SELECT * FROM video_calls WHERE id=? AND (caller_id=? OR callee_id=?)",
-      [cid, me, me]
-    ).then((rr)=>[rr[0]]);
-    if (!c) return res.status(404).json({ error: "not_found" });
-    const role = c.caller_id === me ? "caller" : "callee";
-    const dataUrl = String(req.body?.data_url || "");
-    const duration_ms = parseInt(req.body?.duration_ms, 10) || 0;
-    const m = /^data:(video\/[a-z0-9+.-]+|audio\/[a-z0-9+.-]+);base64,(.+)$/i.exec(dataUrl);
-    if (!m) return res.status(400).json({ error: "invalid_data_url" });
-    const mime = m[1].toLowerCase();
-    const buf = Buffer.from(m[2], "base64");
-    // Máx 50 MB por participante (llamada corta). El caller/callee lo trocean si es larga.
-    if (buf.length > 50 * 1024 * 1024) return res.status(413).json({ error: "too_large" });
-    if (buf.length < 500) return res.status(400).json({ error: "empty" });
-    const ext = mime.includes("webm") ? "webm"
-              : mime.includes("mp4") ? "mp4"
-              : mime.includes("ogg") ? "ogg"
-              : mime.includes("mpeg") ? "mp3"
-              : "bin";
-    const fs = require("fs");
-    const path = require("path");
-    const crypto = require("crypto");
-    const hash = crypto.createHash("sha1").update(buf).digest("hex").slice(0, 16);
-    const now = new Date();
-    const yyyy = String(now.getUTCFullYear());
-    const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const dir = path.join(__dirname, "public", "uploads", "calls", yyyy, mm);
-    try { fs.mkdirSync(dir, { recursive: true }); } catch {}
-    const fname = `${cid}_${role}_${hash}.${ext}`;
-    const url = `/uploads/calls/${yyyy}/${mm}/${fname}`;
-    // V569 · Cifrado en reposo. La URL se conserva como referencia lógica;
-    // el archivo físico es .enc y solo se descifra desde
-    // /api/admin/vault/media/:reqId con un token aprobado por 2 admins.
-    let iv = null, tag = null, encrypted = 0;
-    let toWrite = buf;
-    let abs = path.join(dir, fname);
-    if (__vault && typeof __vault.encryptBuffer === "function") {
-      try {
-        const encRes = __vault.encryptBuffer(buf, fname, "call");
-        toWrite = encRes.enc; iv = encRes.iv; tag = encRes.tag; encrypted = 1;
-        abs = abs + ".enc";
-      } catch (e) { console.warn("[call vault]", e.message); }
-    }
-    try { fs.writeFileSync(abs, toWrite); } catch (e) {
-      console.error("[call rec] write error", e);
-      return res.status(500).json({ error: "write_failed" });
-    }
-    await pool.execute(
-      `INSERT INTO call_recordings
-         (call_id,user_id,role,mime,bytes,duration_ms,url,encrypted,iv,tag)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
-      [cid, me, role, mime, buf.length, duration_ms, url, encrypted, iv, tag]
-    );
-    const col = role === "caller" ? "recording_caller_url" : "recording_callee_url";
-    await pool.execute(
-      `UPDATE video_calls SET ${col}=?, recording_bytes=IFNULL(recording_bytes,0)+? WHERE id=?`,
-      [url, buf.length, cid]
-    );
-    // Auto-triage cuando ya tengamos las dos partes
-    try { await autoTriageCall(pool, cid); } catch {}
-    res.json({ ok: true, url, bytes: buf.length, role });
+    if (!readMyUserId(req)) return res.status(401).json({ error: "unauthorized" });
+    res.status(410).json({ error: "recording_disabled", message: "Aura no graba ni almacena el contenido de las llamadas." });
   }));
 
   // Admin video-llamadas
@@ -377,7 +537,8 @@ function register(app, pool, helpers) {
       params.push(dept);
     }
     const [rows] = await pool.query(
-      `SELECT v.*, ca.name AS caller_name, ce.name AS callee_name
+      `SELECT v.*, ca.name AS caller_name, ce.name AS callee_name,
+              TIMESTAMPDIFF(SECOND,COALESCE(v.accepted_at,v.created_at),COALESCE(v.ended_at,NOW())) AS duration_seconds
          FROM video_calls v
          LEFT JOIN users ca ON ca.id=v.caller_id
          LEFT JOIN users ce ON ce.id=v.callee_id
@@ -388,22 +549,21 @@ function register(app, pool, helpers) {
     res.json({ ok: true, items: rows });
   }));
 
-  // V567 · Detalle de una llamada + sus grabaciones.
+  // V1002 · Detalle administrativo: solo metadatos, nunca contenido.
   app.get("/api/admin/video/calls/:id", requireAdmin, wrap(async (req, res) => {
     const id = parseInt(req.params.id, 10);
     const [[c]] = await pool.query(
       `SELECT v.*, ca.name AS caller_name, ca.email AS caller_email,
-              ce.name AS callee_name, ce.email AS callee_email
+              ce.name AS callee_name, ce.email AS callee_email,
+              TIMESTAMPDIFF(SECOND,COALESCE(v.accepted_at,v.created_at),COALESCE(v.ended_at,NOW())) AS duration_seconds
          FROM video_calls v
          LEFT JOIN users ca ON ca.id=v.caller_id
          LEFT JOIN users ce ON ce.id=v.callee_id
         WHERE v.id=? LIMIT 1`, [id]
     ).then((rr)=>[rr[0]]);
     if (!c) return res.status(404).json({ error: "not_found" });
-    const [recs] = await pool.query(
-      "SELECT * FROM call_recordings WHERE call_id=? ORDER BY id ASC", [id]
-    );
-    res.json({ ok: true, call: c, recordings: recs });
+    const [[legacy]] = await pool.query("SELECT COUNT(*) AS count FROM call_recordings WHERE call_id=?", [id]).then((rr) => [rr[0]]);
+    res.json({ ok: true, call: c, legacy_recordings_count: Number(legacy?.count || 0) });
   }));
 
   // V567 · Asignar/actualizar departamento de una llamada.
@@ -516,25 +676,15 @@ function register(app, pool, helpers) {
   console.log("[phase4] endpoints registered");
 }
 
-// V567 · Auto-triage de una llamada al terminar (o cuando lo solicite admin).
-//   Reglas heurísticas ligeras (sin IA externa):
-//     - Duración < 3 s   → "quality" (posible fallo técnico)
-//     - Solo 1 grabación → "quality" (uno de los dos no envió su pista)
-//     - status='rejected' o 'missed' → "support"
-//     - Reportes activos entre esos usuarios → "safety"
-//     - Palabras clave en 'notes'/'triage_flags' previas → "safety" / "legal"
-//     - Todo OK y ambas partes grabadas → "none"
+// V1002 · Triage por metadatos. El contenido no se graba ni se inspecciona.
 async function autoTriageCall(pool, callId) {
   const [[c]] = await pool.query("SELECT * FROM video_calls WHERE id=? LIMIT 1", [callId]).then((rr)=>[rr[0]]);
   if (!c) return { skipped: true };
-  const [recs] = await pool.query("SELECT role, bytes, duration_ms FROM call_recordings WHERE call_id=?", [callId]);
-  const durMs = c.ended_at && c.created_at
-    ? (new Date(c.ended_at).getTime() - new Date(c.created_at).getTime()) : 0;
+  const start = c.accepted_at || c.created_at;
+  const durMs = c.ended_at && start ? (new Date(c.ended_at).getTime() - new Date(start).getTime()) : 0;
   const flags = []; let dept = "none"; let score = 0;
   if (c.status === "rejected" || c.status === "missed") { dept = "support"; flags.push("no_answer"); score += 10; }
   else if (durMs > 0 && durMs < 3000) { dept = "quality"; flags.push("too_short"); score += 20; }
-  else if (recs.length === 0) { dept = "quality"; flags.push("no_recording"); score += 30; }
-  else if (recs.length === 1) { dept = "quality"; flags.push("one_side_only"); score += 20; }
   // Reportes cruzados entre los dos usuarios (si existe la tabla).
   try {
     const [[rep]] = await pool.query(

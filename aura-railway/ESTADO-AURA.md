@@ -1,8 +1,24 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última publicada: V1000 (`5502a72`, build `5d899c1e72e1`) · siguiente preparada: V1001**
+**Fecha de este resumen: 1 octubre 2026 · última publicada: V1001 (`745f868`, build `507bb6945691`) · siguiente preparada: V1002**
 
-### V1001 (preparada, sin commit ni publicación) — Administración del modo viajero
+### V1002 (preparada, sin commit ni publicación) — Llamadas privadas 1-a-1
+
+- Llamadas de voz para Gold y voz/vídeo para Platinum, gobernadas por la
+  matriz real de permisos y sus excepciones individuales.
+- Flujo WebRTC seguro dentro de conversaciones abiertas: llamando, aceptada,
+  rechazada, perdida y finalizada; evita auto-llamadas, bloqueos y simultáneas.
+- Controles de micrófono, cámara y colgar, llamada entrante inmediata y diseño
+  adaptado a móvil y escritorio. TURN queda preparado, sin pedir credenciales.
+- Aura no inicia grabaciones ni acepta nuevas subidas. Administración muestra
+  exclusivamente metadatos de tipo, participantes, estado, duración y resultado.
+- Los registros heredados no se borran, pero su contenido deja de ser accesible
+  desde llamadas o bóveda. No se modificaron datos reales.
+
+### V1001 (01/10/2026) — Administración del modo viajero
+
+- Publicada en commit `745f868`, build `507bb6945691`; Railway finalizó
+  correctamente y `/api/health` respondió `ready:true`.
 
 - Nueva sección «Modo viajero» en Administración, accesible desde el menú y
   desde los accesos rápidos del panel.
