@@ -39,9 +39,9 @@
   <meta name="twitter:title" content="Aura — Encuentra tu match" />
   <meta name="twitter:description" content="Conecta con personas reales y encuentra tu match perfecto en Aura." />
   <meta name="twitter:image" content="https://citasaura.es/assets/aura-logo-email.png?v=2" />
-  <link rel="manifest" href="manifest.json?v=4" />
-  <link rel="icon" type="image/png" href="assets/aura-icon-512.png?v=4" />
-  <link rel="apple-touch-icon" href="assets/aura-icon-512.png?v=4" />
+  <link rel="manifest" href="manifest.json?v=5" />
+  <link rel="icon" type="image/png" href="assets/aura-icon-512.png?v=5" />
+  <link rel="apple-touch-icon" href="assets/aura-icon-512.png?v=5" />
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
   <meta http-equiv="Pragma" content="no-cache" />
   <meta http-equiv="Expires" content="0" />
@@ -67,18 +67,12 @@
       position: fixed; inset: 0; z-index: 9999;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      gap: 26px;
-      background:
-        radial-gradient(900px 620px at 50% 38%, rgba(168,85,247,.20), transparent 62%),
-        radial-gradient(680px 480px at 50% 44%, rgba(255,59,107,.16), transparent 58%),
-        #0b0c10;
+      gap: 20px;
+      background: #000;
       transition: opacity .4s ease;
     }
     html[data-theme="light"] #auraSplash {
-      background:
-        radial-gradient(900px 620px at 50% 38%, rgba(255,138,59,.22), transparent 62%),
-        radial-gradient(680px 480px at 50% 44%, rgba(236,72,153,.14), transparent 58%),
-        #ffe4ec;
+      background: #000;
     }
     /* Logo original (marca redonda) con resplandor + respiración sutil */
     #auraSplash .sp-logo-wrap {
@@ -86,19 +80,15 @@
       display: flex; align-items: center; justify-content: center;
     }
     #auraSplash .sp-glow {
-      position: absolute; width: 210px; height: 210px; border-radius: 50%;
-      background: radial-gradient(circle, rgba(236,72,153,.38), rgba(168,85,247,.16) 46%, transparent 70%);
-      filter: blur(8px);
-      animation: spGlow 3s ease-in-out infinite;
+      display: none;
     }
     #auraSplash .sp-logo {
       position: relative;
-      width: 138px; height: 138px;
-      background-image: url("assets/aura-logo-round.png?v=2");
+      width: 220px; height: 220px;
+      background-image: url("assets/aura-logo-round.png?v=3");
       background-size: contain;
       background-position: center;
       background-repeat: no-repeat;
-      filter: drop-shadow(0 12px 34px rgba(0,0,0,.45));
       animation: spPulse 2.4s ease-in-out infinite;
     }
     #auraSplash .sp-text {
@@ -108,7 +98,7 @@
       letter-spacing: .06em;
       color: #d8dce8;
     }
-    html[data-theme="light"] #auraSplash .sp-text { color: #6b3b52; }
+    html[data-theme="light"] #auraSplash .sp-text { color: #d8dce8; }
     #auraSplash .sp-dot {
       display: inline-block; width: 4px; height: 4px; margin: 0 1px;
       border-radius: 50%;

@@ -1,6 +1,15 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V992 · publicada: V991**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V993 · publicada: V992**
+
+### V993 (01/10/2026) — Icono instalable y apertura sin recortes
+
+- Las variantes normal y adaptable de 192 y 512 píxeles usan la misma escala,
+  el símbolo original centrado y margen seguro para máscaras del sistema.
+- La pantalla de apertura usa fondo negro y muestra más grande el logotipo
+  redondo original completo, incluyendo «Aura» y «Conecta tu esencia».
+- Las referencias del manifest, favicon y Apple Touch Icon suben a `v=5`; la
+  caché PWA sube a `aura-v114`.
 
 ### V992 (01/10/2026) — Filtros automáticos y accesibles
 
