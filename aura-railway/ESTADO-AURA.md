@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V989**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V990**
+
+### V990 (01/10/2026) — Segunda tanda opcional del panel
+
+- El dashboard distingue datos vacíos de fuentes que no han podido cargarse y
+  permite recargar sin presentar ceros engañosos.
+- El panel y el Centro de trabajo muestran cuándo se actualizaron; al abrir una
+  sección desde una tarjeta, el regreso conserva el contexto y la posición.
+- Denuncias y tickets vencidos se priorizan por su SLA real y se identifican de
+  forma visible en la cola operativa.
+- Los controles recuperan foco visible, objetivos táctiles adecuados y textos
+  legibles sin desbordamiento en móvil, respetando además movimiento reducido.
 
 ### V989 (01/10/2026) — KYC coherente y legible en móvil
 

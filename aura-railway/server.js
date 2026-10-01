@@ -19425,22 +19425,25 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     SELECT * FROM (
       SELECT 'report' kind, id, CONCAT('Denuncia #', id) title,
              CONCAT(reason, ' · usuario #', target_id) detail,
-             CASE WHEN status='escalated' THEN 'critical' ELSE 'high' END severity,
-             created_at, 'reports' view_name
+             CASE WHEN sla_due_at IS NOT NULL AND sla_due_at < NOW() THEN 'critical'
+                  WHEN status='escalated' THEN 'critical' ELSE 'high' END severity,
+             created_at, 'reports' view_name, sla_due_at due_at
         FROM reports WHERE status IN ('open','reviewing','escalated')
       UNION ALL
       SELECT 'ticket', id, CONCAT('Ticket ', ref) title,
              CONCAT(subject, ' · ', email) detail,
-             CASE WHEN priority='high' THEN 'critical' ELSE 'medium' END severity,
-             created_at, 'tickets'
+             CASE WHEN sla_due_at IS NOT NULL AND sla_due_at < NOW() THEN 'critical'
+                  WHEN priority='high' THEN 'critical' ELSE 'medium' END severity,
+             created_at, 'tickets', sla_due_at
         FROM support_tickets WHERE status <> 'closed'
       UNION ALL
       SELECT 'appeal', id, CONCAT('Apelación #', id) title,
              CONCAT(email, ' · ', COALESCE(account_status,'cuenta')) detail,
-             'medium' severity, created_at, 'appeals'
+             'medium' severity, created_at, 'appeals', NULL
         FROM appeals WHERE status IN ('open','review')
     ) work
-    ORDER BY FIELD(severity,'critical','high','medium'), created_at ASC
+    ORDER BY CASE WHEN due_at IS NOT NULL AND due_at < NOW() THEN 0 ELSE 1 END,
+             FIELD(severity,'critical','high','medium'), COALESCE(due_at, created_at), created_at ASC
     LIMIT 12`);
 
   const technicalIssues = [];

@@ -1670,6 +1670,24 @@ $("#nav").addEventListener("click", (e) => {
 })();
 
 let __currentAdminView = "dashboard";
+let __dashboardNavigation = null;
+let __dashboardRestoreScroll = null;
+
+function openDashboardSection(view, label) {
+  const container = $("#view");
+  __dashboardNavigation = {
+    target: view,
+    label: label || "Panel principal",
+    scrollTop: Number(window.scrollY || container?.scrollTop || 0),
+  };
+  route(view);
+}
+
+function returnToDashboard() {
+  __dashboardRestoreScroll = Number(__dashboardNavigation?.scrollTop || 0);
+  __dashboardNavigation = null;
+  route("dashboard");
+}
 
 /* V967 · Actualización en tiempo real del panel. El servidor avisa por SSE
    después de cada cambio confirmado. Solo se vuelven a cargar las vistas que
@@ -1875,6 +1893,8 @@ function guardedRoot(root, gen) {
 }
 
 function route(view) {
+  if (view === "dashboard" && __dashboardRestoreScroll === null) __dashboardNavigation = null;
+  if (view !== "dashboard" && __dashboardNavigation?.target !== view) __dashboardNavigation = null;
   /* Blindaje: esconder la entrada del menú no basta, porque el hash se escribe a
      mano (#/settings) y route() lo obedecería. Aquí se corta. Lo que el
      servidor ya niega son los DATOS; esto evita además la pantalla vacía con
@@ -1929,7 +1949,7 @@ function route(view) {
   const gen = ++__routeGen;
   const container = $("#view");
   container.innerHTML = "";
-  const loading = el("div", { class: "loading" }, "Cargando…");
+  const loading = el("div", { class: "loading", role: "status", "aria-live": "polite" }, "Cargando…");
   container.appendChild(loading);
   // V547 · Vistas extendidas registradas por admin_features.js
   const extras = (window.__adminExtraViews) || {};
@@ -1963,6 +1983,14 @@ function route(view) {
       loading.remove();
       if (gen !== __routeGen) return; // otro route() ganó: ni etiquetar tablas ajenas
       labelTables(container);
+      if (view === "dashboard" && Number.isFinite(__dashboardRestoreScroll)) {
+        const restoreTop = __dashboardRestoreScroll;
+        __dashboardRestoreScroll = null;
+        requestAnimationFrame(() => {
+          container.scrollTo?.({ top: restoreTop });
+          window.scrollTo({ top: restoreTop });
+        });
+      }
       // Retirar el splash inicial del admin al terminar el primer render
       try {
         if (document.documentElement.classList.contains("admin-loading")) {
@@ -2081,12 +2109,13 @@ function viewTitle(t, sub, actions=[]) {
   const isDashboard = (__currentAdminView === "dashboard");
   const leftCol = el("div", { class: "vt-left" });
   if (!isDashboard) {
+    const fromDashboard = __dashboardNavigation?.target === __currentAdminView;
     const backBtn = el("button", {
       class: "btn btn-ghost sm vt-back",
       type: "button",
-      title: "Volver al panel principal",
-      onclick: () => route("dashboard"),
-    }, "← Panel principal");
+      title: fromDashboard ? `Volver a ${__dashboardNavigation.label}` : "Volver al panel principal",
+      onclick: () => fromDashboard ? returnToDashboard() : route("dashboard"),
+    }, fromDashboard ? `← ${__dashboardNavigation.label}` : "← Panel principal");
     leftCol.appendChild(backBtn);
   }
   leftCol.appendChild(el("div", { class: "vt-heading" }, [
@@ -2782,9 +2811,16 @@ async function openSystemStatus() {
 
 function renderOperationsCenter(data, showWork = true, showHealth = true) {
   const wrap = el("section", { class: "ops-center" });
+  const generatedAt = data?.generated_at ? new Date(data.generated_at) : new Date();
+  const generatedText = Number.isNaN(generatedAt.getTime())
+    ? "Actualización sin fecha"
+    : `Actualizado ${generatedAt.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"})}`;
   const head = el("div", { class: "ops-head" }, [
     el("div", {}, [el("small", {}, "PRIORIDADES"), el("h2", {}, "Centro de trabajo"), el("p", {}, "Todo lo que necesita atención, ordenado en una sola cola.")]),
-    btn("Actualizar", "ghost sm", () => route("dashboard")),
+    el("div", { class: "ops-refresh" }, [
+      el("span", { class: "ops-updated", role: "status" }, generatedText),
+      btn("Actualizar", "ghost sm", () => route("dashboard")),
+    ]),
   ]);
   wrap.appendChild(head);
 
@@ -2795,7 +2831,7 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       el("span", { class: "ops-queue-label" }, q.label),
       q.urgent ? el("small", {}, `${q.urgent} urgentes`) : el("small", {}, q.count ? "Pendientes" : "Al día"),
     ]);
-    card.addEventListener("click", () => document.querySelector(`[data-view="${q.view}"]`)?.click());
+    card.addEventListener("click", () => openDashboardSection(q.view, q.label));
     queueGrid.appendChild(card);
   });
   if (showWork) wrap.appendChild(queueGrid);
@@ -2804,16 +2840,37 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
   const work = el("div", { class: "ops-list" }, [
     el("div", { class: "ops-subhead" }, [el("strong", {}, "Siguiente por atender"), el("small", {}, `${(data?.work_items || []).length} elementos prioritarios`)]),
   ]);
-  const items = data?.work_items || [];
+  const severityRank = { critical: 0, high: 1, medium: 2, low: 3 };
+  const items = (data?.work_items || []).slice().sort((a, b) => {
+    const now = Date.now();
+    const aDue = a.due_at ? new Date(a.due_at).getTime() : NaN;
+    const bDue = b.due_at ? new Date(b.due_at).getTime() : NaN;
+    const aOverdue = Number.isFinite(aDue) && aDue < now;
+    const bOverdue = Number.isFinite(bDue) && bDue < now;
+    if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
+    const severityDiff = (severityRank[a.severity] ?? 9) - (severityRank[b.severity] ?? 9);
+    if (severityDiff) return severityDiff;
+    if (Number.isFinite(aDue) || Number.isFinite(bDue)) return (Number.isFinite(aDue) ? aDue : Infinity) - (Number.isFinite(bDue) ? bDue : Infinity);
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  });
   if (!items.length) work.appendChild(el("div", { class: "ops-empty" }, "No hay tareas pendientes."));
   items.slice(0, 7).forEach(item => {
-    const row = el("button", { class: "ops-item", type: "button" }, [
+    const dueAt = item.due_at ? new Date(item.due_at) : null;
+    const dueMs = dueAt && !Number.isNaN(dueAt.getTime()) ? dueAt.getTime() - Date.now() : null;
+    const overdue = dueMs !== null && dueMs < 0;
+    const dueSoon = dueMs !== null && dueMs >= 0 && dueMs <= 4 * 3600000;
+    const timing = overdue
+      ? el("span", { class: "ops-sla overdue" }, `SLA vencido · ${fmt.reldate(item.due_at)}`)
+      : dueSoon
+        ? el("span", { class: "ops-sla urgent" }, `SLA próximo · ${fmt.reldate(item.due_at)}`)
+        : el("time", {}, fmt.reldate(item.created_at));
+    const row = el("button", { class: `ops-item${overdue ? " overdue" : ""}`, type: "button" }, [
       el("span", { class: `ops-severity ${item.severity || "medium"}` }),
       el("span", { class: "ops-item-copy" }, [el("strong", {}, item.title || "Pendiente"), el("small", {}, item.detail || "")]),
-      el("time", {}, fmt.reldate(item.created_at)), el("span", { class: "ops-go" }, "→"),
+      timing, el("span", { class: "ops-go" }, "→"),
     ]);
     row.addEventListener("click", () => {
-      route(item.view_name);
+      openDashboardSection(item.view_name, "Centro de trabajo");
       if (item.kind === "ticket") openTicketDrawer(item.id);
       else if (item.kind === "report") openReportDrawer(item.id);
     });
@@ -2852,8 +2909,8 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       btn("Historial", "primary sm", () => openTechnicalHistory()),
       btn("Incidencias", "ghost sm", () => openIncidentsCenter()),
       btn("Coherencia", "ghost sm", () => openDataConsistency()),
-      btn("Ver logs", "ghost sm", () => document.querySelector('[data-view="logs"]')?.click()),
-      btn("Copias", "ghost sm", () => document.querySelector('[data-view="backup"]')?.click()),
+      btn("Ver logs", "ghost sm", () => openDashboardSection("logs", "Estado técnico")),
+      btn("Copias", "ghost sm", () => openDashboardSection("backup", "Estado técnico")),
     ]);
     health.appendChild(healthActions);
     lower.appendChild(health);
@@ -2863,13 +2920,29 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
 }
 
 async function viewDashboard(root){
-  const [stats, activity, zones, operations] = await Promise.all([
+  const [statsResult, activityResult, zonesResult, operationsResult] = await Promise.allSettled([
     api.get("/api/stats/dashboard"),
     api.get("/api/activity"),
     api.get("/api/stats/zones"),
-    api.get("/api/admin/operations-summary").catch(() => null),
+    api.get("/api/admin/operations-summary"),
   ]);
+  const statsAvailable = statsResult.status === "fulfilled";
+  const activityAvailable = activityResult.status === "fulfilled";
+  const zonesAvailable = zonesResult.status === "fulfilled";
+  const operationsAvailable = operationsResult.status === "fulfilled";
+  const stats = statsAvailable ? statsResult.value : {};
+  const activity = activityAvailable && Array.isArray(activityResult.value) ? activityResult.value : [];
+  const zones = zonesAvailable && Array.isArray(zonesResult.value) ? zonesResult.value : [];
+  const operations = operationsAvailable ? operationsResult.value : null;
+  const loadedAt = new Date();
+  const failedBlocks = [
+    !statsAvailable && "métricas",
+    !activityAvailable && "actividad",
+    !zonesAvailable && "zonas",
+    !operationsAvailable && "operaciones",
+  ].filter(Boolean);
   const dashPrefs = getDashboardPrefs();
+  const dashboardMetric = (value, formatter = fmt.num) => statsAvailable ? formatter(value || 0) : "—";
 
   // V823 — KPIs con series y tendencias REALES del backend (7 días).
   // Si el backend no manda la serie (instancia antigua), no inventamos datos:
@@ -2885,10 +2958,10 @@ async function viewDashboard(root){
     desc: "Vista general en tiempo real de la actividad, ingresos y salud de la plataforma.",
     gradA: "#ec4899", gradB: "#7c3aed",
     stats: [
-      { v: fmt.num(stats.total || 0), l: "Usuarios" },
-      { v: fmt.num(stats.online || 0), l: "En línea" },
-      { v: fmt.eur(stats.mrr || 0), l: "MRR" },
-      { v: fmt.num(stats.matches || 0), l: "Matches" },
+      { v: dashboardMetric(stats.total), l: "Usuarios" },
+      { v: dashboardMetric(stats.online), l: "En línea" },
+      { v: dashboardMetric(stats.mrr, fmt.eur), l: "MRR" },
+      { v: dashboardMetric(stats.matches), l: "Matches" },
     ],
   }));
 
@@ -2896,28 +2969,28 @@ async function viewDashboard(root){
   kpisPro.className = "pro-kpis";
   const kpiCards = {};
   kpiCards.users = proKpi({
-    label: "Nuevos usuarios (7d)", icon: "👥", value: fmt.num(stats.signups_week || 0),
+    label: "Nuevos usuarios (7d)", icon: "👥", value: dashboardMetric(stats.signups_week),
     trend: stats.signups_trend || null, sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
     sub: "vs semana anterior",
-    onClick: () => route("users"), actionLabel: "Abrir usuarios nuevos",
+    onClick: () => openDashboardSection("users", "Nuevos usuarios"), actionLabel: "Abrir usuarios nuevos",
   });
   kpiCards.online = proKpi({
-    label: "Usuarios en línea", icon: "🟢", value: fmt.num(stats.online || 0),
+    label: "Usuarios en línea", icon: "🟢", value: dashboardMetric(stats.online),
     trend: null, sparkline: sparkOnline, gradA: "#22c55e", gradB: "#16a34a",
     sub: `actividad en los últimos ${stats.online_window_seconds || 90} s`,
-    onClick: () => route("users"), actionLabel: "Abrir usuarios en línea",
+    onClick: () => openDashboardSection("users", "Usuarios en línea"), actionLabel: "Abrir usuarios en línea",
   });
   kpiCards.mrr = proKpi({
-    label: "MRR estimado", icon: "💰", value: fmt.eur(stats.mrr || 0),
+    label: "MRR estimado", icon: "💰", value: dashboardMetric(stats.mrr, fmt.eur),
     trend: stats.mrr_trend || null, sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
     sub: `${fmt.num(stats.subscriptions || 0)} suscripciones`,
-    onClick: () => route("subscriptions"), actionLabel: "Abrir suscripciones",
+    onClick: () => openDashboardSection("subscriptions", "MRR y suscripciones"), actionLabel: "Abrir suscripciones",
   });
   kpiCards.matches = proKpi({
-    label: "Matches nuevos (7d)", icon: "💞", value: fmt.num(stats.matches_week || stats.matches || 0),
+    label: "Matches nuevos (7d)", icon: "💞", value: dashboardMetric(stats.matches_week || stats.matches),
     trend: stats.matches_trend || null, sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
     sub: `${fmt.num(stats.open_reports || 0)} denuncias abiertas`,
-    onClick: () => route("user_activity"), actionLabel: "Abrir actividad de matches",
+    onClick: () => openDashboardSection("user_activity", "Matches nuevos"), actionLabel: "Abrir actividad de matches",
   });
   dashPrefs.kpis.forEach(key => { if (kpiCards[key]) kpisPro.appendChild(kpiCards[key]); });
   root.appendChild(kpisPro);
@@ -2926,10 +2999,25 @@ async function viewDashboard(root){
     "Vista general de tu plataforma en tiempo real.",
     [ btn("Personalizar", "ghost sm", openDashboardPrefs),
       btn("Exportar usuarios", "ghost sm", () => downloadCSV("users")),
-      btn("＋ Ir a campañas", "primary sm", () => { document.querySelector('[data-view="notifications"]').click(); }) ]));
+      btn("＋ Ir a campañas", "primary sm", () => openDashboardSection("notifications", "Panel principal")) ]));
+
+  root.appendChild(el("div", { class: `dashboard-freshness${failedBlocks.length ? " attention" : ""}` }, [
+    el("div", {}, [
+      el("strong", {}, failedBlocks.length ? "Actualización parcial del panel" : "Datos del panel actualizados"),
+      failedBlocks.length ? el("span", {}, `Sin datos: ${failedBlocks.join(", ")}`) : null,
+      el("span", {}, loadedAt.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"})),
+    ]),
+    btn("Recargar panel", "ghost sm", () => route("dashboard")),
+  ]));
 
   if (operations && (dashPrefs.work_center || dashPrefs.health)) {
     root.appendChild(renderOperationsCenter(operations, dashPrefs.work_center, dashPrefs.health));
+  } else if (!operationsAvailable && (dashPrefs.work_center || dashPrefs.health)) {
+    root.appendChild(el("section", { class: "dashboard-state error", role: "alert" }, [
+      el("strong", {}, "No se pudo cargar el Centro de trabajo"),
+      el("span", {}, "Las colas no se muestran como cero porque su estado no se ha podido comprobar."),
+      btn("Reintentar", "ghost sm", () => route("dashboard")),
+    ]));
   }
 
   // --- Modo pruebas privado: toggle rápido en cabecera del dashboard ---
@@ -3118,14 +3206,7 @@ async function viewDashboard(root){
       el("span", { class: "sc-arrow", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 6l6 6-6 6"/></svg>` }),
     ]);
     card.addEventListener("click", () => {
-      const link = document.querySelector(`[data-view="${s.id}"]`);
-      if (link) {
-        link.click();
-      } else {
-        // Fallback: la sección puede no tener entrada en el sidebar estático
-        // (por ejemplo "duplicates"). En ese caso navegamos directamente.
-        try { route(s.id); } catch {}
-      }
+      openDashboardSection(s.id, "Accesos rápidos");
       // Visual feedback on the main view
       const mainView = document.getElementById("view");
       if (mainView) {
@@ -3143,13 +3224,13 @@ async function viewDashboard(root){
   if (dashPrefs.shortcuts) root.appendChild(sectionsWrap);
 
   const kpis = [
-    { title: "Usuarios totales", val: fmt.num(stats.total), sub: `${stats.active} activos`, cls: "rose", target: "users",
+    { title: "Usuarios totales", val: dashboardMetric(stats.total), sub: statsAvailable ? `${fmt.num(stats.active || 0)} activos` : "Sin datos", cls: "rose", target: "users",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-8 2-8 6v2h16v-2c0-4-4-6-8-6z"/></svg>` },
-    { title: "Usuarios en línea", val: fmt.num(stats.online), sub: `Actividad en ${stats.online_window_seconds || 90} s`, cls: "blue", target: "users",
+    { title: "Usuarios en línea", val: dashboardMetric(stats.online), sub: statsAvailable ? `Actividad en ${stats.online_window_seconds || 90} s` : "Sin datos", cls: "blue", target: "users",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>` },
-    { title: "Suscripciones", val: fmt.num(stats.subscriptions), sub: `${fmt.num(stats.matches)} matches`, cls: "violet", target: "subscriptions",
+    { title: "Suscripciones", val: dashboardMetric(stats.subscriptions), sub: statsAvailable ? `${fmt.num(stats.matches || 0)} matches` : "Sin datos", cls: "violet", target: "subscriptions",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l3 6 6 .9-4.5 4.3L18 20l-6-3-6 3 1.5-6.8L3 8.9 9 8z"/></svg>` },
-    { title: "Ingresos MRR", val: fmt.eur(stats.mrr), sub: `${stats.open_reports} denuncias abiertas`, cls: "green", target: "subscriptions",
+    { title: "Ingresos MRR", val: dashboardMetric(stats.mrr, fmt.eur), sub: statsAvailable ? `${fmt.num(stats.open_reports || 0)} denuncias abiertas` : "Sin datos", cls: "green", target: "subscriptions",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 6h18v3H3zm0 6h18v6H3z"/></svg>` },
   ];
   const kpiGrid = el("div", { class: "kpi-grid" });
@@ -3160,7 +3241,7 @@ async function viewDashboard(root){
       el("div", { class: "sub" }, k.sub),
       el("div", { class: "ico", html: k.ico }),
     ]);
-    card.addEventListener("click", () => route(k.target));
+    card.addEventListener("click", () => openDashboardSection(k.target, k.title));
     kpiGrid.appendChild(card);
   });
   root.appendChild(kpiGrid);
@@ -3205,7 +3286,7 @@ async function viewDashboard(root){
           await refreshDashBackupInfo();
         } catch (e) { console.error(e); toast("Error al exportar"); }
       }),
-      btn("Abrir sección", "ghost sm", () => route("backup")),
+      btn("Abrir sección", "ghost sm", () => openDashboardSection("backup", "Backup de configuración")),
     ]),
   ]);
   root.appendChild(backupCard);
@@ -3258,7 +3339,9 @@ async function viewDashboard(root){
     });
     return li;
   }
-  if (!activity.length) renderEmpty();
+  if (!activityAvailable) {
+    actList.appendChild(el("li", { class: "af-empty error", role: "alert" }, "No se pudo cargar la actividad reciente."));
+  } else if (!activity.length) renderEmpty();
   else activity.forEach(a => actList.appendChild(activityItem(a)));
   // Sincronización campana ↔ dashboard: expone un refresco que vuelve a cargar
   // el feed de actividad reciente. Lo invoca el popover de la campana al vaciar
@@ -3317,6 +3400,8 @@ async function viewDashboard(root){
     el("b", {}, fmt.num(z.c)),
   ])));
   donut.appendChild(legend);
+  if (!zonesAvailable) donut.appendChild(el("div", { class: "dashboard-inline-state error", role: "alert" }, "No se pudo cargar la distribución."));
+  else if (!zones.length) donut.appendChild(el("div", { class: "dashboard-inline-state" }, "Aún no hay datos por zona."));
   row.appendChild(panel("Distribución por zona", [], [ donut ]));
 
   root.appendChild(row);
