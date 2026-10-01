@@ -1,8 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última publicada: V997 (`a7137a4`, build `16b4c2333b77`) · siguiente preparada: V998**
+**Fecha de este resumen: 1 octubre 2026 · última publicada: V998 (`22f19c8`, build `49ca8d171a94`) · siguiente preparada: V999**
 
-### V998 (preparada, sin commit ni publicación) — Permisos aplicados de extremo a extremo
+### V999 (preparada, sin commit ni publicación) — Suscripciones compactas y dinámicas
+
+- La app compara Free, Premium, Gold y Platinum mediante un selector fijo de
+  cuatro opciones; solo muestra una tarjeta completa cada vez para evitar el
+  desplazamiento largo anterior.
+- Cada tarjeta resume seis datos esenciales (perfiles, chats, Super Likes,
+  lecturas, Boost y anuncios) y conserva el resto como «Ventajas» en un desplegable por
+  grupos. Las cuotas proceden de `plan_entitlements`, no de listas duplicadas.
+- Nuevo `GET /api/public/plans`: expone únicamente nombres, precios, catálogo y
+  prestaciones comerciales necesarias para la comparación, sin datos internos.
+- Mantiene los precios y el flujo de cobro configurados; no cambia Stripe,
+  renovaciones, usuarios ni suscripciones reales.
+- Validada en 390 px y 1280 px: cuatro planes, seis resúmenes, trece funciones
+  operativas y sin desbordamiento horizontal. Pendiente de autorización exacta.
+
+### V998 (01/10/2026) — Permisos aplicados de extremo a extremo
 
 - La matriz central controla ya los límites de perfiles visibles, chats nuevos,
   Super Likes, lecturas y Boost; `-1` se respeta como ilimitado.
@@ -16,8 +31,8 @@
 - `GET /api/my/entitlements` incluye uso y restante. La app carga esos permisos,
   usa la cuota dinámica de perfiles y explica los bloqueos 402 de perfiles,
   Super Likes y chats sin marcar acciones rechazadas como completadas.
-- Pendiente antes de publicar: prueba de comportamiento/API, capturas móvil y
-  escritorio, autorización explícita del usuario y después commit/publicación.
+- Publicada con Railway correcto, `/api/health` en `ready:true` y build
+  `49ca8d171a94`.
 
 ### V997 (01/10/2026) — Permisos centralizados por plan
 

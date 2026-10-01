@@ -19119,208 +19119,279 @@ function screenBilling(root) {
 }
 
 /* ---- Subscriptions ---- */
+const SUBS_PLAN_META_V999 = {
+  free: { short: "Free", tone: "free", tagline: "Lo esencial para empezar" },
+  premium: { short: "Premium", tone: "premium", tagline: "Más conexiones y privacidad" },
+  gold: { short: "Gold", tone: "gold", tagline: "Más alcance y herramientas" },
+  platinum: { short: "Platinum", tone: "platinum", tagline: "Todo incluido, sin límites" },
+};
+
+const SUBS_HIGHLIGHTS_V999 = [
+  { key: "profiles_visible", icon: "profiles" },
+  { key: "chats_monthly", icon: "chats" },
+  { key: "superlikes_daily", icon: "super" },
+  { key: "read_receipts_monthly", icon: "reads" },
+  { key: "boosts_monthly", icon: "boost" },
+  { key: "ads_free", icon: "ads" },
+];
+
+function subscriptionFeatureValueV999(feature, entitlement) {
+  if (!entitlement?.enabled) return "No incluida";
+  if (feature?.kind !== "quota") return "Incluida";
+  if (entitlement.unlimited || Number(entitlement.quota) === -1) return "Ilimitado";
+  const quota = Math.max(0, Number(entitlement.quota || 0));
+  const periods = { day: "al día", month: "al mes", trip: "por viaje" };
+  return `${quota}${entitlement.period ? " " + (periods[entitlement.period] || "") : ""}`.trim();
+}
+
+function subscriptionIconV999(name) {
+  const paths = {
+    profiles: '<path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8M22 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>',
+    chats: '<path d="M21 15a4 4 0 01-4 4H8l-5 3V7a4 4 0 014-4h10a4 4 0 014 4z"/>',
+    super: '<path d="M12 2l3 6 7 .8-5 4.7 1.4 6.8L12 17l-6.4 3.3L7 13.5 2 8.8 9 8z"/>',
+    reads: '<path d="M2 12l4 4L16 6M10 14l3 3 9-10"/>',
+    boost: '<path d="M13 2L4 14h7l-1 8 9-12h-7z"/>',
+    ads: '<path d="M3 11v2M6 9v6l10 4V5L6 9zM6 14l2 6h4"/>',
+  };
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.super}</svg>`;
+}
+
 function screenSubscriptions(root) {
-  // Plans with both monthly and annual prices (annual = 40% off, billed once/year)
-  const plans = [
-    {
-      tier: "Free", cls: "free",
-      monthly: 0,
-      annual: 0,
-      annualPerMonth: 0,
-      free_chats: "5 chats nuevos / mes",
-      free_reads: "10 lecturas de chat / mes",
-      profiles: "Hasta 10 perfiles cercanos",
-      features: [
-        "5 chats nuevos al mes",
-        "10 lecturas de estado de chat / mes",
-        "Hasta 10 perfiles en Cerca de ti",
-        "Likes limitados",
-        "Con publicidad",
-      ],
-    },
-    {
-      tier: "Premium", cls: "",
-      monthly: 9.99,
-      annual: 71.88,      // ~ 5.99 €/mes billed annually
-      annualPerMonth: 5.99,
-      free_chats: "50 chats nuevos / mes",
-      free_reads: "100 lecturas de chat / mes",
-      profiles: "Hasta 30 perfiles cercanos",
-      features: [
-        "50 chats nuevos al mes",
-        "100 lecturas de estado de chat / mes",
-        "Hasta 30 perfiles cercanos",
-        "Likes ilimitados","Sin publicidad","Ver quién te dio like",
-        "Filtros avanzados","Modo invisible","Mayor visibilidad"
-      ],
-    },
-    {
-      tier: "Gold", cls: "gold",
-      monthly: 19.99,
-      annual: 143.88,     // ~ 11.99 €/mes
-      annualPerMonth: 11.99,
-      free_chats: "Chats nuevos ilimitados",
-      free_reads: "500 lecturas de chat / mes",
-      profiles: "Hasta 80 perfiles cercanos",
-      features: [
-        "Chats nuevos ilimitados",
-        "500 lecturas de estado de chat / mes",
-        "Hasta 80 perfiles cercanos",
-        "Todo lo de Premium","5 Boost al mes","Mensajes prioritarios",
-        "Distintivo Gold","Estadísticas del perfil"
-      ],
-    },
-    {
-      tier: "Platinum", cls: "platinum",
-      monthly: 29.99,
-      annual: 215.88,     // ~ 17.99 €/mes
-      annualPerMonth: 17.99,
-      free_chats: "Chats nuevos ilimitados",
-      free_reads: "Lecturas de chat ilimitadas",
-      profiles: "Perfiles cercanos ilimitados",
-      features: [
-        "Chats nuevos ilimitados",
-        "Lecturas de estado de chat ilimitadas",
-        "Perfiles cercanos ilimitados",
-        "Todo lo de Gold","Boost ilimitado","Prioridad máxima en discover",
-        "Soporte prioritario","Funciones exclusivas"
-      ],
-    },
-  ];
+  root.classList.add("subscriptions-v999");
+  const currentPlan = getUserPlan();
+  const stateV999 = { billing: "monthly", selected: currentPlan, data: null };
+  const header = buildSubscriptionHeaderV999(root, stateV999);
+  const shell = el("div", { class: "subs-v999-shell" });
+  const status = el("div", { class: "subs-v999-loading" }, "Cargando planes y prestaciones…");
+  shell.appendChild(status);
+  root.appendChild(shell);
+  hideApp();
 
-  let billing = "monthly"; // "monthly" | "annual"
+  loadPublicPlansV999().then((data) => {
+    stateV999.data = data;
+    renderSubscriptionBodyV999(shell, stateV999, header);
+  }).catch(() => {
+    status.innerHTML = "";
+    status.appendChild(el("strong", {}, "No pudimos cargar los planes"));
+    status.appendChild(el("span", {}, "La comparación necesita la configuración actual de Aura."));
+    status.appendChild(el("button", { class: "btn btn-brand", onclick: () => render(screenSubscriptions) }, "Reintentar"));
+  });
+}
 
-  const btnMonthly = el("button", { class: "on", type: "button" }, "Mensual");
-  const btnAnnual = el("button", { type: "button" }, "Anual (–40%)");
+async function loadPublicPlansV999() {
+  const response = await fetch("/api/public/plans", { cache: "no-store" });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.ok || !Array.isArray(data.plans)) throw new Error("plans_unavailable");
+  return data;
+}
 
-  root.appendChild(el("div", { class: "subs-hero" }, [
-    el("button", { class: "icon-btn", onclick: () => routeTab("me"), style: "position:absolute;left:10px;top:10px;color:white",
-      html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>` }),
-    el("h2", {}, "Encuentra tu match ✨"),
-    el("p", {}, "Desbloquea todo lo que Aura puede ofrecerte."),
-    el("div", { class: "subs-toggle" }, [ btnMonthly, btnAnnual ]),
-  ]));
+function buildSubscriptionHeaderV999(root, stateV999) {
+  const monthly = el("button", { type: "button", class: "active" }, "Mensual");
+  const annual = el("button", { type: "button" }, "Anual");
+  const refresh = (mode) => {
+    stateV999.billing = mode;
+    monthly.classList.toggle("active", mode === "monthly");
+    annual.classList.toggle("active", mode === "annual");
+    if (stateV999.data) renderSubscriptionBodyV999(document.querySelector(".subs-v999-shell"), stateV999, headerApi);
+  };
+  monthly.addEventListener("click", () => refresh("monthly"));
+  annual.addEventListener("click", () => refresh("annual"));
 
-  const fmt = (n) => `€${n.toFixed(2).replace(".", ",")}`;
+  const currentName = SUBS_PLAN_META_V999[stateV999.selected]?.short || planLabel(stateV999.selected);
+  const hero = el("section", { class: "subs-v999-hero" }, [
+    el("div", { class: "subs-v999-nav" }, [
+      el("button", {
+        class: "subs-v999-back", type: "button", "aria-label": "Volver al perfil",
+        onclick: () => routeTab("me"),
+        html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg>',
+      }),
+      el("span", { class: "subs-v999-current" }, `Plan actual · ${currentName}`),
+    ]),
+    el("div", { class: "subs-v999-copy" }, [
+      el("small", {}, "SUSCRIPCIONES AURA"),
+      el("h2", {}, "Elige el plan que encaja contigo"),
+      el("p", {}, "Compara lo importante de un vistazo y consulta el detalle solo cuando lo necesites."),
+    ]),
+    el("div", { class: "subs-v999-billing", role: "group", "aria-label": "Periodo de facturación" }, [monthly, annual]),
+  ]);
+  root.appendChild(hero);
+  const headerApi = { monthly, annual, hero };
+  return headerApi;
+}
 
-  const list = el("div", { class: "plans" });
-  root.appendChild(list);
+function renderSubscriptionBodyV999(shell, stateV999, header) {
+  const data = stateV999.data;
+  const currentPlan = getUserPlan();
+  const plans = (data.plans || [])
+    .filter((plan) => plan.enabled || plan.code === currentPlan)
+    .sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0));
+  if (!plans.some((plan) => plan.code === stateV999.selected)) stateV999.selected = currentPlan;
+  if (!plans.some((plan) => plan.code === stateV999.selected)) stateV999.selected = plans[0]?.code || "free";
+  const selected = plans.find((plan) => plan.code === stateV999.selected) || plans[0];
+  if (!selected) return;
+  const monthlyTotal = Number(selected.price_monthly || 0) * 12;
+  const yearlyTotal = Number(selected.price_yearly || 0);
+  const annualSaving = monthlyTotal > 0 && yearlyTotal > 0 && yearlyTotal < monthlyTotal
+    ? Math.round((1 - yearlyTotal / monthlyTotal) * 100) : 0;
+  header.annual.textContent = annualSaving > 0 ? `Anual · ahorra ${annualSaving}%` : "Anual";
+  const meta = SUBS_PLAN_META_V999[selected.code] || SUBS_PLAN_META_V999.free;
+  const entitlements = data.entitlements?.[selected.code] || {};
+  const catalog = (data.catalog || []).filter((feature) => feature.status === "operational");
+  const catalogByKey = new Map(catalog.map((feature) => [feature.key, feature]));
 
-  function renderPlans() {
-    list.innerHTML = "";
-    // V801 · Plan actual REAL del usuario, para marcar cuál tiene activo en vez
-    // de asumir siempre "Free".
-    const currentPlan = getUserPlan();
-    plans.forEach(p => {
-      const isFree = p.tier === "Free";
-      const isCurrent = p.tier.toLowerCase() === currentPlan;
-      const priceHtml = isFree
-        ? `<span>Gratis</span>`
-        : (billing === "annual"
-            ? `${fmt(p.annualPerMonth)}<small>/mes</small><div class="plan-sub">Facturado como ${fmt(p.annual)}/año</div>`
-            : `${fmt(p.monthly)}<small>/mes</small>`);
-      const badge = (!isFree && billing === "annual")
-        ? el("span", { class: "plan-badge" }, "Ahorra 40%")
-        : null;
-      // Quota summary badges (chats + reads + profiles + ads status)
-      const adsInfo = isFree
-        ? { emoji: "📢", label: "Con anuncios", cls: "ads-on" }
-        : { emoji: "🚫", label: "Sin anuncios", cls: "ads-off" };
-      const quota = el("div", { class: "plan-quota" }, [
-        el("div", { class: "pq-item" }, [ el("span", {}, "💬"), el("small", {}, p.free_chats || "—") ]),
-        el("div", { class: "pq-item" }, [ el("span", {}, "👁"), el("small", {}, p.free_reads || "—") ]),
-        el("div", { class: "pq-item" }, [ el("span", {}, "📍"), el("small", {}, p.profiles || "—") ]),
-        el("div", { class: "pq-item " + adsInfo.cls }, [ el("span", {}, adsInfo.emoji), el("small", {}, adsInfo.label) ]),
-      ]);
-      // V802 · Las tarjetas Gold/Platinum tienen fondo CLARO, pero .btn-outline
-      // usa color:var(--text) (blanco en tema oscuro) → el texto "Plan actual"
-      // salía invisible. Forzamos texto/borde oscuros en esas tarjetas claras.
-      const onLightCard = (p.cls === "gold" || p.cls === "platinum");
-      const outlineStyle = onLightCard ? "color:#111;border-color:rgba(0,0,0,.35)" : "";
-      const cta = isCurrent
-        ? el("button", { class: "btn btn-outline btn-block", disabled: true, style: outlineStyle }, "Plan actual (" + p.tier + ")")
-        : isFree
-        // Plan gratuito no comprable: solo indicativo cuando el usuario ya paga.
-        ? el("button", { class: "btn btn-outline btn-block", disabled: true, style: outlineStyle }, "Plan gratuito")
-        : el("button", { class: "btn btn-brand btn-block",
-            onclick: async (ev) => {
-              const btn = ev.currentTarget;
-              // Función 5 · Con cobro real (Stripe) activo, creamos la sesión de
-              //   Checkout y redirigimos a la página de pago segura de Stripe.
-              if (publicConfig?.payments?.checkout_live) {
-                const prev = btn.textContent;
-                btn.disabled = true; btn.textContent = "Redirigiendo al pago…";
-                try {
-                  // Recuerda el plan elegido para celebrarlo al volver del pago.
-                  try { sessionStorage.setItem("aura_pay_plan", JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "annual" : "monthly" })); } catch {}
-                  const cs = await fetch("/api/my/checkout/subscription", {
-                    method: "POST", headers: chatApi.headers(),
-                    body: JSON.stringify({ plan: p.tier.toLowerCase(), period: billing === "annual" ? "yearly" : "monthly" }),
-                  });
-                  const csj = await cs.json().catch(() => ({}));
-                  if (cs.ok && csj.url) { goToCheckout(csj.url); return; } // V902 · pago dentro de la app
-                  toast(csj.reason || "No se pudo iniciar el pago");
-                } catch { toast("Error iniciando el pago"); }
-                btn.disabled = false; btn.textContent = prev;
-                return;
-              }
-              // Sin cobro real (demo/preview): mostramos la celebración del plan.
-              try { celebratePlan(p.tier, { period: billing === "annual" ? "annual" : "monthly" }); } catch {}
-            }
-          }, `Elegir ${p.tier}`);
-      // Preview of how ads look for the Free plan (upgrade to remove them)
-      const adPreview = isFree ? el("div", { class: "plan-ad-preview" }, [
-        el("span", { class: "pap-tag" }, "Anuncio patrocinado"),
-        el("div", { class: "pap-body" }, [
-          el("div", { class: "pap-thumb" }, "🛒"),
-          el("div", {}, [
-            el("strong", {}, "Ejemplo — Marca aliada"),
-            el("small", {}, "Los usuarios Free ven banners y anuncios nativos entre perfiles y en el chat."),
-          ]),
+  shell.innerHTML = "";
+  const selector = el("div", { class: "subs-v999-selector", role: "tablist", "aria-label": "Planes de Aura" });
+  plans.forEach((plan) => {
+    const planMeta = SUBS_PLAN_META_V999[plan.code] || SUBS_PLAN_META_V999.free;
+    selector.appendChild(el("button", {
+      type: "button",
+      role: "tab",
+      "aria-selected": String(plan.code === selected.code),
+      class: `subs-v999-tab ${planMeta.tone}${plan.code === selected.code ? " selected" : ""}`,
+      onclick: () => { stateV999.selected = plan.code; renderSubscriptionBodyV999(shell, stateV999, header); },
+    }, [
+      el("strong", {}, planMeta.short),
+      plan.code === currentPlan ? el("small", {}, "Actual") : null,
+    ].filter(Boolean)));
+  });
+  shell.appendChild(selector);
+
+  const price = subscriptionPriceV999(selected, stateV999.billing);
+  const summary = el("section", { class: `subs-v999-plan-card ${meta.tone}` }, [
+    el("div", { class: "subs-v999-plan-head" }, [
+      el("div", {}, [
+        el("small", { class: "subs-v999-kicker" }, selected.code === currentPlan ? "TU PLAN ACTUAL" : "PLAN SELECCIONADO"),
+        el("h3", {}, selected.name || meta.short),
+        el("p", {}, meta.tagline),
+      ]),
+      el("div", { class: "subs-v999-price" }, [
+        el("strong", {}, price.main),
+        el("span", {}, price.unit),
+        price.note ? el("small", {}, price.note) : null,
+      ].filter(Boolean)),
+    ]),
+  ]);
+
+  const highlights = el("div", { class: "subs-v999-highlights" });
+  SUBS_HIGHLIGHTS_V999.forEach(({ key, icon }) => {
+    const feature = catalogByKey.get(key);
+    if (!feature) return;
+    const entitlement = entitlements[key];
+    let value = subscriptionFeatureValueV999(feature, entitlement);
+    if (key === "ads_free") value = entitlement?.enabled ? "Sin anuncios" : "Con anuncios";
+    highlights.appendChild(el("div", { class: `subs-v999-highlight${entitlement?.enabled ? " included" : " excluded"}` }, [
+      el("span", { class: "subs-v999-hi-icon", html: subscriptionIconV999(icon) }),
+      el("span", {}, [el("small", {}, feature.label), el("strong", {}, value)]),
+    ]));
+  });
+  summary.appendChild(highlights);
+
+  const cta = subscriptionCtaV999(selected, currentPlan, stateV999.billing);
+  summary.appendChild(cta);
+  shell.appendChild(summary);
+  shell.appendChild(subscriptionDetailsV999(catalog, entitlements));
+  shell.appendChild(subscriptionPaymentMethodsV999());
+  shell.appendChild(el("p", { class: "subs-v999-foot" }, "Las suscripciones se renuevan automáticamente. Puedes cancelarlas desde Facturación."));
+}
+
+function subscriptionPriceV999(plan, billing) {
+  const euro = (value) => `${Number(value || 0).toFixed(2).replace(".", ",")} €`;
+  if (plan.code === "free" || Number(plan.price_monthly || 0) === 0) {
+    return { main: "Gratis", unit: "", note: "Sin tarjeta" };
+  }
+  if (billing === "annual") {
+    const yearly = Number(plan.price_yearly || 0);
+    if (yearly > 0) return { main: euro(yearly / 12), unit: "/mes", note: `${euro(yearly)} facturados al año` };
+    return { main: euro(plan.price_monthly), unit: "/mes", note: "Facturación mensual" };
+  }
+  return { main: euro(plan.price_monthly), unit: "/mes", note: "Facturación mensual" };
+}
+
+function subscriptionCtaV999(plan, currentPlan, billing) {
+  if (plan.code === currentPlan) {
+    return el("button", { class: "subs-v999-cta current", type: "button", disabled: true }, "Este es tu plan actual");
+  }
+  if (plan.code === "free") {
+    return el("button", { class: "subs-v999-cta secondary", type: "button", onclick: () => render(screenBilling) }, "Gestionar plan en Facturación");
+  }
+  const button = el("button", { class: "subs-v999-cta", type: "button" }, `Elegir ${plan.name || plan.code}`);
+  button.addEventListener("click", async () => {
+    if (!publicConfig?.payments?.checkout_live) {
+      try { celebratePlan(plan.code, { period: billing === "annual" ? "annual" : "monthly" }); } catch {}
+      return;
+    }
+    const previous = button.textContent;
+    button.disabled = true;
+    button.textContent = "Abriendo pago seguro…";
+    try {
+      try { sessionStorage.setItem("aura_pay_plan", JSON.stringify({ plan: plan.code, period: billing === "annual" ? "annual" : "monthly" })); } catch {}
+      const response = await fetch("/api/my/checkout/subscription", {
+        method: "POST",
+        headers: chatApi.headers(),
+        body: JSON.stringify({ plan: plan.code, period: billing === "annual" ? "yearly" : "monthly" }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok && data.url) { goToCheckout(data.url); return; }
+      toast(data.reason || "No se pudo iniciar el pago");
+    } catch {
+      toast("Error iniciando el pago");
+    }
+    button.disabled = false;
+    button.textContent = previous;
+  });
+  return button;
+}
+
+function subscriptionDetailsV999(catalog, entitlements) {
+  const grouped = new Map();
+  catalog.forEach((feature) => {
+    if (!grouped.has(feature.group)) grouped.set(feature.group, []);
+    grouped.get(feature.group).push(feature);
+  });
+  const details = el("details", { class: "subs-v999-details" }, [
+    el("summary", {}, [
+      el("span", {}, [
+        el("strong", {}, "Ver todas las ventajas"),
+        el("small", {}, "Consulta qué incluye este plan"),
+      ]),
+      el("span", { class: "subs-v999-chevron", html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' }),
+    ]),
+  ]);
+  const content = el("div", { class: "subs-v999-detail-content" });
+  grouped.forEach((features, group) => {
+    const section = el("section", { class: "subs-v999-feature-group" }, [el("h4", {}, group)]);
+    features.forEach((feature) => {
+      const entitlement = entitlements[feature.key];
+      const included = !!entitlement?.enabled;
+      section.appendChild(el("div", { class: `subs-v999-feature-row${included ? " included" : " excluded"}` }, [
+        el("span", { class: "subs-v999-feature-mark", "aria-hidden": "true" }, included ? "✓" : "—"),
+        el("span", { class: "subs-v999-feature-copy" }, [
+          el("strong", {}, feature.label),
+          el("small", {}, feature.description),
         ]),
-      ]) : null;
-      list.appendChild(el("div", { class: "plan " + p.cls }, [
-        el("div", { class: "row" }, [
-          el("div", { class: "tier" }, [ p.tier, badge ].filter(Boolean)),
-          el("div", { class: "price", html: priceHtml }),
-        ]),
-        quota,
-        adPreview,
-        el("ul", {}, p.features.map(f => el("li", {}, f))),
-        cta,
+        el("span", { class: "subs-v999-feature-value" }, subscriptionFeatureValueV999(feature, entitlement)),
       ]));
     });
-  }
+    content.appendChild(section);
+  });
+  details.appendChild(content);
+  return details;
+}
 
-  function setBilling(mode) {
-    billing = mode;
-    btnMonthly.classList.toggle("on", mode === "monthly");
-    btnAnnual.classList.toggle("on", mode === "annual");
-    renderPlans();
-  }
-  btnMonthly.addEventListener("click", () => setBilling("monthly"));
-  btnAnnual.addEventListener("click", () => setBilling("annual"));
-
-  renderPlans();
-
-  // Payment methods enabled from admin
-  const pay = publicConfig.payments || {};
+function subscriptionPaymentMethodsV999() {
+  const pay = publicConfig?.payments || {};
   const methods = [
-    { key: "stripe", label: "Tarjeta", icon: "💳" },
-    { key: "paypal", label: "PayPal", icon: "🅿" },
-    { key: "apple_pay", label: "Apple Pay", icon: "" },
-    { key: "google_pay", label: "Google Pay", icon: "G Pay" },
-    { key: "bizum", label: "Bizum", icon: "B" },
-  ].filter(m => pay[m.key]);
-  if (methods.length) {
-    root.appendChild(el("div", { class: "pay-methods" }, [
-      el("div", { class: "pay-methods-title" }, "Métodos de pago disponibles"),
-      el("div", { class: "pay-methods-row" }, methods.map(m => el("div", { class: "pay-method" }, `${m.icon} ${m.label}`))),
-    ]));
-  }
-
-  root.appendChild(el("p", { class: "center small pad" }, "Se renueva automáticamente. Cancela cuando quieras."));
-  hideApp();
+    ["stripe", "Tarjeta"], ["paypal", "PayPal"], ["apple_pay", "Apple Pay"],
+    ["google_pay", "Google Pay"], ["bizum", "Bizum"],
+  ].filter(([key]) => pay[key]);
+  if (!methods.length) return el("div", { class: "subs-v999-secure" }, [
+    el("span", { html: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>' }),
+    el("small", {}, "El pago seguro se mostrará cuando esté disponible para tu cuenta."),
+  ]);
+  return el("div", { class: "subs-v999-methods" }, [
+    el("small", {}, "Pago seguro disponible con"),
+    el("div", {}, methods.map(([, label]) => el("span", {}, label))),
+  ]);
 }
 
 /* ---- Common: topbar, stepper ---- */
@@ -20573,6 +20644,9 @@ async function boot() {
       }
       if (n === "profile" && typeof screenMe === "function") {
         try { seedPreviewSession(); activatePreviewTab("me"); render(screenMe); return; } catch {}
+      }
+      if ((n === "subscriptions" || n === "plans") && typeof screenSubscriptions === "function") {
+        try { seedPreviewSession(); activatePreviewTab("me"); render(screenSubscriptions); return; } catch {}
       }
       if (n === "beta") {
         // En modo vista previa NO pasamos email demo: así el input muestra

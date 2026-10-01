@@ -945,6 +945,7 @@ const PUBLIC_API = new Set([
   "GET /api/demo",
   "GET /api/content",
   "GET /api/public-config",
+  "GET /api/public/plans",
   "GET /api/admin-branding",
   "GET /api/discover",
   "POST /api/login",
@@ -4071,6 +4072,34 @@ async function entitlementMatrixV997(planCodes = PLAN_CODES_V997) {
   }
   return matrix;
 }
+
+// V999 · Catálogo público seguro para comparar planes en la app. Solo expone
+// precios, nombres y prestaciones comerciales; no incluye métricas, usuarios
+// ni metadatos internos de Administración.
+app.get("/api/public/plans", wrap(async (_req, res) => {
+  const [rows] = await pool.query(
+    "SELECT code,name,price_monthly,price_yearly,enabled,sort_order FROM plans WHERE code IN ('free','premium','gold','platinum') ORDER BY sort_order"
+  );
+  const byCode = new Map(rows.map((row) => [String(row.code || "").toLowerCase(), row]));
+  const plans = PLAN_CODES_V997.map((code, index) => {
+    const row = byCode.get(code) || {};
+    return {
+      code,
+      name: row.name || (code[0].toUpperCase() + code.slice(1)),
+      price_monthly: Number(row.price_monthly || 0),
+      price_yearly: Number(row.price_yearly || 0),
+      enabled: row.enabled == null ? true : !!row.enabled,
+      sort_order: row.sort_order == null ? index : Number(row.sort_order),
+    };
+  });
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    plans,
+    catalog: entitlementCatalogPayloadV997(),
+    entitlements: await entitlementMatrixV997(),
+  });
+}));
 
 function entitlementPeriodKeyV998(period) {
   const now = new Date();
