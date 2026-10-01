@@ -5576,11 +5576,16 @@ function collapseKycVerifications(rows) {
   const priorityOf = (status) => KYC_STATUS_PRIORITY[status] || 3;
   const groups = new Map();
   for (const row of rows || []) {
-    const key = row.user_id != null ? `u:${row.user_id}`
+    const key = row.account_user_id != null ? `u:${row.account_user_id}`
+      : row.user_id != null ? `u:${row.user_id}`
       : (row.email ? `e:${String(row.email).toLowerCase()}` : `r:${row.id}`);
     const current = groups.get(key);
-    if (!current) { groups.set(key, { rep: row, count: 1 }); continue; }
+    if (!current) {
+      groups.set(key, { rep: row, count: 1, accountVerified: !!row.account_verified });
+      continue;
+    }
     current.count++;
+    current.accountVerified = current.accountVerified || !!row.account_verified;
     const rowPriority = priorityOf(row.status);
     const currentPriority = priorityOf(current.rep.status);
     const rowUpdatedAt = new Date(row.updated_at).getTime() || 0;
@@ -5590,7 +5595,14 @@ function collapseKycVerifications(rows) {
       current.rep = row;
     }
   }
-  return [...groups.values()].map(group => ({ ...group.rep, dup_count: group.count }));
+  return [...groups.values()].map(group => ({
+    ...group.rep,
+    user_id: group.rep.user_id ?? group.rep.account_user_id ?? null,
+    source_status: group.rep.status,
+    status: group.accountVerified ? "verified" : group.rep.status,
+    account_verified: group.accountVerified ? 1 : 0,
+    dup_count: group.count,
+  }));
 }
 
 /* ---- ADMIN: cola de revisión manual ------------------------ */
@@ -5606,27 +5618,31 @@ app.get("/api/admin/kyc/queue", wrap(async (req, res) => {
   // de colapsar por identidad, sobre el estado efectivo de cada persona.
   const clauses = [];
   const args = [];
-  if (q) { clauses.push("(email LIKE ? OR ip LIKE ? OR fingerprint LIKE ?)");
+  if (q) { clauses.push("(iv.email LIKE ? OR iv.ip LIKE ? OR iv.fingerprint LIKE ?)");
            args.push(`%${q}%`, `%${q}%`, `%${q}%`); }
-  if (provider === "didit") { clauses.push("provider = 'didit'"); }
-  else if (provider === "local") { clauses.push("(provider IS NULL OR provider <> 'didit')"); }
-  if (country) { clauses.push("didit_country = ?"); args.push(country); }
-  if (decision) { clauses.push("didit_decision = ?"); args.push(decision); }
-  if (range === "24h") clauses.push("updated_at >= NOW() - INTERVAL 1 DAY");
-  else if (range === "7d") clauses.push("updated_at >= NOW() - INTERVAL 7 DAY");
-  else if (range === "30d") clauses.push("updated_at >= NOW() - INTERVAL 30 DAY");
+  if (provider === "didit") { clauses.push("iv.provider = 'didit'"); }
+  else if (provider === "local") { clauses.push("(iv.provider IS NULL OR iv.provider <> 'didit')"); }
+  if (country) { clauses.push("iv.didit_country = ?"); args.push(country); }
+  if (decision) { clauses.push("iv.didit_decision = ?"); args.push(decision); }
+  if (range === "24h") clauses.push("iv.updated_at >= NOW() - INTERVAL 1 DAY");
+  else if (range === "7d") clauses.push("iv.updated_at >= NOW() - INTERVAL 7 DAY");
+  else if (range === "30d") clauses.push("iv.updated_at >= NOW() - INTERVAL 30 DAY");
   const whereSql = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const [allRows] = await pool.query(
-    `SELECT id, user_id, session_token, email, ip, fingerprint, doc_type,
-            doc_hash, doc_score, selfie_match_score, liveness_score,
-            extracted_age, extracted_name, extracted_dob, status,
-            manual_attempts, last_reason,
-            provider, didit_session_id, didit_session_url,
-            didit_status, didit_decision, didit_country,
-            created_at, updated_at
-       FROM identity_verifications
+    `SELECT iv.id, iv.user_id, iv.session_token, iv.email, iv.ip, iv.fingerprint, iv.doc_type,
+            iv.doc_hash, iv.doc_score, iv.selfie_match_score, iv.liveness_score,
+            iv.extracted_age, iv.extracted_name, iv.extracted_dob, iv.status,
+            iv.manual_attempts, iv.last_reason,
+            iv.provider, iv.didit_session_id, iv.didit_session_url,
+            iv.didit_status, iv.didit_decision, iv.didit_country,
+            iv.created_at, iv.updated_at,
+            COALESCE(uid.id, uemail.id) AS account_user_id,
+            COALESCE(uid.verified, uemail.verified, 0) AS account_verified
+       FROM identity_verifications iv
+       LEFT JOIN users uid ON uid.id = iv.user_id
+       LEFT JOIN users uemail ON iv.user_id IS NULL AND uemail.email = iv.email
       ${whereSql}
-      ORDER BY updated_at DESC, id DESC
+      ORDER BY iv.updated_at DESC, iv.id DESC
       LIMIT 5000`,
     args
   );

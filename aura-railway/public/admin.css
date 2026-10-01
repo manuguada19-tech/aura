@@ -2132,6 +2132,48 @@ textarea.input { resize: vertical; min-height: 60px; }
 .kyc-decision.declined  { background: rgba(220,38,38,.15);  color:#f87171; }
 .kyc-decision.in-review { background: rgba(234,179,8,.18);  color:#f5c542; }
 .kyc-decision.not-started { background: rgba(255,255,255,.06); color: var(--text-muted); }
+.kyc-row-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:6px; }
+
+@media (max-width: 720px) {
+  .kyc-table-wrap { overflow: visible; border: 0; }
+  .kyc-table tbody { padding: 0; }
+  .kyc-table tr { gap: 0; padding: 14px; }
+  .kyc-table td:first-child {
+    justify-content: space-between;
+    padding-bottom: 10px;
+  }
+  .data-table.kyc-table td:first-child::before { display: block; }
+  .kyc-table td { min-width: 0; }
+  .kyc-table td > :not(.kyc-row-actions) { max-width: 62%; overflow-wrap: anywhere; }
+  .kyc-table td.kyc-actions-cell {
+    display: block;
+    padding-top: 12px;
+    margin-top: 8px;
+    border-top: 1px dashed var(--border);
+  }
+  .kyc-table td.kyc-actions-cell::before {
+    display: block;
+    margin-bottom: 9px;
+  }
+  .kyc-table td.kyc-actions-cell > .kyc-row-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    width: 100%;
+  }
+  .kyc-row-actions .btn {
+    width: 100%;
+    min-width: 0;
+    min-height: 42px;
+    margin-left: 0 !important;
+    padding: 8px 10px;
+    white-space: normal;
+    overflow-wrap: normal;
+    word-break: normal;
+    line-height: 1.25;
+  }
+  .kyc-row-actions .btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
+}
 
 /* Panel incrustado "Crear usuario" dentro de la vista Usuarios */
 .create-user-panel { padding: 22px 24px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel); }

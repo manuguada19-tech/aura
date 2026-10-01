@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V988**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V989**
+
+### V989 (01/10/2026) — KYC coherente y legible en móvil
+
+- La cola KYC toma como estado efectivo el sello verificado de la cuenta de
+  Aura, igual que el perfil del usuario, aunque exista un intento Didit posterior
+  sin terminar.
+- Los registros KYC enlazados por usuario o correo se muestran como una sola
+  persona; el historial indica intentos conservados para auditoría, no cuentas.
+- En móvil cada dato recupera su etiqueta y las acciones pasan a botones de
+  ancho completo, sin texto vertical, recortes ni desbordamiento horizontal.
+- No se eliminan usuarios ni sesiones históricas de Didit automáticamente.
 
 ### V988 (01/10/2026) — Dashboard administrativo más fiable y accionable
 

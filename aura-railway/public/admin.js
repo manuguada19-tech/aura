@@ -17146,7 +17146,7 @@ async function viewKyc(root) {
           <thead><tr>
             <th>#</th><th>Email</th><th>Proveedor</th><th>Edad</th>
             <th>Doc</th><th>Cara</th><th>Vida</th>
-            <th>Estado</th><th>Decisión</th><th>País</th><th>Intentos</th>
+            <th>Estado</th><th>Decisión</th><th>País</th><th>Historial</th>
             <th>IP</th><th>Actualizado</th><th class="ta-right">Acciones</th>
           </tr></thead>`;
         const tbody = document.createElement("tbody");
@@ -17156,21 +17156,21 @@ async function viewKyc(root) {
             ? `<span class="kyc-decision ${String(row.didit_decision).toLowerCase().replace(/\s+/g,'-')}">${row.didit_decision}</span>`
             : "—";
           tr.innerHTML = `
-            <td class="mono">#${row.id}</td>
-            <td>${row.email || "—"}</td>
-            <td>${providerBadge(row.provider)}</td>
-            <td>${row.extracted_age != null ? row.extracted_age : "—"}</td>
-            <td>${scoreCell(row.doc_score)}</td>
-            <td>${scoreCell(row.selfie_match_score)}</td>
-            <td>${scoreCell(row.liveness_score)}</td>
-            <td>${statusBadge(row.status)}</td>
-            <td>${decCell}</td>
-            <td class="mono">${row.didit_country || "—"}</td>
-            <td>${(row.dup_count && row.dup_count > 1) ? `<span title="Sesiones de verificación de esta persona">${row.dup_count} sesiones</span>` : (row.manual_attempts || 0)}</td>
-            <td class="mono" style="font-size:11px;">${row.ip || "—"}</td>
-            <td style="font-size:11.5px;">${row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}</td>
-            <td class="ta-right"></td>`;
-          const actions = tr.lastElementChild;
+            <td class="mono" data-label="Registro">#${row.id}</td>
+            <td data-label="Cuenta">${row.email || "—"}</td>
+            <td data-label="Proveedor">${providerBadge(row.provider)}</td>
+            <td data-label="Edad">${row.extracted_age != null ? row.extracted_age : "—"}</td>
+            <td data-label="Documento">${scoreCell(row.doc_score)}</td>
+            <td data-label="Rostro">${scoreCell(row.selfie_match_score)}</td>
+            <td data-label="Prueba de vida">${scoreCell(row.liveness_score)}</td>
+            <td data-label="Estado">${statusBadge(row.status)}</td>
+            <td data-label="Decisión Didit">${decCell}</td>
+            <td class="mono" data-label="País">${row.didit_country || "—"}</td>
+            <td data-label="Historial">${(row.dup_count && row.dup_count > 1) ? `<span title="Intentos de verificación conservados para auditoría">${row.dup_count} intentos</span>` : "1 intento"}</td>
+            <td class="mono" data-label="IP" style="font-size:11px;">${row.ip || "—"}</td>
+            <td data-label="Actualizado" style="font-size:11.5px;">${row.updated_at ? new Date(row.updated_at).toLocaleString() : "—"}</td>
+            <td class="ta-right kyc-actions-cell" data-label="Acciones"><div class="kyc-row-actions"></div></td>`;
+          const actions = tr.querySelector(".kyc-row-actions");
           const bView = el("button", { class: "btn small ghost", onclick: () => openKycDetail(row.id) }, "Ver");
           actions.appendChild(bView);
           // Botón simple: eliminar de la app y de Didit con motivo básico por email.
