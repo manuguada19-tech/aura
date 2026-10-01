@@ -1858,6 +1858,7 @@ const state = {
   // Rehidratamos la sesión guardada para que el heartbeat/SSE arranque
   // aunque el usuario aterrice directo en la pantalla de bloqueo.
   user: (() => { try { return JSON.parse(localStorage.getItem("aura-session") || "null") || null; } catch { return null; } })(),
+  entitlements: {},
   _prev_user: null,
   // V906 · Hidratamos la zona desde la sesión guardada (aura-session.zone) para
   // que el PRIMER /api/discover al reabrir la PWA use ya la zona real y no caiga
@@ -2154,8 +2155,9 @@ const chatApi = {
       headers: this.headers(),
       body: JSON.stringify({ conversation_id: cid, body, media_type: mediaType, media_url: mediaUrl }),
     });
-    if (!r.ok) return null;
-    return await r.json();
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) return { ...data, error: data.error || "error", status: r.status };
+    return data;
   },
   async heartbeat() {
     if (!state.user || !state.user.id) return;
@@ -2192,7 +2194,8 @@ const chatApi = {
 // Convierte una fila de usuario de la BD al objeto que espera la UI.
 function mapApiUser(row) {
   if (!row) return null;
-  const photo = row.photo_url || row.photo || `https://i.pravatar.cc/600?u=${row.id}`;
+  const locked = !!row.locked;
+  const photo = locked ? "" : (row.photo_url || row.photo || `https://i.pravatar.cc/600?u=${row.id}`);
   const photos = Array.isArray(row.photos) && row.photos.length ? row.photos : [photo];
   const u = {
     id: row.id,
@@ -2241,6 +2244,7 @@ function mapApiUser(row) {
     })(),
     photos, photo,
     _real: true,
+    _locked: locked,
   };
   if ("is_match" in row) u.is_match = !!row.is_match;
   if (row.type) u.like_type = row.type;
@@ -2282,9 +2286,10 @@ const datingApi = {
     if (!this._authed()) return null;
     try {
       const r = await fetch("/api/my/like", { method: "POST", headers: this.headers(), body: JSON.stringify({ target_id: targetId, type }) });
-      if (!r.ok) return null;
-      return await r.json();
-    } catch { return null; }
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { ...data, error: data.error || "error", status: r.status };
+      return data;
+    } catch { return { error: "network", status: 0 }; }
   },
   // V749 · Rebobinar real: deshace la última reacción en el servidor.
   // Devuelve { ok, undone, match_reverted } o { error, status } para que la UI
@@ -2341,9 +2346,10 @@ const datingApi = {
         body: JSON.stringify({ target_id: targetId }),
         keepalive: true,
       });
-      if (!r.ok) return null;
-      return await r.json();
-    } catch { return null; }
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { ...data, error: data.error || "error", status: r.status };
+      return data;
+    } catch { return { error: "network", status: 0 }; }
   },
   async saveFilters(filters) {
     if (!this._authed()) return null;
@@ -10954,6 +10960,12 @@ function markDiscoverProfileSeen(u, stack) {
   if (shouldRecord) state.discoverViewRecordedKeys.add(seenKey);
   if (isReal && shouldRecord) {
     datingApi.recordProfileView(u.id).then(result => {
+      if (result?.status === 402) {
+        state.discoverSeenKeys.delete(seenKey);
+        state.discoverViewRecordedKeys.delete(seenKey);
+        openPlanLimitModal(0);
+        return;
+      }
       const view = result && result.view;
       if (view) state.discoverViewCounts.set(Number(u.id), Number(view.view_count || 0));
     }).catch(() => {});
@@ -10969,11 +10981,18 @@ function markDiscoverProfileSeen(u, stack) {
 async function syncUserPlan() {
   try {
     if (!state.user || !state.user.id) return;
-    const r = await fetch("/api/my/reads/status", { headers: chatApi.headers(), cache: "no-store" });
-    if (!r.ok) return;
-    const s = await r.json().catch(() => null);
-    if (!s || !s.plan) return;
-    const plan = String(s.plan).toLowerCase();
+    const [r, entitlementResponse] = await Promise.all([
+      fetch("/api/my/reads/status", { headers: chatApi.headers(), cache: "no-store" }),
+      fetch("/api/my/entitlements", { headers: chatApi.headers(), cache: "no-store" }),
+    ]);
+    const s = r.ok ? await r.json().catch(() => null) : null;
+    const entitlementPayload = entitlementResponse.ok ? await entitlementResponse.json().catch(() => null) : null;
+    const previousEntitlements = JSON.stringify(state.entitlements || {});
+    if (entitlementPayload?.features) state.entitlements = entitlementPayload.features;
+    const entitlementsChanged = previousEntitlements !== JSON.stringify(state.entitlements || {});
+    const planValue = entitlementPayload?.plan || s?.plan;
+    if (!planValue) return;
+    const plan = String(planValue).toLowerCase();
     const prevPlan = String((state.user.plan || state.user.plan_key) || "free").toLowerCase();
     let zoneChanged = false;
     state.user.plan = plan;
@@ -10982,7 +11001,7 @@ async function syncUserPlan() {
     // caía a "hetero" aunque la cuenta fuera "lgtb". Ahora la traemos del servidor
     // en cada arranque y la guardamos en la sesión para que el chip y el mazo de
     // Explorar (que dependen de state.zone) reflejen la zona real.
-    if (s.zone === "hetero" || s.zone === "lgtb") {
+    if (s && (s.zone === "hetero" || s.zone === "lgtb")) {
       zoneChanged = state.zone !== s.zone;
       state.zone = s.zone;
       state.user.zone = s.zone;
@@ -10992,7 +11011,7 @@ async function syncUserPlan() {
     // V975 · Si el plan llegó después del primer pintado, el cupo de Explorar
     // o Cerca no puede quedarse congelado en Free. Repintamos esas pantallas
     // cuando cambia el plan; un cambio de zona conserva el comportamiento previo.
-    if (zoneChanged || (prevPlan !== plan && (state.currentTab === "discover" || state.currentTab === "nearby"))) {
+    if (zoneChanged || ((prevPlan !== plan || entitlementsChanged) && (state.currentTab === "discover" || state.currentTab === "nearby"))) {
       try { _rerender(); } catch {}
     }
     // V811 · Al detectar que el usuario ha vuelto al plan gratuito desde uno de
@@ -11027,6 +11046,9 @@ function updateMeTierBadge() {
   }
 }
 function getProfilesLimit() {
+  const configured = state.entitlements?.profiles_visible;
+  if (configured?.enabled && configured.unlimited) return Infinity;
+  if (configured?.enabled && Number.isFinite(Number(configured.quota))) return Math.max(0, Number(configured.quota));
   const plan = getUserPlan();
   const lim = PLAN_PROFILE_LIMITS[plan];
   return (typeof lim === "number" || lim === Infinity) ? lim : PLAN_PROFILE_LIMITS.free;
@@ -11465,18 +11487,29 @@ function bindSwipe(card, stack) {
 // numérico) para saber si hay que deshacerlo también en el servidor.
 let _lastSwipe = null;
 
-function fly(card, dir, stack) {
+async function fly(card, dir, stack) {
   const off = window.innerWidth;
   const map = { left: [-off, 0, -30], right: [off, 0, 30], up: [0, -off, 0] };
   const [x, y, rot] = map[dir];
+  const currentUser = stack._users[stack._index];
+  const type = dir === "up" ? "super" : dir === "right" ? "like" : "pass";
+  const mustConfirmQuota = dir === "up" && currentUser?._real && typeof currentUser.id === "number";
+  if (mustConfirmQuota) {
+    card.style.pointerEvents = "none";
+    const accepted = await reactToUser(currentUser, type, dir);
+    card.style.pointerEvents = "";
+    if (!accepted) {
+      card.style.transform = "";
+      card.style.opacity = "1";
+      return;
+    }
+  }
   card.style.transform = `translate(${x}px, ${y}px) rotate(${rot}deg)`;
   card.style.opacity = "0";
-  const currentUser = stack._users[stack._index];
   // Descartar, dar like o Super Like también implica haber visto esa tarjeta.
   markDiscoverProfileSeen(currentUser, stack);
   // Registra la reacción en el servidor (like/super/pass) para usuarios reales.
-  const type = dir === "up" ? "super" : dir === "right" ? "like" : "pass";
-  reactToUser(currentUser, type, dir);
+  if (!mustConfirmQuota) reactToUser(currentUser, type, dir);
   // V749 · Recuerda esta acción para "Rebobinar".
   _lastSwipe = currentUser
     ? { userId: currentUser.id, user: currentUser, type, stack,
@@ -11497,20 +11530,30 @@ function fly(card, dir, stack) {
 // Envía la reacción al backend y resuelve el match (o el aviso de super like).
 // Para usuarios demo (sin id numérico) conserva el comportamiento simulado.
 async function reactToUser(user, type, dir) {
-  if (!user) return;
+  if (!user) return false;
   const isReal = user._real && typeof user.id === "number" && Number.isFinite(user.id);
   if (!isReal) {
     // Modo demo (anónimo / sin sesión): mantiene la experiencia visual.
     if (dir === "right" && Math.random() > 0.55) triggerMatch(user);
     else if (dir === "up") toast(`✦ Super Like enviado a ${user.name}`);
-    return;
+    return true;
   }
-  if (dir === "up") toast(`✦ Super Like enviado a ${user.name}`);
   const res = await datingApi.react(user.id, type);
+  if (res?.status === 402 && res?.feature === "superlikes_daily") {
+    toast("Has usado todos los Super Likes de hoy. Consulta Suscripciones para ampliar el límite.", 5000);
+    return false;
+  }
+  if (!res || res.error) return false;
+  if (type === "super" && state.entitlements?.superlikes_daily && !state.entitlements.superlikes_daily.unlimited) {
+    const current = Number(state.entitlements.superlikes_daily.remaining);
+    if (Number.isFinite(current)) state.entitlements.superlikes_daily.remaining = Math.max(0, current - 1);
+  }
+  if (dir === "up" && res?.ok) toast(`✦ Super Like enviado a ${user.name}`);
   if (res && res.match) {
     // Match real → abre el chat sobre la conversación creada por el servidor.
     triggerMatch(user, res.conversation_id);
   }
+  return true;
 }
 
 function swipeCurrent(dir) {
@@ -12977,11 +13020,9 @@ function screenLikes(root) {
       return;
     }
     // Tease Premium: para usuarios Free, sólo se ven los 2 primeros.
-    const plan = (state.user && state.user.plan) || "free";
-    const unlockedAll = plan !== "free";
     let hasBlurred = false;
     users.forEach((u, i) => {
-      const blurred = !unlockedAll && i >= 2;
+      const blurred = !!u._locked || (isPreviewMode() && getUserPlan() === "free" && i >= 2);
       if (blurred) hasBlurred = true;
       grid.appendChild(likeCard(u, blurred));
     });
@@ -14822,12 +14863,20 @@ function screenProfileDetail(root, u, opts = {}) {
       "aria-label": "Super Like",
       title: "Super Like",
       onclick: async () => {
-        toast(`✦ Super Like enviado a ${u.name}`);
-        document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
         if (pdReal) {
           const res = await datingApi.react(u.id, "super");
+          if (res?.status === 402 && res?.feature === "superlikes_daily") {
+            toast("Has usado todos los Super Likes de hoy. Consulta Suscripciones para ampliar el límite.", 5000);
+            return;
+          }
+          if (!res?.ok) { toast("No se pudo enviar el Super Like."); return; }
+          toast(`✦ Super Like enviado a ${u.name}`);
+          document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
           if (res && res.match) triggerMatch(u, res.conversation_id);
+          return;
         }
+        toast(`✦ Super Like enviado a ${u.name}`);
+        document.body.classList.remove("profile-open"); showApp(); routeTab(returnTab);
       },
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z"/></svg>`
     }), "Super Like"),
@@ -15005,6 +15054,11 @@ function screenChat(root, u, isNew, opts = {}) {
             optimistic.remove();
             return;
           }
+          if (r?.error === "quota_exhausted" && r?.feature === "chats_monthly") {
+            optimistic.remove();
+            toast("Has alcanzado el límite mensual de chats nuevos. Puedes seguir escribiendo en chats ya iniciados.", 5200);
+            return;
+          }
           throw new Error(r?.error || "err");
         }
         optimistic.classList.add("ephemeral-msg");
@@ -15016,7 +15070,12 @@ function screenChat(root, u, isNew, opts = {}) {
       }
     } else {
       r = await chatApi.sendMessage(state_.convId, v);
-      if (!r) {
+      if (r?.status === 402 && r?.feature === "chats_monthly") {
+        optimistic.remove();
+        toast("Has alcanzado el límite mensual de chats nuevos. Puedes seguir escribiendo en chats ya iniciados.", 5200);
+        return;
+      }
+      if (!r || r.error) {
         optimistic.style.opacity = ".5";
         toast("No se pudo enviar. Reintenta.");
         return;
@@ -15030,9 +15089,17 @@ function screenChat(root, u, isNew, opts = {}) {
     if (!state_.convId) return;
     if (blockIfVerifyRequired()) return; // V731 · verificación de edad requerida
     const url = `https://picsum.photos/seed/${Date.now()}/300/400`;
-    msgs.appendChild(photoBubble("out", url));
+    const optimisticPhoto = photoBubble("out", url);
+    msgs.appendChild(optimisticPhoto);
     msgs.scrollTop = msgs.scrollHeight;
-    await chatApi.sendMessage(state_.convId, null, "photo", url);
+    const result = await chatApi.sendMessage(state_.convId, null, "photo", url);
+    if (result?.status === 402 && result?.feature === "chats_monthly") {
+      optimisticPhoto.remove();
+      toast("Has alcanzado el límite mensual de chats nuevos. Puedes seguir escribiendo en chats ya iniciados.", 5200);
+    } else if (!result || result.error) {
+      optimisticPhoto.style.opacity = ".5";
+      toast("No se pudo enviar la foto.");
+    }
   };
 
   // V545 · Modal genérico de plan bloqueado
@@ -15121,6 +15188,10 @@ function screenChat(root, u, isNew, opts = {}) {
                     const j = await r.json();
                     if (!r.ok) {
                       if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Stickers"); return; }
+                      if (j?.error === "quota_exhausted" && j?.feature === "chats_monthly") {
+                        toast("Has alcanzado el límite mensual de chats nuevos. Puedes seguir escribiendo en chats ya iniciados.", 5200);
+                        return;
+                      }
                       throw new Error();
                     }
                     msgs.appendChild(photoBubble("out", s.url));
@@ -15264,6 +15335,10 @@ function screenChat(root, u, isNew, opts = {}) {
           const j = await r.json();
           if (!r.ok) {
             if (j?.error === "plan_required") { openPlanLockModal(j.required_plan || "gold", "Notas de voz"); return; }
+            if (j?.error === "quota_exhausted" && j?.feature === "chats_monthly") {
+              toast("Has alcanzado el límite mensual de chats nuevos. Puedes seguir escribiendo en chats ya iniciados.", 5200);
+              return;
+            }
             throw new Error();
           }
           // V569 · Si está cifrado, reproducir vía endpoint autenticado; si no,
@@ -20321,7 +20396,7 @@ async function submitTicket(e) {
   try {
     const r = await fetch("/api/tickets", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: chatApi.headers(),
       body: JSON.stringify(payload),
     });
     const data = await r.json();

@@ -133,6 +133,8 @@ async function getUserPlan(pool, userId) {
 
 function register(app, pool, helpers) {
   const { readMyUserId, wrap, requireAdmin } = helpers;
+  const getUserEntitlement = typeof helpers.getUserEntitlementV998 === "function"
+    ? helpers.getUserEntitlementV998 : null;
 
   // ==== Eventos ==================================================
   app.get("/api/my/events", wrap(async (req, res) => {
@@ -389,13 +391,19 @@ function register(app, pool, helpers) {
     let payload = {};
     try { payload = rows[0]?.payload ? (typeof rows[0].payload === "string" ? JSON.parse(rows[0].payload) : rows[0].payload) : {}; } catch {}
     const plan = await getUserPlan(pool, me);
-    res.json({ ok: true, filters: payload, plan, gold_or_more: planAtLeast(plan, "gold") });
+    const advancedAllowed = getUserEntitlement
+      ? !!(await getUserEntitlement(me, "advanced_filters"))?.enabled
+      : planAtLeast(plan, "gold");
+    res.json({ ok: true, filters: payload, plan, gold_or_more: advancedAllowed });
   }));
 
   app.put("/api/my/filters", wrap(async (req, res) => {
     const me = readMyUserId(req);
     if (!me) return res.status(401).json({ error: "unauthorized" });
     const plan = await getUserPlan(pool, me);
+    const advancedAllowed = getUserEntitlement
+      ? !!(await getUserEntitlement(me, "advanced_filters"))?.enabled
+      : planAtLeast(plan, "gold");
     const filters = req.body?.filters || {};
     // Filtros premium (permitidos desde Premium)
     // V748 · Añadidos city/cities (ubicación) y ethnicities (multi-etnia) al
@@ -413,7 +421,7 @@ function register(app, pool, helpers) {
     const advanced = ["has_children","wants_children","has_pets","smokes","drinks","religion","politics","relationship_goal","education_level","languages"];
     const finalFilters = {};
     for (const k of basic) if (k in filters) finalFilters[k] = filters[k];
-    if (planAtLeast(plan, "gold")) {
+    if (advancedAllowed) {
       for (const k of advanced) if (k in filters) finalFilters[k] = filters[k];
     }
     await pool.query(
@@ -421,7 +429,7 @@ function register(app, pool, helpers) {
       [me, JSON.stringify(finalFilters)]
     );
     const advanced_saved = advanced.filter((k) => k in finalFilters);
-    res.json({ ok: true, filters: finalFilters, advanced_saved, plan_lock: !planAtLeast(plan, "gold") });
+    res.json({ ok: true, filters: finalFilters, advanced_saved, plan_lock: !advancedAllowed });
   }));
 
   // ==== GDPR self-service ========================================

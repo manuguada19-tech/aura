@@ -169,6 +169,17 @@ function register(app, pool, helpers) {
   const notifyNewMessage = typeof helpers.notifyNewMessage === "function" ? helpers.notifyNewMessage : async () => {};
   // V731 · gate por verificación de edad (no-op si no llega el helper)
   const enforceKycGate = typeof helpers.enforceKycGate === "function" ? helpers.enforceKycGate : async () => false;
+  const reserveNewChat = typeof helpers.reserveNewChatV998 === "function" ? helpers.reserveNewChatV998 : async () => ({ ok: true, reserved: false });
+  const releaseNewChat = typeof helpers.releaseNewChatV998 === "function" ? helpers.releaseNewChatV998 : async () => {};
+  const rejectChatQuota = (res, reservation) => res.status(402).json({
+    ok: false,
+    error: "quota_exhausted",
+    feature: "chats_monthly",
+    quota: Number(reservation.entitlement?.quota || 0),
+    used: reservation.used,
+    remaining: reservation.remaining,
+    message: "Has alcanzado el límite de chats nuevos de este mes. Puedes seguir escribiendo en tus conversaciones actuales.",
+  });
 
   // ============ V569 · Reproducción de nota de voz cifrada ===========
   // El emisor y el receptor de la conversación pueden reproducir su propio
@@ -358,10 +369,18 @@ function register(app, pool, helpers) {
     const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
     if (!c.length) return res.status(404).json({ error: "not_found" });
     if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
-    const [r] = await pool.execute(
-      "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url, sticker_id) VALUES (?,?,?,?,?,?)",
-      [cid, me, null, "photo", sticker.url, stickerId]
-    );
+    const reservation = await reserveNewChat(me, cid);
+    if (!reservation.ok) return rejectChatQuota(res, reservation);
+    let r;
+    try {
+      [r] = await pool.execute(
+        "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url, sticker_id) VALUES (?,?,?,?,?,?)",
+        [cid, me, null, "photo", sticker.url, stickerId]
+      );
+    } catch (error) {
+      await releaseNewChat(me, reservation);
+      throw error;
+    }
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
     notifyNewMessage(me, cid, "🎨 Sticker").catch(() => {}); // V591
     res.json({ ok: true, id: r.insertId, sticker_url: sticker.url });
@@ -389,13 +408,21 @@ function register(app, pool, helpers) {
     const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
     if (!c.length) return res.status(404).json({ error: "not_found" });
     if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
-    const [r] = await pool.execute(
-      `INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url,
-                             audio_bytes, audio_duration_ms, audio_mime,
-                             audio_encrypted, audio_iv, audio_tag)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-      [cid, me, null, "audio", mediaUrl, bytes, duration_ms, mime, encrypted, iv, tag]
-    );
+    const reservation = await reserveNewChat(me, cid);
+    if (!reservation.ok) return rejectChatQuota(res, reservation);
+    let r;
+    try {
+      [r] = await pool.execute(
+        `INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url,
+                               audio_bytes, audio_duration_ms, audio_mime,
+                               audio_encrypted, audio_iv, audio_tag)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        [cid, me, null, "audio", mediaUrl, bytes, duration_ms, mime, encrypted, iv, tag]
+      );
+    } catch (error) {
+      await releaseNewChat(me, reservation);
+      throw error;
+    }
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
     // V568 · Auto-triage inicial
     try { await autoTriageVoiceNote(pool, r.insertId); } catch (e) { console.warn("[voice triage]", e.message); }
@@ -424,11 +451,19 @@ function register(app, pool, helpers) {
     const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
     if (!c.length) return res.status(404).json({ error: "not_found" });
     if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
-    const [r] = await pool.execute(
-      `INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url, sticker_id, ephemeral, expires_at)
-       VALUES (?,?,?,?,?,?,1, DATE_ADD(NOW(), INTERVAL 24 HOUR))`,
-      [cid, me, body, media_type, media_url, sticker_id]
-    );
+    const reservation = await reserveNewChat(me, cid);
+    if (!reservation.ok) return rejectChatQuota(res, reservation);
+    let r;
+    try {
+      [r] = await pool.execute(
+        `INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url, sticker_id, ephemeral, expires_at)
+         VALUES (?,?,?,?,?,?,1, DATE_ADD(NOW(), INTERVAL 24 HOUR))`,
+        [cid, me, body, media_type, media_url, sticker_id]
+      );
+    } catch (error) {
+      await releaseNewChat(me, reservation);
+      throw error;
+    }
     await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
     notifyNewMessage(me, cid, body || "✨ Mensaje efímero").catch(() => {}); // V591
     res.json({ ok: true, id: r.insertId, expires_in_hours: 24 });

@@ -1,8 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última publicada: V996 · siguiente preparada: V997**
+**Fecha de este resumen: 1 octubre 2026 · última publicada: V997 (`a7137a4`, build `16b4c2333b77`) · siguiente preparada: V998**
 
-### V997 (preparada, pendiente de autorización) — Permisos centralizados por plan
+### V998 (preparada, sin commit ni publicación) — Permisos aplicados de extremo a extremo
+
+- La matriz central controla ya los límites de perfiles visibles, chats nuevos,
+  Super Likes, lecturas y Boost; `-1` se respeta como ilimitado.
+- Los contadores diarios y mensuales se guardan en `plan_usage_counters`; chats
+  existentes no consumen otra cuota y los créditos comprados de lecturas o
+  Boost siguen disponibles después de agotar los incluidos.
+- Likes recibidos Free expone solo dos perfiles completos y redacta en servidor
+  cualquier dato real de los restantes. Deshacer, invisible, filtros avanzados,
+  ausencia de anuncios y soporte prioritario consultan la matriz, no el rango
+  codificado del plan.
+- `GET /api/my/entitlements` incluye uso y restante. La app carga esos permisos,
+  usa la cuota dinámica de perfiles y explica los bloqueos 402 de perfiles,
+  Super Likes y chats sin marcar acciones rechazadas como completadas.
+- Pendiente antes de publicar: prueba de comportamiento/API, capturas móvil y
+  escritorio, autorización explícita del usuario y después commit/publicación.
+
+### V997 (01/10/2026) — Permisos centralizados por plan
 
 - Nuevo catálogo controlado de 16 funciones y cuotas, asociado de forma
   estructurada a Free, Premium, Gold y Platinum mediante `plan_entitlements`.

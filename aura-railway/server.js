@@ -1518,22 +1518,22 @@ app.use(async (req, res, next) => {
 const PLAN_CODES_V997 = Object.freeze(["free", "premium", "gold", "platinum"]);
 const ENTITLEMENT_PERIODS_V997 = new Set(["day", "month", "trip"]);
 const FEATURE_CATALOG_V997 = Object.freeze([
-  { key: "profiles_visible", label: "Perfiles visibles", description: "Máximo de perfiles disponibles en Explorar.", group: "Descubrimiento", kind: "quota", unit: "perfiles", status: "operational", next_phase: "V998" },
-  { key: "chats_monthly", label: "Chats nuevos", description: "Conversaciones nuevas que se pueden iniciar cada mes.", group: "Conversaciones", kind: "quota", unit: "chats", status: "prepared", next_phase: "V998" },
+  { key: "profiles_visible", label: "Perfiles visibles", description: "Máximo de perfiles disponibles en Explorar.", group: "Descubrimiento", kind: "quota", unit: "perfiles", status: "operational", next_phase: null },
+  { key: "chats_monthly", label: "Chats nuevos", description: "Conversaciones nuevas que se pueden iniciar cada mes.", group: "Conversaciones", kind: "quota", unit: "chats", status: "operational", next_phase: null },
   { key: "ads_free", label: "Sin anuncios", description: "Oculta los espacios publicitarios del producto.", group: "Experiencia", kind: "boolean", unit: null, status: "operational", next_phase: null },
-  { key: "superlikes_daily", label: "Super Likes", description: "Super Likes incluidos cada día.", group: "Descubrimiento", kind: "quota", unit: "Super Likes", status: "prepared", next_phase: "V998" },
-  { key: "boosts_monthly", label: "Boost incluidos", description: "Boost incluidos cada mes; las compras adicionales se gestionan aparte.", group: "Visibilidad", kind: "quota", unit: "Boost", status: "operational", next_phase: "V998" },
-  { key: "likes_received_full", label: "Todos los likes recibidos", description: "Permite ver sin recortes quién ha dado Like.", group: "Descubrimiento", kind: "boolean", unit: null, status: "prepared", next_phase: "V998" },
+  { key: "superlikes_daily", label: "Super Likes", description: "Super Likes incluidos cada día.", group: "Descubrimiento", kind: "quota", unit: "Super Likes", status: "operational", next_phase: null },
+  { key: "boosts_monthly", label: "Boost incluidos", description: "Boost incluidos cada mes; las compras adicionales se gestionan aparte.", group: "Visibilidad", kind: "quota", unit: "Boost", status: "operational", next_phase: null },
+  { key: "likes_received_full", label: "Todos los likes recibidos", description: "Permite ver sin recortes quién ha dado Like.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "rewind", label: "Deshacer", description: "Recupera la última decisión de Explorar.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "invisible", label: "Modo invisible", description: "Control de visibilidad del perfil validado por el servidor.", group: "Privacidad", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "advanced_filters", label: "Filtros avanzados", description: "Amplía los criterios disponibles en los filtros.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
-  { key: "read_receipts_monthly", label: "Confirmaciones de lectura", description: "Confirmaciones de lectura incluidas cada mes.", group: "Conversaciones", kind: "quota", unit: "lecturas", status: "operational", next_phase: "V998" },
+  { key: "read_receipts_monthly", label: "Confirmaciones de lectura", description: "Confirmaciones de lectura incluidas cada mes.", group: "Conversaciones", kind: "quota", unit: "lecturas", status: "operational", next_phase: null },
   { key: "traveler_current", label: "Modo viajero actual", description: "Duración máxima de un viaje activo.", group: "Modo viajero", kind: "quota", unit: "días", status: "prepared", next_phase: "V1000" },
   { key: "traveler_future", label: "Viajes futuros", description: "Viajes que se pueden dejar programados.", group: "Modo viajero", kind: "quota", unit: "viajes", status: "prepared", next_phase: "V1000" },
   { key: "traveler_city_limit", label: "Ciudades por itinerario", description: "Ciudades admitidas dentro de un mismo viaje.", group: "Modo viajero", kind: "quota", unit: "ciudades", status: "prepared", next_phase: "V1000" },
   { key: "audio_calls", label: "Llamadas de voz", description: "Llamadas de audio dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
   { key: "video_calls", label: "Videollamadas", description: "Videollamadas dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
-  { key: "priority_support", label: "Soporte prioritario", description: "Prioridad de atención en soporte.", group: "Soporte", kind: "boolean", unit: null, status: "prepared", next_phase: "V998" },
+  { key: "priority_support", label: "Soporte prioritario", description: "Prioridad de atención en soporte.", group: "Soporte", kind: "boolean", unit: null, status: "operational", next_phase: null },
 ]);
 const FEATURE_BY_KEY_V997 = new Map(FEATURE_CATALOG_V997.map((feature) => [feature.key, feature]));
 
@@ -1815,6 +1815,15 @@ async function migrate() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (plan_code, feature_key),
       INDEX idx_entitlement_feature (feature_key)
+    )`,
+    `CREATE TABLE IF NOT EXISTS plan_usage_counters (
+      user_id INT NOT NULL,
+      feature_key VARCHAR(64) NOT NULL,
+      period_key VARCHAR(20) NOT NULL,
+      used_count INT UNSIGNED NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, feature_key, period_key),
+      INDEX idx_usage_feature_period (feature_key, period_key)
     )`,
     `CREATE TABLE IF NOT EXISTS subscriptions (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2239,6 +2248,7 @@ async function migrate() {
       );
     }
   }
+  await refreshInvisibleEntitlementsV998();
 
   // V965 · Reconciliación para instalaciones que ya tenían la tabla de
   // auditoría V824. MySQL no admite ADD COLUMN IF NOT EXISTS en todas las
@@ -3977,6 +3987,7 @@ async function purgeUserData(id, { keepBilling = true } = {}) {
     ["DELETE FROM chat_read_credits WHERE user_id=?", [uid]],
     ["DELETE FROM chat_read_purchases WHERE user_id=?", [uid]],
     ["DELETE FROM chat_read_reveals WHERE user_id=?", [uid]],
+    ["DELETE FROM plan_usage_counters WHERE user_id=?", [uid]],
     ["DELETE FROM user_restrictions WHERE user_id=?", [uid]],
     ["DELETE FROM user_gps WHERE user_id=?", [uid]],
     ["DELETE FROM user_2fa WHERE user_id=?", [uid]],
@@ -4061,6 +4072,121 @@ async function entitlementMatrixV997(planCodes = PLAN_CODES_V997) {
   return matrix;
 }
 
+function entitlementPeriodKeyV998(period) {
+  const now = new Date();
+  const day = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")}`;
+  return period === "day" ? day : day.slice(0, 7);
+}
+
+async function getPlanEntitlementV998(planCode, featureKey) {
+  const normalizedPlan = PLAN_CODES_V997.includes(String(planCode || "").toLowerCase())
+    ? String(planCode).toLowerCase() : "free";
+  if (!FEATURE_BY_KEY_V997.has(featureKey)) return null;
+  const matrix = await entitlementMatrixV997([normalizedPlan]);
+  return matrix[normalizedPlan][featureKey];
+}
+
+async function getUserEntitlementV998(userId, featureKey) {
+  const [[user]] = await pool.query("SELECT plan FROM users WHERE id=? LIMIT 1", [userId]);
+  if (!user) return null;
+  return getPlanEntitlementV998(user.plan, featureKey);
+}
+
+async function getUsageCounterV998(userId, featureKey, period) {
+  const periodKey = entitlementPeriodKeyV998(period);
+  const [[row]] = await pool.query(
+    "SELECT used_count FROM plan_usage_counters WHERE user_id=? AND feature_key=? AND period_key=? LIMIT 1",
+    [userId, featureKey, periodKey]
+  );
+  return { period_key: periodKey, used: Number(row?.used_count || 0) };
+}
+
+// Reserva una unidad con bloqueo de fila. Así dos acciones simultáneas no
+// pueden superar una cuota. Los permisos ilimitados no crean contadores.
+async function consumeEntitlementV998(userId, featureKey) {
+  const entitlement = await getUserEntitlementV998(userId, featureKey);
+  if (!entitlement || !entitlement.enabled) return { ok: false, entitlement, used: 0, remaining: 0 };
+  if (entitlement.unlimited) return { ok: true, entitlement, used: 0, remaining: null, unlimited: true };
+  const quota = Math.max(0, Number(entitlement.quota || 0));
+  const periodKey = entitlementPeriodKeyV998(entitlement.period);
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.execute(
+      "INSERT IGNORE INTO plan_usage_counters (user_id,feature_key,period_key,used_count) VALUES (?,?,?,0)",
+      [userId, featureKey, periodKey]
+    );
+    const [[row]] = await conn.query(
+      "SELECT used_count FROM plan_usage_counters WHERE user_id=? AND feature_key=? AND period_key=? FOR UPDATE",
+      [userId, featureKey, periodKey]
+    );
+    const used = Number(row?.used_count || 0);
+    if (used >= quota) {
+      await conn.rollback();
+      return { ok: false, entitlement, used, remaining: 0 };
+    }
+    await conn.execute(
+      "UPDATE plan_usage_counters SET used_count=used_count+1 WHERE user_id=? AND feature_key=? AND period_key=?",
+      [userId, featureKey, periodKey]
+    );
+    await conn.commit();
+    return { ok: true, entitlement, used: used + 1, remaining: Math.max(0, quota - used - 1) };
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+async function refundEntitlementV998(userId, featureKey, period) {
+  const periodKey = entitlementPeriodKeyV998(period);
+  await pool.execute(
+    "UPDATE plan_usage_counters SET used_count=GREATEST(0,used_count-1) WHERE user_id=? AND feature_key=? AND period_key=?",
+    [userId, featureKey, periodKey]
+  );
+}
+
+async function reserveNewChatV998(userId, conversationId) {
+  const [[sent]] = await pool.query(
+    "SELECT id FROM messages WHERE conversation_id=? AND sender_id=? LIMIT 1",
+    [conversationId, userId]
+  );
+  if (sent) return { ok: true, reserved: false };
+  const usage = await consumeEntitlementV998(userId, "chats_monthly");
+  return { ...usage, reserved: !!usage.ok };
+}
+
+async function releaseNewChatV998(userId, reservation) {
+  if (!reservation?.reserved || reservation?.unlimited) return;
+  await refundEntitlementV998(userId, "chats_monthly", reservation.entitlement?.period || "month");
+}
+
+async function entitlementUsageV998(userId, featureKey, entitlement) {
+  if (!entitlement?.enabled) return { used: 0, remaining: 0 };
+  if (featureKey === "profiles_visible") {
+    const [[row]] = await pool.query("SELECT COUNT(*) c FROM profile_views WHERE viewer_id=?", [userId]);
+    const used = Number(row?.c || 0);
+    return { used, remaining: entitlement.unlimited ? null : Math.max(0, Number(entitlement.quota || 0) - used) };
+  }
+  if (featureKey === "superlikes_daily" || featureKey === "chats_monthly") {
+    const usage = await getUsageCounterV998(userId, featureKey, entitlement.period);
+    return { used: usage.used, remaining: entitlement.unlimited ? null : Math.max(0, Number(entitlement.quota || 0) - usage.used) };
+  }
+  if (featureKey === "read_receipts_monthly") {
+    const status = await getReadStatus(userId);
+    return { used: status.free_used, remaining: status.unlimited ? null : status.free_remaining };
+  }
+  if (featureKey === "boosts_monthly") {
+    const status = await getBoostStatus(userId);
+    return { used: status.free_used, remaining: status.unlimited ? null : status.free_remaining };
+  }
+  if (entitlement.quota != null) {
+    return { used: 0, remaining: entitlement.unlimited ? null : Number(entitlement.quota || 0) };
+  }
+  return { used: null, remaining: null };
+}
+
 // Permisos efectivos de la cuenta. La verificación se entrega en un bloque
 // separado para que ningún cliente pueda confundir KYC con una ventaja de pago.
 app.get("/api/my/entitlements", wrap(async (req, res) => {
@@ -4076,8 +4202,11 @@ app.get("/api/my/entitlements", wrap(async (req, res) => {
   const matrix = await entitlementMatrixV997([planCode]);
   const features = {};
   for (const feature of FEATURE_CATALOG_V997) {
+    const entitlement = matrix[planCode][feature.key];
+    const usage = await entitlementUsageV998(uid, feature.key, entitlement);
     features[feature.key] = {
-      ...matrix[planCode][feature.key],
+      ...entitlement,
+      ...usage,
       status: feature.status,
       next_phase: feature.next_phase,
     };
@@ -4141,6 +4270,7 @@ app.put("/api/admin/plan-entitlements/:planCode/:featureKey", requireAdmin, wrap
      ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), quota=VALUES(quota), period=VALUES(period)`,
     [planCode, featureKey, req.body.enabled ? 1 : 0, quota, period]
   );
+  if (featureKey === "invisible") await refreshInvisibleEntitlementsV998();
   await logActivity("admin", `Prestación ${featureKey} actualizada para ${planCode}`);
   const matrix = await entitlementMatrixV997([planCode]);
   res.json({ ok: true, entitlement: matrix[planCode][featureKey] });
@@ -4278,9 +4408,12 @@ app.post("/api/tickets", wrap(async (req, res) => {
   const subject = String(b.subject || "").trim().slice(0, 200);
   const message = String(b.message || "").trim().slice(0, 8000);
   const category = String(b.category || "other").trim().slice(0, 40);
-  const priority = ["low", "med", "high"].includes(b.priority) ? b.priority : "low";
   const attachments = Math.min(parseInt(b.attachments || 0, 10) || 0, 5);
-  const userId = b.user_id ? parseInt(b.user_id, 10) : null;
+  const userId = readMyUserIdSigned(req) || null;
+  const priorityEntitlement = userId ? await getUserEntitlementV998(userId, "priority_support") : null;
+  const prioritySupport = !!priorityEntitlement?.enabled;
+  const requestedPriority = ["low", "med"].includes(b.priority) ? b.priority : "low";
+  const priority = prioritySupport ? "high" : requestedPriority;
   if (!name || !email || !subject || !message)
     return res.status(400).json({ error: "missing_fields" });
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -4307,7 +4440,7 @@ app.post("/api/tickets", wrap(async (req, res) => {
       priority: prioLabel,
     }).catch(() => {});
   } catch {}
-  res.json({ ok: true, id: r.insertId, ref });
+  res.json({ ok: true, id: r.insertId, ref, priority_support: prioritySupport });
 }));
 
 /* ============================================================
@@ -8859,7 +8992,8 @@ app.get("/api/admin/read-credits", wrap(async (req, res) => {
      ORDER BY (COALESCE(cc.credits,0) + COALESCE(cc.used_free,0)) DESC, u.id DESC
      LIMIT 200`
   );
-  res.json({ rows, packs: readPacks(), free_per_month: parseInt(getSetting("chat.reads.free_per_month","10"),10), currency: getSetting("chat.reads.currency","EUR") });
+  const freeReads = await getPlanEntitlementV998("free", "read_receipts_monthly");
+  res.json({ rows, packs: readPacks(), free_per_month: Number(freeReads?.quota || 0), currency: getSetting("chat.reads.currency","EUR") });
 }));
 
 // GET /api/admin/read-credits/:uid → details + purchases + recent reveals for a user
@@ -10619,6 +10753,14 @@ const PRIVACY_KEYS = new Set([
 ]);
 const INVISIBLE_PLAN_CODES = new Set(["premium", "gold", "platinum"]);
 
+async function refreshInvisibleEntitlementsV998() {
+  const [rows] = await pool.query(
+    "SELECT plan_code FROM plan_entitlements WHERE feature_key='invisible' AND enabled=1"
+  );
+  INVISIBLE_PLAN_CODES.clear();
+  rows.forEach((row) => INVISIBLE_PLAN_CODES.add(String(row.plan_code || "").toLowerCase()));
+}
+
 // Parsea el JSON almacenado en users.privacy_hidden → objeto {key:true}.
 function parsePrivacy(raw) {
   if (!raw) return {};
@@ -10646,7 +10788,7 @@ function hasInvisiblePlan(plan) {
 function applyInvisibleDiscoveryFilter(where, params, viewerId) {
   const storedInvisible =
     "COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'";
-  const entitled = "LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')";
+  const entitled = "EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)";
   if (viewerId) {
     where.push(`(NOT (${storedInvisible} AND ${entitled}) OR EXISTS (
       SELECT 1 FROM likes iv
@@ -10990,7 +11132,7 @@ app.get("/api/discover/facets", wrap(async (req, res) => {
         WHERE u.zone=? AND u.status='active' AND (u.role='user' OR u.role IS NULL)
           AND NOT (
             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
-            AND LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')
+            AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
           )
           AND u.city IS NOT NULL AND TRIM(u.city) <> ''
         GROUP BY u.city ORDER BY count DESC, u.city ASC LIMIT 200`,
@@ -11005,7 +11147,7 @@ app.get("/api/discover/facets", wrap(async (req, res) => {
         WHERE u.zone=? AND u.status='active' AND (u.role='user' OR u.role IS NULL)
           AND NOT (
             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
-            AND LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')
+            AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
           )
           AND u.ethnicity IS NOT NULL AND TRIM(u.ethnicity) <> ''
         GROUP BY u.ethnicity ORDER BY count DESC, u.ethnicity ASC LIMIT 60`,
@@ -11350,14 +11492,43 @@ app.post("/api/my/like", wrap(async (req, res) => {
   );
   if (!peer) return res.status(404).json({ error: "target_not_found" });
 
+  let superReservation = null;
+  if (type === "super") {
+    const [[previous]] = await pool.query(
+      "SELECT type FROM likes WHERE from_user=? AND to_user=? LIMIT 1", [me, target]
+    );
+    if (previous?.type !== "super") {
+      superReservation = await consumeEntitlementV998(me, "superlikes_daily");
+      if (!superReservation.ok) {
+        return res.status(402).json({
+          ok: false,
+          error: "quota_exhausted",
+          feature: "superlikes_daily",
+          quota: Number(superReservation.entitlement?.quota || 0),
+          used: superReservation.used,
+          remaining: superReservation.remaining,
+          message: "Has usado todos los Super Likes incluidos hoy.",
+        });
+      }
+    }
+  }
+
   // Guardar/actualizar la reacción (idempotente por UNIQUE (from_user,to_user))
   // V631 · affectedRows: 1 = fila NUEVA, 2 = actualización de una ya existente.
   // Solo notificamos "like recibido" en la campana cuando el like es NUEVO, para
   // no repetir avisos si el usuario reacciona varias veces al mismo perfil.
-  const [likeRes] = await pool.execute(
-    "INSERT INTO likes (from_user, to_user, type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE type=VALUES(type), created_at=NOW()",
-    [me, target, type]
-  );
+  let likeRes;
+  try {
+    [likeRes] = await pool.execute(
+      "INSERT INTO likes (from_user, to_user, type) VALUES (?,?,?) ON DUPLICATE KEY UPDATE type=VALUES(type), created_at=NOW()",
+      [me, target, type]
+    );
+  } catch (error) {
+    if (superReservation && !superReservation.unlimited) {
+      await refundEntitlementV998(me, "superlikes_daily", superReservation.entitlement?.period || "day");
+    }
+    throw error;
+  }
   const isNewLike = likeRes && likeRes.affectedRows === 1;
 
   // Un "pass" nunca genera match
@@ -11481,10 +11652,8 @@ app.post("/api/my/like/undo", wrap(async (req, res) => {
   const me = readMyUserId(req);
   if (!me) return res.status(401).json({ error: "unauthorized" });
 
-  // Rebobinar es Premium: los planes de pago lo desbloquean.
-  const [[meRow]] = await pool.query("SELECT plan FROM users WHERE id=? LIMIT 1", [me]);
-  const plan = String((meRow && meRow.plan) || "free").toLowerCase();
-  if (plan === "free") return res.status(402).json({ error: "premium_required", feature: "rewind" });
+  const rewind = await getUserEntitlementV998(me, "rewind");
+  if (!rewind?.enabled) return res.status(402).json({ error: "premium_required", feature: "rewind" });
 
   // Localiza la reacción a deshacer: por target si se indica, o la más reciente.
   const target = parseInt(req.body?.target_id, 10);
@@ -11557,7 +11726,22 @@ app.get("/api/my/likes", wrap(async (req, res) => {
     [me, me, me, me, me]
   );
   rows.forEach(applyPrivacyToPublicRow);
-  res.json(rows);
+  const fullLikes = await getUserEntitlementV998(me, "likes_received_full");
+  if (fullLikes?.enabled) return res.json(rows);
+  res.json(rows.map((row, index) => index < 2 ? row : {
+    id: null,
+    name: "Perfil oculto",
+    age: null,
+    city: null,
+    photo_url: null,
+    verified: false,
+    online: false,
+    plan: null,
+    type: row.type,
+    created_at: row.created_at,
+    is_match: false,
+    locked: true,
+  }));
 }));
 
 // GET /api/my/matches → mis matches
@@ -11589,7 +11773,7 @@ app.get("/api/my/favorites", wrap(async (req, res) => {
         AND (
           NOT (
             COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
-            AND LOWER(COALESCE(u.plan,'free')) IN ('premium','gold','platinum')
+            AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
           )
           OR EXISTS (SELECT 1 FROM likes iv WHERE iv.from_user=u.id AND iv.to_user=? AND iv.type IN ('like','super'))
         )
@@ -11647,6 +11831,26 @@ app.post("/api/my/profile-views", wrap(async (req, res) => {
   if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
   const [[user]] = await pool.query("SELECT id FROM users WHERE id=? AND status='active' LIMIT 1", [target]);
   if (!user) return res.status(404).json({ error: "target_not_found" });
+  const [[existingView]] = await pool.query(
+    "SELECT target_id FROM profile_views WHERE viewer_id=? AND target_id=? LIMIT 1", [me, target]
+  );
+  if (!existingView) {
+    const entitlement = await getUserEntitlementV998(me, "profiles_visible");
+    const [[countRow]] = await pool.query("SELECT COUNT(*) c FROM profile_views WHERE viewer_id=?", [me]);
+    const used = Number(countRow?.c || 0);
+    const quota = Number(entitlement?.quota || 0);
+    if (!entitlement?.enabled || (!entitlement.unlimited && used >= quota)) {
+      return res.status(402).json({
+        ok: false,
+        error: "quota_exhausted",
+        feature: "profiles_visible",
+        quota,
+        used,
+        remaining: 0,
+        message: "Has alcanzado el límite de perfiles visibles de tu plan.",
+      });
+    }
+  }
   await pool.execute(
     `INSERT INTO profile_views (viewer_id,target_id,view_count,first_viewed_at,last_viewed_at)
      VALUES (?,?,1,NOW(),NOW())
@@ -11657,7 +11861,19 @@ app.post("/api/my/profile-views", wrap(async (req, res) => {
     "SELECT target_id,view_count,first_viewed_at,last_viewed_at FROM profile_views WHERE viewer_id=? AND target_id=? LIMIT 1",
     [me, target]
   );
-  res.json({ ok: true, view: row });
+  const entitlement = await getUserEntitlementV998(me, "profiles_visible");
+  const [[countRow]] = await pool.query("SELECT COUNT(*) c FROM profile_views WHERE viewer_id=?", [me]);
+  const used = Number(countRow?.c || 0);
+  res.json({
+    ok: true,
+    view: row,
+    usage: {
+      quota: entitlement?.quota ?? 0,
+      used,
+      remaining: entitlement?.unlimited ? null : Math.max(0, Number(entitlement?.quota || 0) - used),
+      unlimited: !!entitlement?.unlimited,
+    },
+  });
 }));
 
 /* ---- Administración de vistos y favoritos por usuario ---- V980 */
@@ -12914,15 +13130,12 @@ async function ensureBoostCreditsRow(uid) {
   );
 }
 
-// Cuota mensual gratis según el plan. Gold: boost.free_per_month.gold (5 por
-// defecto). Platinum: ilimitado si boost.platinum_unlimited. Free/Premium: 0.
-function boostFreePerMonth(plan) {
-  const p = String(plan || "free").toLowerCase();
-  if (p === "gold") return Math.max(0, parseInt(getSetting("boost.free_per_month.gold", "5"), 10) || 0);
-  return 0;
-}
-function boostUnlimited(plan) {
-  return String(plan || "").toLowerCase() === "platinum" && isTrue("boost.platinum_unlimited", true);
+async function boostAllowanceV998(plan) {
+  const entitlement = await getPlanEntitlementV998(plan, "boosts_monthly");
+  return {
+    unlimited: !!entitlement?.enabled && !!entitlement?.unlimited,
+    monthly: entitlement?.enabled && !entitlement?.unlimited ? Math.max(0, Number(entitlement.quota || 0)) : 0,
+  };
 }
 
 // Estado de la bolsa de Boost. No consume nada, solo informa.
@@ -12932,8 +13145,9 @@ async function getBoostStatus(uid) {
     "SELECT plan, TIMESTAMPDIFF(SECOND, NOW(), boost_until) AS active_left FROM users WHERE id=? LIMIT 1", [uid]
   );
   const plan = (user && user.plan) || "free";
-  const unlimited = boostUnlimited(plan);
-  const freeMonthly = boostFreePerMonth(plan);
+  const allowance = await boostAllowanceV998(plan);
+  const unlimited = allowance.unlimited;
+  const freeMonthly = allowance.monthly;
   const [[row]] = await pool.query("SELECT used_month, credits FROM boost_credits WHERE user_id=?", [uid]);
   const used = row ? Number(row.used_month) : 0;
   const bought = row ? Number(row.credits) : 0;
@@ -13210,9 +13424,10 @@ app.get("/api/admin/boost/credits", wrap(async (req, res) => {
       ORDER BY (u.boost_until > NOW()) DESC, (COALESCE(bc.credits,0)+COALESCE(bc.used_month,0)) DESC, u.id DESC
       LIMIT 200`
   );
-  const out = rows.map((u) => {
-    const freeMonthly = boostFreePerMonth(u.plan);
-    const unlimited = boostUnlimited(u.plan);
+  const out = await Promise.all(rows.map(async (u) => {
+    const allowance = await boostAllowanceV998(u.plan);
+    const freeMonthly = allowance.monthly;
+    const unlimited = allowance.unlimited;
     const activeLeft = u.active_left != null && Number(u.active_left) > 0 ? Number(u.active_left) : 0;
     return {
       ...u,
@@ -13222,12 +13437,14 @@ app.get("/api/admin/boost/credits", wrap(async (req, res) => {
       active: activeLeft > 0,
       active_seconds_left: activeLeft,
     };
-  });
+  }));
+  const goldAllowance = await boostAllowanceV998("gold");
+  const platinumAllowance = await boostAllowanceV998("platinum");
   res.json({
     rows: out,
     packs: boostPacks(),
-    free_gold: boostFreePerMonth("gold"),
-    platinum_unlimited: isTrue("boost.platinum_unlimited", true),
+    free_gold: goldAllowance.monthly,
+    platinum_unlimited: platinumAllowance.unlimited,
     duration_min: Math.max(1, parseInt(getSetting("boost.duration_min", String(BOOST_DEFAULT_DURATION_MIN)), 10) || BOOST_DEFAULT_DURATION_MIN),
     currency: getSetting("boost.currency", "EUR"),
   });
@@ -18291,9 +18508,9 @@ async function getReadStatus(uid) {
   // valor por defecto "hetero" aunque en la BD (y en el panel) fuera "lgtb".
   const [[user]] = await pool.query("SELECT plan, zone FROM users WHERE id=?", [uid]);
   const plan = (user && user.plan) || "free";
-  const premiumUnlimited = isTrue("chat.reads.premium_unlimited", true);
-  const unlimited = premiumUnlimited && plan && plan !== "free";
-  const freeMonthly = Math.max(0, parseInt(getSetting("chat.reads.free_per_month","10"),10) || 0);
+  const entitlement = await getPlanEntitlementV998(plan, "read_receipts_monthly");
+  const unlimited = !!entitlement?.enabled && !!entitlement?.unlimited;
+  const freeMonthly = entitlement?.enabled && !unlimited ? Math.max(0, Number(entitlement.quota || 0)) : 0;
   const [[row]] = await pool.query("SELECT used_free, credits FROM chat_read_credits WHERE user_id=?", [uid]);
   const used_free = row ? Number(row.used_free) : 0;
   const credits = row ? Number(row.credits) : 0;
@@ -18517,7 +18734,6 @@ app.put("/api/admin/reads/packs", wrap(async (req, res) => {
 app.get("/api/my/ads-context", wrap(async (req, res) => {
   // Fallo seguro: si falta la preferencia, no se muestran anuncios.
   const globalEnabled = isTrue("ads.enabled", false);
-  const onlyFree = isTrue("ads.only_free_plan", true);
   const interstitialEnabled = isTrue("ads.interstitial_enabled", false);
   const freq = parseInt(getSetting("ads.interstitial_frequency","5"),10) || 5;
   const cooldown = parseInt(getSetting("ads.interstitial_cooldown_s","120"),10) || 120;
@@ -18555,15 +18771,16 @@ app.get("/api/my/ads-context", wrap(async (req, res) => {
       if (rows.length) { plan = rows[0].plan || "free"; override = rows[0].ads_override || "default"; }
     } catch(_) {}
   }
+  const adFree = await getPlanEntitlementV998(plan, "ads_free");
 
-  // Decisión final: override manda; luego enabled global; luego onlyFree
+  // Decisión final: override individual, configuración global y finalmente la
+  // prestación central "Sin anuncios" del plan.
   let show;
   if (override === "force_off") show = false;
   else if (override === "force_on") show = globalEnabled === true; // sigue exigiendo que la red esté activa
   else {
     if (!globalEnabled) show = false;
-    else if (onlyFree && plan && plan !== "free") show = false;
-    else show = true;
+    else show = !adFree?.enabled;
   }
 
   res.json({
@@ -19327,10 +19544,26 @@ app.post("/api/my/messages", wrap(async (req, res) => {
   const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
   if (!c.length) return res.status(404).json({ error: "not_found" });
   if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
-  const [r] = await pool.execute(
-    "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url) VALUES (?,?,?,?,?)",
-    [cid, me, body, media_type, media_url]
-  );
+  const chatReservation = await reserveNewChatV998(me, cid);
+  if (!chatReservation.ok) return res.status(402).json({
+    ok: false,
+    error: "quota_exhausted",
+    feature: "chats_monthly",
+    quota: Number(chatReservation.entitlement?.quota || 0),
+    used: chatReservation.used,
+    remaining: chatReservation.remaining,
+    message: "Has alcanzado el límite de chats nuevos de este mes. Puedes seguir escribiendo en tus conversaciones actuales.",
+  });
+  let r;
+  try {
+    [r] = await pool.execute(
+      "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url) VALUES (?,?,?,?,?)",
+      [cid, me, body, media_type, media_url]
+    );
+  } catch (error) {
+    await releaseNewChatV998(me, chatReservation);
+    throw error;
+  }
   await pool.execute("UPDATE conversations SET last_message_at=NOW() WHERE id=?", [cid]);
   try {
     await logStream(me, "chat_send", {
@@ -20432,9 +20665,9 @@ const adminExtra = require("./features_admin_extra"); // V712 · endpoints admin
 const adminExtra2 = require("./features_admin_extra2"); // V713 · 2º lote endpoints admin (mod/tickets/pagos/stats/dispositivos)
 const webauthn = require("./features_webauthn"); // V714 · login con huella / Face ID (WebAuthn)
 const billing = require("./features_billing"); // V933 · factura en PDF + informe imprimible
-phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage, enforceKycGate }); // V591 · +notifyNewMessage · V731 · +enforceKycGate
+phase1.register(app, pool, { readMyUserId, wrap, requireAdmin, notifyNewMessage, enforceKycGate, reserveNewChatV998, releaseNewChatV998 }); // V591 · +notifyNewMessage · V731 · +enforceKycGate · V998 cuotas
 phase2.register(app, pool, { readMyUserId, wrap, requireAdmin });
-phase3.register(app, pool, { readMyUserId, wrap, requireAdmin });
+phase3.register(app, pool, { readMyUserId, wrap, requireAdmin, getUserEntitlementV998 });
 phase4.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase5.register(app, pool, { readMyUserId, wrap, requireAdmin });
 phase6.register(app, pool, { readMyUserId, wrap, requireAdmin });
