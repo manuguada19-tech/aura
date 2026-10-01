@@ -1515,6 +1515,124 @@ textarea.input { resize: vertical; min-height: 60px; }
 .plan-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
 .plan-form { display: flex; flex-direction: column; gap: 12px; }
 
+/* V997 · Matriz central de prestaciones por plan. No reutiliza las tarjetas de
+   precio: aquí se edita el permiso estructurado que consume la API. */
+.entitlement-section {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0 24px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--panel);
+}
+.entitlement-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+}
+.entitlement-heading .eyebrow {
+  color: var(--brand-1);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .12em;
+}
+.entitlement-heading h3 { margin: 4px 0 3px; font-size: 19px; }
+.entitlement-heading p { margin: 0; font-size: 12.5px; }
+.entitlement-status-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.ent-status {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.ent-status.operational { color: #34d399; border-color: rgba(52,211,153,.3); background: rgba(16,185,129,.1); }
+.ent-status.prepared { color: #fbbf24; border-color: rgba(251,191,36,.3); background: rgba(245,158,11,.1); }
+.kyc-plan-separation {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid rgba(56,189,248,.28);
+  border-radius: 12px;
+  background: rgba(56,189,248,.07);
+}
+.kyc-plan-separation strong { color: var(--text); font-size: 13px; }
+.kyc-plan-separation span { color: var(--text-soft); font-size: 12px; line-height: 1.45; }
+.entitlement-group {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--panel-2);
+}
+.entitlement-group > summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  color: var(--text);
+  cursor: pointer;
+  list-style-position: inside;
+}
+.entitlement-group > summary span { color: var(--text-muted); font-size: 11px; font-weight: 600; }
+.entitlement-list { display: grid; gap: 1px; border-top: 1px solid var(--border); }
+.entitlement-feature {
+  display: grid;
+  grid-template-columns: minmax(190px, .8fr) minmax(560px, 2fr);
+  gap: 14px;
+  padding: 14px;
+  background: var(--panel);
+}
+.ent-feature-copy { min-width: 0; }
+.ent-feature-title { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.ent-feature-title > strong { color: var(--text); font-size: 13.5px; }
+.ent-feature-copy p { margin: 5px 0 3px; color: var(--text-soft); font-size: 11.5px; line-height: 1.4; }
+.ent-feature-copy small { color: var(--text-muted); font-size: 10.5px; }
+.ent-plan-grid { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 7px; }
+.ent-plan-cell {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.ent-plan-name { color: var(--text); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+.ent-plan-name.premium { color: #f472b6; }
+.ent-plan-name.gold { color: #fbbf24; }
+.ent-plan-name.platinum { color: #a78bfa; }
+.ent-enabled { display: flex; align-items: center; gap: 6px; color: var(--text-soft); font-size: 11.5px; }
+.ent-enabled input { margin: 0; accent-color: var(--brand-1); }
+.ent-quota-row { display: grid; grid-template-columns: minmax(46px, .7fr) minmax(78px, 1.3fr); gap: 5px; }
+.ent-plan-cell .input { min-width: 0; width: 100%; padding: 6px 7px; font-size: 11px; }
+.ent-plan-cell .btn { width: 100%; min-height: 30px; }
+
+@media (max-width: 980px) {
+  .entitlement-feature { grid-template-columns: 1fr; }
+  .ent-plan-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .entitlement-section { margin-inline: -4px; padding: 12px; border-radius: 14px; }
+  .entitlement-heading { display: grid; }
+  .entitlement-status-legend { justify-content: flex-start; }
+  .entitlement-feature { padding: 11px; }
+  .ent-plan-grid { grid-template-columns: 1fr; }
+  .ent-plan-cell { grid-template-columns: minmax(80px, .8fr) minmax(0, 1.2fr); align-items: center; }
+  .ent-plan-cell .ent-plan-name { grid-column: 1; }
+  .ent-plan-cell .ent-enabled { grid-column: 2; justify-self: end; }
+  .ent-plan-cell .ent-quota-row { grid-column: 1 / -1; }
+  .ent-plan-cell .btn { grid-column: 1 / -1; }
+  .ent-status { white-space: normal; }
+}
+
 /* ==================== PLANS v2 (rediseño llamativo) ==================== */
 .plans-grid.v2 {
   display: grid;

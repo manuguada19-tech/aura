@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada y publicada: V996**
+**Fecha de este resumen: 1 octubre 2026 · última publicada: V996 · siguiente preparada: V997**
+
+### V997 (preparada, pendiente de autorización) — Permisos centralizados por plan
+
+- Nuevo catálogo controlado de 16 funciones y cuotas, asociado de forma
+  estructurada a Free, Premium, Gold y Platinum mediante `plan_entitlements`.
+- Nuevo `GET /api/my/entitlements`, que devuelve los permisos efectivos de la
+  cuenta y mantiene la verificación de identidad en un bloque independiente.
+- Suscripciones en Administración incorpora una matriz editable por función y
+  plan, con cuotas, períodos y estado operativo o preparado para V998, V1000 y
+  V1002. Los textos antiguos de `plans.features` quedan solo como copia
+  comercial compatible y ya no sugieren la verificación como ventaja de pago.
+- El seed es aditivo e idempotente: completa funciones nuevas sin sobrescribir
+  cambios posteriores del panel. No activa límites, modo viajero, cobros ni
+  modificaciones sobre usuarios reales.
 
 ### V996 (01/10/2026) — Información legal correcta
 

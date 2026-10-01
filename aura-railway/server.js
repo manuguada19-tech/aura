@@ -1399,6 +1399,8 @@ const ESCRITURA = [
   [/^(POST|PUT|DELETE) \/api\/admin\/users\/[^/]+\/(profile-views|favorites)(\/|$)/, 3],
   // Los catálogos con los que trabaja el equipo de moderación
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/(deletion-reasons|kyc-reasons|mod-rules|mod-templates|user-rules|ticket-macros)(\/|$)/, 3],
+  // V997 · La matriz de prestaciones cambia producto y planes, no moderación.
+  [/^PUT \/api\/admin\/plan-entitlements\/[^/]+\/[^/]+$/, 3],
 ];
 
 /* Nivel que hace falta para esta petición. Devuelve 4 (solo el dueño) cuando no
@@ -1501,6 +1503,78 @@ app.use(async (req, res, next) => {
     res.status(503).json({ error: "admin_2fa_unavailable", message: "No se pudo comprobar el segundo factor." });
   }
 });
+
+/* ============================================================
+   V997 · Catálogo único de prestaciones por plan
+   ------------------------------------------------------------
+   `plans.features` se conserva como texto comercial para no romper clientes
+   antiguos. Los permisos estructurados viven en plan_entitlements y se
+   describen aquí: no se admite crear claves arbitrarias desde Administración.
+
+   KYC no aparece en este catálogo a propósito. Verificar la identidad es una
+   medida de confianza disponible para cualquier cuenta, nunca una ventaja de
+   pago ni un permiso que dependa del plan.
+   ============================================================ */
+const PLAN_CODES_V997 = Object.freeze(["free", "premium", "gold", "platinum"]);
+const ENTITLEMENT_PERIODS_V997 = new Set(["day", "month", "trip"]);
+const FEATURE_CATALOG_V997 = Object.freeze([
+  { key: "profiles_visible", label: "Perfiles visibles", description: "Máximo de perfiles disponibles en Explorar.", group: "Descubrimiento", kind: "quota", unit: "perfiles", status: "operational", next_phase: "V998" },
+  { key: "chats_monthly", label: "Chats nuevos", description: "Conversaciones nuevas que se pueden iniciar cada mes.", group: "Conversaciones", kind: "quota", unit: "chats", status: "prepared", next_phase: "V998" },
+  { key: "ads_free", label: "Sin anuncios", description: "Oculta los espacios publicitarios del producto.", group: "Experiencia", kind: "boolean", unit: null, status: "operational", next_phase: null },
+  { key: "superlikes_daily", label: "Super Likes", description: "Super Likes incluidos cada día.", group: "Descubrimiento", kind: "quota", unit: "Super Likes", status: "prepared", next_phase: "V998" },
+  { key: "boosts_monthly", label: "Boost incluidos", description: "Boost incluidos cada mes; las compras adicionales se gestionan aparte.", group: "Visibilidad", kind: "quota", unit: "Boost", status: "operational", next_phase: "V998" },
+  { key: "likes_received_full", label: "Todos los likes recibidos", description: "Permite ver sin recortes quién ha dado Like.", group: "Descubrimiento", kind: "boolean", unit: null, status: "prepared", next_phase: "V998" },
+  { key: "rewind", label: "Deshacer", description: "Recupera la última decisión de Explorar.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
+  { key: "invisible", label: "Modo invisible", description: "Control de visibilidad del perfil validado por el servidor.", group: "Privacidad", kind: "boolean", unit: null, status: "operational", next_phase: null },
+  { key: "advanced_filters", label: "Filtros avanzados", description: "Amplía los criterios disponibles en los filtros.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
+  { key: "read_receipts_monthly", label: "Confirmaciones de lectura", description: "Confirmaciones de lectura incluidas cada mes.", group: "Conversaciones", kind: "quota", unit: "lecturas", status: "operational", next_phase: "V998" },
+  { key: "traveler_current", label: "Modo viajero actual", description: "Duración máxima de un viaje activo.", group: "Modo viajero", kind: "quota", unit: "días", status: "prepared", next_phase: "V1000" },
+  { key: "traveler_future", label: "Viajes futuros", description: "Viajes que se pueden dejar programados.", group: "Modo viajero", kind: "quota", unit: "viajes", status: "prepared", next_phase: "V1000" },
+  { key: "traveler_city_limit", label: "Ciudades por itinerario", description: "Ciudades admitidas dentro de un mismo viaje.", group: "Modo viajero", kind: "quota", unit: "ciudades", status: "prepared", next_phase: "V1000" },
+  { key: "audio_calls", label: "Llamadas de voz", description: "Llamadas de audio dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
+  { key: "video_calls", label: "Videollamadas", description: "Videollamadas dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
+  { key: "priority_support", label: "Soporte prioritario", description: "Prioridad de atención en soporte.", group: "Soporte", kind: "boolean", unit: null, status: "prepared", next_phase: "V998" },
+]);
+const FEATURE_BY_KEY_V997 = new Map(FEATURE_CATALOG_V997.map((feature) => [feature.key, feature]));
+
+const PLAN_ENTITLEMENT_DEFAULTS_V997 = Object.freeze({
+  free: {
+    profiles_visible: [true, 10, null], chats_monthly: [true, 5, "month"], ads_free: [false, null, null],
+    superlikes_daily: [true, 1, "day"], boosts_monthly: [false, 0, "month"], likes_received_full: [false, null, null],
+    rewind: [false, null, null], invisible: [false, null, null], advanced_filters: [false, null, null],
+    read_receipts_monthly: [true, 10, "month"], traveler_current: [true, 7, "trip"], traveler_future: [false, 0, "trip"],
+    traveler_city_limit: [true, 1, "trip"], audio_calls: [false, null, null], video_calls: [false, null, null],
+    priority_support: [false, null, null],
+  },
+  premium: {
+    profiles_visible: [true, 30, null], chats_monthly: [true, 50, "month"], ads_free: [true, null, null],
+    superlikes_daily: [true, 5, "day"], boosts_monthly: [false, 0, "month"], likes_received_full: [true, null, null],
+    rewind: [true, null, null], invisible: [true, null, null], advanced_filters: [false, null, null],
+    read_receipts_monthly: [true, 100, "month"], traveler_current: [true, 30, "trip"], traveler_future: [true, 1, "trip"],
+    traveler_city_limit: [true, 1, "trip"], audio_calls: [false, null, null], video_calls: [false, null, null],
+    priority_support: [false, null, null],
+  },
+  gold: {
+    profiles_visible: [true, 80, null], chats_monthly: [true, -1, "month"], ads_free: [true, null, null],
+    superlikes_daily: [true, 10, "day"], boosts_monthly: [true, 5, "month"], likes_received_full: [true, null, null],
+    rewind: [true, null, null], invisible: [true, null, null], advanced_filters: [true, null, null],
+    read_receipts_monthly: [true, 500, "month"], traveler_current: [true, 30, "trip"], traveler_future: [true, 2, "trip"],
+    traveler_city_limit: [true, 3, "trip"], audio_calls: [true, null, null], video_calls: [false, null, null],
+    priority_support: [false, null, null],
+  },
+  platinum: {
+    profiles_visible: [true, -1, null], chats_monthly: [true, -1, "month"], ads_free: [true, null, null],
+    superlikes_daily: [true, -1, "day"], boosts_monthly: [true, -1, "month"], likes_received_full: [true, null, null],
+    rewind: [true, null, null], invisible: [true, null, null], advanced_filters: [true, null, null],
+    read_receipts_monthly: [true, -1, "month"], traveler_current: [true, 30, "trip"], traveler_future: [true, 6, "trip"],
+    traveler_city_limit: [true, 10, "trip"], audio_calls: [true, null, null], video_calls: [true, null, null],
+    priority_support: [true, null, null],
+  },
+});
+
+function entitlementCatalogPayloadV997() {
+  return FEATURE_CATALOG_V997.map((feature) => ({ ...feature }));
+}
 
 /* ---------- Schema ---------- */
 async function migrate() {
@@ -1731,6 +1805,16 @@ async function migrate() {
       features JSON NULL,
       enabled BOOLEAN DEFAULT TRUE,
       sort_order INT DEFAULT 0
+    )`,
+    `CREATE TABLE IF NOT EXISTS plan_entitlements (
+      plan_code VARCHAR(40) NOT NULL,
+      feature_key VARCHAR(64) NOT NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 0,
+      quota INT NULL,
+      period VARCHAR(20) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (plan_code, feature_key),
+      INDEX idx_entitlement_feature (feature_key)
     )`,
     `CREATE TABLE IF NOT EXISTS subscriptions (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2139,6 +2223,20 @@ async function migrate() {
       } else {
         throw e;
       }
+    }
+  }
+
+  // V997 · Seed aditivo: INSERT IGNORE rellena claves nuevas sin sobrescribir
+  // ninguna decisión guardada posteriormente desde Administración.
+  for (const planCode of PLAN_CODES_V997) {
+    const planDefaults = PLAN_ENTITLEMENT_DEFAULTS_V997[planCode];
+    for (const feature of FEATURE_CATALOG_V997) {
+      const [enabled, quota, period] = planDefaults[feature.key];
+      await pool.execute(
+        `INSERT IGNORE INTO plan_entitlements (plan_code, feature_key, enabled, quota, period)
+         VALUES (?,?,?,?,?)`,
+        [planCode, feature.key, enabled ? 1 : 0, quota, period]
+      );
     }
   }
 
@@ -3928,6 +4026,124 @@ app.patch("/api/plans/:id", wrap(async (req, res) => {
   await pool.execute(`UPDATE plans SET ${updates.join(", ")} WHERE id=?`, params);
   await logActivity("admin", `Plan actualizado (id ${req.params.id})`);
   res.json({ ok: true });
+}));
+
+// V997 · Devuelve siempre el catálogo completo. Si una instalación antigua
+// todavía no tiene alguna fila, se usa el valor inicial sin escribir durante
+// la lectura; la siguiente migración la insertará de forma idempotente.
+async function entitlementMatrixV997(planCodes = PLAN_CODES_V997) {
+  const wanted = planCodes.filter((code) => PLAN_CODES_V997.includes(code));
+  if (!wanted.length) return {};
+  const placeholders = wanted.map(() => "?").join(",");
+  const [rows] = await pool.query(
+    `SELECT plan_code, feature_key, enabled, quota, period, updated_at
+       FROM plan_entitlements
+      WHERE plan_code IN (${placeholders})`,
+    wanted
+  );
+  const stored = new Map(rows.map((row) => [`${row.plan_code}:${row.feature_key}`, row]));
+  const matrix = {};
+  for (const planCode of wanted) {
+    matrix[planCode] = {};
+    for (const feature of FEATURE_CATALOG_V997) {
+      const fallback = PLAN_ENTITLEMENT_DEFAULTS_V997[planCode][feature.key];
+      const row = stored.get(`${planCode}:${feature.key}`);
+      const quota = row ? (row.quota == null ? null : Number(row.quota)) : fallback[1];
+      matrix[planCode][feature.key] = {
+        enabled: row ? !!row.enabled : !!fallback[0],
+        quota,
+        unlimited: quota === -1,
+        period: row ? (row.period || null) : fallback[2],
+        updated_at: row ? row.updated_at : null,
+      };
+    }
+  }
+  return matrix;
+}
+
+// Permisos efectivos de la cuenta. La verificación se entrega en un bloque
+// separado para que ningún cliente pueda confundir KYC con una ventaja de pago.
+app.get("/api/my/entitlements", wrap(async (req, res) => {
+  const uid = readMyUserId(req);
+  if (!uid) return res.status(401).json({ error: "unauthorized" });
+  const [users] = await pool.query(
+    "SELECT id, plan, verified FROM users WHERE id=? LIMIT 1", [uid]
+  );
+  if (!users.length) return res.status(404).json({ error: "user_not_found" });
+  const user = users[0];
+  const requestedPlan = String(user.plan || "free").toLowerCase();
+  const planCode = PLAN_CODES_V997.includes(requestedPlan) ? requestedPlan : "free";
+  const matrix = await entitlementMatrixV997([planCode]);
+  const features = {};
+  for (const feature of FEATURE_CATALOG_V997) {
+    features[feature.key] = {
+      ...matrix[planCode][feature.key],
+      status: feature.status,
+      next_phase: feature.next_phase,
+    };
+  }
+  res.set("Cache-Control", "private, no-store");
+  res.json({
+    ok: true,
+    plan: planCode,
+    features,
+    identity_verification: {
+      verified: !!user.verified,
+      independent_of_plan: true,
+    },
+  });
+}));
+
+// Matriz de Administración: catálogo controlado + asociación actual por plan.
+app.get("/api/admin/plan-entitlements", requireAdmin, wrap(async (_req, res) => {
+  const [plans] = await pool.query(
+    "SELECT id, code, name, enabled, sort_order FROM plans ORDER BY sort_order"
+  );
+  res.json({
+    ok: true,
+    catalog: entitlementCatalogPayloadV997(),
+    plans: plans.filter((plan) => PLAN_CODES_V997.includes(String(plan.code).toLowerCase())),
+    entitlements: await entitlementMatrixV997(),
+    identity_verification: {
+      independent_of_plan: true,
+      note: "KYC está disponible para todas las cuentas y no se configura en esta matriz.",
+    },
+  });
+}));
+
+app.put("/api/admin/plan-entitlements/:planCode/:featureKey", requireAdmin, wrap(async (req, res) => {
+  const planCode = String(req.params.planCode || "").toLowerCase();
+  const featureKey = String(req.params.featureKey || "").toLowerCase();
+  const feature = FEATURE_BY_KEY_V997.get(featureKey);
+  if (!PLAN_CODES_V997.includes(planCode)) return res.status(400).json({ error: "invalid_plan" });
+  if (!feature) return res.status(400).json({ error: "invalid_feature" });
+  if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "enabled_must_be_boolean" });
+
+  let quota = null;
+  let period = null;
+  if (feature.kind === "quota") {
+    if (req.body.quota == null || req.body.quota === "") {
+      return res.status(400).json({ error: "quota_required" });
+    }
+    quota = Number(req.body.quota);
+    if (!Number.isInteger(quota) || quota < -1) {
+      return res.status(400).json({ error: "invalid_quota", message: "Usa un entero desde 0 o -1 para ilimitado." });
+    }
+    period = req.body.period == null || req.body.period === "" ? null : String(req.body.period);
+    if (period && !ENTITLEMENT_PERIODS_V997.has(period)) {
+      return res.status(400).json({ error: "invalid_period" });
+    }
+  }
+
+  await pool.execute(
+    `INSERT INTO plan_entitlements (plan_code, feature_key, enabled, quota, period)
+     VALUES (?,?,?,?,?)
+     ON DUPLICATE KEY UPDATE enabled=VALUES(enabled), quota=VALUES(quota), period=VALUES(period)`,
+    [planCode, featureKey, req.body.enabled ? 1 : 0, quota, period]
+  );
+  await logActivity("admin", `Prestación ${featureKey} actualizada para ${planCode}`);
+  const matrix = await entitlementMatrixV997([planCode]);
+  res.json({ ok: true, entitlement: matrix[planCode][featureKey] });
 }));
 
 // Reports

@@ -8143,7 +8143,7 @@ async function viewSubscriptions(root){
   } catch (e) { /* silencioso — el hero es un extra */ }
 
   root.appendChild(viewTitle("Suscripciones",
-    "Configura los planes y sus características. Los cambios se guardan al momento.",
+    "Configura precios, textos comerciales y permisos efectivos desde una única matriz.",
     [
       btn("👥 Suscritos actuales", "ghost sm", () => openActiveSubscribers()),
       btn("📉 Churn últimos 30d", "ghost sm", async () => {
@@ -8213,7 +8213,121 @@ async function viewSubscriptions(root){
     return "✨";
   }
 
-  const plans = await api.get("/api/plans");
+  const [plans, entitlementData] = await Promise.all([
+    api.get("/api/plans"),
+    api.get("/api/admin/plan-entitlements"),
+  ]);
+
+  // V997 · Matriz estructurada: ésta es la fuente de permisos por plan.
+  // `plans.features` se conserva más abajo únicamente como copia comercial.
+  const entitlementSection = el("section", { class: "entitlement-section" });
+  entitlementSection.appendChild(el("div", { class: "entitlement-heading" }, [
+    el("div", {}, [
+      el("small", { class: "eyebrow" }, "PERMISOS EFECTIVOS"),
+      el("h3", {}, "Funciones y cuotas por plan"),
+      el("p", { class: "muted" }, "Cada cambio se aplica a la configuración estructurada. -1 significa ilimitado."),
+    ]),
+    el("div", { class: "entitlement-status-legend" }, [
+      el("span", { class: "ent-status operational" }, "Operativa"),
+      el("span", { class: "ent-status prepared" }, "Preparada para la siguiente fase"),
+    ]),
+  ]));
+  entitlementSection.appendChild(el("aside", { class: "kyc-plan-separation" }, [
+    el("strong", {}, "Verificación de identidad separada de los planes"),
+    el("span", {}, entitlementData.identity_verification?.note || "KYC está disponible para todas las cuentas y nunca es una ventaja de pago."),
+  ]));
+
+  const planNames = Object.fromEntries((entitlementData.plans || []).map((plan) => [plan.code, plan.name]));
+  const periodLabels = { "": "Sin período", day: "Por día", month: "Por mes", trip: "Por viaje" };
+  const groups = new Map();
+  (entitlementData.catalog || []).forEach((feature) => {
+    if (!groups.has(feature.group)) groups.set(feature.group, []);
+    groups.get(feature.group).push(feature);
+  });
+
+  function entitlementEditor(planCode, feature) {
+    const saved = entitlementData.entitlements?.[planCode]?.[feature.key] || {};
+    const enabled = el("input", { type: "checkbox", checked: !!saved.enabled, "aria-label": `${feature.label} en ${planNames[planCode] || planCode}` });
+    const controls = [
+      el("label", { class: "ent-enabled" }, [enabled, el("span", {}, "Incluida")]),
+    ];
+    let quota = null;
+    let period = null;
+    if (feature.kind === "quota") {
+      quota = el("input", {
+        class: "input ent-quota", type: "number", min: "-1", step: "1",
+        value: saved.quota == null ? "0" : saved.quota,
+        "aria-label": `Cuota de ${feature.label} en ${planNames[planCode] || planCode}`,
+      });
+      period = el("select", { class: "input ent-period", "aria-label": `Período de ${feature.label}` },
+        Object.entries(periodLabels).map(([value, label]) => el("option", { value, selected: (saved.period || "") === value }, label))
+      );
+      controls.push(el("div", { class: "ent-quota-row" }, [quota, period]));
+    }
+    const save = el("button", { type: "submit", class: "btn ghost xs" }, "Guardar");
+    const form = el("form", {
+      class: "ent-plan-cell",
+      "data-no-autosave": "true",
+      onsubmit: async (event) => {
+        event.preventDefault();
+        save.disabled = true;
+        save.textContent = "Guardando…";
+        try {
+          const body = { enabled: enabled.checked };
+          if (feature.kind === "quota") {
+            body.quota = Number(quota.value);
+            body.period = period.value || null;
+          }
+          const result = await api.put(`/api/admin/plan-entitlements/${planCode}/${feature.key}`, body);
+          Object.assign(saved, result.entitlement || body);
+          save.textContent = "Guardado";
+          setTimeout(() => { if (document.body.contains(save)) save.textContent = "Guardar"; }, 1200);
+        } catch (error) {
+          save.textContent = "Guardar";
+          toast(error.message || "No se pudo guardar");
+        } finally {
+          save.disabled = false;
+        }
+      },
+    }, [
+      el("strong", { class: `ent-plan-name ${planCode}` }, planNames[planCode] || planCode),
+      ...controls,
+      save,
+    ]);
+    return form;
+  }
+
+  for (const [groupName, features] of groups) {
+    const block = el("details", { class: "entitlement-group", open: groupName !== "Modo viajero" }, [
+      el("summary", {}, [
+        el("strong", {}, groupName),
+        el("span", {}, `${features.length} ${features.length === 1 ? "función" : "funciones"}`),
+      ]),
+    ]);
+    const featureList = el("div", { class: "entitlement-list" });
+    features.forEach((feature) => {
+      const phaseText = feature.status === "operational"
+        ? (feature.next_phase ? `Operativa · refuerzo ${feature.next_phase}` : "Operativa")
+        : `Preparada · ${feature.next_phase}`;
+      featureList.appendChild(el("article", { class: "entitlement-feature" }, [
+        el("div", { class: "ent-feature-copy" }, [
+          el("div", { class: "ent-feature-title" }, [
+            el("strong", {}, feature.label),
+            el("span", { class: `ent-status ${feature.status}` }, phaseText),
+          ]),
+          el("p", {}, feature.description),
+          feature.unit ? el("small", {}, `Unidad: ${feature.unit}`) : null,
+        ]),
+        el("div", { class: "ent-plan-grid" },
+          ["free", "premium", "gold", "platinum"].map((planCode) => entitlementEditor(planCode, feature))
+        ),
+      ]));
+    });
+    block.appendChild(featureList);
+    entitlementSection.appendChild(block);
+  }
+  root.appendChild(entitlementSection);
+
   const grid = el("div", { class: "plans-grid v2" });
 
   plans.forEach(p => {
@@ -8265,7 +8379,7 @@ async function viewSubscriptions(root){
       featsPreview.appendChild(el("li", { class: "muted more" }, [ el("span", { class: "feat-ic" }, "➕"), el("span", {}, "y " + ((p.features || []).length - 6) + " más…") ]));
     }
 
-    // Formulario editable (colapsable) — inputs de precio y chips de features.
+    // Formulario editable (colapsable) — precios y textos comerciales legacy.
     let priceM, priceY, discountSel;
     const featChipsWrap = el("div", { class: "feat-chips" });
     const featuresState = Array.isArray(p.features) ? [...p.features] : [];
@@ -8430,7 +8544,6 @@ async function viewSubscriptions(root){
       "Ver quién te ha dado like",
       "Modo incógnito",
       "Filtros avanzados",
-      "Insignia verificada",
       "Soporte prioritario",
       "Videollamadas",
       "Deshacer swipe",
@@ -8448,8 +8561,8 @@ async function viewSubscriptions(root){
 
     form.appendChild(el("div", { class: "feats-editor" }, [
       el("div", { class: "feats-editor-head" }, [
-        el("span", {}, "✨ Características del plan"),
-        el("small", {}, "Arrastra ⋮⋮ para reordenar · Icono automático según el texto"),
+        el("span", {}, "✨ Textos comerciales del plan"),
+        el("small", {}, "Compatibilidad visual: los permisos se editan en la matriz superior. KYC no es una ventaja de plan."),
       ]),
       featChipsWrap,
       el("div", { class: "feat-add-row" }, [
