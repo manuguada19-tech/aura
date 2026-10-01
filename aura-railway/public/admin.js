@@ -4222,13 +4222,27 @@ async function viewProfileVisitsV1005(root) {
     searchTimer = setTimeout(() => { state.q = search.value.trim(); state.offset = 0; refresh(); }, 280);
   });
 
-  const personCell = (id, name, email, photo, invisible) => el("button", {
+  const personCell = (id, name, email, photo, detail, invisible) => el("button", {
     class: "profile-visit-person-v1005", type: "button", onclick: () => openUserDrawer(id, refresh),
+    "aria-label": `Abrir ficha de ${name || `usuario ${id}`}`,
   }, [
     avatar(photo, 34),
-    el("span", {}, [el("strong", {}, name || `#${id}`), el("small", {}, `${email || "Sin email"}${invisible ? " · Invisible" : ""}`)]),
+    el("span", {}, [
+      el("strong", {}, name || `#${id}`),
+      el("small", {}, `#${id} · ${email || "Sin email"}`),
+      el("small", { class: "profile-visit-person-detail-v1006" }, detail),
+      el("small", { class: "profile-visit-person-open-v1006" }, invisible ? "Invisible · Abrir ficha" : "Abrir ficha"),
+    ]),
   ]);
   const sourceNames = { discover: "Explorar", search: "Buscar", nearby: "Cerca", map: "Mapa", chat: "Chat", likes: "Likes", visitors: "Visitantes" };
+  const relationshipCell = (visit) => {
+    const messages = Number(visit.chat_messages || 0);
+    const tags = [el("span", {
+      class: `profile-visit-relation-v1006 ${messages > 0 ? "chatted" : "none"}`,
+    }, messages > 0 ? `Ya hablaron · ${messages} ${messages === 1 ? "mensaje" : "mensajes"}` : "Sin conversación con mensajes")];
+    if (visit.viewer_invisible) tags.push(el("span", { class: "profile-visit-relation-v1006 private" }, "Visita invisible"));
+    return el("div", { class: "profile-visit-relations-v1006" }, tags);
+  };
 
   async function refresh() {
     host.replaceChildren(el("div", { class: "loading" }, "Cargando visitas…"));
@@ -4255,12 +4269,13 @@ async function viewProfileVisitsV1005(root) {
       }
       const table = el("table", { class: "data-table mobile-card-table" });
       table.appendChild(el("thead", {}, el("tr", {}, [
-        el("th", {}, "Visitante"), el("th", {}, "Perfil visitado"), el("th", {}, "Origen"), el("th", {}, "Fecha"),
+        el("th", {}, "Visitante"), el("th", {}, "Perfil visitado"), el("th", {}, "Relación"), el("th", {}, "Origen"), el("th", {}, "Fecha"),
       ])));
       const body = el("tbody");
       rows.forEach((visit) => body.appendChild(el("tr", {}, [
-        el("td", { "data-label": "Visitante" }, personCell(visit.viewer_id, visit.viewer_name, visit.viewer_email, visit.viewer_photo, !!visit.viewer_invisible)),
-        el("td", { "data-label": "Perfil visitado" }, personCell(visit.viewed_id, visit.viewed_name, visit.viewed_email, visit.viewed_photo, false)),
+        el("td", { "data-label": "Visitante" }, personCell(visit.viewer_id, visit.viewer_name, visit.viewer_email, visit.viewer_photo, `${fmt.num(visit.viewer_visits_made)} perfiles completos abiertos`, !!visit.viewer_invisible)),
+        el("td", { "data-label": "Perfil visitado" }, personCell(visit.viewed_id, visit.viewed_name, visit.viewed_email, visit.viewed_photo, `${fmt.num(visit.viewed_visits_received)} visitas · ${fmt.num(visit.viewed_unique_visitors)} visitantes`, false)),
+        el("td", { "data-label": "Relación" }, relationshipCell(visit)),
         el("td", { "data-label": "Origen" }, el("span", { class: "profile-visit-source-v1005" }, sourceNames[visit.source] || visit.source || "—")),
         el("td", { "data-label": "Fecha" }, fmt.date(visit.viewed_at)),
       ])));
@@ -5169,11 +5184,14 @@ async function openUserDrawer(id, onChange) {
         const list = el("div", { class: "profile-visits-user-list-v1005" });
         rows.forEach((visit) => {
           const otherId = incoming ? visit.viewer_id : visit.viewed_id;
+          const messages = Number(visit.chat_messages || 0);
           list.appendChild(el("button", { type: "button", class: "profile-visits-user-row-v1005", onclick: () => openRelatedUser(otherId) }, [
             avatar(visit.photo_url, 34),
             el("span", {}, [
               el("strong", {}, `${visit.name || "Perfil"}${incoming && visit.viewer_invisible ? " · Invisible" : ""}`),
               el("small", {}, `${sourceNames[visit.source] || visit.source || "Aura"} · ${fmt.date(visit.viewed_at)}`),
+              el("span", { class: `profile-visit-relation-v1006 ${messages > 0 ? "chatted" : "none"}` }, messages > 0 ? `Ya hablaron · ${messages} ${messages === 1 ? "mensaje" : "mensajes"}` : "Sin conversación con mensajes"),
+              el("small", { class: "profile-visit-person-open-v1006" }, "Abrir ficha"),
             ]),
           ]));
         });

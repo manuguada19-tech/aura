@@ -12563,12 +12563,18 @@ app.get("/api/admin/profile-visits", requireAdmin, wrap(async (req, res) => {
       `SELECT e.id,e.viewer_id,e.viewed_id,e.source,e.viewed_at,
               va.name viewer_name,va.email viewer_email,va.photo_url viewer_photo,
               vd.name viewed_name,vd.email viewed_email,vd.photo_url viewed_photo,
+              c.id conversation_id,c.last_message_at,
+              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) chat_messages,
+              (SELECT COUNT(*) FROM profile_visit_events vm WHERE vm.viewer_id=e.viewer_id) viewer_visits_made,
+              (SELECT COUNT(*) FROM profile_visit_events vr WHERE vr.viewed_id=e.viewed_id) viewed_visits_received,
+              (SELECT COUNT(DISTINCT vr.viewer_id) FROM profile_visit_events vr WHERE vr.viewed_id=e.viewed_id) viewed_unique_visitors,
               CASE WHEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(va.privacy_hidden),va.privacy_hidden,'{}'),'$.invisible')),'false')='true'
                 AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(va.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
               THEN 1 ELSE 0 END AS viewer_invisible
          FROM profile_visit_events e
          JOIN users va ON va.id=e.viewer_id
          JOIN users vd ON vd.id=e.viewed_id
+         LEFT JOIN conversations c ON (c.user_a=e.viewer_id AND c.user_b=e.viewed_id) OR (c.user_a=e.viewed_id AND c.user_b=e.viewer_id)
          ${where}
         ORDER BY e.viewed_at DESC,e.id DESC LIMIT ? OFFSET ?`, [...args, limit, offset]
     ).then(([items]) => items),
@@ -12588,15 +12594,21 @@ app.get("/api/admin/users/:uid/profile-visits", requireAdmin, wrap(async (req, r
     ).then(([items]) => items),
     pool.query(
       `SELECT e.viewer_id,e.source,e.viewed_at,u.name,u.email,u.photo_url,
+              c.id conversation_id,c.last_message_at,
+              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) chat_messages,
               CASE WHEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
                 AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
               THEN 1 ELSE 0 END AS viewer_invisible
          FROM profile_visit_events e JOIN users u ON u.id=e.viewer_id
+         LEFT JOIN conversations c ON (c.user_a=e.viewer_id AND c.user_b=e.viewed_id) OR (c.user_a=e.viewed_id AND c.user_b=e.viewer_id)
         WHERE e.viewed_id=? ORDER BY e.viewed_at DESC,e.id DESC LIMIT 200`, [uid]
     ).then(([items]) => items),
     pool.query(
-      `SELECT e.viewed_id,e.source,e.viewed_at,u.name,u.email,u.photo_url
+      `SELECT e.viewed_id,e.source,e.viewed_at,u.name,u.email,u.photo_url,
+              c.id conversation_id,c.last_message_at,
+              (SELECT COUNT(*) FROM messages m WHERE m.conversation_id=c.id) chat_messages
          FROM profile_visit_events e JOIN users u ON u.id=e.viewed_id
+         LEFT JOIN conversations c ON (c.user_a=e.viewer_id AND c.user_b=e.viewed_id) OR (c.user_a=e.viewed_id AND c.user_b=e.viewer_id)
         WHERE e.viewer_id=? ORDER BY e.viewed_at DESC,e.id DESC LIMIT 200`, [uid]
     ).then(([items]) => items),
   ]);

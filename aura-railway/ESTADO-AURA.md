@@ -1,6 +1,27 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última publicada: V1001 (`745f868`, build `507bb6945691`) · siguiente preparada: V1002**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1005 (`4dd4e9f`, build `3d76eec35d98`) · siguiente preparada: V1006**
+
+### V1006 (preparada, sin commit ni publicación) — Detalle administrativo de visitas
+
+- «Visitas de perfiles» muestra si visitante y perfil visitado ya hablaron,
+  cuántos mensajes existen y si la visita se hizo con modo invisible.
+- Cada persona incluye su identificador, email administrativo, totales de
+  aperturas o visitas y un acceso explícito a su ficha completa.
+- La ficha individual también indica la relación conversacional en las listas
+  de personas que visitaron al usuario y perfiles que este abrió.
+- Validada sintaxis de servidor y panel, comportamiento con datos simulados y
+  vistas de 390 y 1440 píxeles sin desbordamiento. No se modificaron datos reales.
+
+### V1005 (02/10/2026) — Visitas reales de perfiles
+
+- Registra exclusivamente la apertura del perfil completo, una vez por pareja
+  cada 24 horas; no mezcla estas visitas con impresiones de tarjetas.
+- Perfil incorpora «Quién vio mi perfil» y distingue «Ya hablasteis» cuando
+  existe una conversación con mensajes.
+- Administración dispone de «Visitas de perfiles» y del historial recibido y
+  realizado dentro de cada ficha de usuario.
+- Publicada en commit `4dd4e9f`, build `3d76eec35d98`.
 
 ### V1002 (preparada, sin commit ni publicación) — Llamadas privadas 1-a-1
 
