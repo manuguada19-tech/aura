@@ -1529,9 +1529,9 @@ const FEATURE_CATALOG_V997 = Object.freeze([
   { key: "invisible", label: "Modo invisible", description: "Control de visibilidad del perfil validado por el servidor.", group: "Privacidad", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "advanced_filters", label: "Filtros avanzados", description: "Amplía los criterios disponibles en los filtros.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "read_receipts_monthly", label: "Confirmaciones de lectura", description: "Confirmaciones de lectura incluidas cada mes.", group: "Conversaciones", kind: "quota", unit: "lecturas", status: "operational", next_phase: null },
-  { key: "traveler_current", label: "Modo viajero actual", description: "Duración máxima de un viaje activo.", group: "Modo viajero", kind: "quota", unit: "días", status: "prepared", next_phase: "V1000" },
-  { key: "traveler_future", label: "Viajes futuros", description: "Viajes que se pueden dejar programados.", group: "Modo viajero", kind: "quota", unit: "viajes", status: "prepared", next_phase: "V1000" },
-  { key: "traveler_city_limit", label: "Ciudades por itinerario", description: "Ciudades admitidas dentro de un mismo viaje.", group: "Modo viajero", kind: "quota", unit: "ciudades", status: "prepared", next_phase: "V1000" },
+  { key: "traveler_current", label: "Modo viajero actual", description: "Duración máxima de un viaje activo.", group: "Modo viajero", kind: "quota", unit: "días", status: "operational", next_phase: null },
+  { key: "traveler_future", label: "Viajes futuros", description: "Viajes que se pueden dejar programados.", group: "Modo viajero", kind: "quota", unit: "viajes", status: "operational", next_phase: null },
+  { key: "traveler_city_limit", label: "Ciudades por itinerario", description: "Ciudades admitidas dentro de un mismo viaje.", group: "Modo viajero", kind: "quota", unit: "ciudades", status: "operational", next_phase: null },
   { key: "audio_calls", label: "Llamadas de voz", description: "Llamadas de audio dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
   { key: "video_calls", label: "Videollamadas", description: "Videollamadas dentro de una conversación.", group: "Conversaciones", kind: "boolean", unit: null, status: "operational", next_phase: "V1002" },
   { key: "priority_support", label: "Soporte prioritario", description: "Prioridad de atención en soporte.", group: "Soporte", kind: "boolean", unit: null, status: "operational", next_phase: null },
@@ -1825,6 +1825,29 @@ async function migrate() {
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       PRIMARY KEY (user_id, feature_key, period_key),
       INDEX idx_usage_feature_period (feature_key, period_key)
+    )`,
+    // V1000 · El modo viajero comunica una estancia; nunca sustituye el GPS ni
+    // mueve la posición del usuario. Un viaje puede contener varias paradas.
+    `CREATE TABLE IF NOT EXISTS traveler_trips (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      starts_on DATE NOT NULL,
+      ends_on DATE NOT NULL,
+      enabled TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_traveler_user_dates (user_id, starts_on, ends_on),
+      INDEX idx_traveler_active_dates (enabled, starts_on, ends_on)
+    )`,
+    `CREATE TABLE IF NOT EXISTS traveler_trip_stops (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      trip_id BIGINT NOT NULL,
+      city VARCHAR(120) NOT NULL,
+      starts_on DATE NOT NULL,
+      ends_on DATE NOT NULL,
+      position SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+      UNIQUE KEY uniq_traveler_stop_position (trip_id, position),
+      INDEX idx_traveler_stop_dates (trip_id, starts_on, ends_on)
     )`,
     `CREATE TABLE IF NOT EXISTS subscriptions (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -3989,6 +4012,8 @@ async function purgeUserData(id, { keepBilling = true } = {}) {
     ["DELETE FROM chat_read_purchases WHERE user_id=?", [uid]],
     ["DELETE FROM chat_read_reveals WHERE user_id=?", [uid]],
     ["DELETE FROM plan_usage_counters WHERE user_id=?", [uid]],
+    ["DELETE FROM traveler_trip_stops WHERE trip_id IN (SELECT id FROM traveler_trips WHERE user_id=?)", [uid]],
+    ["DELETE FROM traveler_trips WHERE user_id=?", [uid]],
     ["DELETE FROM user_restrictions WHERE user_id=?", [uid]],
     ["DELETE FROM user_gps WHERE user_id=?", [uid]],
     ["DELETE FROM user_2fa WHERE user_id=?", [uid]],
@@ -10977,6 +11002,259 @@ async function loadDiscoveryFilters(userId) {
   return filters;
 }
 
+/* ============================================================
+   V1000 · Modo viajero real, sin ubicación virtual
+   ------------------------------------------------------------
+   Publica únicamente ciudad y fechas declaradas. No escribe `users.lat/lng`,
+   no altera `user_gps` y no interviene en el cálculo de distancias o del mapa.
+   ============================================================ */
+function travelerDateV1000(value) {
+  const text = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return null;
+  const date = new Date(`${text}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === text ? text : null;
+}
+
+function travelerDaysV1000(start, end) {
+  return Math.floor((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000) + 1;
+}
+
+function todayUtcV1000() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function travelerLimitsV1000(userId) {
+  const [[user]] = await pool.query("SELECT plan FROM users WHERE id=? LIMIT 1", [userId]);
+  if (!user) return null;
+  const plan = PLAN_CODES_V997.includes(String(user.plan || "").toLowerCase()) ? String(user.plan).toLowerCase() : "free";
+  const matrix = await entitlementMatrixV997([plan]);
+  const current = matrix[plan].traveler_current;
+  const future = matrix[plan].traveler_future;
+  const cities = matrix[plan].traveler_city_limit;
+  return {
+    plan,
+    enabled: !!current?.enabled,
+    max_days: Math.max(0, Number(current?.quota || 0)),
+    future_enabled: !!future?.enabled,
+    future_limit: Math.max(0, Number(future?.quota || 0)),
+    city_limit: Math.max(1, Number(cities?.quota || 1)),
+  };
+}
+
+async function travelerTripsV1000(userId, includePast = false) {
+  const [rows] = await pool.query(
+    `SELECT t.id, DATE_FORMAT(t.starts_on,'%Y-%m-%d') AS starts_on,
+            DATE_FORMAT(t.ends_on,'%Y-%m-%d') AS ends_on, t.enabled,
+            DATE_FORMAT(t.created_at,'%Y-%m-%dT%H:%i:%sZ') AS created_at,
+            s.id AS stop_id, s.city,
+            DATE_FORMAT(s.starts_on,'%Y-%m-%d') AS stop_starts_on,
+            DATE_FORMAT(s.ends_on,'%Y-%m-%d') AS stop_ends_on, s.position
+       FROM traveler_trips t
+       LEFT JOIN traveler_trip_stops s ON s.trip_id=t.id
+      WHERE t.user_id=? AND t.enabled=1 ${includePast ? "" : "AND t.ends_on >= CURDATE()"}
+      ORDER BY t.starts_on ASC, t.id ASC, s.position ASC`,
+    [userId]
+  );
+  const trips = [];
+  const byId = new Map();
+  for (const row of rows) {
+    let trip = byId.get(String(row.id));
+    if (!trip) {
+      const today = todayUtcV1000();
+      trip = {
+        id: Number(row.id), starts_on: row.starts_on, ends_on: row.ends_on,
+        status: row.starts_on > today ? "future" : (row.ends_on < today ? "past" : "active"),
+        stops: [],
+      };
+      byId.set(String(row.id), trip);
+      trips.push(trip);
+    }
+    if (row.stop_id != null) {
+      trip.stops.push({
+        id: Number(row.stop_id), city: row.city,
+        starts_on: row.stop_starts_on, ends_on: row.stop_ends_on,
+        position: Number(row.position || 0),
+      });
+    }
+  }
+  return trips;
+}
+
+function normalizeTravelerStopsV1000(rawStops) {
+  if (!Array.isArray(rawStops)) return { error: "stops_required" };
+  const stops = rawStops.map((stop, position) => ({
+    city: String(stop?.city || "").trim().replace(/\s+/g, " ").slice(0, 120),
+    starts_on: travelerDateV1000(stop?.starts_on),
+    ends_on: travelerDateV1000(stop?.ends_on),
+    position,
+  }));
+  if (!stops.length || stops.some((stop) => !stop.city || !stop.starts_on || !stop.ends_on || stop.ends_on < stop.starts_on)) {
+    return { error: "invalid_stops" };
+  }
+  stops.sort((a, b) => a.starts_on.localeCompare(b.starts_on) || a.position - b.position);
+  for (let i = 1; i < stops.length; i += 1) {
+    if (stops[i].starts_on <= stops[i - 1].ends_on) return { error: "overlapping_stops" };
+  }
+  stops.forEach((stop, position) => { stop.position = position; });
+  return { stops };
+}
+
+function travelerPublicSelectV1000() {
+  const active = "tt.enabled=1 AND CURDATE() BETWEEN tt.starts_on AND tt.ends_on";
+  return `,
+    EXISTS(SELECT 1 FROM traveler_trips tt WHERE tt.user_id=u.id AND ${active}) AS traveler_active,
+    (SELECT ts.city FROM traveler_trips tt JOIN traveler_trip_stops ts ON ts.trip_id=tt.id
+      WHERE tt.user_id=u.id AND ${active} AND CURDATE() BETWEEN ts.starts_on AND ts.ends_on
+      ORDER BY ts.position ASC LIMIT 1) AS traveler_city,
+    (SELECT DATE_FORMAT(tt.ends_on,'%Y-%m-%d') FROM traveler_trips tt
+      WHERE tt.user_id=u.id AND ${active} ORDER BY tt.ends_on ASC LIMIT 1) AS traveler_until`;
+}
+
+function normalizeTravelerPublicV1000(row) {
+  if (!row) return row;
+  row.traveler = row.traveler_active ? {
+    active: true,
+    city: row.traveler_city || "",
+    until: row.traveler_until || null,
+  } : null;
+  delete row.traveler_active;
+  delete row.traveler_city;
+  delete row.traveler_until;
+  return row;
+}
+
+function applyTravelerFilterV1000(where, filters) {
+  if (filters && (filters.travelers_only === true || filters.travelers_only === 1 || filters.travelers_only === "1")) {
+    where.push("EXISTS (SELECT 1 FROM traveler_trips tf WHERE tf.user_id=u.id AND tf.enabled=1 AND CURDATE() BETWEEN tf.starts_on AND tf.ends_on)");
+  }
+}
+
+app.get("/api/my/traveler", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const limits = await travelerLimitsV1000(me);
+  if (!limits) return res.status(404).json({ error: "not_found" });
+  const trips = await travelerTripsV1000(me);
+  const futureUsed = trips.filter((trip) => trip.status === "future").length;
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ok: true, limits,
+    usage: { future_used: futureUsed, future_remaining: Math.max(0, limits.future_limit - futureUsed) },
+    trips,
+  });
+}));
+
+async function saveTravelerTripV1000(req, res, tripId = null) {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const limits = await travelerLimitsV1000(me);
+  if (!limits?.enabled || limits.max_days < 1) {
+    return res.status(402).json({ error: "traveler_unavailable", message: "El modo viajero no está disponible en tu plan." });
+  }
+  const normalized = normalizeTravelerStopsV1000(req.body?.stops);
+  if (normalized.error) return res.status(400).json({ error: normalized.error, message: "Revisa las ciudades y sus fechas." });
+  const stops = normalized.stops;
+  if (stops.length > limits.city_limit) {
+    return res.status(402).json({ error: "traveler_city_limit", limit: limits.city_limit, message: `Tu plan admite ${limits.city_limit} ciudad(es) por viaje.` });
+  }
+  const startsOn = stops[0].starts_on;
+  const endsOn = stops[stops.length - 1].ends_on;
+  const duration = travelerDaysV1000(startsOn, endsOn);
+  const today = todayUtcV1000();
+  const id = tripId == null ? null : parseInt(tripId, 10);
+  if (tripId != null && (!Number.isFinite(id) || id <= 0)) return res.status(400).json({ error: "invalid_trip" });
+  // Un viaje nuevo empieza hoy o después. Al editar uno que ya está activo se
+  // conservan sus fechas pasadas para que pueda corregirse sin crear otro.
+  if (startsOn < today && id == null) return res.status(400).json({ error: "past_start", message: "El viaje no puede empezar en una fecha pasada." });
+  if (duration < 1 || duration > limits.max_days) {
+    return res.status(402).json({ error: "traveler_duration_limit", limit: limits.max_days, message: `Tu plan admite viajes de hasta ${limits.max_days} días.` });
+  }
+  const isFuture = startsOn > today;
+  if (isFuture && (!limits.future_enabled || limits.future_limit < 1)) {
+    return res.status(402).json({ error: "traveler_future_unavailable", limit: 0, message: "Tu plan permite activar el viaje cuando empiece, pero no programarlo con antelación." });
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    if (id != null) {
+      const [[owned]] = await conn.query("SELECT id FROM traveler_trips WHERE id=? AND user_id=? FOR UPDATE", [id, me]);
+      if (!owned) { await conn.rollback(); return res.status(404).json({ error: "not_found" }); }
+    }
+    const [lockedTrips] = await conn.query(
+      "SELECT id, starts_on, ends_on FROM traveler_trips WHERE user_id=? AND enabled=1 AND ends_on>=CURDATE() FOR UPDATE",
+      [me]
+    );
+    const otherTrips = lockedTrips.filter((trip) => id == null || Number(trip.id) !== id);
+    if (otherTrips.some((trip) => {
+      const start = String(trip.starts_on instanceof Date ? trip.starts_on.toISOString().slice(0, 10) : trip.starts_on).slice(0, 10);
+      const end = String(trip.ends_on instanceof Date ? trip.ends_on.toISOString().slice(0, 10) : trip.ends_on).slice(0, 10);
+      return !(end < startsOn || start > endsOn);
+    })) {
+      await conn.rollback();
+      return res.status(409).json({ error: "traveler_overlap", message: "Ese viaje coincide con otro itinerario activo o programado." });
+    }
+    if (isFuture) {
+      const futureUsed = otherTrips.filter((trip) => {
+        const start = String(trip.starts_on instanceof Date ? trip.starts_on.toISOString().slice(0, 10) : trip.starts_on).slice(0, 10);
+        return start > today;
+      }).length;
+      if (futureUsed >= limits.future_limit) {
+        await conn.rollback();
+        return res.status(402).json({ error: "traveler_future_limit", limit: limits.future_limit, message: "Has alcanzado el límite de viajes futuros de tu plan." });
+      }
+    }
+    let savedId = id;
+    if (savedId == null) {
+      const [insert] = await conn.execute(
+        "INSERT INTO traveler_trips (user_id,starts_on,ends_on,enabled) VALUES (?,?,?,1)",
+        [me, startsOn, endsOn]
+      );
+      savedId = Number(insert.insertId);
+    } else {
+      await conn.execute("UPDATE traveler_trips SET starts_on=?,ends_on=?,enabled=1 WHERE id=? AND user_id=?", [startsOn, endsOn, savedId, me]);
+      await conn.execute("DELETE FROM traveler_trip_stops WHERE trip_id=?", [savedId]);
+    }
+    for (const stop of stops) {
+      await conn.execute(
+        "INSERT INTO traveler_trip_stops (trip_id,city,starts_on,ends_on,position) VALUES (?,?,?,?,?)",
+        [savedId, stop.city, stop.starts_on, stop.ends_on, stop.position]
+      );
+    }
+    await conn.commit();
+    return res.json({ ok: true, id: savedId, trips: await travelerTripsV1000(me) });
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+}
+
+app.post("/api/my/traveler/trips", wrap(async (req, res) => saveTravelerTripV1000(req, res)));
+app.put("/api/my/traveler/trips/:id", wrap(async (req, res) => saveTravelerTripV1000(req, res, req.params.id)));
+app.delete("/api/my/traveler/trips/:id", wrap(async (req, res) => {
+  const me = readMyUserId(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid_trip" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[trip]] = await conn.query("SELECT id FROM traveler_trips WHERE id=? AND user_id=? FOR UPDATE", [id, me]);
+    if (!trip) { await conn.rollback(); return res.status(404).json({ error: "not_found" }); }
+    await conn.execute("DELETE FROM traveler_trip_stops WHERE trip_id=?", [id]);
+    await conn.execute("DELETE FROM traveler_trips WHERE id=? AND user_id=?", [id, me]);
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+}));
+
 app.get("/api/discover", wrap(async (req, res) => {
   if (await enforceRestriction(req, res, "discover")) return;
   const me = readMyUserId(req); // puede ser null (anónimo)
@@ -11040,6 +11318,7 @@ app.get("/api/discover", wrap(async (req, res) => {
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
   // V757 · Filtros adicionales: qué busca, tipo de relación e intereses.
   applyPreferenceFilters(where, params, f);
+  applyTravelerFilterV1000(where, f);
 
   // ---- Geolocalización (función 4) ----
   // Coordenadas del usuario actual (sólo si dio consentimiento GPS y hay
@@ -11102,7 +11381,7 @@ app.get("/api/discover", wrap(async (req, res) => {
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
-            (u.boost_until > NOW()) AS boosted,
+            (u.boost_until > NOW()) AS boosted${travelerPublicSelectV1000()},
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -11139,6 +11418,7 @@ app.get("/api/discover", wrap(async (req, res) => {
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
     r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
     delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
+    normalizeTravelerPublicV1000(r);
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
@@ -11248,6 +11528,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
   applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
   applyPreferenceFilters(where, params, f); // V757 · qué busca / relación / intereses
+  applyTravelerFilterV1000(where, f);
 
   // Coordenadas del usuario actual. V738 · GPS real (para filtrar por radio) e
   // IP aproximada (solo para mostrar distancia; nunca excluye).
@@ -11296,7 +11577,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             (SELECT 1 FROM user_gps gg WHERE gg.user_id=u.id AND gg.consent_given=1 AND gg.revoked_at IS NULL LIMIT 1) AS gps_ok,
-            (u.boost_until > NOW()) AS boosted,
+            (u.boost_until > NOW()) AS boosted${travelerPublicSelectV1000()},
             ${distExpr} AS distance`;
   if (realDistExpr) sql += `, ${realDistExpr} AS real_distance`;
   sql += ` FROM users u`;
@@ -11335,6 +11616,7 @@ app.get("/api/my/nearby", wrap(async (req, res) => {
     // V866 · Estado "Ahora mismo": objeto {text,expires_in} o null (ya caducado).
     r.now_status = (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null);
     delete r.now_status_text; delete r.now_status_expires_in; delete r.now_photo_ok;
+    normalizeTravelerPublicV1000(r);
     applyPrivacyToPublicRow(r); // V742 · respeta los campos ocultos del dueño
   }
   res.json(rows);
@@ -11418,6 +11700,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
   applyFacetFilter(where, params, "u.city", f.cities != null ? f.cities : f.city);
   applyFacetFilter(where, params, "u.ethnicity", f.ethnicities);
   applyPreferenceFilters(where, params, f);
+  applyTravelerFilterV1000(where, f);
 
   const distExpr = "ROUND(6371 * ACOS(LEAST(1, COS(RADIANS(?)) * COS(RADIANS(COALESCE(gps.lat, u.lat))) * COS(RADIANS(COALESCE(gps.lng, u.lng)) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(COALESCE(gps.lat, u.lat))))), 1)";
   const sql =
@@ -11432,7 +11715,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
             CASE WHEN u.now_status_until > NOW() THEN TIMESTAMPDIFF(SECOND, NOW(), u.now_status_until) ELSE NULL END AS now_status_expires_in,
             (SELECT 1 FROM photos pnw WHERE pnw.user_id=u.id AND pnw.is_now_photo=1 AND pnw.approved=1 LIMIT 1) AS now_photo_ok,
             COALESCE(gps.lat, u.lat) AS clat, COALESCE(gps.lng, u.lng) AS clng,
-            (gps.lat IS NOT NULL) AS gps_ok,
+            (gps.lat IS NOT NULL) AS gps_ok${travelerPublicSelectV1000()},
             ${distExpr} AS distance
        FROM users u
        LEFT JOIN user_gps gps ON gps.user_id = u.id AND gps.consent_given=1 AND gps.revoked_at IS NULL
@@ -11488,6 +11771,7 @@ app.get("/api/my/nearby-map", wrap(async (req, res) => {
       // V866 · Estado "Ahora mismo" (frase declarada). Solo llega si no ha
       // caducado (el SELECT ya lo anula cuando now_status_until <= NOW()).
       now_status: (r.now_status_text ? { text: r.now_status_text, expires_in: (r.now_status_expires_in == null ? null : Number(r.now_status_expires_in)), has_photo: !!r.now_photo_ok } : null),
+      traveler: r.traveler_active ? { active: true, city: r.traveler_city || "", until: r.traveler_until || null } : null,
       lat: Number((lat + jLat).toFixed(5)),
       lng: Number((lng + jLng).toFixed(5)),
     });

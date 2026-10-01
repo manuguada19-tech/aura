@@ -1881,7 +1881,7 @@ const state = {
     // V887 · filtros nuevos del buscador (multi): tribu, tipo de cuerpo,
     // dónde quedar, prácticas de salud; nsfwOnly y notChattedToday (bool).
     tribe: [], bodyType: [], meetAt: [], healthPractices: [],
-    nsfwOnly: false, notChattedToday: false,
+    nsfwOnly: false, notChattedToday: false, travelersOnly: false,
   },
   favorites: new Set(),
   // V980 · Perfiles consultados en Explorar, sincronizados con el servidor para
@@ -2228,6 +2228,13 @@ function mapApiUser(row) {
     // V866 · Estado "Ahora mismo": frase declarada y vigente {text,expires_in}
     // o null si no tiene o ya caducó. El backend nunca envía estados caducados.
     now_status: (row.now_status && row.now_status.text ? { text: String(row.now_status.text), expires_in: (row.now_status.expires_in == null ? null : Number(row.now_status.expires_in)), has_photo: !!row.now_status.has_photo } : null),
+    // V1000 · Estado de viaje declarado. No sustituye la ciudad ni la distancia
+    // GPS: solo añade contexto público mientras el viaje está activo.
+    traveler: (row.traveler && row.traveler.active) ? {
+      active: true,
+      city: String(row.traveler.city || ""),
+      until: row.traveler.until || null,
+    } : null,
     height: row.height || null,
     weight: row.weight || null,
     // V776 · Campos opcionales de estilo de vida + etnia + prompts (rompehielos).
@@ -2358,6 +2365,31 @@ const datingApi = {
       if (!r.ok) return null;
       return await r.json();
     } catch { return null; }
+  },
+  async traveler() {
+    if (!this._authed()) return null;
+    try {
+      const r = await fetch("/api/my/traveler", { headers: this.headers(), cache: "no-store" });
+      const data = await r.json().catch(() => ({}));
+      return r.ok ? data : { ...data, error: data.error || "error", status: r.status };
+    } catch { return { error: "network", status: 0 }; }
+  },
+  async saveTraveler(stops, id = null) {
+    if (!this._authed()) return { error: "unauthorized", status: 401 };
+    try {
+      const url = id == null ? "/api/my/traveler/trips" : `/api/my/traveler/trips/${encodeURIComponent(id)}`;
+      const r = await fetch(url, { method: id == null ? "POST" : "PUT", headers: this.headers(), body: JSON.stringify({ stops }) });
+      const data = await r.json().catch(() => ({}));
+      return r.ok ? data : { ...data, error: data.error || "error", status: r.status };
+    } catch { return { error: "network", status: 0 }; }
+  },
+  async deleteTraveler(id) {
+    if (!this._authed()) return { error: "unauthorized", status: 401 };
+    try {
+      const r = await fetch(`/api/my/traveler/trips/${encodeURIComponent(id)}`, { method: "DELETE", headers: this.headers() });
+      const data = await r.json().catch(() => ({}));
+      return r.ok ? data : { ...data, error: data.error || "error", status: r.status };
+    } catch { return { error: "network", status: 0 }; }
   },
   // V866 · Estado "Ahora mismo". setNowStatus(text) lo fija (caduca en 60 min);
   // setNowStatus(null) lo borra. Devuelve { ok, status } o { error, message }.
@@ -4092,6 +4124,13 @@ function locDistanceInfo(u) {
   return { text: km, off: false };
 }
 
+function travelerDateLabel(value) {
+  if (!value) return "";
+  try {
+    return new Intl.DateTimeFormat("es-ES", { day: "numeric", month: "short" }).format(new Date(`${value}T12:00:00`));
+  } catch { return String(value); }
+}
+
 // V761 · Estado de actividad reciente para la tarjeta de Explorar y el detalle.
 // Devuelve { show, level, text }:
 //   · level "online"  → activo ahora (verde)
@@ -4171,11 +4210,18 @@ function generateUsers(count, opts = {}) {
       ]),
       verified: Math.random() > .5,
       online: Math.random() > .55,
+      traveler: i % 4 === 0 ? { active: true, city: pick(CITIES), until: addDaysForPreviewV1000(4 + (i % 5)) } : null,
       photos,
       photo: photos[0],
     });
   }
   return users;
+}
+
+function addDaysForPreviewV1000(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
 }
 
 /* ---------- Routing ---------- */
@@ -4575,6 +4621,7 @@ const DEEP_LINK_TABS = {
   explorar: "discover", descubrir: "discover", buscar: "search", cerca: "nearby",
   perfil: "me", ajustes: "me",
   suscripcion: "me", facturacion: "me", facturas: "me",
+  viajero: "me", traveler: "me",
   ayuda: "me", soporte: "me", notificaciones: "me",
   privacidad: "me", normas: "me", rules: "me",
   // Info pages accesibles también sin sesión desde los footers de los emails.
@@ -4651,6 +4698,8 @@ function applyDeepLink(dl) {
     preferencias: typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotificationSettings === "function" ? screenNotificationSettings : null),
     preferences:  typeof screenInfoPreferences === "function" ? screenInfoPreferences : (typeof screenNotificationSettings === "function" ? screenNotificationSettings : null),
     notificaciones: typeof screenNotificationSettings === "function" ? screenNotificationSettings : null,
+    viajero:        typeof screenTravelerMode === "function" ? screenTravelerMode : null,
+    traveler:       typeof screenTravelerMode === "function" ? screenTravelerMode : null,
     seguridad:      typeof screenSessionSecurity === "function" ? screenSessionSecurity : null,
     security:       typeof screenSessionSecurity === "function" ? screenSessionSecurity : null,
     "centro-seguridad": typeof screenSafetyCenter === "function" ? screenSafetyCenter : null,
@@ -4722,11 +4771,11 @@ const DISCOVERY_FILTER_DEFAULTS = Object.freeze({
   pets: [], smoke: [], drink: [], education: [], exercise: [],
   heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
   tribe: [], bodyType: [], meetAt: [], healthPractices: [],
-  nsfwOnly: false, notChattedToday: false,
+  nsfwOnly: false, notChattedToday: false, travelersOnly: false,
 });
 const NEARBY_FILTER_DEFAULTS = Object.freeze({
   ageMin: 18, ageMax: 65, distance: 200, onlyOnline: false, zone: "all",
-  interests: [], looking_for: "any", relationship: "any",
+  interests: [], looking_for: "any", relationship: "any", travelersOnly: false,
 });
 function cloneFilterDefaults(defaults) {
   return JSON.parse(JSON.stringify(defaults));
@@ -4764,6 +4813,7 @@ function discoveryFilterPayload(f) {
     tribe: f.tribe || [], body_type: f.bodyType || [], meet_at: f.meetAt || [],
     health_practices: f.healthPractices || [], nsfw_ok: f.nsfwOnly ? 1 : 0,
     not_chatted_today: f.notChattedToday ? 1 : 0,
+    travelers_only: f.travelersOnly ? 1 : 0,
   };
 }
 let activeDiscoveryFilterScope = null;
@@ -4789,7 +4839,7 @@ function discoveryActiveFilterCount(f) {
   if (f.lookingFor && f.lookingFor !== "any") n++;
   if (f.relationship && f.relationship !== "any") n++;
   if (f.heightMin || f.heightMax || f.weightMin || f.weightMax) n++;
-  if (f.onlyVerified || f.onlyOnline || f.nsfwOnly || f.notChattedToday) n++;
+  if (f.onlyVerified || f.onlyOnline || f.nsfwOnly || f.notChattedToday || f.travelersOnly) n++;
   return n;
 }
 async function resetDiscoveryFilterScope(scope) {
@@ -9295,7 +9345,7 @@ async function openNearbyMap() {
   // mapa y las tarjetas de la cuadrícula (mismos campos que el filtro de
   // "Buscar"). Rango completo / vacío = sin filtro.
   const mapFilterDefaults = {
-    gender: "todos", orientation: "todas", onlyOnline: false, onlyNew: false, onlyNow: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
+    gender: "todos", orientation: "todas", onlyOnline: false, onlyNew: false, onlyNow: false, onlyTravelers: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
     ageMin: 18, ageMax: 99,
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
     looking_for: "any", relationship: "any",
@@ -9311,7 +9361,7 @@ async function openNearbyMap() {
   // El radio del mapa es técnico y siempre usa el valor vigente de esta versión.
   mapFilters.radiusKm = NEARBY_RADIUS_KM;
   let mapResetChip = null;
-  const mapHasActiveFilters = () => !!(mapFilters.onlyOnline || mapFilters.onlyNew || mapFilters.onlyNow || activeMapFilterCount());
+  const mapHasActiveFilters = () => !!(mapFilters.onlyOnline || mapFilters.onlyNew || mapFilters.onlyNow || mapFilters.onlyTravelers || activeMapFilterCount());
   const persistMapFilters = () => storeFilterScope("map", mapFilters);
   const syncMapResetChip = () => { if (mapResetChip) mapResetChip.hidden = !mapHasActiveFilters(); };
   // V852 · ¿Cuenta recién registrada? (account_age_h dentro de la ventana).
@@ -9384,6 +9434,17 @@ async function openNearbyMap() {
     repaint();
   });
 
+  const travelerChip = el("button", { class: "map-chip map-chip-traveler" + (mapFilters.onlyTravelers ? " active" : ""), type: "button" }, [
+    el("span", { class: "map-chip-ic", "aria-hidden": "true" }, "✈"),
+    "De viaje",
+  ]);
+  travelerChip.addEventListener("click", () => {
+    mapFilters.onlyTravelers = !mapFilters.onlyTravelers;
+    travelerChip.classList.toggle("active", mapFilters.onlyTravelers);
+    persistMapFilters(); syncMapResetChip();
+    repaint();
+  });
+
   // V851 · Chip "Filtros" (estilo Grindr): abre una hoja con edad, altura, peso,
   // qué busca, relación, intereses y estilo de vida. Una insignia muestra cuántos
   // filtros avanzados hay activos. Al aplicar se repinta (menos pines/tarjetas).
@@ -9413,7 +9474,7 @@ async function openNearbyMap() {
       Object.keys(mapFilters).forEach(k => { delete mapFilters[k]; });
       Object.assign(mapFilters, cloneFilterDefaults(mapFilterDefaults));
       persistMapFilters();
-      onlineChip.classList.remove("active"); newChip.classList.remove("active"); nowChip.classList.remove("active");
+      onlineChip.classList.remove("active"); newChip.classList.remove("active"); nowChip.classList.remove("active"); travelerChip.classList.remove("active");
       syncFiltersChip(); repaint();
       toast("Filtros del mapa restablecidos");
     },
@@ -9426,7 +9487,7 @@ async function openNearbyMap() {
   // estrechos cuando la Zona LGTB+ añade varias identidades. La barra superior
   // conserva solo los accesos rápidos (En línea, Buscan ahora, Nuevos, Filtros).
   const filterbar = el("div", { class: "map-filterbar" }, [
-    el("div", { class: "map-filterbar-row" }, [ onlineChip, nowChip, newChip, filtersChip, mapResetChip ]),
+    el("div", { class: "map-filterbar-row" }, [ onlineChip, nowChip, travelerChip, newChip, filtersChip, mapResetChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -9612,11 +9673,13 @@ async function openNearbyMap() {
     // un aro ámbar y un rayo, para distinguirlo de "online" (punto verde).
     const hasNow = !!(u.now_status && u.now_status.text);
     if (hasNow) cls.push("now");
+    if (u.traveler && u.traveler.active) cls.push("traveler");
     const dot = u.online ? '<span class="map-pin-dot"></span>' : "";
     // V852 · Etiqueta del pin: "Prueba" para la cuenta ficticia; si no, "Nuevo"
     // cuando la cuenta es de reciente registro (destaca a quien acaba de llegar).
     let tag = "";
     if (u._test) tag = '<span class="map-pin-tag">Prueba</span>';
+    else if (u.traveler && u.traveler.active) tag = '<span class="map-pin-tag traveler">De viaje</span>';
     else if (isNewUser(u)) tag = '<span class="map-pin-tag new">Nuevo</span>';
     // V866 · Rayo (símbolo del estado) sobre el pin cuando busca ahora.
     const bolt = hasNow ? '<span class="map-pin-bolt" title="Ahora mismo"><svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg></span>' : "";
@@ -9638,6 +9701,7 @@ async function openNearbyMap() {
       education: u.education, exercise: u.exercise, prompts: u.prompts,
       // V866 · Conserva el estado "Ahora mismo" al abrir el detalle desde el mapa.
       now_status: u.now_status,
+      traveler: u.traveler,
     });
     // El perfil de prueba no es "real" (id no numérico): así el detalle no
     // intenta dar like/pasar contra el backend.
@@ -9733,6 +9797,7 @@ async function openNearbyMap() {
     if (f.onlyNow && !isSearchingNow(u)) return false;
     // V852 · "Nuevos": solo cuentas recién registradas (últimas NEW_USER_HOURS).
     if (f.onlyNew && !isNewUser(u)) return false;
+    if (f.onlyTravelers && !(u.traveler && u.traveler.active)) return false;
     // Edad
     if (u.age != null && Number.isFinite(+u.age)) {
       if (+u.age < f.ageMin || +u.age > f.ageMax) return false;
@@ -9830,7 +9895,8 @@ async function openNearbyMap() {
         style: `background-image:url('${u.photo || ""}')`,
         onclick: () => { try { modal.close(); } catch {} openUserProfile(u); } }, [
         u.online ? el("span", { class: "map-grid-dot" }) : null,
-        u._test ? el("span", { class: "map-grid-tag" }, "Prueba") : null,
+      u._test ? el("span", { class: "map-grid-tag" }, "Prueba") : null,
+        u.traveler && u.traveler.active ? el("span", { class: "map-grid-traveler" }, "✈ De viaje") : null,
         el("span", { class: "map-grid-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
       ]);
       grid.appendChild(cell);
@@ -10639,6 +10705,7 @@ function buildNearbySection() {
     if (f.ageMin !== 18 || f.ageMax !== 65) n++;
     if (f.distance !== 200) n++;
     if (f.onlyOnline) n++;
+    if (f.travelersOnly) n++;
     if (f.zone !== "all") n++;
     if (f.interests.length) n++;
     if (f.looking_for !== "any") n++;
@@ -10658,6 +10725,7 @@ function buildNearbySection() {
       if (u._real && u.gps_ok === false) { /* no filtrar por distancia aproximada */ }
       else if (typeof u.distance === "number" && u.distance > f.distance) return false;
       if (f.onlyOnline && !u.online) return false;
+      if (f.travelersOnly && !(u.traveler && u.traveler.active)) return false;
       if (f.looking_for !== "any" && u.looking_for !== f.looking_for) return false;
       if (f.relationship !== "any" && u.relationship !== f.relationship) return false;
       if (f.interests.length) {
@@ -10711,6 +10779,7 @@ function buildNearbySection() {
             el("span", { class: "nearby-dot" }),
             el("span", {}, u.online ? "En línea" : "Desconectado"),
           ]),
+          u.traveler && u.traveler.active ? el("div", { class: "nearby-traveler-badge" }, `✈ De viaje${u.traveler.city ? " · " + u.traveler.city : ""}`) : null,
           looking ? el("div", { class: "nearby-badge" }, `${looking.emoji} ${looking.label}`) : null,
           el("div", { class: "nearby-info" }, [
             el("strong", {}, `${u.name}, ${u.age}`),
@@ -11287,6 +11356,7 @@ function renderDiscoverGrid(stack) {
     if (hasNowStatus(u)) badges.push(el("span", { class: "discover-grid-badge now", title: "Busca algo ahora" }, [
       el("svg", { viewBox: "0 0 24 24", html: `<path fill="currentColor" d="M12 2c2.8 3.2 5.8 5.7 5.8 9.7A5.8 5.8 0 116.2 12c0-2.1 1-4.1 2.8-5.9.2 2.1 1 3.4 2.1 4.2C10.7 7.2 11.1 4.5 12 2z"/>` }),
     ]));
+    if (u.traveler && u.traveler.active) badges.push(el("span", { class: "discover-grid-badge traveler", title: `De viaje${u.traveler.city ? " en " + u.traveler.city : ""}` }, "✈"));
     const card = el("div", {
       class: "discover-grid-card", role: "button", tabindex: "0",
       style: `--grid-photo:url('${u.photo}')`,
@@ -11358,6 +11428,9 @@ function buildSwipeCard(u, depth = 0) {
       el("span", { class: "sb-bolt", html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
       el("span", { class: "sb-txt" }, "Impulsado"),
     ]));
+  }
+  if (u.traveler && u.traveler.active) {
+    card.appendChild(el("div", { class: "swipe-traveler", title: "Modo viajero activo" }, `✈ De viaje${u.traveler.city ? " · " + u.traveler.city : ""}`));
   }
   // V979 · Favoritos accesibles también desde la vista principal de Tarjetas.
   // Antes solo existía el control en Cuadrícula y dentro del perfil completo.
@@ -12044,10 +12117,14 @@ function renderResults(grid, filter = "") {
       el("span", { class: "sb-bolt", html: `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
       el("span", {}, "Impulsado"),
     ]) : null;
+    const travelerBadge = u.traveler && u.traveler.active
+      ? el("div", { class: "result-traveler", title: "Modo viajero activo" }, `✈ De viaje${u.traveler.city ? " · " + u.traveler.city : ""}`)
+      : null;
     const card = el("div", { class: "result-card" + (nowText ? " has-now" : ""), style: `background-image:url('${u.photo}')` }, [
       u.online ? el("div", { class: "online" }) : null,
       buildFavoriteButton(u, "heart"),
       boostBadge,
+      travelerBadge,
       nowBadge,
       el("div", { class: "info" }, [
         el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
@@ -12759,6 +12836,8 @@ async function openFilters(scope = "discover") {
     el("label", { class: "switch" }, [ verInp, el("span") ]),
   ]);
   const verHint = el("small", { class: "filter-hint", style: "display:none;color:var(--text-muted);margin-top:2px;line-height:1.4" });
+  const travelerInp = el("input", { type: "checkbox", checked: state.filters.travelersOnly || undefined });
+  travelerInp.addEventListener("change", () => { state.filters.travelersOnly = travelerInp.checked; });
   let _iAmVerified = null; // null=desconocido, true/false una vez cargado
   verInp.addEventListener("change", () => {
     if (verInp.checked && _iAmVerified === false) {
@@ -12771,6 +12850,10 @@ async function openFilters(scope = "discover") {
   });
   const otrosGroup = el("div", { class: "filter-group" }, [
     el("h5", {}, "Otros"),
+    el("div", { class: "switch-row" }, [
+      el("span", { style: "font-size:14px" }, "Solo personas de viaje"),
+      el("label", { class: "switch" }, [ travelerInp, el("span") ]),
+    ]),
     verRow,
     verHint,
     switchRow("Solo online", state.filters.onlyOnline, v => state.filters.onlyOnline = v),
@@ -12827,6 +12910,7 @@ async function openFilters(scope = "discover") {
     state.filters.tribe = Array.from(selTribe); state.filters.bodyType = Array.from(selBody);
     state.filters.meetAt = Array.from(selMeet); state.filters.healthPractices = Array.from(selHealth);
     state.filters.nsfwOnly = !!nsfwInp.checked; state.filters.notChattedToday = !!notChatInp.checked;
+    state.filters.travelersOnly = !!travelerInp.checked;
     await persistDiscoveryFilterScope(scope, state.filters);
     const users = await datingApi.discover(state.zone, 30);
     const countedUsers = Array.isArray(users) && scope === "search" && searchNowOnly ? users.filter(searchingNow) : users;
@@ -13973,6 +14057,10 @@ function handleDeeplink(raw) {
         case "now":
           if (typeof openNowStatus === "function") return openNowStatus();
           return routeTab("discover");
+        case "viajero":
+        case "traveler":
+          if (typeof screenTravelerMode === "function") return render(screenTravelerMode);
+          return routeTab("profile");
         case "perfil":
         case "profile":
           return routeTab("profile");
@@ -14139,8 +14227,13 @@ function openNearbyFilters(onApply) {
 
   // Toggles
   const onlineToggle = el("input", { type: "checkbox", checked: !!f.onlyOnline });
+  const travelerToggle = el("input", { type: "checkbox", checked: !!f.travelersOnly });
   sheet.appendChild(el("div", { class: "filter-group" }, [
     el("h5", {}, "Otros"),
+    el("div", { class: "switch-row" }, [
+      el("span", { style: "font-size:14px" }, "Solo personas de viaje"),
+      el("label", { class: "switch" }, [ travelerToggle, el("span") ]),
+    ]),
     el("div", { class: "switch-row" }, [
       el("span", { style: "font-size:14px" }, "Solo en línea"),
       el("label", { class: "switch" }, [ onlineToggle, el("span") ]),
@@ -14154,6 +14247,7 @@ function openNearbyFilters(onApply) {
       ageMax: Math.max(+ageMax.value, +ageMin.value),
       distance: +dist.value,
       onlyOnline: onlineToggle.checked,
+      travelersOnly: travelerToggle.checked,
       zone: state.nearbyFilters.zone || "all",
       interests: Array.from(selectedInterests),
       looking_for: lookingSelectedRef.id,
@@ -14198,7 +14292,7 @@ async function openMapFilters(mf, onApply) {
   const resetMapFilters = () => {
     if (mapSaveTimer) { clearTimeout(mapSaveTimer); mapSaveTimer = null; }
     mf.gender = "todos"; mf.orientation = "todas";
-    mf.onlyOnline = false; mf.onlyNew = false; mf.onlyNow = false;
+    mf.onlyOnline = false; mf.onlyNew = false; mf.onlyNow = false; mf.onlyTravelers = false;
     mf.ageMin = 18; mf.ageMax = 99;
     mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
     mf.looking_for = "any"; mf.relationship = "any";
@@ -14713,6 +14807,9 @@ function screenProfileDetail(root, u, opts = {}) {
           el("span", {}, "Impulsado"),
         ]));
       }
+      if (u.traveler && u.traveler.active) {
+        out.push(el("span", { class: "pd-traveler-tag", title: "Modo viajero activo" }, "✈ De viaje"));
+      }
       return out;
     })()),
   ]));
@@ -14730,6 +14827,16 @@ function screenProfileDetail(root, u, opts = {}) {
       el("span", {}, u.job),
     ]) : null,
   ]));
+
+  if (u.traveler && u.traveler.active) {
+    wrap.appendChild(el("div", { class: "pd-traveler-card" }, [
+      el("span", { class: "pd-traveler-icon", "aria-hidden": "true" }, "✈"),
+      el("div", {}, [
+        el("strong", {}, `Está de viaje${u.traveler.city ? " en " + u.traveler.city : ""}`),
+        el("small", {}, u.traveler.until ? `Hasta el ${travelerDateLabel(u.traveler.until)} · su GPS real no cambia` : "Su GPS real no cambia"),
+      ]),
+    ]));
+  }
 
   // Bio
   if (u.bio) {
@@ -15798,21 +15905,32 @@ async function openOwnProfilePreview() {
   let profile = {};
   let photos = [];
   let verified = !!state.user.verified;
+  let traveler = null;
   try {
     const headers = Auth.apply({ "X-User-Id": String(state.user.id || "") });
-    const [profileRes, photosRes, statusRes] = await Promise.all([
+    const [profileRes, photosRes, statusRes, travelerRes] = await Promise.all([
       fetch("/api/my/profile", { headers, cache: "no-store" }),
       fetch("/api/my/photos", { headers, cache: "no-store" }),
       fetch("/api/my/account-status", { headers, cache: "no-store" }),
+      fetch("/api/my/traveler", { headers, cache: "no-store" }),
     ]);
     const profileData = await profileRes.json().catch(() => ({}));
     const photosData = await photosRes.json().catch(() => ({}));
     const statusData = await statusRes.json().catch(() => ({}));
+    const travelerData = await travelerRes.json().catch(() => ({}));
     if (profileRes.ok && profileData && profileData.profile) profile = profileData.profile;
     if (photosRes.ok && photosData && Array.isArray(photosData.items)) {
       photos = photosData.items.map((p) => p && p.url).filter(Boolean);
     }
     if (statusRes.ok) verified = statusData && statusData.kyc_status === "verified";
+    if (travelerRes.ok && Array.isArray(travelerData.trips)) {
+      const activeTrip = travelerData.trips.find((trip) => trip.status === "active");
+      if (activeTrip) {
+        const today = new Date().toISOString().slice(0, 10);
+        const currentStop = (activeTrip.stops || []).find((stop) => today >= stop.starts_on && today <= stop.ends_on) || activeTrip.stops?.[0];
+        traveler = { active: true, city: currentStop?.city || "", until: activeTrip.ends_on || null };
+      }
+    }
   } catch {}
 
   const primaryPhoto = photos[0] || state.user.photo || "";
@@ -15829,6 +15947,7 @@ async function openOwnProfilePreview() {
     photo: primaryPhoto,
     photos,
     verified,
+    traveler,
     _real: false,
   });
   openProfileDetail(previewUser, { selfPreview: true });
@@ -15972,6 +16091,7 @@ function screenMe(root) {
       { icon: "🧾", title: "Pagos y facturas", sub: "Facturas, reembolsos y cobros pendientes", onClick: () => render(screenBilling) },
     ]},
     { title: "Beneficios", items: [
+      { icon: "✈", title: "Modo viajero", sub: "Comparte ciudad y fechas sin cambiar tu GPS", onClick: () => render(screenTravelerMode) },
       { icon: "🚀", title: "Boost / Impulso", id: "meBoostRow", sub: "Destaca tu perfil y consulta el tiempo restante", onClick: () => render(screenBoost) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
@@ -16547,6 +16667,221 @@ function ensureBoostStyle() {
     body.theme-dark .boost-stat .bs-n,body.dark .boost-stat .bs-n,html.dark .boost-stat .bs-n{color:var(--text,#e6e9f2);}
   `;
   document.head.appendChild(st);
+}
+
+/* — V1000 · Modo viajero (declarativo; no sustituye el GPS real) — */
+function screenTravelerMode(root) {
+  meSubHeader(root, "Modo viajero");
+  root.classList.add("screen-traveler");
+  const wrap = el("div", { class: "traveler-wrap" });
+  root.appendChild(wrap);
+
+  const isoToday = () => new Date().toISOString().slice(0, 10);
+  const addDays = (iso, days) => {
+    const d = new Date(`${iso}T12:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+  const demoData = () => ({
+    ok: true,
+    limits: { plan: "gold", enabled: true, max_days: 30, future_enabled: true, future_limit: 2, city_limit: 3 },
+    usage: { future_used: 1, future_remaining: 1 },
+    trips: [
+      { id: 1, status: "active", starts_on: isoToday(), ends_on: addDays(isoToday(), 5), stops: [
+        { city: "Valencia", starts_on: isoToday(), ends_on: addDays(isoToday(), 2), position: 0 },
+        { city: "Alicante", starts_on: addDays(isoToday(), 3), ends_on: addDays(isoToday(), 5), position: 1 },
+      ] },
+      { id: 2, status: "future", starts_on: addDays(isoToday(), 14), ends_on: addDays(isoToday(), 17), stops: [
+        { city: "Sevilla", starts_on: addDays(isoToday(), 14), ends_on: addDays(isoToday(), 17), position: 0 },
+      ] },
+    ],
+  });
+
+  let model = null;
+  let editingId = null;
+  let formOpen = false;
+
+  function formatRange(start, end) {
+    if (!start || !end) return "";
+    return `${travelerDateLabel(start)} – ${travelerDateLabel(end)}`;
+  }
+
+  function statusCopy(status) {
+    if (status === "active") return { label: "Activo ahora", tone: "active" };
+    if (status === "future") return { label: "Programado", tone: "future" };
+    return { label: "Finalizado", tone: "past" };
+  }
+
+  function renderLoading() {
+    wrap.replaceChildren(el("div", { class: "traveler-loading" }, [
+      el("strong", {}, "Cargando tus viajes…"),
+      el("small", {}, "Consultando las fechas y límites de tu plan."),
+    ]));
+  }
+
+  function renderScreen() {
+    const limits = model?.limits || { plan: getUserPlan(), enabled: true, max_days: 7, future_enabled: false, future_limit: 0, city_limit: 1 };
+    const trips = Array.isArray(model?.trips) ? model.trips : [];
+    const activeTrip = trips.find((trip) => trip.status === "active");
+    const futureTrips = trips.filter((trip) => trip.status === "future");
+    wrap.innerHTML = "";
+
+    wrap.appendChild(el("section", { class: "traveler-hero" + (activeTrip ? " is-active" : "") }, [
+      el("div", { class: "traveler-hero-icon", "aria-hidden": "true" }, "✈"),
+      el("div", { class: "traveler-hero-copy" }, [
+        el("span", { class: "traveler-kicker" }, activeTrip ? "MODO VIAJERO ACTIVO" : "PLANIFICA TU ESTANCIA"),
+        el("h2", {}, activeTrip
+          ? `Estás de viaje en ${activeTrip.stops.find((stop) => isoToday() >= stop.starts_on && isoToday() <= stop.ends_on)?.city || activeTrip.stops[0]?.city || "tu destino"}`
+          : "Cuenta que estás de viaje"),
+        el("p", {}, activeTrip
+          ? `Visible hasta el ${travelerDateLabel(activeTrip.ends_on)}. Tu ubicación continúa siendo la del GPS real.`
+          : "Añade una ciudad y tus fechas para que otras personas entiendan que estás de paso."),
+      ]),
+    ]));
+
+    wrap.appendChild(el("div", { class: "traveler-trust-note" }, [
+      el("strong", {}, "Sin ubicación virtual"),
+      el("span", {}, "El modo viajero no desplaza tu perfil, no falsea distancias y nunca sustituye el GPS."),
+    ]));
+
+    wrap.appendChild(el("div", { class: "traveler-limits" }, [
+      el("div", {}, [ el("strong", {}, `${limits.max_days}`), el("span", {}, "días por viaje") ]),
+      el("div", {}, [ el("strong", {}, `${limits.city_limit}`), el("span", {}, limits.city_limit === 1 ? "ciudad" : "ciudades") ]),
+      el("div", {}, [ el("strong", {}, `${limits.future_limit}`), el("span", {}, "futuros") ]),
+    ]));
+
+    const head = el("div", { class: "traveler-section-head" }, [
+      el("div", {}, [ el("h3", {}, "Tus viajes"), el("small", {}, trips.length ? `${trips.length} activo${trips.length === 1 ? "" : "s"} o programado${trips.length === 1 ? "" : "s"}` : "Todavía no has añadido ninguno") ]),
+      el("button", { class: "btn btn-brand btn-sm", type: "button", onclick: () => { editingId = null; formOpen = true; renderScreen(); } }, "+ Añadir"),
+    ]);
+    wrap.appendChild(head);
+
+    const list = el("div", { class: "traveler-list" });
+    if (!trips.length) {
+      list.appendChild(el("div", { class: "traveler-empty" }, [
+        el("strong", {}, "No tienes viajes activos"),
+        el("small", {}, "Puedes activar uno hoy o programarlo si tu plan lo permite."),
+      ]));
+    }
+    trips.forEach((trip) => {
+      const status = statusCopy(trip.status);
+      const cities = (trip.stops || []).map((stop) => stop.city).filter(Boolean);
+      list.appendChild(el("article", { class: `traveler-trip traveler-${status.tone}` }, [
+        el("div", { class: "traveler-trip-main" }, [
+          el("span", { class: "traveler-status" }, status.label),
+          el("strong", {}, cities.join(" → ") || "Viaje"),
+          el("small", {}, formatRange(trip.starts_on, trip.ends_on)),
+        ]),
+        el("div", { class: "traveler-trip-actions" }, [
+          el("button", { type: "button", class: "traveler-action", onclick: () => { editingId = trip.id; formOpen = true; renderScreen(); } }, "Editar"),
+          el("button", { type: "button", class: "traveler-action danger", onclick: async () => {
+            const destination = cities.join(" y ") || "este viaje";
+            if (!confirm(`¿Eliminar el viaje a ${destination} del ${formatRange(trip.starts_on, trip.ends_on)}?\n\nSolo se eliminará este modo viajero; tu GPS y tu perfil no cambiarán.`)) return;
+            const result = await datingApi.deleteTraveler(trip.id);
+            if (!result || result.error) { toast(result?.message || "No se pudo eliminar el viaje"); return; }
+            editingId = null; formOpen = false;
+            toast("Viaje eliminado");
+            await load();
+          } }, "Eliminar"),
+        ]),
+      ]));
+    });
+    wrap.appendChild(list);
+
+    if (formOpen) {
+      const editing = trips.find((trip) => String(trip.id) === String(editingId));
+      renderForm(limits, editing || null);
+    }
+  }
+
+  function renderForm(limits, trip) {
+    const stops = trip && Array.isArray(trip.stops) && trip.stops.length
+      ? trip.stops.map((stop) => ({ city: stop.city, starts_on: stop.starts_on, ends_on: stop.ends_on }))
+      : [{ city: "", starts_on: isoToday(), ends_on: addDays(isoToday(), Math.min(6, Math.max(0, limits.max_days - 1))) }];
+    const section = el("section", { class: "traveler-form-card" });
+    section.appendChild(el("div", { class: "traveler-form-head" }, [
+      el("div", {}, [
+        el("h3", {}, trip ? "Editar itinerario" : "Nuevo viaje"),
+        el("small", {}, limits.future_enabled ? "Puedes activarlo hoy o dejarlo programado." : "En Free debe comenzar hoy; otros planes permiten programarlo."),
+      ]),
+      el("button", { class: "traveler-form-close", type: "button", "aria-label": "Cerrar formulario", onclick: () => { formOpen = false; editingId = null; renderScreen(); } }, "×"),
+    ]));
+    const stopList = el("div", { class: "traveler-stop-list" });
+    const addStop = el("button", { class: "btn btn-outline btn-sm", type: "button" }, "+ Añadir ciudad");
+
+    function paintStops() {
+      stopList.innerHTML = "";
+      stops.forEach((stop, index) => {
+        const city = el("input", { type: "text", maxlength: 120, value: stop.city, placeholder: "Ej. Valencia", autocomplete: "address-level2" });
+        const start = el("input", { type: "date", min: isoToday(), value: stop.starts_on });
+        const end = el("input", { type: "date", min: stop.starts_on || isoToday(), value: stop.ends_on });
+        city.addEventListener("input", () => { stop.city = city.value; });
+        start.addEventListener("change", () => {
+          stop.starts_on = start.value;
+          end.min = start.value || isoToday();
+          if (!stop.ends_on || stop.ends_on < stop.starts_on) { stop.ends_on = stop.starts_on; end.value = stop.ends_on; }
+        });
+        end.addEventListener("change", () => { stop.ends_on = end.value; });
+        stopList.appendChild(el("div", { class: "traveler-stop" }, [
+          el("div", { class: "traveler-stop-number" }, String(index + 1)),
+          el("div", { class: "traveler-stop-fields" }, [
+            el("label", {}, [ el("span", {}, "Ciudad"), city ]),
+            el("div", { class: "traveler-date-grid" }, [
+              el("label", {}, [ el("span", {}, "Llegada"), start ]),
+              el("label", {}, [ el("span", {}, "Salida"), end ]),
+            ]),
+          ]),
+          stops.length > 1 ? el("button", { class: "traveler-stop-remove", type: "button", "aria-label": `Quitar ciudad ${index + 1}`, onclick: () => { stops.splice(index, 1); paintStops(); } }, "×") : null,
+        ]));
+      });
+      addStop.hidden = stops.length >= limits.city_limit;
+    }
+    addStop.addEventListener("click", () => {
+      if (stops.length >= limits.city_limit) { toast(`Tu plan admite ${limits.city_limit} ciudad(es)`); return; }
+      const previous = stops[stops.length - 1];
+      const nextDate = addDays(previous.ends_on || isoToday(), 1);
+      stops.push({ city: "", starts_on: nextDate, ends_on: nextDate });
+      paintStops();
+    });
+    paintStops();
+    section.appendChild(stopList);
+    section.appendChild(addStop);
+    section.appendChild(el("div", { class: "traveler-form-foot" }, [
+      el("small", {}, `Plan ${planLabel(limits.plan)}: hasta ${limits.max_days} días, ${limits.city_limit} ciudad(es) y ${limits.future_limit} viaje(s) futuro(s).`),
+      el("button", { class: "btn btn-brand", type: "button", onclick: async (event) => {
+        const button = event.currentTarget;
+        const clean = stops.map((stop) => ({ city: stop.city.trim(), starts_on: stop.starts_on, ends_on: stop.ends_on }));
+        if (clean.some((stop) => !stop.city || !stop.starts_on || !stop.ends_on)) { toast("Completa la ciudad y las fechas"); return; }
+        button.disabled = true; button.textContent = "Guardando…";
+        const result = await datingApi.saveTraveler(clean, trip?.id || null);
+        button.disabled = false; button.textContent = trip ? "Guardar cambios" : "Activar modo viajero";
+        if (!result || result.error) { toast(result?.message || "No se pudo guardar el viaje"); return; }
+        editingId = null; formOpen = false;
+        toast(trip ? "Itinerario actualizado" : "Modo viajero guardado");
+        await load();
+      } }, trip ? "Guardar cambios" : "Activar modo viajero"),
+    ]));
+    wrap.appendChild(section);
+    try { section.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+  }
+
+  async function load() {
+    renderLoading();
+    model = isPreviewMode() ? demoData() : await datingApi.traveler();
+    if (!model || model.error) {
+      wrap.replaceChildren(el("div", { class: "traveler-empty" }, [
+        el("strong", {}, "No se pudo cargar el modo viajero"),
+        el("small", {}, "Comprueba la conexión y vuelve a intentarlo."),
+        el("button", { class: "btn btn-outline btn-sm", type: "button", onclick: load }, "Reintentar"),
+      ]));
+      return;
+    }
+    if (isPreviewMode()) {
+      try { formOpen = new URLSearchParams(location.search || "").get("form") === "1"; } catch {}
+    }
+    renderScreen();
+  }
+  load();
 }
 
 /* — Editar perfil — */
@@ -20647,6 +20982,9 @@ async function boot() {
       }
       if ((n === "subscriptions" || n === "plans") && typeof screenSubscriptions === "function") {
         try { seedPreviewSession(); activatePreviewTab("me"); render(screenSubscriptions); return; } catch {}
+      }
+      if ((n === "traveler" || n === "viajero") && typeof screenTravelerMode === "function") {
+        try { seedPreviewSession(); state.user.plan = "gold"; activatePreviewTab("me"); render(screenTravelerMode); return; } catch {}
       }
       if (n === "beta") {
         // En modo vista previa NO pasamos email demo: así el input muestra

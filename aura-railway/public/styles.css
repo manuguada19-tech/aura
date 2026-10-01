@@ -11991,3 +11991,114 @@ body.desktop-app .notif-modal .modal-actions { margin-top: 0; }
   .security-device { grid-template-columns: 36px minmax(0,1fr); }
   .security-device > :last-child { grid-column: 2; justify-self: start; }
 }
+
+/* V1000 · Modo viajero. El azul diferencia una estancia declarada de los
+   estados urgentes (Busco ahora) y promocionales (Boost). */
+.traveler-wrap { width: min(100%, 720px); margin: 0 auto; padding: 12px 14px 34px; }
+.traveler-hero {
+  display: grid; grid-template-columns: 54px minmax(0,1fr); gap: 14px; align-items: center;
+  padding: 18px; border-radius: 20px; color: #f8fbff;
+  background: linear-gradient(135deg,#172554 0%,#1d4ed8 55%,#0891b2 100%);
+  box-shadow: 0 14px 34px rgba(29,78,216,.22);
+}
+.traveler-hero.is-active { background: linear-gradient(135deg,#0f3c5c 0%,#0369a1 55%,#0f766e 100%); }
+.traveler-hero-icon {
+  display: grid; place-items: center; width: 54px; height: 54px; border-radius: 18px;
+  background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.24); font-size: 27px;
+}
+.traveler-kicker { display: block; margin-bottom: 4px; font-size: 10px; font-weight: 900; letter-spacing: .12em; opacity: .78; }
+.traveler-hero h2 { margin: 0; font-size: 20px; line-height: 1.16; }
+.traveler-hero p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; opacity: .88; }
+.traveler-trust-note {
+  display: grid; gap: 3px; margin: 12px 0; padding: 12px 14px; border-radius: 14px;
+  border: 1px solid color-mix(in srgb,#38bdf8 32%,var(--card-border));
+  background: color-mix(in srgb,#38bdf8 8%,var(--surface));
+}
+.traveler-trust-note strong { color: #38bdf8; font-size: 12px; }
+.traveler-trust-note span { color: var(--text-soft); font-size: 11.5px; line-height: 1.42; }
+.traveler-limits { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin: 12px 0 20px; }
+.traveler-limits > div {
+  min-width: 0; padding: 12px 6px; border: 1px solid var(--card-border); border-radius: 14px;
+  background: var(--surface); text-align: center;
+}
+.traveler-limits strong,.traveler-limits span { display: block; }
+.traveler-limits strong { font-size: 20px; color: var(--text); }
+.traveler-limits span { margin-top: 3px; color: var(--text-soft); font-size: 10px; }
+.traveler-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 10px; }
+.traveler-section-head h3,.traveler-form-head h3 { margin: 0; color: var(--text); font-size: 16px; }
+.traveler-section-head small,.traveler-form-head small { display: block; margin-top: 3px; color: var(--text-soft); font-size: 11px; line-height: 1.35; }
+.traveler-list { display: grid; gap: 9px; }
+.traveler-trip {
+  display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 10px; align-items: center;
+  padding: 13px; border-radius: 15px; background: var(--surface); border: 1px solid var(--card-border);
+}
+.traveler-trip.traveler-active { border-color: rgba(34,197,94,.38); box-shadow: inset 3px 0 #22c55e; }
+.traveler-trip.traveler-future { box-shadow: inset 3px 0 #38bdf8; }
+.traveler-trip-main strong,.traveler-trip-main small { display: block; }
+.traveler-trip-main strong { margin-top: 5px; color: var(--text); font-size: 14px; overflow-wrap: anywhere; }
+.traveler-trip-main small { margin-top: 3px; color: var(--text-soft); font-size: 11px; }
+.traveler-status { display: inline-flex; padding: 3px 7px; border-radius: 999px; color: #0369a1; background: rgba(56,189,248,.14); font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+.traveler-active .traveler-status { color: #16a36f; background: rgba(34,197,94,.13); }
+.traveler-trip-actions { display: grid; gap: 5px; }
+.traveler-action { min-height: 32px; padding: 5px 9px; border: 0; border-radius: 9px; color: var(--brand-1); background: var(--surface-2); font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; }
+.traveler-action.danger { color: var(--danger,#e5484d); }
+.traveler-empty,.traveler-loading { display: grid; gap: 5px; justify-items: center; padding: 28px 18px; border: 1px dashed var(--card-border); border-radius: 16px; color: var(--text-soft); text-align: center; }
+.traveler-empty strong,.traveler-loading strong { color: var(--text); font-size: 14px; }
+.traveler-empty small,.traveler-loading small { font-size: 11.5px; line-height: 1.4; }
+.traveler-empty .btn { margin-top: 8px; }
+.traveler-form-card { margin-top: 18px; padding: 15px; border: 1px solid var(--card-border); border-radius: 18px; background: var(--surface); box-shadow: 0 10px 28px rgba(0,0,0,.08); }
+.traveler-form-head { display: grid; grid-template-columns: minmax(0,1fr) 34px; gap: 10px; align-items: start; margin-bottom: 13px; }
+.traveler-form-close,.traveler-stop-remove { border: 0; border-radius: 50%; background: var(--surface-2); color: var(--text-soft); font: inherit; cursor: pointer; }
+.traveler-form-close { width: 34px; height: 34px; font-size: 22px; }
+.traveler-stop-list { display: grid; gap: 10px; }
+.traveler-stop { display: grid; grid-template-columns: 28px minmax(0,1fr) 28px; gap: 9px; align-items: start; padding: 11px; border-radius: 14px; background: var(--surface-2); }
+.traveler-stop-number { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 10px; color: #fff; background: linear-gradient(135deg,#2563eb,#0891b2); font-size: 12px; font-weight: 900; }
+.traveler-stop-fields { display: grid; gap: 8px; min-width: 0; }
+.traveler-stop-fields label { display: grid; gap: 4px; min-width: 0; }
+.traveler-stop-fields label > span { color: var(--text-soft); font-size: 10px; font-weight: 750; }
+.traveler-stop-fields input { min-width: 0; width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; box-sizing: border-box; }
+.traveler-date-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.traveler-stop-remove { width: 28px; height: 28px; color: var(--danger,#e5484d); font-size: 18px; }
+.traveler-form-card > .btn-outline { margin-top: 10px; }
+.traveler-form-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 13px; border-top: 1px solid var(--card-border); }
+.traveler-form-foot small { max-width: 330px; color: var(--text-soft); font-size: 10.5px; line-height: 1.4; }
+.traveler-form-foot .btn { flex: 0 0 auto; }
+
+.discover-grid-badge.traveler { color: #7dd3fc !important; font-size: 13px; }
+.swipe-traveler,.result-traveler,.nearby-traveler-badge {
+  position: absolute; z-index: 5; display: inline-flex; align-items: center; max-width: calc(100% - 24px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff;
+  background: linear-gradient(135deg,rgba(37,99,235,.94),rgba(8,145,178,.94));
+  border: 1px solid rgba(255,255,255,.32); box-shadow: 0 4px 12px rgba(8,145,178,.28);
+  font-weight: 800;
+}
+.swipe-traveler { top: 56px; left: 12px; padding: 5px 9px; border-radius: 999px; font-size: 11px; }
+.result-traveler { left: 8px; top: 39px; padding: 4px 8px; border-radius: 999px; font-size: 10px; }
+.result-card.has-now .result-traveler { top: 72px; }
+.nearby-traveler-badge { left: 6px; top: 32px; padding: 3px 7px; border-radius: 999px; font-size: 9px; }
+.pd-traveler-tag { display: inline-flex; align-items: center; margin-left: 8px; padding: 2px 8px; border-radius: 999px; color: #fff; background: linear-gradient(135deg,#2563eb,#0891b2); border: 1px solid rgba(255,255,255,.25); font-size: 12px; font-weight: 800; }
+.pd-traveler-card { display: grid; grid-template-columns: 36px minmax(0,1fr); gap: 10px; align-items: center; margin: 12px 16px 0; padding: 12px; border: 1px solid rgba(56,189,248,.32); border-radius: 15px; background: color-mix(in srgb,#38bdf8 9%,var(--surface)); }
+.pd-traveler-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; color: #fff; background: linear-gradient(135deg,#2563eb,#0891b2); }
+.pd-traveler-card strong,.pd-traveler-card small { display: block; }
+.pd-traveler-card strong { color: var(--text); font-size: 13px; }
+.pd-traveler-card small { margin-top: 3px; color: var(--text-soft); font-size: 10.5px; line-height: 1.35; }
+.map-pin.traveler { box-shadow: 0 0 0 3px rgba(56,189,248,.48),0 5px 16px rgba(0,0,0,.32); }
+.map-pin-tag.traveler,.map-grid-traveler { color: #fff; background: linear-gradient(135deg,#2563eb,#0891b2); }
+.map-grid-traveler { position: absolute; left: 6px; top: 6px; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; }
+
+@media (max-width: 430px) {
+  .traveler-wrap { padding-inline: 12px; }
+  .traveler-hero { grid-template-columns: 46px minmax(0,1fr); padding: 15px; }
+  .traveler-hero-icon { width: 46px; height: 46px; border-radius: 15px; font-size: 23px; }
+  .traveler-hero h2 { font-size: 17px; }
+  .traveler-date-grid { grid-template-columns: 1fr; }
+  .traveler-form-foot { align-items: stretch; flex-direction: column; }
+  .traveler-form-foot .btn { width: 100%; }
+}
+
+@media (max-width: 350px) {
+  .traveler-limits { gap: 5px; }
+  .traveler-limits > div { padding-inline: 3px; }
+  .traveler-trip { grid-template-columns: 1fr; }
+  .traveler-trip-actions { grid-template-columns: 1fr 1fr; }
+}

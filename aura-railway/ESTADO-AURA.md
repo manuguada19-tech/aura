@@ -1,8 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última publicada: V998 (`22f19c8`, build `49ca8d171a94`) · siguiente preparada: V999**
+**Fecha de este resumen: 1 octubre 2026 · última publicada: V999 (`c6a6884`, build `052d36d7b007`) · siguiente preparada: V1000**
 
-### V999 (preparada, sin commit ni publicación) — Suscripciones compactas y dinámicas
+### V1000 (preparada, sin commit ni publicación) — Modo viajero sin ubicación falsa
+
+- Nuevo apartado «Modo viajero» en Perfil: permite activar una estancia actual,
+  programar viajes futuros y organizar varias ciudades con fechas propias.
+- Los límites se validan en servidor desde la matriz real: Free 7 días/1 ciudad
+  y sin viajes futuros; Premium 30/1/1; Gold 30/3/2; Platinum 30/10/6.
+- No cambia `users.lat/lng`, GPS, distancias ni el punto del mapa. Solo comunica
+  que la persona está de viaje, su ciudad declarada y hasta cuándo.
+- Explorar, Buscar, Cerca y el mapa incluyen el filtro «personas de viaje»;
+  tarjetas y perfil completo muestran un distintivo cuando el viaje está activo.
+- Itinerarios guardados en tablas propias, con fechas válidas, sin solapamientos,
+  límites de duración/ciudades/futuros y confirmación antes de eliminar.
+- Validada sintaxis de servidor/cliente, interacción de varias ciudades y vistas
+  de 320, 390 y 1280 px sin desbordamiento. Pendiente de autorización exacta.
+
+### V999 (01/10/2026) — Suscripciones compactas y dinámicas
 
 - La app compara Free, Premium, Gold y Platinum mediante un selector fijo de
   cuatro opciones; solo muestra una tarjeta completa cada vez para evitar el
@@ -15,7 +30,8 @@
 - Mantiene los precios y el flujo de cobro configurados; no cambia Stripe,
   renovaciones, usuarios ni suscripciones reales.
 - Validada en 390 px y 1280 px: cuatro planes, seis resúmenes, trece funciones
-  operativas y sin desbordamiento horizontal. Pendiente de autorización exacta.
+  operativas y sin desbordamiento horizontal. Publicada con Railway correcto,
+  `/api/health` en `ready:true` y build `052d36d7b007`.
 
 ### V998 (01/10/2026) — Permisos aplicados de extremo a extremo
 
