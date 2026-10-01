@@ -2292,6 +2292,10 @@ async function downloadCSV(kind) {
     .pro-kpi{position:relative;background:var(--panel,#1a1a24);border:1px solid var(--border,#2a2a3a);
       border-radius:16px;padding:14px 16px;overflow:hidden;transition:transform .15s,box-shadow .15s}
     .pro-kpi:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(0,0,0,.25)}
+    .pro-kpi-action{width:100%;appearance:none;text-align:left;color:inherit;font:inherit;cursor:pointer}
+    .pro-kpi-action:focus-visible{outline:3px solid color-mix(in srgb,var(--k-a,#7c3aed) 45%,transparent);outline-offset:3px}
+    .pro-kpi-open{position:absolute;right:15px;bottom:12px;color:var(--muted,#9aa);font-size:10.5px;font-weight:750}
+    .pro-kpi-action .pro-kpi-sub{padding-right:66px}
     .pro-kpi::before{content:"";position:absolute;top:0;left:0;right:0;height:3px;
       background:linear-gradient(90deg,var(--k-a,#7c3aed),var(--k-b,#ec4899));}
     .pro-kpi-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
@@ -2407,9 +2411,15 @@ function proHero(o) {
  * @param {object} o { label, value, icon, trend:"+12%"|"-3%"|null, sparkline:[num], gradA, gradB }
  */
 function proKpi(o) {
-  const { label = "", value = "", icon = "📈", trend = null, sparkline = [], gradA = "#7c3aed", gradB = "#ec4899", sub = "" } = o || {};
-  const c = document.createElement("div");
+  const { label = "", value = "", icon = "📈", trend = null, sparkline = [], gradA = "#7c3aed", gradB = "#ec4899", sub = "", onClick = null, actionLabel = "" } = o || {};
+  const c = document.createElement(typeof onClick === "function" ? "button" : "div");
   c.className = "pro-kpi";
+  if (typeof onClick === "function") {
+    c.type = "button";
+    c.classList.add("pro-kpi-action");
+    c.setAttribute("aria-label", actionLabel || `Abrir detalle de ${label}`);
+    c.addEventListener("click", onClick);
+  }
   c.style.setProperty("--k-a", gradA);
   c.style.setProperty("--k-b", gradB);
   let trendHtml = "";
@@ -2442,7 +2452,8 @@ function proKpi(o) {
     </div>
     <div class="pro-kpi-val">${value}</div>
     <div class="pro-kpi-sub">${trendHtml}${sub ? `<span>${sub}</span>` : ""}</div>
-    ${sparkHtml}`;
+    ${sparkHtml}
+    ${typeof onClick === "function" ? '<span class="pro-kpi-open" aria-hidden="true">Ver detalle →</span>' : ""}`;
   return c;
 }
 
@@ -2561,14 +2572,16 @@ function openDashboardPrefs() {
   const overlay = el("div", { class: "ac-overlay" });
   overlay.innerHTML = `<div class="ac-scrim"></div><div class="ac-dialog ac-dialog-wide dashboard-prefs" role="dialog" aria-modal="true">
     <div class="prefs-head"><div><small>MI PANEL</small><h3>Personalizar dashboard</h3></div><button class="prefs-close" type="button" aria-label="Cerrar">×</button></div>
-    <p class="muted small">Elige qué información quieres ver. La configuración se guarda en este navegador.</p>
-    <div class="prefs-grid"></div>
-    <div class="prefs-block"><strong>Secciones</strong>
-      <label><input type="checkbox" data-pref="work_center" ${current.work_center ? "checked" : ""}> Centro de trabajo</label>
-      <label><input type="checkbox" data-pref="health" ${current.health ? "checked" : ""}> Estado técnico</label>
-      <label><input type="checkbox" data-pref="shortcuts" ${current.shortcuts ? "checked" : ""}> Accesos rápidos</label>
+    <div class="prefs-scroll">
+      <p class="muted small">Elige qué información quieres ver. La configuración se guarda en este navegador.</p>
+      <div class="prefs-grid"></div>
+      <div class="prefs-block"><strong>Secciones</strong>
+        <label><input type="checkbox" data-pref="work_center" ${current.work_center ? "checked" : ""}> Centro de trabajo</label>
+        <label><input type="checkbox" data-pref="health" ${current.health ? "checked" : ""}> Estado técnico</label>
+        <label><input type="checkbox" data-pref="shortcuts" ${current.shortcuts ? "checked" : ""}> Accesos rápidos</label>
+      </div>
     </div>
-    <div class="ac-actions"><button class="btn ghost prefs-reset" type="button">Restaurar</button><button class="btn primary prefs-save" type="button">Guardar</button></div>
+    <div class="ac-actions prefs-actions"><button class="btn ghost prefs-reset" type="button">Restaurar valores predeterminados</button><button class="btn primary prefs-save" type="button">Guardar</button></div>
   </div>`;
   const grid = overlay.querySelector(".prefs-grid");
   choices.forEach(([key, label]) => grid.appendChild(el("label", { class: "prefs-choice" }, [
@@ -2811,6 +2824,10 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
   if (showHealth) {
     const h = data?.health || {};
     const ok = h.status === "ok" && h.ready !== false && h.database?.ok !== false;
+    const latestBackupAt = h.backup?.latest_at || h.backup?.last_full_export_at || h.backup?.last_snapshot_at || h.backup?.last_export_at;
+    const latestBackupText = latestBackupAt
+      ? `${fmt.reldate(latestBackupAt)}${h.backup?.latest_kind ? ` · ${h.backup.latest_kind}` : ""}`
+      : "Pendiente";
     const health = el("aside", { class: `ops-health ${ok ? "ok" : "attention"}` }, [
       el("div", { class: "health-head" }, [
         el("span", { class: "health-pulse" }),
@@ -2822,7 +2839,7 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
         el("div", {}, [el("dt", {}, "Emails en cola"), el("dd", {}, fmt.num(h.email?.queued || 0))]),
         el("div", {}, [el("dt", {}, "Push en cola"), el("dd", {}, fmt.num(h.push?.queued || 0))]),
         el("div", {}, [el("dt", {}, "Errores 24 h"), el("dd", {}, fmt.num(h.errors_24h || 0))]),
-        el("div", {}, [el("dt", {}, "Última copia"), el("dd", {}, h.backup?.last_full_export_at ? fmt.reldate(h.backup.last_full_export_at) : (h.backup?.last_export_at ? fmt.reldate(h.backup.last_export_at) : "Pendiente"))]),
+        el("div", {}, [el("dt", {}, "Última copia"), el("dd", {}, latestBackupText)]),
       ]),
     ]);
     if (Array.isArray(h.issues) && h.issues.length) {
@@ -2882,21 +2899,25 @@ async function viewDashboard(root){
     label: "Nuevos usuarios (7d)", icon: "👥", value: fmt.num(stats.signups_week || 0),
     trend: stats.signups_trend || null, sparkline: spark7, gradA: "#ec4899", gradB: "#f472b6",
     sub: "vs semana anterior",
+    onClick: () => route("users"), actionLabel: "Abrir usuarios nuevos",
   });
   kpiCards.online = proKpi({
     label: "Usuarios en línea", icon: "🟢", value: fmt.num(stats.online || 0),
     trend: null, sparkline: sparkOnline, gradA: "#22c55e", gradB: "#16a34a",
-    sub: "últimas 12h",
+    sub: `actividad en los últimos ${stats.online_window_seconds || 90} s`,
+    onClick: () => route("users"), actionLabel: "Abrir usuarios en línea",
   });
   kpiCards.mrr = proKpi({
     label: "MRR estimado", icon: "💰", value: fmt.eur(stats.mrr || 0),
     trend: stats.mrr_trend || null, sparkline: sparkMrr, gradA: "#f59e0b", gradB: "#f97316",
     sub: `${fmt.num(stats.subscriptions || 0)} suscripciones`,
+    onClick: () => route("subscriptions"), actionLabel: "Abrir suscripciones",
   });
   kpiCards.matches = proKpi({
     label: "Matches nuevos (7d)", icon: "💞", value: fmt.num(stats.matches_week || stats.matches || 0),
     trend: stats.matches_trend || null, sparkline: sparkMatches, gradA: "#8b5cf6", gradB: "#a855f7",
     sub: `${fmt.num(stats.open_reports || 0)} denuncias abiertas`,
+    onClick: () => route("user_activity"), actionLabel: "Abrir actividad de matches",
   });
   dashPrefs.kpis.forEach(key => { if (kpiCards[key]) kpisPro.appendChild(kpiCards[key]); });
   root.appendChild(kpisPro);
@@ -3122,22 +3143,26 @@ async function viewDashboard(root){
   if (dashPrefs.shortcuts) root.appendChild(sectionsWrap);
 
   const kpis = [
-    { title: "Usuarios totales", val: fmt.num(stats.total), sub: `${stats.active} activos`, cls: "rose",
+    { title: "Usuarios totales", val: fmt.num(stats.total), sub: `${stats.active} activos`, cls: "rose", target: "users",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-8 2-8 6v2h16v-2c0-4-4-6-8-6z"/></svg>` },
-    { title: "Usuarios en línea", val: fmt.num(stats.online), sub: "Ahora mismo", cls: "blue",
+    { title: "Usuarios en línea", val: fmt.num(stats.online), sub: `Actividad en ${stats.online_window_seconds || 90} s`, cls: "blue", target: "users",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="12" r="6"/></svg>` },
-    { title: "Suscripciones", val: fmt.num(stats.subscriptions), sub: `${fmt.num(stats.matches)} matches`, cls: "violet",
+    { title: "Suscripciones", val: fmt.num(stats.subscriptions), sub: `${fmt.num(stats.matches)} matches`, cls: "violet", target: "subscriptions",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 2l3 6 6 .9-4.5 4.3L18 20l-6-3-6 3 1.5-6.8L3 8.9 9 8z"/></svg>` },
-    { title: "Ingresos MRR", val: fmt.eur(stats.mrr), sub: `${stats.open_reports} denuncias abiertas`, cls: "green",
+    { title: "Ingresos MRR", val: fmt.eur(stats.mrr), sub: `${stats.open_reports} denuncias abiertas`, cls: "green", target: "subscriptions",
       ico: `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M3 6h18v3H3zm0 6h18v6H3z"/></svg>` },
   ];
   const kpiGrid = el("div", { class: "kpi-grid" });
-  kpis.forEach(k => kpiGrid.appendChild(el("div", { class: `kpi ${k.cls}` }, [
-    el("h4", {}, k.title),
-    el("div", { class: "val" }, k.val),
-    el("div", { class: "sub" }, k.sub),
-    el("div", { class: "ico", html: k.ico }),
-  ])));
+  kpis.forEach(k => {
+    const card = el("button", { class: `kpi ${k.cls} kpi-action`, type: "button", "aria-label": `Abrir ${k.title}` }, [
+      el("h4", {}, k.title),
+      el("div", { class: "val" }, k.val),
+      el("div", { class: "sub" }, k.sub),
+      el("div", { class: "ico", html: k.ico }),
+    ]);
+    card.addEventListener("click", () => route(k.target));
+    kpiGrid.appendChild(card);
+  });
   root.appendChild(kpiGrid);
 
   // ---- Tarjeta rápida de Backup ----
@@ -3191,7 +3216,7 @@ async function viewDashboard(root){
       const fmtDate = (iso) => iso ? new Date(iso).toLocaleString("es-ES") : "Nunca";
       const infoEl = document.getElementById("dashBackupInfo");
       if (infoEl) infoEl.innerHTML =
-        `Último backup: <strong>${fmtDate(info.last_snapshot_at)}</strong> (${info.snapshots_count || 0} guardados) · ` +
+        `Backup en servidor: <strong>${fmtDate(info.last_snapshot_at)}</strong> (${info.snapshots_count || 0} guardados) · ` +
         `Descarga: <strong>${fmtDate(info.last_export_at)}</strong> · Import: <strong>${fmtDate(info.last_import_at)}</strong>`;
     } catch {}
   }

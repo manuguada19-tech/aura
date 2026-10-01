@@ -3146,7 +3146,14 @@ const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).cat
 app.get("/api/stats/dashboard", wrap(async (req, res) => {
   const [[{ total }]] = await pool.query("SELECT COUNT(*) total FROM users");
   const [[{ active }]] = await pool.query("SELECT COUNT(*) active FROM users WHERE status='active'");
-  const [[{ online }]] = await pool.query("SELECT COUNT(*) online FROM users WHERE online=1");
+  // V988 · "En línea" significa actividad realmente reciente. El flag se
+  // conserva para presencia, pero no debe contar sesiones cuyo heartbeat haya
+  // caducado aunque todavía no haya pasado la limpieza periódica.
+  const ONLINE_WINDOW_SECONDS = 90;
+  const [[{ online }]] = await pool.query(
+    "SELECT COUNT(*) online FROM users WHERE online=1 AND last_login >= DATE_SUB(NOW(), INTERVAL ? SECOND)",
+    [ONLINE_WINDOW_SECONDS]
+  );
   // V596 · El MRR y el nº de suscripciones solo cuentan usuarios reales
   // (role='user'). Si un admin/moderador/superadmin se pone un plan de pago
   // en su propio perfil (p. ej. para probar la demo), no debe inflar la
@@ -3220,7 +3227,8 @@ app.get("/api/stats/dashboard", wrap(async (req, res) => {
   ]);
 
   res.json({
-    total, active, online, subscriptions: subs, mrr: Number(mrr), matches, open_reports,
+    total, active, online, online_window_seconds: ONLINE_WINDOW_SECONDS,
+    subscriptions: subs, mrr: Number(mrr), matches, open_reports,
     signups_7d, matches_7d, mrr_7d,
     signups_week: signCur, matches_week: matchCur,
     signups_trend: pct(signCur, signPrev),
@@ -19363,7 +19371,7 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     adminScalar("SELECT COUNT(*) n FROM push_campaigns WHERE status IN ('queued','sending')"),
     adminScalar("SELECT COALESCE(SUM(failed_count),0) n FROM push_campaigns WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
     adminScalar("SELECT COUNT(*) n FROM logs WHERE level='error' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
-    adminRows("SELECT k,v FROM settings WHERE k IN ('backup.last_export_at','backup.last_snapshot_at','backup.last_full_export_at')"),
+    adminRows("SELECT k,v FROM settings WHERE k IN ('backup.last_export_at','backup.last_snapshot_at','backup.last_snapshot_file','backup.last_full_export_at')"),
   ]);
 
   // Mismo criterio que /api/admin/kyc/queue: una persona, un caso efectivo.
@@ -19372,6 +19380,22 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     .length;
 
   const backup = Object.fromEntries(backupRows.map(r => [r.k, r.v]));
+  const snapshotFile = String(backup["backup.last_snapshot_file"] || "");
+  let serverSnapshotAvailable = false;
+  if (/^aura-snapshot-[a-zA-Z0-9_\-]+\.json$/.test(snapshotFile)) {
+    try {
+      await fs.promises.access(path.join(__dirname, "backups", snapshotFile));
+      serverSnapshotAvailable = true;
+    } catch {}
+  }
+  const latestBackup = [
+    { kind: "completa", at: backup["backup.last_full_export_at"] },
+    { kind: "servidor", at: serverSnapshotAvailable ? backup["backup.last_snapshot_at"] : null },
+    { kind: "descarga", at: backup["backup.last_export_at"] },
+  ]
+    .map(item => ({ ...item, ts: item.at ? new Date(item.at).getTime() : NaN }))
+    .filter(item => Number.isFinite(item.ts))
+    .sort((a, b) => b.ts - a.ts)[0] || null;
   const queues = [
     { key: "reports", label: "Denuncias", count: reports, view: "reports", tone: reports ? "danger" : "ok" },
     { key: "tickets", label: "Tickets", count: tickets, urgent: urgentTickets, view: "tickets", tone: urgentTickets ? "danger" : (tickets ? "warn" : "ok") },
@@ -19410,6 +19434,20 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
   if (pushFailed) technicalIssues.push({ level: "danger", label: `${pushFailed} envíos push fallidos en 24 h` });
   if (pushQueued >= 10) technicalIssues.push({ level: "warn", label: `${pushQueued} campañas push en cola` });
   if (errors24h) technicalIssues.push({ level: errors24h >= 10 ? "danger" : "warn", label: `${errors24h} errores registrados en 24 h` });
+  if (backup["backup.last_snapshot_at"] && !serverSnapshotAvailable) {
+    technicalIssues.push({ level: "warn", label: "El último backup del servidor ya no está disponible" });
+  }
+  if (!latestBackup) {
+    technicalIssues.push({ level: "danger", label: "No hay ninguna copia de seguridad registrada" });
+  } else {
+    const backupAgeDays = Math.floor((Date.now() - latestBackup.ts) / 86400000);
+    if (backupAgeDays >= 7) {
+      technicalIssues.push({
+        level: backupAgeDays >= 30 ? "danger" : "warn",
+        label: `La última copia tiene ${backupAgeDays} días`,
+      });
+    }
+  }
 
   // Una muestra cada cinco minutos como máximo. El histórico se alimenta con
   // la lectura normal del panel, sin cron externo y sin inflar la base.
@@ -19431,7 +19469,7 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     queues,
     work_items: workItems,
     health: {
-      status: technicalIssues.some(i => ["critical", "danger"].includes(i.level)) ? "attention" : "ok",
+      status: technicalIssues.length ? "attention" : "ok",
       ready: BOOT_READY,
       database: { ok: dbOk, latency_ms: dbMs },
       email: { queued: emailQueued, failed_24h: emailFailed },
@@ -19440,7 +19478,10 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
       backup: {
         last_export_at: backup["backup.last_export_at"] || null,
         last_snapshot_at: backup["backup.last_snapshot_at"] || null,
+        last_snapshot_available: serverSnapshotAvailable,
         last_full_export_at: backup["backup.last_full_export_at"] || null,
+        latest_at: latestBackup?.at || null,
+        latest_kind: latestBackup?.kind || null,
       },
       build: BUILD_ID,
       uptime_seconds: Math.round(process.uptime()),

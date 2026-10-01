@@ -1,6 +1,18 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 29 septiembre 2026 · última versión preparada: V987**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V988**
+
+### V988 (01/10/2026) — Dashboard administrativo más fiable y accionable
+
+- «Usuarios en línea» cuenta únicamente sesiones con actividad en los últimos
+  90 segundos y muestra ese criterio, en vez del texto incorrecto «últimas 12h».
+- El estado técnico toma la copia más reciente entre backup completo, snapshot
+  del servidor todavía disponible y descarga; identifica el tipo y deja de
+  mostrar «Todo funciona» si falta, desapareció o tiene siete días o más.
+- Las tarjetas de usuarios, presencia, MRR/suscripciones y matches abren su
+  sección relacionada mediante ratón o teclado.
+- «Mi panel» limita el diálogo al alto disponible, desplaza solo las opciones y
+  mantiene las acciones accesibles también en pantallas pequeñas.
 
 ### V987 (29/09/2026) — Restablecimiento visible y efectivo del usuario de prueba
 
