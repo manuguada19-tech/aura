@@ -1,8 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última publicada: V999 (`c6a6884`, build `052d36d7b007`) · siguiente preparada: V1000**
+**Fecha de este resumen: 1 octubre 2026 · última publicada: V1000 (`5502a72`, build `5d899c1e72e1`) · siguiente preparada: V1001**
 
-### V1000 (preparada, sin commit ni publicación) — Modo viajero sin ubicación falsa
+### V1001 (preparada, sin commit ni publicación) — Administración del modo viajero
+
+- Nueva sección «Modo viajero» en Administración, accesible desde el menú y
+  desde los accesos rápidos del panel.
+- Resumen de viajes activos, programados, usuarios y ciudades; listado con
+  búsqueda, filtros de estado/plan, paginación e itinerarios completos.
+- Cada fila muestra el plan y sus límites efectivos de días, ciudades y viajes
+  futuros. La ficha administrativa de cada usuario incorpora su historial de
+  viajes y el mismo resumen de límites.
+- La eliminación administrativa es individual, transaccional y exige escribir
+  literalmente `ELIMINAR VIAJE N`; solo Administrador o Superadmin puede usarla.
+- No lee ni modifica el GPS y no se tocaron datos reales durante el desarrollo.
+- Validada sintaxis de servidor/cliente, vista de 1440 px, vista móvil de 390 px
+  sin desbordamiento y bloqueo de la confirmación hasta introducir el texto exacto.
+
+### V1000 (01/10/2026) — Modo viajero sin ubicación falsa
 
 - Nuevo apartado «Modo viajero» en Perfil: permite activar una estancia actual,
   programar viajes futuros y organizar varias ciudades con fechas propias.
@@ -15,7 +30,8 @@
 - Itinerarios guardados en tablas propias, con fechas válidas, sin solapamientos,
   límites de duración/ciudades/futuros y confirmación antes de eliminar.
 - Validada sintaxis de servidor/cliente, interacción de varias ciudades y vistas
-  de 320, 390 y 1280 px sin desbordamiento. Pendiente de autorización exacta.
+  de 320, 390 y 1280 px sin desbordamiento. Publicada con Railway correcto,
+  `/api/health` en `ready:true` y build `5d899c1e72e1`.
 
 ### V999 (01/10/2026) — Suscripciones compactas y dinámicas
 

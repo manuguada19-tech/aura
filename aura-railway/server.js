@@ -1398,6 +1398,9 @@ const ESCRITURA = [
   [/^PATCH \/api\/users\/[^/]+$/, 3],
   [/^DELETE \/api\/users\/[^/]+\/activity$/, 3],
   [/^(POST|PUT|DELETE) \/api\/admin\/users\/[^/]+\/(profile-views|favorites)(\/|$)/, 3],
+  // V1001 · Un viaje declarado se puede consultar desde cualquier rango, pero
+  // eliminarlo modifica datos del usuario y queda reservado a Administrador.
+  [/^DELETE \/api\/admin\/traveler\/trips\/[^/]+$/, 3],
   // Los catálogos con los que trabaja el equipo de moderación
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/(deletion-reasons|kyc-reasons|mod-rules|mod-templates|user-rules|ticket-macros)(\/|$)/, 3],
   // V997 · La matriz de prestaciones cambia producto y planes, no moderación.
@@ -11247,6 +11250,142 @@ app.delete("/api/my/traveler/trips/:id", wrap(async (req, res) => {
     await conn.execute("DELETE FROM traveler_trips WHERE id=? AND user_id=?", [id, me]);
     await conn.commit();
     res.json({ ok: true });
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+}));
+
+/* ============================================================
+   V1001 · Administración del modo viajero
+   ------------------------------------------------------------
+   Solo consulta viajes declarados: nunca lee ni modifica el GPS. El borrado
+   administrativo es individual, transaccional y queda auditado por el
+   middleware general del panel.
+   ============================================================ */
+app.get("/api/admin/traveler", requireAdmin, wrap(async (req, res) => {
+  const status = ["active", "future", "past"].includes(String(req.query.status || ""))
+    ? String(req.query.status) : "";
+  const plan = PLAN_CODES_V997.includes(String(req.query.plan || "").toLowerCase())
+    ? String(req.query.plan).toLowerCase() : "";
+  const q = String(req.query.q || "").trim().slice(0, 120);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const where = ["t.enabled=1"];
+  const args = [];
+  if (status === "active") where.push("CURDATE() BETWEEN t.starts_on AND t.ends_on");
+  if (status === "future") where.push("t.starts_on > CURDATE()");
+  if (status === "past") where.push("t.ends_on < CURDATE()");
+  if (plan) { where.push("LOWER(COALESCE(u.plan,'free'))=?"); args.push(plan); }
+  if (q) {
+    where.push("(u.name LIKE ? OR u.email LIKE ? OR EXISTS (SELECT 1 FROM traveler_trip_stops sq WHERE sq.trip_id=t.id AND sq.city LIKE ?))");
+    const like = `%${q}%`;
+    args.push(like, like, like);
+  }
+  const clause = where.join(" AND ");
+  const [[summary]] = await pool.query(
+    `SELECT
+       COUNT(DISTINCT CASE WHEN CURDATE() BETWEEN t.starts_on AND t.ends_on THEN t.id END) AS active,
+       COUNT(DISTINCT CASE WHEN t.starts_on > CURDATE() THEN t.id END) AS future,
+       COUNT(DISTINCT CASE WHEN t.ends_on < CURDATE() THEN t.id END) AS past,
+       COUNT(DISTINCT CASE WHEN t.ends_on >= CURDATE() THEN t.user_id END) AS users,
+       COUNT(DISTINCT CASE WHEN t.ends_on >= CURDATE() THEN s.city END) AS cities
+       FROM traveler_trips t
+       LEFT JOIN traveler_trip_stops s ON s.trip_id=t.id
+      WHERE t.enabled=1`
+  );
+  const [[count]] = await pool.query(
+    `SELECT COUNT(*) AS total FROM traveler_trips t JOIN users u ON u.id=t.user_id WHERE ${clause}`,
+    args
+  );
+  const [rows] = await pool.query(
+    `SELECT t.id, t.user_id, u.name, u.email, u.photo_url,
+            LOWER(COALESCE(u.plan,'free')) AS plan,
+            DATE_FORMAT(t.starts_on,'%Y-%m-%d') AS starts_on,
+            DATE_FORMAT(t.ends_on,'%Y-%m-%d') AS ends_on,
+            DATE_FORMAT(t.created_at,'%Y-%m-%dT%H:%i:%sZ') AS created_at
+       FROM traveler_trips t
+       JOIN users u ON u.id=t.user_id
+      WHERE ${clause}
+      ORDER BY CASE WHEN CURDATE() BETWEEN t.starts_on AND t.ends_on THEN 0 WHEN t.starts_on>CURDATE() THEN 1 ELSE 2 END,
+               CASE WHEN t.ends_on<CURDATE() THEN t.ends_on END DESC,
+               t.starts_on ASC, t.id ASC
+      LIMIT ? OFFSET ?`,
+    [...args, limit, offset]
+  );
+  const ids = rows.map((row) => Number(row.id)).filter(Number.isFinite);
+  let stopRows = [];
+  if (ids.length) {
+    const placeholders = ids.map(() => "?").join(",");
+    [stopRows] = await pool.query(
+      `SELECT id, trip_id, city, DATE_FORMAT(starts_on,'%Y-%m-%d') AS starts_on,
+              DATE_FORMAT(ends_on,'%Y-%m-%d') AS ends_on, position
+         FROM traveler_trip_stops WHERE trip_id IN (${placeholders})
+        ORDER BY trip_id, position`, ids
+    );
+  }
+  const stopsByTrip = new Map();
+  for (const stop of stopRows) {
+    const key = String(stop.trip_id);
+    if (!stopsByTrip.has(key)) stopsByTrip.set(key, []);
+    stopsByTrip.get(key).push({
+      id: Number(stop.id), city: stop.city, starts_on: stop.starts_on,
+      ends_on: stop.ends_on, position: Number(stop.position || 0),
+    });
+  }
+  const today = todayUtcV1000();
+  const matrix = await entitlementMatrixV997(PLAN_CODES_V997);
+  const limits = {};
+  for (const code of PLAN_CODES_V997) {
+    limits[code] = {
+      max_days: Math.max(0, Number(matrix[code]?.traveler_current?.quota || 0)),
+      city_limit: Math.max(1, Number(matrix[code]?.traveler_city_limit?.quota || 1)),
+      future_limit: Math.max(0, Number(matrix[code]?.traveler_future?.quota || 0)),
+    };
+  }
+  res.set("Cache-Control", "no-store");
+  res.json({
+    ok: true,
+    summary: {
+      active: Number(summary?.active || 0), future: Number(summary?.future || 0),
+      past: Number(summary?.past || 0), users: Number(summary?.users || 0),
+      cities: Number(summary?.cities || 0),
+    },
+    limits,
+    total: Number(count?.total || 0), limit, offset,
+    rows: rows.map((row) => ({
+      ...row, id: Number(row.id), user_id: Number(row.user_id),
+      status: row.starts_on > today ? "future" : (row.ends_on < today ? "past" : "active"),
+      stops: stopsByTrip.get(String(row.id)) || [],
+    })),
+  });
+}));
+
+app.get("/api/admin/users/:uid/traveler", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!Number.isFinite(uid) || uid <= 0) return res.status(400).json({ error: "invalid_user" });
+  const limits = await travelerLimitsV1000(uid);
+  if (!limits) return res.status(404).json({ error: "not_found" });
+  res.set("Cache-Control", "no-store");
+  res.json({ ok: true, limits, trips: await travelerTripsV1000(uid, true) });
+}));
+
+app.delete("/api/admin/traveler/trips/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: "invalid_trip" });
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[trip]] = await conn.query(
+      "SELECT id, user_id, starts_on, ends_on FROM traveler_trips WHERE id=? AND enabled=1 FOR UPDATE", [id]
+    );
+    if (!trip) { await conn.rollback(); return res.status(404).json({ error: "not_found" }); }
+    await conn.execute("DELETE FROM traveler_trip_stops WHERE trip_id=?", [id]);
+    await conn.execute("DELETE FROM traveler_trips WHERE id=?", [id]);
+    await conn.commit();
+    res.json({ ok: true, deleted_id: id, user_id: Number(trip.user_id) });
   } catch (error) {
     try { await conn.rollback(); } catch {}
     throw error;

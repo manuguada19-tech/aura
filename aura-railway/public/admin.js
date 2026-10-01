@@ -1766,7 +1766,7 @@ function initAdminLiveUpdates() {
    ============================================================ */
 const VISTA_NIVEL = {
   // -- Solo lectura y arriba (1): mirar y el trabajo de moderación --
-  dashboard: 1, users: 1, user_activity: 1, moderation: 1, reports: 1,
+  dashboard: 1, users: 1, traveler: 1, user_activity: 1, moderation: 1, reports: 1,
   appeals: 1, tickets: 1, chats: 1, infractions: 1, kyc: 1, duplicates: 1,
   logs: 1, stats: 1, fx_now_status: 1, live: 1,
   // -- Administrador y arriba (3): hablarle a los usuarios y el contenido --
@@ -1923,7 +1923,7 @@ function route(view) {
     return;
   }
   const map = {
-    dashboard: viewDashboard, users: viewUsers, moderation: viewModeration,
+    dashboard: viewDashboard, users: viewUsers, traveler: viewTravelerAdmin, moderation: viewModeration,
     reports: viewReports, appeals: viewAppeals, tickets: viewTickets, chats: viewChatsAdmin, otp: viewOtpCodes,
     subscriptions: viewSubscriptions,
     payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, boost: viewBoostAdmin, stats: viewStats,
@@ -3131,6 +3131,8 @@ async function viewDashboard(root){
   const SECTION_CARDS = [
     { id: "users", title: "Usuarios", desc: "Cuentas, verificaciones y bloqueos.", cls: "rose",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-8 2-8 6v2h16v-2c0-4-4-6-8-6z"/></svg>` },
+    { id: "traveler", title: "Modo viajero", desc: "Estancias, itinerarios y límites por plan.", cls: "blue",
+      ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 00-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>` },
     { id: "moderation", title: "Moderación", desc: "Perfiles, fotos y contenido.", cls: "orange",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 2l9 4v6c0 5-4 9-9 10-5-1-9-5-9-10V6l9-4z"/></svg>` },
     { id: "reports", title: "Denuncias", desc: "Reportes de usuarios pendientes.", cls: "red",
@@ -4009,6 +4011,201 @@ async function viewUsers(root){
 }
 
 /* ================================================================
+   V1001 · Administración del modo viajero
+   ================================================================ */
+function travelerAdminDateV1001(value) {
+  if (!value) return "—";
+  try {
+    return new Date(`${String(value).slice(0, 10)}T00:00:00`).toLocaleDateString("es-ES", {
+      day: "2-digit", month: "short", year: "numeric",
+    });
+  } catch (_) { return String(value); }
+}
+
+function travelerAdminStatusV1001(status) {
+  const map = {
+    active: ["Activo", "ok"],
+    future: ["Programado", "info"],
+    past: ["Finalizado", "muted"],
+  };
+  const item = map[status] || [status || "—", "muted"];
+  return tag(item[0], item[1]);
+}
+
+function confirmTravelerDeleteV1001(trip) {
+  return new Promise((resolve) => {
+    const phrase = `ELIMINAR VIAJE ${trip.id}`;
+    const overlay = el("div", { class: "ac-overlay" });
+    const input = el("input", {
+      class: "input traveler-confirm-input", type: "text", autocomplete: "off",
+      placeholder: phrase, "aria-label": `Escribe ${phrase} para confirmar`,
+    });
+    const cancel = btn("Cancelar", "ghost", () => finish(false));
+    const accept = btn("Eliminar viaje", "danger", () => {
+      if (input.value.trim() === phrase) finish(true);
+    });
+    accept.disabled = true;
+    const dialog = el("div", { class: "ac-dialog traveler-confirm-dialog", role: "alertdialog", "aria-modal": "true" }, [
+      el("h3", {}, "Eliminar viaje declarado"),
+      el("p", {}, `Se eliminará el viaje #${trip.id} y todas sus ciudades. El GPS real del usuario no se modifica.`),
+      el("label", { class: "traveler-confirm-label" }, [
+        el("span", {}, ["Escribe ", el("strong", {}, phrase), " para confirmar"]), input,
+      ]),
+      el("div", { class: "ac-actions" }, [cancel, accept]),
+    ]);
+    overlay.appendChild(el("div", { class: "ac-scrim", onclick: () => finish(false) }));
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+    const onKey = (event) => {
+      if (event.key === "Escape") finish(false);
+      if (event.key === "Enter" && !accept.disabled) finish(true);
+    };
+    function finish(value) {
+      document.removeEventListener("keydown", onKey);
+      overlay.remove();
+      resolve(value);
+    }
+    input.addEventListener("input", () => { accept.disabled = input.value.trim() !== phrase; });
+    document.addEventListener("keydown", onKey);
+    setTimeout(() => input.focus(), 30);
+  });
+}
+
+function travelerStopsNodeV1001(stops) {
+  const list = el("div", { class: "traveler-admin-stops" });
+  (stops || []).forEach((stop, index) => list.appendChild(el("div", { class: "traveler-admin-stop" }, [
+    el("span", { class: "traveler-admin-stop-index" }, String(index + 1)),
+    el("span", {}, [
+      el("strong", {}, stop.city || "Ciudad sin nombre"),
+      el("small", {}, `${travelerAdminDateV1001(stop.starts_on)} – ${travelerAdminDateV1001(stop.ends_on)}`),
+    ]),
+  ])));
+  if (!(stops || []).length) list.appendChild(el("span", { class: "muted" }, "Sin ciudades registradas"));
+  return list;
+}
+
+async function viewTravelerAdmin(root) {
+  const state = { q: "", status: "", plan: "", limit: 30, offset: 0 };
+  let searchTimer = null;
+  root.appendChild(viewTitle("Modo viajero", "Consulta estancias declaradas, itinerarios y límites sin alterar el GPS real."));
+  const heroHost = el("div");
+  root.appendChild(heroHost);
+
+  const search = el("input", { class: "input grow", type: "search", placeholder: "Buscar usuario, email o ciudad…" });
+  const status = el("select", { class: "input" }, [
+    el("option", { value: "" }, "Todos los estados"),
+    el("option", { value: "active" }, "Activos"),
+    el("option", { value: "future" }, "Programados"),
+    el("option", { value: "past" }, "Finalizados"),
+  ]);
+  const plan = el("select", { class: "input" }, [
+    el("option", { value: "" }, "Todos los planes"),
+    el("option", { value: "free" }, "Gratis"),
+    el("option", { value: "premium" }, "Premium"),
+    el("option", { value: "gold" }, "Oro"),
+    el("option", { value: "platinum" }, "Platino"),
+  ]);
+  const reset = btn("Restablecer", "ghost sm", () => {
+    state.q = state.status = state.plan = ""; state.offset = 0;
+    search.value = status.value = plan.value = "";
+    refresh();
+  });
+  const filters = el("div", { class: "filter-bar traveler-admin-filters" }, [search, status, plan, reset]);
+  const tableHost = el("div", { class: "panel table-panel traveler-admin-table" });
+  root.appendChild(filters);
+  root.appendChild(tableHost);
+
+  search.addEventListener("input", () => {
+    state.q = search.value.trim(); state.offset = 0;
+    clearTimeout(searchTimer); searchTimer = setTimeout(refresh, 280);
+  });
+  status.addEventListener("change", () => { state.status = status.value; state.offset = 0; refresh(); });
+  plan.addEventListener("change", () => { state.plan = plan.value; state.offset = 0; refresh(); });
+
+  async function refresh() {
+    tableHost.replaceChildren(el("div", { class: "loading" }, "Cargando viajes…"));
+    const params = new URLSearchParams({ limit: String(state.limit), offset: String(state.offset) });
+    if (state.q) params.set("q", state.q);
+    if (state.status) params.set("status", state.status);
+    if (state.plan) params.set("plan", state.plan);
+    const data = await api.get(`/api/admin/traveler?${params}`);
+    const summary = data.summary || {};
+    heroHost.replaceChildren(proHero({
+      icon: "✈",
+      title: "Viajes declarados",
+      desc: "Supervisa quién está de viaje, sus próximas estancias y las ciudades indicadas. La ubicación GPS permanece independiente.",
+      gradA: "#2563eb", gradB: "#06b6d4",
+      stats: [
+        { v: fmt.num(summary.active), l: "Activos" },
+        { v: fmt.num(summary.future), l: "Programados" },
+        { v: fmt.num(summary.users), l: "Usuarios" },
+        { v: fmt.num(summary.cities), l: "Ciudades" },
+      ],
+    }));
+    tableHost.innerHTML = "";
+    const rows = Array.isArray(data.rows) ? data.rows : [];
+    if (!rows.length) {
+      tableHost.appendChild(el("div", { class: "empty" }, "No hay viajes que coincidan con estos filtros."));
+      return;
+    }
+    const table = el("table", { class: "data-table" });
+    table.appendChild(el("thead", {}, el("tr", {}, [
+      el("th", {}, "Usuario"), el("th", {}, "Estado"), el("th", {}, "Itinerario"),
+      el("th", {}, "Fechas"), el("th", {}, "Plan y límites"), el("th", { class: "ta-right" }, "Acciones"),
+    ])));
+    const body = el("tbody");
+    rows.forEach((trip) => {
+      const limits = data.limits?.[trip.plan] || {};
+      const actions = el("div", { class: "row-actions traveler-admin-actions" }, [
+        btn("Ver usuario", "ghost xs", () => openUserDrawer(trip.user_id, refresh)),
+      ]);
+      const remove = btn("Eliminar", "danger xs", async () => {
+        if (!(await confirmTravelerDeleteV1001(trip))) return;
+        try {
+          await api.del(`/api/admin/traveler/trips/${trip.id}`);
+          toast("Viaje eliminado");
+          await refresh();
+        } catch (error) { toast(error?.message || "No se pudo eliminar el viaje"); }
+      });
+      if (nivelUsuario() < 3) {
+        remove.disabled = true;
+        remove.title = "Necesita el rango Administrador";
+      }
+      actions.appendChild(remove);
+      body.appendChild(el("tr", {}, [
+        el("td", {}, el("button", { type: "button", class: "profile-relation-user", onclick: () => openUserDrawer(trip.user_id, refresh) }, [
+          avatar(trip.photo_url, 34),
+          el("span", {}, [el("strong", {}, trip.name || `#${trip.user_id}`), el("small", {}, trip.email || `Usuario #${trip.user_id}`)]),
+        ])),
+        el("td", {}, travelerAdminStatusV1001(trip.status)),
+        el("td", {}, travelerStopsNodeV1001(trip.stops)),
+        el("td", {}, [
+          el("strong", {}, `${travelerAdminDateV1001(trip.starts_on)} – ${travelerAdminDateV1001(trip.ends_on)}`),
+          el("small", { class: "traveler-admin-trip-id" }, `Viaje #${trip.id}`),
+        ]),
+        el("td", {}, [
+          planTag(trip.plan),
+          el("small", { class: "traveler-admin-limit" }, `${limits.max_days || 0} días · ${limits.city_limit || 1} ciudad${Number(limits.city_limit || 1) === 1 ? "" : "es"} · ${limits.future_limit || 0} futuro${Number(limits.future_limit || 0) === 1 ? "" : "s"}`),
+        ]),
+        el("td", { class: "ta-right" }, actions),
+      ]));
+    });
+    table.appendChild(body);
+    tableHost.appendChild(el("div", { class: "table-scroll" }, table));
+    labelTables(tableHost);
+    const from = state.offset + 1;
+    const to = state.offset + rows.length;
+    tableHost.appendChild(el("div", { class: "table-footer traveler-admin-pagination" }, [
+      el("span", {}, `${from}–${to} de ${fmt.num(data.total)} viajes`),
+      el("span", { class: "spacer" }),
+      btn("← Anterior", "ghost xs", () => { if (state.offset > 0) { state.offset = Math.max(0, state.offset - state.limit); refresh(); } }),
+      btn("Siguiente →", "ghost xs", () => { if (to < data.total) { state.offset += state.limit; refresh(); } }),
+    ]));
+  }
+  await refresh();
+}
+
+/* ================================================================
    V450+ · Auto-reglas para usuarios (auto-ban, auto-verify, etc.)
    ================================================================ */
 async function openAutoRulesModal() {
@@ -4087,6 +4284,60 @@ async function openAutoRulesModal() {
   modal.appendChild(el("div", { style: "text-align:right;margin-top:16px" }, btn("Cerrar", "ghost sm", () => overlay.remove())));
   document.body.appendChild(overlay);
   load();
+}
+
+function userTravelerBlockV1001(userId, onChange) {
+  const box = el("div", { class: "profile-traveler-admin" }, [
+    el("div", { class: "loading" }, "Cargando viajes…"),
+  ]);
+  async function load() {
+    box.replaceChildren(el("div", { class: "loading" }, "Cargando viajes…"));
+    try {
+      const data = await api.get(`/api/admin/users/${userId}/traveler`);
+      const limits = data.limits || {};
+      const trips = Array.isArray(data.trips) ? data.trips : [];
+      box.innerHTML = "";
+      box.appendChild(el("div", { class: "traveler-admin-user-summary" }, [
+        el("div", {}, [el("strong", {}, PLAN_ES[limits.plan] || limits.plan || "Gratis"), el("span", {}, "Plan actual")]),
+        el("div", {}, [el("strong", {}, String(limits.max_days || 0)), el("span", {}, "Días máximos")]),
+        el("div", {}, [el("strong", {}, String(limits.city_limit || 1)), el("span", {}, "Ciudades/viaje")]),
+        el("div", {}, [el("strong", {}, String(limits.future_limit || 0)), el("span", {}, "Viajes futuros")]),
+      ]));
+      if (!trips.length) {
+        box.appendChild(el("div", { class: "empty small" }, "Este usuario no tiene viajes activos, programados ni finalizados."));
+        return;
+      }
+      const list = el("div", { class: "traveler-admin-user-list" });
+      trips.forEach((trip) => {
+        const remove = btn("Eliminar", "danger xs", async () => {
+          if (!(await confirmTravelerDeleteV1001(trip))) return;
+          try {
+            await api.del(`/api/admin/traveler/trips/${trip.id}`);
+            toast("Viaje eliminado");
+            await load();
+            await onChange?.();
+          } catch (error) { toast(error?.message || "No se pudo eliminar el viaje"); }
+        });
+        if (nivelUsuario() < 3) {
+          remove.disabled = true;
+          remove.title = "Necesita el rango Administrador";
+        }
+        list.appendChild(el("article", { class: "traveler-admin-user-trip" }, [
+          el("div", { class: "traveler-admin-user-trip-head" }, [
+            travelerAdminStatusV1001(trip.status),
+            el("strong", {}, `${travelerAdminDateV1001(trip.starts_on)} – ${travelerAdminDateV1001(trip.ends_on)}`),
+            remove,
+          ]),
+          travelerStopsNodeV1001(trip.stops),
+        ]));
+      });
+      box.appendChild(list);
+    } catch (error) {
+      box.replaceChildren(el("div", { class: "error" }, "No se pudieron cargar los viajes de este usuario."));
+    }
+  }
+  load();
+  return box;
 }
 
 async function openUserDrawer(id, onChange) {
@@ -4636,6 +4887,11 @@ async function openUserDrawer(id, onChange) {
     el("div", {}, [ el("span", { class: "kv-k" }, "Zona horaria"), el("span", { class: "kv-v" }, u.timezone || "—") ]),
   ]);
   form.appendChild(loc);
+
+  // V1001 · El viaje declarado vive separado de la ubicación GPS. Aquí se ve
+  // todo el historial y los límites efectivos del plan sin mezclar ciudades.
+  form.appendChild(el("h3", { class: "profile-traveler-admin-title" }, "Modo viajero"));
+  form.appendChild(userTravelerBlockV1001(id, onChange));
 
   // --- Dispositivos ---
   form.appendChild(el("h3", {}, "Dispositivos"));
