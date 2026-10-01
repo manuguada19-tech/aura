@@ -1,6 +1,11 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada y publicada: V995**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada y publicada: V996**
+
+### V996 (01/10/2026) — Información legal correcta
+
+- Eliminada de «Acerca de Aura» la fila «Empresa · Aura S.L.», ya que Aura no
+  está constituida como esa sociedad. Se conservan versión, build y país.
 
 ### V995 (01/10/2026) — Vistas de prueba y «Acerca de Aura»
 

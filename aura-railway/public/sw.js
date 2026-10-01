@@ -32,8 +32,8 @@
 // versión fuerza a las PWA ya instaladas a recibirlos sin recarga manual.
 // V991 · El perfil reorganiza sus secciones y añade una vista previa propia;
 // invalida el menú anterior en instalaciones que sigan abiertas.
-// V995 · sincroniza la pestaña activa en las vistas de prueba.
-const CACHE_VERSION = "aura-v116";
+// V996 · elimina la atribución empresarial incorrecta de «Acerca de Aura».
+const CACHE_VERSION = "aura-v117";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

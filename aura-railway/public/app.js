@@ -18259,7 +18259,6 @@ function screenAbout(root) {
   const aboutCard = infoCard([
     el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_version") || "Versión"), el("b", {}, aboutVersion) ]),
     el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_build") || "Build"), el("b", {}, "2026.07.31") ]),
-    el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_company") || "Empresa"), el("b", {}, "Aura S.L.") ]),
     el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_country") || "País"), el("b", {}, "España") ]),
   ]);
   aboutCard.classList.add("about-card");
