@@ -18540,10 +18540,39 @@ function screenDataExport(root) {
     T("content.me.data_i4") || "Mensajes de chats",
     T("content.me.data_i5") || "Metadatos técnicos (dispositivo, IP anonimizada)",
   ])));
+  const requestStatus = el("div", { class: "info-cta-p", role: "status", "aria-live": "polite" },
+    "Registraremos una solicitud de privacidad y te contactaremos en el correo verificado de tu cuenta.");
+  const requestBtn = el("button", { class: "btn btn-brand", type: "button" }, T("content.me.data_button") || "Solicitar mis datos");
+  requestBtn.addEventListener("click", async () => {
+    if (!state.user?.id) { toast("Inicia sesión de nuevo para solicitar tus datos."); return; }
+    requestBtn.disabled = true;
+    requestBtn.textContent = "Registrando solicitud…";
+    try {
+      const response = await fetch("/api/my/data-export-request", {
+        method: "POST",
+        headers: Auth.apply({ "Content-Type": "application/json", "X-User-Id": String(state.user.id) }),
+        body: "{}",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.status === 401) throw new Error("session");
+      if (!response.ok || !data.ref) throw new Error("request");
+      requestStatus.textContent = data.existing
+        ? `Ya tienes una solicitud abierta · referencia #${data.ref}.`
+        : `Solicitud registrada · referencia #${data.ref}. Revisa el correo asociado a tu cuenta.`;
+      requestBtn.textContent = "Solicitud registrada";
+      toast(data.existing ? "Ya había una solicitud abierta." : "Solicitud registrada correctamente.");
+    } catch (error) {
+      requestBtn.disabled = false;
+      requestBtn.textContent = T("content.me.data_button") || "Solicitar mis datos";
+      requestStatus.textContent = error?.message === "session"
+        ? "La sesión ha caducado. Vuelve a entrar para proteger esta solicitud."
+        : "No se pudo registrar la solicitud. Comprueba la conexión e inténtalo de nuevo.";
+    }
+  });
   wrap.appendChild(el("div", { class: "info-cta" }, [
     el("div", { class: "info-cta-h" }, T("content.me.data_cta_h") || "Solicitar exportación"),
-    el("div", { class: "info-cta-p" }, T("content.me.data_cta_p") || "Te enviaremos el enlace de descarga en menos de 24 h."),
-    el("button", { class: "btn btn-brand", type: "button", onclick: () => toast(T("content.me.data_requested") || "Solicitud enviada. Revisa tu correo.") }, T("content.me.data_button") || "Solicitar mis datos"),
+    requestStatus,
+    requestBtn,
   ]));
   root.appendChild(wrap);
   hideApp();

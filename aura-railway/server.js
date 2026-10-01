@@ -990,6 +990,8 @@ const PUBLIC_API = new Set([
   "GET /api/social/demo",
   // Support tickets (public creation)
   "POST /api/tickets",
+  // Solicitud RGPD autenticada del propio usuario.
+  "POST /api/my/data-export-request",
   // Lista de espera beta (usuario deja su email en la pantalla de pruebas)
   "POST /api/waitlist",
   // Estado de mantenimiento (para que la página de mantenimiento se actualice sola)
@@ -4498,6 +4500,74 @@ app.post("/api/tickets", wrap(async (req, res) => {
     }).catch(() => {});
   } catch {}
   res.json({ ok: true, id: r.insertId, ref, priority_support: prioritySupport });
+}));
+
+// V1004 · Solicitud real de acceso y portabilidad de datos.
+// Exige sesión firmada, toma nombre/correo de la cuenta (nunca del body) y
+// reutiliza una petición abierta para evitar duplicados por doble toque.
+app.post("/api/my/data-export-request", wrap(async (req, res) => {
+  const me = readMyUserIdSigned(req);
+  if (!me) return res.status(401).json({ error: "unauthorized" });
+  const conn = await pool.getConnection();
+  let user;
+  let result;
+  const ref = genTicketRef();
+  const subject = "Solicitud de copia de datos personales";
+  const message = "Solicitud de acceso y portabilidad iniciada por la persona titular desde Perfil → Descargar mis datos. Preparar la copia y enviar las instrucciones al correo verificado de la cuenta.";
+  const ua = String(req.headers["user-agent"] || "").slice(0, 300);
+  try {
+    await conn.beginTransaction();
+    [[user]] = await conn.query(
+      "SELECT id, name, email FROM users WHERE id=? LIMIT 1 FOR UPDATE",
+      [me]
+    );
+    if (!user) {
+      await conn.rollback();
+      return res.status(404).json({ error: "user_not_found" });
+    }
+    const [[openRequest]] = await conn.query(
+      `SELECT id, ref, status, created_at
+         FROM support_tickets
+        WHERE user_id=? AND category='privacy_export' AND status<>'closed'
+        ORDER BY id DESC LIMIT 1`,
+      [me]
+    );
+    if (openRequest) {
+      await conn.commit();
+      return res.json({
+        ok: true,
+        existing: true,
+        id: openRequest.id,
+        ref: openRequest.ref,
+        status: openRequest.status,
+      });
+    }
+    [result] = await conn.execute(
+      `INSERT INTO support_tickets
+         (ref, user_id, name, email, category, subject, message, priority, status, attachments, user_agent)
+       VALUES (?,?,?,?,?,?,?,'med','open',0,?)`,
+      [ref, user.id, String(user.name || "Usuario").slice(0, 120), user.email, "privacy_export", subject, message, ua]
+    );
+    await conn.commit();
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+  await logActivity("privacy", `Solicitud de copia de datos ${ref} (usuario ${user.id})`);
+  try {
+    enqueueEmail("ticket_created", user.id, {
+      user_name: user.name || "Usuario",
+      user_email: user.email,
+      ticket_ref: ref,
+      ticket_subject: subject,
+      category: "Privacidad y datos",
+      priority: "Media",
+    }).catch(() => {});
+  } catch {}
+
+  res.status(201).json({ ok: true, existing: false, id: result.insertId, ref, status: "open" });
 }));
 
 /* ============================================================
