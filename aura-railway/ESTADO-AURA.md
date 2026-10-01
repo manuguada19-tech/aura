@@ -1,6 +1,19 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V991**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V992 · publicada: V991**
+
+### V992 (01/10/2026) — Filtros automáticos y accesibles
+
+- Explorar, Buscar, Cerca y el mapa guardan cada selección automáticamente; no
+  dependen de un botón al final de una hoja larga.
+- La cabecera fija muestra que el guardado es automático, el número de perfiles
+  encontrados, una X para cerrar y «Restablecer» siempre accesible.
+- Cuando existen filtros activos también aparece «Restablecer» junto al acceso
+  de filtros de cada pantalla. Sin filtros activos, ese acceso se oculta.
+- Explorar, Buscar, Cerca y mapa conservan configuraciones independientes en el
+  dispositivo. Explorar y Buscar activan su configuración correspondiente en
+  el servidor al entrar en cada pestaña.
+- La caché PWA sube a `aura-v113`.
 
 ### V991 (01/10/2026) — Perfil más claro sin retirar accesos
 

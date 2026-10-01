@@ -4699,7 +4699,132 @@ function syncTabUrl(tab) {
   } catch {}
 }
 
-function routeTab(tab) {
+// V992 · Filtros persistentes por contexto. Explorar y Buscar conservan una
+// copia independiente en el dispositivo; al entrar en cada pestaña se activa
+// su copia en el backend antes de solicitar resultados. Cerca y el mapa usan
+// sus propias claves locales porque sus filtros se aplican en cliente.
+const FILTER_SCOPE_KEYS = {
+  discover: "aura-filters-v992-discover",
+  search: "aura-filters-v992-search",
+  nearby: "aura-filters-v992-nearby",
+  map: "aura-filters-v992-map",
+};
+const DISCOVERY_FILTER_DEFAULTS = Object.freeze({
+  ageMin: 18, ageMax: 99, distance: 500,
+  genders: ["Todos"], orientation: "todas", onlyVerified: false, onlyOnline: false,
+  cities: [], ethnicities: [], lookingFor: "any", relationship: "any", interests: [],
+  pets: [], smoke: [], drink: [], education: [], exercise: [],
+  heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
+  tribe: [], bodyType: [], meetAt: [], healthPractices: [],
+  nsfwOnly: false, notChattedToday: false,
+});
+const NEARBY_FILTER_DEFAULTS = Object.freeze({
+  ageMin: 18, ageMax: 65, distance: 200, onlyOnline: false, zone: "all",
+  interests: [], looking_for: "any", relationship: "any",
+});
+function cloneFilterDefaults(defaults) {
+  return JSON.parse(JSON.stringify(defaults));
+}
+function loadFilterScope(scope, defaults) {
+  const base = cloneFilterDefaults(defaults);
+  try {
+    const saved = JSON.parse(localStorage.getItem(FILTER_SCOPE_KEYS[scope]) || "null");
+    return saved && typeof saved === "object" ? Object.assign(base, saved) : base;
+  } catch { return base; }
+}
+function storeFilterScope(scope, filters) {
+  try { localStorage.setItem(FILTER_SCOPE_KEYS[scope], JSON.stringify(filters)); } catch {}
+}
+function getDiscoveryFilterScope(scope) {
+  const safe = scope === "search" ? "search" : "discover";
+  state.discoveryFilterScopes = state.discoveryFilterScopes || {};
+  if (!state.discoveryFilterScopes[safe]) {
+    const fallback = Object.assign(cloneFilterDefaults(DISCOVERY_FILTER_DEFAULTS), state.filters || {});
+    state.discoveryFilterScopes[safe] = loadFilterScope(safe, fallback);
+  }
+  return state.discoveryFilterScopes[safe];
+}
+function discoveryFilterPayload(f) {
+  const concrete = (f.genders || []).filter(x => x && x !== "Todos");
+  return {
+    age_min: f.ageMin, age_max: f.ageMax, distance_km: f.distance,
+    gender: concrete[0] || "todos", orientation: f.orientation || "todas",
+    cities: f.cities || [], ethnicities: f.ethnicities || [],
+    looking_for: f.lookingFor || "any", relationship: f.relationship || "any",
+    interests: f.interests || [], education: f.education || [], pets: f.pets || [],
+    exercise: f.exercise || [], smoke: f.smoke || [], drink: f.drink || [],
+    height_min: f.heightMin || 0, height_max: f.heightMax || 0,
+    weight_min: f.weightMin || 0, weight_max: f.weightMax || 0,
+    tribe: f.tribe || [], body_type: f.bodyType || [], meet_at: f.meetAt || [],
+    health_practices: f.healthPractices || [], nsfw_ok: f.nsfwOnly ? 1 : 0,
+    not_chatted_today: f.notChattedToday ? 1 : 0,
+  };
+}
+let activeDiscoveryFilterScope = null;
+async function persistDiscoveryFilterScope(scope, filters) {
+  storeFilterScope(scope, filters);
+  state.filters = filters;
+  activeDiscoveryFilterScope = scope;
+  return datingApi.saveFilters(discoveryFilterPayload(filters));
+}
+async function activateDiscoveryFilterScope(scope) {
+  const filters = getDiscoveryFilterScope(scope);
+  state.filters = filters;
+  if (activeDiscoveryFilterScope !== scope) await persistDiscoveryFilterScope(scope, filters);
+  return filters;
+}
+function discoveryActiveFilterCount(f) {
+  let n = 0;
+  if (+f.ageMin !== 18 || +f.ageMax !== 99) n++;
+  if (+f.distance !== 500) n++;
+  if ((f.genders || []).some(x => x && x !== "Todos")) n++;
+  if (f.orientation && f.orientation !== "todas") n++;
+  ["cities","ethnicities","interests","education","pets","exercise","smoke","drink","tribe","bodyType","meetAt","healthPractices"].forEach(k => { if ((f[k] || []).length) n++; });
+  if (f.lookingFor && f.lookingFor !== "any") n++;
+  if (f.relationship && f.relationship !== "any") n++;
+  if (f.heightMin || f.heightMax || f.weightMin || f.weightMax) n++;
+  if (f.onlyVerified || f.onlyOnline || f.nsfwOnly || f.notChattedToday) n++;
+  return n;
+}
+async function resetDiscoveryFilterScope(scope) {
+  const clean = cloneFilterDefaults(DISCOVERY_FILTER_DEFAULTS);
+  state.discoveryFilterScopes = state.discoveryFilterScopes || {};
+  state.discoveryFilterScopes[scope] = clean;
+  await persistDiscoveryFilterScope(scope, clean);
+  return clean;
+}
+
+function createAutoFilterHeader({ title = "Filtros", scopeLabel = "", onClose, onReset }) {
+  const result = el("span", { class: "filter-result-count" }, "Actualizando…");
+  const saveTitle = el("strong", {}, "Se guardan automáticamente");
+  const saveSub = el("small", {}, "Cada cambio queda aplicado al seleccionarlo");
+  const titlebar = el("div", { class: "sheet-titlebar filter-sticky-head" }, [
+    el("div", { class: "filter-title-copy" }, [
+      el("span", { class: "sheet-title", style: "padding-left:0" }, title),
+      scopeLabel ? el("small", { class: "filter-scope-label" }, scopeLabel) : null,
+    ]),
+    el("button", { class: "filter-reset-head", type: "button", onclick: onReset }, "Restablecer"),
+    el("button", {
+      class: "sheet-close", type: "button", "aria-label": "Cerrar filtros", onclick: onClose,
+      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
+    }),
+  ]);
+  const notice = el("div", { class: "filter-autosave-note" }, [
+    el("span", { class: "filter-autosave-check", "aria-hidden": "true" }, "✓"),
+    el("span", { class: "filter-autosave-copy" }, [saveTitle, saveSub]),
+    result,
+  ]);
+  return {
+    titlebar, notice,
+    setSaving(saving) {
+      saveTitle.textContent = saving ? "Guardando cambios…" : "Se guardan automáticamente";
+      notice.classList.toggle("saving", !!saving);
+    },
+    setResult(text) { result.textContent = text || "Resultados actualizados"; },
+  };
+}
+
+async function routeTab(tab) {
   try { stopChatPolling(); } catch {}
   document.body.classList.remove("chat-open");
   document.body.classList.remove("profile-open");
@@ -4720,9 +4845,14 @@ function routeTab(tab) {
     chats: screenChats,
     me: screenMe,
   };
+  const safeTab = map[tab] ? tab : "discover";
+  state.currentTab = safeTab;
+  if (safeTab === "discover" || safeTab === "search") {
+    try { await activateDiscoveryFilterScope(safeTab); } catch {}
+  }
   // Refleja la sección en la barra de direcciones (URL amigable por sección).
-  try { syncTabUrl(map[tab] ? tab : "discover"); } catch {}
-  render(map[tab] || screenDiscover);
+  try { syncTabUrl(safeTab); } catch {}
+  render(map[safeTab] || screenDiscover);
   // Cuenta la navegación para posible intersticial
   try { maybeShowInterstitial(); } catch {}
   // V638 · Al entrar en Likes/Chats se marcan como vistos → refresca badges.
@@ -8478,6 +8608,21 @@ function screenDiscover(root) {
     // que no se veía que el Boost seguía en marcha).
     buildBoostAction(),
   ]);
+  const discoverFilters = getDiscoveryFilterScope("discover");
+  const discoverFiltersCount = discoveryActiveFilterCount(discoverFilters);
+  const discoverFilterBtn = el("button", { class: "chip", onclick: () => openFilters("discover"), title: "Filtros", "aria-label": "Filtros" }, [
+    el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
+    "Filtros",
+    discoverFiltersCount ? el("span", { class: "filter-chip-count" }, String(discoverFiltersCount)) : null,
+  ]);
+  const discoverResetBtn = el("button", {
+    class: "chip filter-reset-chip", type: "button", hidden: discoverFiltersCount === 0,
+    onclick: async () => {
+      await resetDiscoveryFilterScope("discover");
+      toast("Filtros de Explorar restablecidos");
+      routeTab("discover");
+    },
+  }, "Restablecer");
   const discoverShell = el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
       el("span", {
@@ -8492,11 +8637,9 @@ function screenDiscover(root) {
         state.zone === "lgtb" ? "Zona LGTB+" : "Zona Hetero",
       ]),
       el("span", { class: "brand-topbar-spacer", "aria-hidden": "true" }),
-      // Botón de filtros independiente (icono de embudo).
-      el("button", { class: "chip", onclick: openFilters, title: "Filtros", "aria-label": "Filtros" }, [
-        el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
-        "Filtros",
-      ]),
+      // V992 · Filtros y restablecimiento visibles sin abrir la hoja.
+      discoverFilterBtn,
+      discoverResetBtn,
     ]),
     buildDiscoverViewBar(stack, actionRow),
     el("div", { class: "discover-stack-wrap" }, [
@@ -9151,7 +9294,7 @@ async function openNearbyMap() {
   // relación, intereses y estilo de vida. Al aplicarlos se reducen los pines del
   // mapa y las tarjetas de la cuadrícula (mismos campos que el filtro de
   // "Buscar"). Rango completo / vacío = sin filtro.
-  const mapFilters = {
+  const mapFilterDefaults = {
     gender: "todos", orientation: "todas", onlyOnline: false, onlyNew: false, onlyNow: false, radiusKm: NEARBY_RADIUS_KM, showTest: true,
     ageMin: 18, ageMax: 99,
     heightMin: 0, heightMax: 0, weightMin: 0, weightMax: 0,
@@ -9164,6 +9307,13 @@ async function openNearbyMap() {
     // mapa (matchesMapFilters), igual que el resto de filtros avanzados.
     cities: [], ethnicities: [], onlyVerified: false,
   };
+  const mapFilters = loadFilterScope("map", mapFilterDefaults);
+  // El radio del mapa es técnico y siempre usa el valor vigente de esta versión.
+  mapFilters.radiusKm = NEARBY_RADIUS_KM;
+  let mapResetChip = null;
+  const mapHasActiveFilters = () => !!(mapFilters.onlyOnline || mapFilters.onlyNew || mapFilters.onlyNow || activeMapFilterCount());
+  const persistMapFilters = () => storeFilterScope("map", mapFilters);
+  const syncMapResetChip = () => { if (mapResetChip) mapResetChip.hidden = !mapHasActiveFilters(); };
   // V852 · ¿Cuenta recién registrada? (account_age_h dentro de la ventana).
   const isNewUser = (u) => u && u.account_age_h != null && Number.isFinite(+u.account_age_h) && +u.account_age_h <= NEW_USER_HOURS;
   // V865 · ¿Está "buscando ahora"? = activa en los últimos ~15 min (online o
@@ -9201,6 +9351,7 @@ async function openNearbyMap() {
   onlineChip.addEventListener("click", () => {
     mapFilters.onlyOnline = !mapFilters.onlyOnline;
     onlineChip.classList.toggle("active", mapFilters.onlyOnline);
+    persistMapFilters(); syncMapResetChip();
     repaint();
   });
 
@@ -9215,6 +9366,7 @@ async function openNearbyMap() {
   newChip.addEventListener("click", () => {
     mapFilters.onlyNew = !mapFilters.onlyNew;
     newChip.classList.toggle("active", mapFilters.onlyNew);
+    persistMapFilters(); syncMapResetChip();
     repaint();
   });
 
@@ -9228,6 +9380,7 @@ async function openNearbyMap() {
   nowChip.addEventListener("click", () => {
     mapFilters.onlyNow = !mapFilters.onlyNow;
     nowChip.classList.toggle("active", mapFilters.onlyNow);
+    persistMapFilters(); syncMapResetChip();
     repaint();
   });
 
@@ -9245,10 +9398,26 @@ async function openNearbyMap() {
     filtersCountBadge.textContent = String(n);
     filtersCountBadge.hidden = n === 0;
     filtersChip.classList.toggle("active", n > 0);
+    syncMapResetChip();
   }
   filtersChip.addEventListener("click", () => {
-    openMapFilters(mapFilters, () => { syncFiltersChip(); repaint(); });
+    openMapFilters(mapFilters, () => {
+      persistMapFilters();
+      syncFiltersChip();
+      return repaint();
+    });
   });
+  mapResetChip = el("button", {
+    class: "map-chip map-chip-reset", type: "button", hidden: !mapHasActiveFilters(),
+    onclick: () => {
+      Object.keys(mapFilters).forEach(k => { delete mapFilters[k]; });
+      Object.assign(mapFilters, cloneFilterDefaults(mapFilterDefaults));
+      persistMapFilters();
+      onlineChip.classList.remove("active"); newChip.classList.remove("active"); nowChip.classList.remove("active");
+      syncFiltersChip(); repaint();
+      toast("Filtros del mapa restablecidos");
+    },
+  }, "Restablecer");
 
   // V843 · Sin chips de km: la distancia ya no restringe (ver SEARCH_RADIUS_KM).
   // V910 · El GÉNERO ya NO es un segmento en la barra: se ha movido DENTRO de la
@@ -9257,7 +9426,7 @@ async function openNearbyMap() {
   // estrechos cuando la Zona LGTB+ añade varias identidades. La barra superior
   // conserva solo los accesos rápidos (En línea, Buscan ahora, Nuevos, Filtros).
   const filterbar = el("div", { class: "map-filterbar" }, [
-    el("div", { class: "map-filterbar-row" }, [ onlineChip, nowChip, newChip, filtersChip ]),
+    el("div", { class: "map-filterbar-row" }, [ onlineChip, nowChip, newChip, filtersChip, mapResetChip ]),
   ]);
   overlay.appendChild(filterbar);
 
@@ -9766,6 +9935,7 @@ async function openNearbyMap() {
     }
     renderPeople(list);
     syncControls();
+    return list.length;
   }
 
   // V840 · El panel de personas tiene altura VARIABLE (una fila en PC, hasta
@@ -10424,15 +10594,7 @@ function buildNearbySection() {
   // dejar la pantalla vacía. paintNearby() se vuelve a llamar cuando cargan.
   let nearbyPool = [];
   let nearbyLoading = true;
-  state.nearbyFilters = state.nearbyFilters || {
-    ageMin: 18, ageMax: 60,
-    distance: 50,
-    onlyOnline: false,
-    zone: "all",
-    interests: [],
-    looking_for: "any",
-    relationship: "any",
-  };
+  state.nearbyFilters = state.nearbyFilters || loadFilterScope("nearby", NEARBY_FILTER_DEFAULTS);
 
   const nearbyGrid = el("div", { class: "nearby-grid" });
   const nearbyHead = el("div", { class: "nearby-head" }, [
@@ -10450,8 +10612,8 @@ function buildNearbySection() {
   function activeFilterCount() {
     const f = state.nearbyFilters;
     let n = 0;
-    if (f.ageMin !== 18 || f.ageMax !== 60) n++;
-    if (f.distance !== 50) n++;
+    if (f.ageMin !== 18 || f.ageMax !== 65) n++;
+    if (f.distance !== 200) n++;
     if (f.onlyOnline) n++;
     if (f.zone !== "all") n++;
     if (f.interests.length) n++;
@@ -10572,6 +10734,7 @@ function buildNearbySection() {
         : `${visible.length} de ${limit} visibles · ${planLabel(getUserPlan())}`;
       countEl.textContent = `${onlineNow} en línea · ${suffix}`;
     }
+    return list.length;
   }
 
   const filtersBtn = el("button", { class: "chip-filter primary", type: "button" }, [
@@ -10580,7 +10743,7 @@ function buildNearbySection() {
     el("span", { class: "chip-count", id: "nearbyFilterCount", hidden: activeFilterCount() === 0 }, String(activeFilterCount())),
   ]);
   filtersBtn.addEventListener("click", () => openNearbyFilters(() => {
-    paintNearby();
+    const visibleCount = paintNearby();
     const cc = wrap.querySelector("#nearbyFilterCount");
     if (cc) {
       const n = activeFilterCount();
@@ -10588,16 +10751,38 @@ function buildNearbySection() {
       cc.hidden = n === 0;
     }
     onlineChip.classList.toggle("active", !!state.nearbyFilters.onlyOnline);
+    resetNearbyBtn.hidden = activeFilterCount() === 0;
+    return visibleCount;
   }));
 
   const onlineChip = chipBtn(
     [ el("span", { class: "chip-dot on" }), el("span", {}, "Solo en línea") ],
-    (btn) => { state.nearbyFilters.onlyOnline = !state.nearbyFilters.onlyOnline; btn.classList.toggle("active", state.nearbyFilters.onlyOnline); paintNearby(); },
+    (btn) => {
+      state.nearbyFilters.onlyOnline = !state.nearbyFilters.onlyOnline;
+      storeFilterScope("nearby", state.nearbyFilters);
+      btn.classList.toggle("active", state.nearbyFilters.onlyOnline);
+      resetNearbyBtn.hidden = activeFilterCount() === 0;
+      paintNearby();
+    },
     state.nearbyFilters.onlyOnline
   );
 
+  const resetNearbyBtn = chipBtn("Restablecer", () => {
+    state.nearbyFilters = cloneFilterDefaults(NEARBY_FILTER_DEFAULTS);
+    storeFilterScope("nearby", state.nearbyFilters);
+    resetNearbyBtn.hidden = true;
+    onlineChip.classList.remove("active");
+    const cc = wrap.querySelector("#nearbyFilterCount");
+    if (cc) cc.hidden = true;
+    paintNearby();
+    toast("Filtros de Cerca restablecidos");
+  }, false);
+  resetNearbyBtn.classList.add("filter-reset-chip");
+  resetNearbyBtn.hidden = activeFilterCount() === 0;
+
   chipsRow.appendChild(filtersBtn);
   chipsRow.appendChild(onlineChip);
+  chipsRow.appendChild(resetNearbyBtn);
 
   wrap.appendChild(nearbyHead);
   wrap.appendChild(chipsRow);
@@ -11697,22 +11882,51 @@ function actionBtn(cls, path, onclick, label) {
 }
 
 /* ---- Search ---- */
-let searchNowOnly = false; // V865 · estado del chip "Buscan ahora" en Buscar.
+let searchNowOnly = (() => { try { return localStorage.getItem("aura-search-now-only") === "1"; } catch { return false; } })();
 function screenSearch(root) {
   // V865 · Chip "Buscan ahora" también en Buscar: filtra la cuadrícula a quien
   // está activa en los últimos ~15 min. Mismo criterio que en el mapa.
+  let updateSearchFilterChrome = () => {};
   const nowChip = el("button", { class: "chip chip-now" + (searchNowOnly ? " active" : ""), type: "button",
-    onclick: () => { searchNowOnly = !searchNowOnly; nowChip.classList.toggle("active", searchNowOnly); filterSearch(getSearchQuery()); } }, [
+    onclick: () => {
+      searchNowOnly = !searchNowOnly;
+      try { localStorage.setItem("aura-search-now-only", searchNowOnly ? "1" : "0"); } catch {}
+      nowChip.classList.toggle("active", searchNowOnly);
+      updateSearchFilterChrome();
+      filterSearch(getSearchQuery());
+    } }, [
     el("span", { class: "chip-ic", html: `<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
     "Buscan ahora",
   ]);
+  const searchFilters = getDiscoveryFilterScope("search");
+  const searchFilterCount = discoveryActiveFilterCount(searchFilters) + (searchNowOnly ? 1 : 0);
+  const searchFilterBadge = el("span", { class: "filter-chip-count", hidden: searchFilterCount === 0 }, String(searchFilterCount));
+  const searchFiltersBtn = el("button", { class: "chip", onclick: () => openFilters("search") }, [
+    el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
+    "Filtros",
+    searchFilterBadge,
+  ]);
+  const searchResetBtn = el("button", {
+    class: "chip filter-reset-chip", type: "button", hidden: searchFilterCount === 0,
+    onclick: async () => {
+      await resetDiscoveryFilterScope("search");
+      searchNowOnly = false;
+      try { localStorage.setItem("aura-search-now-only", "0"); } catch {}
+      toast("Filtros de Buscar restablecidos");
+      routeTab("search");
+    },
+  }, "Restablecer");
+  updateSearchFilterChrome = () => {
+    const n = discoveryActiveFilterCount(getDiscoveryFilterScope("search")) + (searchNowOnly ? 1 : 0);
+    searchFilterBadge.textContent = String(n);
+    searchFilterBadge.hidden = n === 0;
+    searchResetBtn.hidden = n === 0;
+  };
   root.appendChild(el("div", { class: "search-bar" }, [
     el("input", { class: "search-input", placeholder: T("content.search.placeholder"), oninput: (e) => filterSearch(e.target.value) }),
     nowChip,
-    el("button", { class: "chip", onclick: openFilters }, [
-      el("svg", { viewBox: "0 0 24 24", width: 14, height: 14, html: `<path fill="currentColor" d="M4 5h16v2l-6 7v5l-4-2v-3L4 7z"/>` }),
-      "Filtros"
-    ]),
+    searchFiltersBtn,
+    searchResetBtn,
   ]));
   const grid = el("div", { class: "results-grid", id: "resultsGrid" });
   root.appendChild(grid);
@@ -12108,21 +12322,34 @@ function makeUnitSingle({ metric, defaultUnitId, valCanon, presetsCanon }) {
   node.appendChild(presetRow);
   return { node, getCanon: () => unit.toCanon(+rangeInp.value) };
 }
-async function openFilters() {
+async function openFilters(scope = "discover") {
+  scope = scope === "search" ? "search" : "discover";
+  await activateDiscoveryFilterScope(scope);
   // Carga la identidad real antes de decidir qué géneros tienen sentido. La
   // copia local permite que las siguientes aperturas sean instantáneas.
   await syncOwnIdentityForFilters();
   const wrap = el("div", { class: "filters-body" });
-  wrap.appendChild(el("div", { class: "sheet-titlebar" }, [
-    el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros"),
-    el("button", {
-      class: "sheet-close",
-      type: "button",
-      "aria-label": "Cerrar filtros",
-      onclick: () => modal.close(),
-      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
-    }),
-  ]));
+  let commitDiscoveryFilters = async () => {};
+  let discoverySaveTimer = null;
+  const closeDiscoveryFilters = async () => {
+    if (discoverySaveTimer) clearTimeout(discoverySaveTimer);
+    await commitDiscoveryFilters();
+    modal.close();
+    routeTab(scope);
+  };
+  const resetCurrentDiscoveryFilters = async () => {
+    if (discoverySaveTimer) { clearTimeout(discoverySaveTimer); discoverySaveTimer = null; }
+    await resetDiscoveryFilterScope(scope);
+    modal.close();
+    toast(`Filtros de ${scope === "search" ? "Buscar" : "Explorar"} restablecidos`);
+    routeTab(scope);
+  };
+  const autoHead = createAutoFilterHeader({
+    title: "Filtros", scopeLabel: `Solo para ${scope === "search" ? "Buscar" : "Explorar"}`,
+    onClose: closeDiscoveryFilters, onReset: resetCurrentDiscoveryFilters,
+  });
+  wrap.appendChild(autoHead.titlebar);
+  wrap.appendChild(autoHead.notice);
 
   const zone = state.zone === "lgtb" ? "lgtb" : "hetero";
 
@@ -12491,95 +12718,58 @@ async function openFilters() {
     }
   })();
 
-  wrap.appendChild(el("div", { class: "sheet-actions" }, [
-    el("button", { class: "btn btn-brand btn-block", onclick: () => {
-      // V792 · Edad: control con slider + caja manual. Valor canónico = años.
-      state.filters.ageMin = ageCtl.getLoCanon();
-      state.filters.ageMax = ageCtl.getHiCanon();
-      // V792 · Distancia: canónico = km (aunque se muestre en millas). 1–500 km.
-      let dkm = distCtl.getCanon();
-      if (!Number.isFinite(dkm) || dkm < 1) dkm = 50; dkm = Math.min(500, dkm);
-      state.filters.distance = dkm;
-      // V792 · Altura: canónico = cm (aunque se muestre en ft·in). Si abarca todo
-      // el rango (120–230) = sin filtro (0).
-      let hMin = heightCtl.getLoCanon(), hMax = heightCtl.getHiCanon();
-      hMin = Math.min(230, Math.max(120, hMin)); hMax = Math.min(230, Math.max(120, hMax));
-      if (hMin > hMax) { const t = hMin; hMin = hMax; hMax = t; }
-      const hFull = (hMin <= 120 && hMax >= 230);
-      state.filters.heightMin = hFull ? 0 : hMin;
-      state.filters.heightMax = hFull ? 0 : hMax;
-      // V792 · Peso: canónico = kg (aunque se muestre en lb). Todo el rango = sin filtro.
-      let wMinKg = weightCtl.getLoCanon(), wMaxKg = weightCtl.getHiCanon();
-      wMinKg = Math.min(250, Math.max(35, wMinKg)); wMaxKg = Math.min(250, Math.max(35, wMaxKg));
-      if (wMinKg > wMaxKg) { const t = wMinKg; wMinKg = wMaxKg; wMaxKg = t; }
-      const wFull = (wMinKg <= 35 && wMaxKg >= 250);
-      state.filters.weightMin = wFull ? 0 : wMinKg;
-      state.filters.weightMax = wFull ? 0 : wMaxKg;
-      // Género: chips activos → valores guardados. "Todos" o vacío = sin filtro.
-      const activeGender = genderChips.filter(x => x.classList.contains("active"));
-      const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
-      state.filters.genders = concrete.length ? concrete : ["Todos"];
-      const genderVal = concrete.length ? concrete[0] : "todos"; // backend: 1 valor
-      // V907 · Orientación (selección única) en ambas zonas. "todas" = sin filtro.
-      const orientVal = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas";
-      state.filters.orientation = orientVal;
-      // Ubicación / etnia (multi).
-      state.filters.cities = Array.from(citySelected);
-      state.filters.ethnicities = Array.from(ethSelected);
-      // V757 · Más filtros: qué busca / tipo de relación / intereses.
-      state.filters.lookingFor = lookingRef.id || "any";
-      state.filters.relationship = relRef.id || "any";
-      state.filters.interests = Array.from(selInterests);
-      // V776 · Filtros opcionales de estilo de vida (multi).
-      state.filters.education = Array.from(selEdu);
-      state.filters.pets = Array.from(selPets);
-      state.filters.exercise = Array.from(selEx);
-      state.filters.smoke = Array.from(selSmoke);
-      state.filters.drink = Array.from(selDrink);
-      // V887 · Nuevos filtros del buscador.
-      state.filters.tribe = Array.from(selTribe);
-      state.filters.bodyType = Array.from(selBody);
-      state.filters.meetAt = Array.from(selMeet);
-      state.filters.healthPractices = Array.from(selHealth);
-      state.filters.nsfwOnly = !!nsfwInp.checked;
-      state.filters.notChattedToday = !!notChatInp.checked;
-      datingApi.saveFilters({
-        age_min: state.filters.ageMin,
-        age_max: state.filters.ageMax,
-        distance_km: state.filters.distance,
-        gender: genderVal,
-        orientation: orientVal, // V904 · orientación (LGTB); "todas" = sin filtro
-        cities: state.filters.cities,
-        ethnicities: state.filters.ethnicities,
-        looking_for: state.filters.lookingFor,
-        relationship: state.filters.relationship,
-        interests: state.filters.interests,
-        education: state.filters.education,
-        pets: state.filters.pets,
-        exercise: state.filters.exercise,
-        smoke: state.filters.smoke,
-        drink: state.filters.drink,
-        // V788 · rangos de altura/peso (0 = sin filtro).
-        height_min: state.filters.heightMin || 0,
-        height_max: state.filters.heightMax || 0,
-        weight_min: state.filters.weightMin || 0,
-        weight_max: state.filters.weightMax || 0,
-        // V887 · nuevos filtros del buscador.
-        tribe: state.filters.tribe,
-        body_type: state.filters.bodyType,
-        meet_at: state.filters.meetAt,
-        health_practices: state.filters.healthPractices,
-        nsfw_ok: state.filters.nsfwOnly ? 1 : 0,
-        not_chatted_today: state.filters.notChattedToday ? 1 : 0,
-      });
-      modal.close(); toast("Filtros aplicados");
-      const grid = $("#resultsGrid");
-      if (grid) { grid._pool = null; populateResults(grid); }
-      const stack = $("#swipeStack");
-      if (stack) loadDiscoverInto(stack, false);
-    }}, "Aplicar filtros"),
-    el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cancelar"),
-  ]));
+  // V992 · Guardado automático y recuento visible en la cabecera. No hay botón
+  // Aplicar/Guardar al final: cualquier selección se conserva al instante.
+  commitDiscoveryFilters = async () => {
+    state.filters.ageMin = ageCtl.getLoCanon();
+    state.filters.ageMax = ageCtl.getHiCanon();
+    let dkm = distCtl.getCanon();
+    if (!Number.isFinite(dkm) || dkm < 1) dkm = 50;
+    state.filters.distance = Math.min(500, dkm);
+    let hMin = heightCtl.getLoCanon(), hMax = heightCtl.getHiCanon();
+    hMin = Math.min(230, Math.max(120, hMin)); hMax = Math.min(230, Math.max(120, hMax));
+    if (hMin > hMax) { const t = hMin; hMin = hMax; hMax = t; }
+    const hFull = (hMin <= 120 && hMax >= 230);
+    state.filters.heightMin = hFull ? 0 : hMin; state.filters.heightMax = hFull ? 0 : hMax;
+    let wMinKg = weightCtl.getLoCanon(), wMaxKg = weightCtl.getHiCanon();
+    wMinKg = Math.min(250, Math.max(35, wMinKg)); wMaxKg = Math.min(250, Math.max(35, wMaxKg));
+    if (wMinKg > wMaxKg) { const t = wMinKg; wMinKg = wMaxKg; wMaxKg = t; }
+    const wFull = (wMinKg <= 35 && wMaxKg >= 250);
+    state.filters.weightMin = wFull ? 0 : wMinKg; state.filters.weightMax = wFull ? 0 : wMaxKg;
+    const activeGender = genderChips.filter(x => x.classList.contains("active"));
+    const concrete = activeGender.filter(x => x._value !== "todos").map(x => x._value);
+    state.filters.genders = concrete.length ? concrete : ["Todos"];
+    state.filters.orientation = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas";
+    state.filters.cities = Array.from(citySelected); state.filters.ethnicities = Array.from(ethSelected);
+    state.filters.lookingFor = lookingRef.id || "any"; state.filters.relationship = relRef.id || "any";
+    state.filters.interests = Array.from(selInterests);
+    state.filters.education = Array.from(selEdu); state.filters.pets = Array.from(selPets);
+    state.filters.exercise = Array.from(selEx); state.filters.smoke = Array.from(selSmoke); state.filters.drink = Array.from(selDrink);
+    state.filters.tribe = Array.from(selTribe); state.filters.bodyType = Array.from(selBody);
+    state.filters.meetAt = Array.from(selMeet); state.filters.healthPractices = Array.from(selHealth);
+    state.filters.nsfwOnly = !!nsfwInp.checked; state.filters.notChattedToday = !!notChatInp.checked;
+    await persistDiscoveryFilterScope(scope, state.filters);
+    const users = await datingApi.discover(state.zone, 30);
+    const countedUsers = Array.isArray(users) && scope === "search" && searchNowOnly ? users.filter(searchingNow) : users;
+    const count = Array.isArray(countedUsers) ? countedUsers.length : null;
+    autoHead.setSaving(false);
+    autoHead.setResult(Number.isFinite(count) ? (count ? `${count} perfiles` : "Sin resultados") : "Resultados actualizados");
+  };
+  const scheduleDiscoverySave = () => {
+    autoHead.setSaving(true);
+    if (discoverySaveTimer) clearTimeout(discoverySaveTimer);
+    discoverySaveTimer = setTimeout(() => { discoverySaveTimer = null; commitDiscoveryFilters(); }, 380);
+  };
+  wrap.addEventListener("input", scheduleDiscoverySave);
+  wrap.addEventListener("change", scheduleDiscoverySave);
+  wrap.addEventListener("click", (e) => {
+    if (e.target.closest(".chip.selectable, .filter-search-item")) setTimeout(scheduleDiscoverySave, 0);
+  });
+  datingApi.discover(state.zone, 30).then(users => {
+    const countedUsers = Array.isArray(users) && scope === "search" && searchNowOnly ? users.filter(searchingNow) : users;
+    const count = Array.isArray(countedUsers) ? countedUsers.length : null;
+    autoHead.setResult(Number.isFinite(count) ? (count ? `${count} perfiles` : "Sin resultados") : "Resultados actualizados");
+  }).catch(() => autoHead.setResult("Resultados actualizados"));
   modal.open(wrap);
 }
 function switchRow(label, checked, onChange) {
@@ -13773,16 +13963,27 @@ function openBroadcastChannelMenu() {
 function openNearbyFilters(onApply) {
   const f = state.nearbyFilters;
   const sheet = el("div", { class: "nearby-filters-sheet" });
-  sheet.appendChild(el("div", { class: "sheet-titlebar" }, [
-    el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros de personas cerca"),
-    el("button", {
-      class: "sheet-close",
-      type: "button",
-      "aria-label": "Cerrar filtros",
-      onclick: () => modal.close(),
-      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>`,
-    }),
-  ]));
+  let commitNearbyFilters = async () => {};
+  let nearbySaveTimer = null;
+  const closeNearbyFilters = async () => {
+    if (nearbySaveTimer) clearTimeout(nearbySaveTimer);
+    await commitNearbyFilters();
+    modal.close();
+  };
+  const resetNearbyFilters = () => {
+    if (nearbySaveTimer) { clearTimeout(nearbySaveTimer); nearbySaveTimer = null; }
+    state.nearbyFilters = cloneFilterDefaults(NEARBY_FILTER_DEFAULTS);
+    storeFilterScope("nearby", state.nearbyFilters);
+    modal.close();
+    onApply && onApply();
+    toast("Filtros de Cerca restablecidos");
+  };
+  const autoHead = createAutoFilterHeader({
+    title: "Filtros", scopeLabel: "Solo para Cerca",
+    onClose: closeNearbyFilters, onReset: resetNearbyFilters,
+  });
+  sheet.appendChild(autoHead.titlebar);
+  sheet.appendChild(autoHead.notice);
 
   // Age range
   const ageLbl = el("span", { class: "val" }, `${f.ageMin} - ${f.ageMax} años`);
@@ -13872,31 +14073,35 @@ function openNearbyFilters(onApply) {
     ]),
   ]));
 
-  // Actions
-  sheet.appendChild(el("div", { class: "sheet-actions" }, [
-    el("button", { class: "btn btn-brand btn-block", type: "button", onclick: () => {
-      state.nearbyFilters = {
-        ageMin: +ageMin.value,
-        ageMax: Math.max(+ageMax.value, +ageMin.value),
-        distance: +dist.value,
-        onlyOnline: onlineToggle.checked,
-        zone: state.nearbyFilters.zone || "all",
-        interests: Array.from(selectedInterests),
-        looking_for: lookingSelectedRef.id,
-        relationship: relSelectedRef.id,
-      };
-      modal.close();
-      onApply && onApply();
-      toast("Filtros aplicados");
-    } }, "Aplicar filtros"),
-    el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
-      state.nearbyFilters = { ageMin: 18, ageMax: 60, distance: 50, onlyOnline: false, zone: "all", interests: [], looking_for: "any", relationship: "any" };
-      modal.close();
-      onApply && onApply();
-      toast("Filtros restablecidos");
-    } }, "Restablecer"),
-    el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cancelar"),
-  ]));
+  // V992 · Guardado automático: no hay acciones al final de una hoja larga.
+  commitNearbyFilters = async () => {
+    state.nearbyFilters = {
+      ageMin: +ageMin.value,
+      ageMax: Math.max(+ageMax.value, +ageMin.value),
+      distance: +dist.value,
+      onlyOnline: onlineToggle.checked,
+      zone: state.nearbyFilters.zone || "all",
+      interests: Array.from(selectedInterests),
+      looking_for: lookingSelectedRef.id,
+      relationship: relSelectedRef.id,
+    };
+    storeFilterScope("nearby", state.nearbyFilters);
+    const count = onApply ? onApply() : null;
+    autoHead.setSaving(false);
+    autoHead.setResult(Number.isFinite(count) ? (count ? `${count} perfiles` : "Sin resultados") : "Resultados actualizados");
+  };
+  const scheduleNearbySave = () => {
+    autoHead.setSaving(true);
+    if (nearbySaveTimer) clearTimeout(nearbySaveTimer);
+    nearbySaveTimer = setTimeout(() => { nearbySaveTimer = null; commitNearbyFilters(); }, 320);
+  };
+  sheet.addEventListener("input", scheduleNearbySave);
+  sheet.addEventListener("change", scheduleNearbySave);
+  sheet.addEventListener("click", (e) => {
+    if (e.target.closest(".chip.selectable")) setTimeout(scheduleNearbySave, 0);
+  });
+  const initialNearbyCount = onApply ? onApply() : null;
+  autoHead.setResult(Number.isFinite(initialNearbyCount) ? (initialNearbyCount ? `${initialNearbyCount} perfiles` : "Sin resultados") : "Resultados actualizados");
 
   modal.open(sheet);
 }
@@ -13909,12 +14114,34 @@ async function openMapFilters(mf, onApply) {
   await syncOwnIdentityForFilters();
   const _cc = myCountry();
   const sheet = el("div", { class: "nearby-filters-sheet" });
-  sheet.appendChild(el("div", { class: "sheet-titlebar" }, [
-    el("span", { class: "sheet-title", style: "padding-left:0" }, "Filtros del mapa"),
-    el("button", { class: "sheet-close", type: "button", "aria-label": "Cerrar filtros",
-      onclick: () => modal.close(),
-      html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M6 18L18 6"/></svg>` }),
-  ]));
+  let commitMapFilters = async () => {};
+  let mapSaveTimer = null;
+  const closeMapFilters = async () => {
+    if (mapSaveTimer) clearTimeout(mapSaveTimer);
+    await commitMapFilters();
+    modal.close();
+  };
+  const resetMapFilters = () => {
+    if (mapSaveTimer) { clearTimeout(mapSaveTimer); mapSaveTimer = null; }
+    mf.gender = "todos"; mf.orientation = "todas";
+    mf.onlyOnline = false; mf.onlyNew = false; mf.onlyNow = false;
+    mf.ageMin = 18; mf.ageMax = 99;
+    mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
+    mf.looking_for = "any"; mf.relationship = "any";
+    mf.interests = []; mf.education = []; mf.pets = []; mf.exercise = []; mf.smoke = []; mf.drink = [];
+    mf.tribe = []; mf.bodyType = []; mf.meetAt = []; mf.healthPractices = [];
+    mf.nsfwOnly = false; mf.cities = []; mf.ethnicities = []; mf.onlyVerified = false;
+    storeFilterScope("map", mf);
+    modal.close();
+    onApply && onApply();
+    toast("Filtros del mapa restablecidos");
+  };
+  const autoHead = createAutoFilterHeader({
+    title: "Filtros", scopeLabel: "Solo para Cerca · mapa",
+    onClose: closeMapFilters, onReset: resetMapFilters,
+  });
+  sheet.appendChild(autoHead.titlebar);
+  sheet.appendChild(autoHead.notice);
 
   const _mfZone = state.zone === "lgtb" ? "lgtb" : "hetero";
 
@@ -14208,59 +14435,45 @@ async function openMapFilters(mf, onApply) {
     }
   })();
 
-  // Acciones.
-  sheet.appendChild(el("div", { class: "sheet-actions" }, [
-    el("button", { class: "btn btn-brand btn-block", type: "button", onclick: () => {
-      // Rango completo → 0 (sin filtro). Compara contra los límites de la unidad canónica.
-      let aMin = ageCtl.getLoCanon(), aMax = ageCtl.getHiCanon();
-      mf.ageMin = aMin; mf.ageMax = Math.max(aMax, aMin);
-      let hMin = heightCtl.getLoCanon(), hMax = heightCtl.getHiCanon();
-      const hFull = (hMin <= heightCtl.canonMin() && hMax >= heightCtl.canonMax());
-      mf.heightMin = hFull ? 0 : hMin; mf.heightMax = hFull ? 0 : hMax;
-      let wMin = weightCtl.getLoCanon(), wMax = weightCtl.getHiCanon();
-      const wFull = (wMin <= weightCtl.canonMin() && wMax >= weightCtl.canonMax());
-      mf.weightMin = wFull ? 0 : wMin; mf.weightMax = wFull ? 0 : wMax;
-      mf.gender = genderRef.value || "todos"; // V910
-      mf.orientation = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas"; // V908
-      mf.looking_for = lookingRef.id;
-      mf.relationship = relRef.id;
-      mf.interests = Array.from(selInterests);
-      mf.education = Array.from(selEdu);
-      mf.pets = Array.from(selPets);
-      mf.exercise = Array.from(selEx);
-      mf.smoke = Array.from(selSmoke);
-      mf.drink = Array.from(selDrink);
-      // V887 · Nuevos filtros.
-      mf.tribe = Array.from(selTribe);
-      mf.bodyType = Array.from(selBody);
-      mf.meetAt = Array.from(selMeet);
-      mf.healthPractices = Array.from(selHealth);
-      mf.nsfwOnly = !!nsfwInp.checked;
-      // V936 · Ubicación, etnia y solo verificados (paridad con Explorar).
-      mf.cities = Array.from(citySelected);
-      mf.ethnicities = Array.from(ethSelected);
-      mf.onlyVerified = !!verInp.checked && _mfIAmVerified !== false;
-      modal.close();
-      onApply && onApply();
-      toast("Filtros aplicados");
-    } }, "Aplicar filtros"),
-    el("button", { class: "btn btn-outline btn-block", type: "button", onclick: () => {
-      mf.ageMin = 18; mf.ageMax = 99;
-      mf.gender = "todos"; // V910
-      mf.orientation = "todas"; // V908
-      mf.heightMin = 0; mf.heightMax = 0; mf.weightMin = 0; mf.weightMax = 0;
-      mf.looking_for = "any"; mf.relationship = "any";
-      mf.interests = []; mf.education = []; mf.pets = []; mf.exercise = []; mf.smoke = []; mf.drink = [];
-      // V887 · Reset de los nuevos filtros.
-      mf.tribe = []; mf.bodyType = []; mf.meetAt = []; mf.healthPractices = []; mf.nsfwOnly = false;
-      // V936 · Reset de ubicación, etnia y solo verificados.
-      mf.cities = []; mf.ethnicities = []; mf.onlyVerified = false;
-      modal.close();
-      onApply && onApply();
-      toast("Filtros restablecidos");
-    } }, "Restablecer"),
-    el("button", { class: "btn btn-ghost btn-block", "data-close": true }, "Cancelar"),
-  ]));
+  // V992 · Guardado automático y recuento en directo; desaparecen los botones
+  // inferiores Aplicar/Cancelar para que no haya que recorrer toda la hoja.
+  commitMapFilters = async () => {
+    let aMin = ageCtl.getLoCanon(), aMax = ageCtl.getHiCanon();
+    mf.ageMin = aMin; mf.ageMax = Math.max(aMax, aMin);
+    let hMin = heightCtl.getLoCanon(), hMax = heightCtl.getHiCanon();
+    const hFull = (hMin <= heightCtl.canonMin() && hMax >= heightCtl.canonMax());
+    mf.heightMin = hFull ? 0 : hMin; mf.heightMax = hFull ? 0 : hMax;
+    let wMin = weightCtl.getLoCanon(), wMax = weightCtl.getHiCanon();
+    const wFull = (wMin <= weightCtl.canonMin() && wMax >= weightCtl.canonMax());
+    mf.weightMin = wFull ? 0 : wMin; mf.weightMax = wFull ? 0 : wMax;
+    mf.gender = genderRef.value || "todos";
+    mf.orientation = (orientRef.value && orientRef.value !== "todas") ? orientRef.value : "todas";
+    mf.looking_for = lookingRef.id; mf.relationship = relRef.id;
+    mf.interests = Array.from(selInterests);
+    mf.education = Array.from(selEdu); mf.pets = Array.from(selPets);
+    mf.exercise = Array.from(selEx); mf.smoke = Array.from(selSmoke); mf.drink = Array.from(selDrink);
+    mf.tribe = Array.from(selTribe); mf.bodyType = Array.from(selBody);
+    mf.meetAt = Array.from(selMeet); mf.healthPractices = Array.from(selHealth);
+    mf.nsfwOnly = !!nsfwInp.checked;
+    mf.cities = Array.from(citySelected); mf.ethnicities = Array.from(ethSelected);
+    mf.onlyVerified = !!verInp.checked && _mfIAmVerified !== false;
+    storeFilterScope("map", mf);
+    const count = onApply ? onApply() : null;
+    autoHead.setSaving(false);
+    autoHead.setResult(Number.isFinite(count) ? (count ? `${count} perfiles en el mapa` : "Sin resultados") : "Mapa actualizado");
+  };
+  const scheduleMapSave = () => {
+    autoHead.setSaving(true);
+    if (mapSaveTimer) clearTimeout(mapSaveTimer);
+    mapSaveTimer = setTimeout(() => { mapSaveTimer = null; commitMapFilters(); }, 320);
+  };
+  sheet.addEventListener("input", scheduleMapSave);
+  sheet.addEventListener("change", scheduleMapSave);
+  sheet.addEventListener("click", (e) => {
+    if (e.target.closest(".chip.selectable, .filter-search-item")) setTimeout(scheduleMapSave, 0);
+  });
+  const initialMapCount = onApply ? onApply() : null;
+  autoHead.setResult(Number.isFinite(initialMapCount) ? (initialMapCount ? `${initialMapCount} perfiles en el mapa` : "Sin resultados") : "Mapa actualizado");
 
   modal.open(sheet);
 }
