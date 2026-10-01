@@ -3220,6 +3220,21 @@ body.account-suspended .restriction-banner .rb-close {
   box-shadow: 0 2px 8px rgba(0,0,0,.04);
   display: grid; gap: 8px;
 }
+.ad-slot.ad-slot-demo {
+  border-style: dashed;
+  border-color: rgba(245,158,11,.42);
+  background:
+    linear-gradient(135deg, rgba(245,158,11,.08), rgba(236,72,153,.055)),
+    var(--panel, #fff);
+}
+[data-theme="dark"] .ad-slot.ad-slot-demo {
+  border-color: rgba(251,191,36,.34);
+  background: linear-gradient(135deg, rgba(245,158,11,.11), rgba(236,72,153,.07));
+}
+.results-grid .ad-slot-grid {
+  grid-column: 1 / -1;
+  margin: 2px 0;
+}
 [data-theme="dark"] .ad-slot { background: rgba(255,255,255,.04); }
 .ad-slot .ad-tag {
   display: flex; align-items: center; justify-content: space-between;
@@ -3245,6 +3260,7 @@ body.account-suspended .restriction-banner .rb-close {
   width: 44px; height: 44px; border-radius: 10px;
   display: grid; place-items: center; font-size: 22px;
   background: linear-gradient(135deg, #fde68a, #f472b6);
+  color: #7c2d12; font-size: 12px; font-weight: 900; letter-spacing: .04em;
 }
 .ad-slot .ad-info { min-width: 0; }
 .ad-slot .ad-info strong { font-size: 13.5px; display: block; }

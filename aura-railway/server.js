@@ -18299,7 +18299,8 @@ app.put("/api/admin/reads/packs", wrap(async (req, res) => {
    ========================================================= */
 // GET /api/my/ads-context → devuelve si mostrar anuncios y config del intersticial
 app.get("/api/my/ads-context", wrap(async (req, res) => {
-  const globalEnabled = isTrue("ads.enabled", true);
+  // Fallo seguro: si falta la preferencia, no se muestran anuncios.
+  const globalEnabled = isTrue("ads.enabled", false);
   const onlyFree = isTrue("ads.only_free_plan", true);
   const interstitialEnabled = isTrue("ads.interstitial_enabled", false);
   const freq = parseInt(getSetting("ads.interstitial_frequency","5"),10) || 5;
@@ -19228,11 +19229,13 @@ app.get("/api/public-config", (req, res) => {
       stripe_mode: stripeClient.mode(),
     },
     ads: {
-      enabled: isTrue("ads.enabled", true),
+      // Fallo seguro: una configuración incompleta nunca activa anuncios.
+      enabled: isTrue("ads.enabled", false),
       network: getSetting("ads.network","adsense"),        // adsense | admob | gam | demo
       publisher_id: getSetting("ads.publisher_id",""),      // e.g. ca-pub-xxxxxxxx
       slot_discover_top: getSetting("ads.slot_discover_top",""),
       slot_discover_bottom: getSetting("ads.slot_discover_bottom",""),
+      slot_search: getSetting("ads.slot_search",""),
       slot_messages: getSetting("ads.slot_messages",""),
       slot_interstitial: getSetting("ads.slot_interstitial",""),
       test_mode: isTrue("ads.test_mode", true),

@@ -8651,11 +8651,10 @@ function screenDiscover(root) {
   stack._discoverShell = discoverShell;
   discoverShell.classList.toggle("is-grid", stack._viewMode === "grid");
   root.appendChild(discoverShell);
-  // Ad slot (visible only to Free plan)
-  const adTop = buildAdSlot("discover");
-  if (adTop) root.appendChild(adTop);
-  const adBottom = buildAdSlot("discover-bottom");
-  if (adBottom) root.appendChild(adBottom);
+  // Un único espacio de prueba al final de Explorar. No altera ni sustituye
+  // perfiles y sólo se construye para el plan Free cuando está habilitado.
+  const adSlot = buildAdSlot("discover");
+  if (adSlot) root.appendChild(adSlot);
 }
 
 /* ---- Botón Boost de Descubrir con estado activo (V896) ----
@@ -8764,11 +8763,7 @@ function screenNearby(root) {
   // AHORA (caduca en 1 h) + sección con quienes están buscando ahora cerca.
   root.appendChild(buildNowBar());
   root.appendChild(buildNowSection());
-  const adTop = buildAdSlot("nearby-top");
-  if (adTop) root.appendChild(adTop);
   root.appendChild(buildNearbySection());
-  const adBot = buildAdSlot("nearby-bottom");
-  if (adBot) root.appendChild(adBot);
 }
 
 /* ---- V866 · Estado "Ahora mismo" (editor + sección tipo "Right Now") ---- */
@@ -10440,16 +10435,27 @@ async function openNearbyMap() {
      - Reads publicConfig.ads (populated from server-side settings, editable
        from the admin panel → "Anuncios").
      - Supports Google AdSense (`adsense`), Google Ad Manager (`gam`),
-       and a `demo` fallback that renders in-house creatives.
-     - Google AdMob is native only (Android/iOS SDK), so on web builds we
-       fall back to AdSense with the same publisher_id.
+       and a `demo` mode that renders internal, non-tracking test creatives.
+     - Google AdMob is native only (Android/iOS SDK) and is never loaded here.
      - When `only_free_plan` is on (default), Premium+ users never see ads.
 -------------------------------------------------------------------- */
 const DEMO_ADS = [
-  { title: "Aliados de Aura", body: "Descuentos exclusivos para miembros — sponsored.", cta: "Ver oferta", icon: "🛍️", brand: "Fashion Co." },
-  { title: "Cenas para dos", body: "Reserva restaurantes con 20% de descuento para tu próxima cita.", cta: "Reservar", icon: "🍷", brand: "DineWith" },
-  { title: "Escapada de fin de semana", body: "Escápate cerca de casa con hoteles seleccionados por Aura.", cta: "Ver planes", icon: "🌴", brand: "Traveler" },
-  { title: "Look para tu cita", body: "Cosmética y perfumes recomendados por creadores.", cta: "Ir a la tienda", icon: "💄", brand: "GlowShop" },
+  {
+    title: "Espacio publicitario de prueba",
+    body: "Estamos probando una ubicación discreta. No es un anuncio real ni genera ingresos.",
+    cta: "Entendido",
+    icon: "AD",
+    brand: "Prueba de Aura",
+    action: "notice",
+  },
+  {
+    title: "Aura Premium",
+    body: "Disfruta de Aura sin espacios publicitarios y con más funciones.",
+    cta: "Ver planes",
+    icon: "A",
+    brand: "Promoción interna",
+    action: "plans",
+  },
 ];
 
 function adConfig() {
@@ -10461,10 +10467,7 @@ function adConfig() {
 // Esto evita "anuncios servidos en pantallas sin contenido del editor".
 const AD_CONTENT_SCREENS = [
   "screenDiscover",
-  "screenNearby",
-  "screenChats",
   "screenSearch",
-  "screenLikes",
 ];
 function isContentScreen() {
   try {
@@ -10505,23 +10508,28 @@ function slotIdFor(placement, cfg) {
     "discover":        cfg.slot_discover_top,
     "discover-top":    cfg.slot_discover_top,
     "discover-bottom": cfg.slot_discover_bottom,
+    "search":          cfg.slot_search,
     "messages":        cfg.slot_messages,
   };
   return map[placement] || cfg.slot_discover_top || "";
 }
 
-function renderDemoAdInto(container) {
-  const ad = DEMO_ADS[Math.floor(Math.random() * DEMO_ADS.length)];
+function renderDemoAdInto(container, placement) {
+  // Selección estable: evita que el anuncio cambie al filtrar o repintar.
+  const ad = DEMO_ADS[placement === "search" ? 1 : 0];
   container.innerHTML = "";
   container.appendChild(el("div", { class: "ad-body" }, [
-    el("div", { class: "ad-thumb" }, ad.icon),
+    el("div", { class: "ad-thumb", "aria-hidden": "true" }, ad.icon),
     el("div", { class: "ad-info" }, [
       el("strong", {}, ad.title),
       el("small", {}, ad.body),
       el("span", { class: "ad-brand" }, ad.brand),
     ]),
     el("button", { class: "ad-cta", type: "button",
-      onclick: () => toast("Anuncio de demostración — abriría el enlace del anunciante") }, ad.cta),
+      onclick: () => {
+        if (ad.action === "plans") render(screenSubscriptions);
+        else toast("Es una demostración interna: no abre enlaces ni registra clics");
+      } }, ad.cta),
   ]));
 }
 
@@ -10529,9 +10537,18 @@ function buildAdSlot(placement) {
   if (!shouldShowAds()) return null;
   const cfg = adConfig();
   const network = (cfg.network || "demo").toLowerCase();
-  const slot = el("div", { class: "ad-slot", "data-placement": placement || "generic", "data-network": network }, [
+  // La prueba acordada sólo aparece en Explorar y Buscar. Cerca, Mensajes,
+  // perfiles, login y verificación permanecen siempre libres de anuncios.
+  if (network === "demo" && !["discover", "search"].includes(placement)) return null;
+  const isDemo = network === "demo";
+  const slot = el("div", {
+    class: "ad-slot" + (isDemo ? " ad-slot-demo" : ""),
+    "data-placement": placement || "generic",
+    "data-network": network,
+    "aria-label": isDemo ? "Publicidad de prueba" : "Publicidad",
+  }, [
     el("div", { class: "ad-tag" }, [
-      el("span", {}, "Anuncio"),
+      el("span", {}, isDemo ? "Publicidad · Prueba" : "Publicidad"),
       el("button", { class: "ad-remove", type: "button", title: "Quitar anuncios con Premium",
         onclick: () => render(screenSubscriptions) }, "Quitar"),
     ]),
@@ -10542,8 +10559,7 @@ function buildAdSlot(placement) {
   const pubId = cfg.publisher_id || "";
   const slotId = slotIdFor(placement, cfg);
 
-  if ((network === "adsense" || network === "admob") && pubId && slotId) {
-    // AdMob on web is served through AdSense — same integration
+  if (network === "adsense" && pubId && slotId) {
     const ins = document.createElement("ins");
     ins.className = "adsbygoogle";
     ins.style.display = "block";
@@ -10554,9 +10570,9 @@ function buildAdSlot(placement) {
     if (cfg.test_mode) ins.setAttribute("data-adtest", "on");
     body.appendChild(ins);
     ensureAdSenseLoader(pubId).then((ok) => {
-      if (!ok) { renderDemoAdInto(body); return; }
+      if (!ok) { slot.remove(); return; }
       try { (window.adsbygoogle = window.adsbygoogle || []).push({}); }
-      catch { renderDemoAdInto(body); }
+      catch { slot.remove(); }
     });
   } else if (network === "gam" && slotId) {
     // Google Ad Manager (GPT) — expects slotId like /XXXXXXX/aura_slot
@@ -10577,11 +10593,14 @@ function buildAdSlot(placement) {
         window.googletag.pubads().enableSingleRequest();
         window.googletag.enableServices();
         window.googletag.display(holder.id);
-      } catch { renderDemoAdInto(body); }
+      } catch { slot.remove(); }
     });
+  } else if (network === "admob") {
+    // AdMob sólo puede integrarse en la futura aplicación Android nativa.
+    return null;
   } else {
-    // No publisher configured yet → in-house / demo creative
-    renderDemoAdInto(body);
+    // Demo interno: no carga scripts, cookies ni medición de terceros.
+    renderDemoAdInto(body, placement);
   }
   return slot;
 }
@@ -11965,7 +11984,8 @@ function renderResults(grid, filter = "") {
       : `<div class="empty" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Prueba a ampliar los filtros o cambiar el término.</p></div>`;
     return;
   }
-  filtered.forEach(u => {
+  let testAdInserted = false;
+  filtered.forEach((u, index) => {
     // V744 · Distancia real o "GPS no permitido" por tarjeta (ubicación desactivada).
     const li = locDistanceInfo(u);
     // V888 · Etiqueta breve: tribu o, en su defecto, tipo de cuerpo (si los declaró).
@@ -11994,7 +12014,24 @@ function renderResults(grid, filter = "") {
     ]);
     card.addEventListener("click", () => openProfile(u));
     grid.appendChild(card);
+    // El anuncio de prueba suma una fila propia; nunca sustituye ni elimina
+    // perfiles. En listas cortas se añade tras el último resultado.
+    if (index === 3) {
+      const ad = buildAdSlot("search");
+      if (ad) {
+        ad.classList.add("ad-slot-grid");
+        grid.appendChild(ad);
+        testAdInserted = true;
+      }
+    }
   });
+  if (!testAdInserted && filtered.length > 0) {
+    const ad = buildAdSlot("search");
+    if (ad) {
+      ad.classList.add("ad-slot-grid");
+      grid.appendChild(ad);
+    }
+  }
 }
 function filterSearch(v) {
   const grid = $("#resultsGrid");
@@ -13597,9 +13634,6 @@ function screenChats(root) {
     el("span", { class: "rb-cta" }, "Comprar"),
   ]);
   root.appendChild(readsBanner);
-  // Ad slot for free users, right below the reads banner
-  const adChat = buildAdSlot("messages");
-  if (adChat) root.appendChild(adChat);
   (async () => {
     try {
       const r = await fetch("/api/my/reads/status", { headers: chatApi.headers(), cache: "no-store" });
@@ -19732,7 +19766,7 @@ function screenInfoPrivacy(root) {
     // publicidad personalizada — y el detalle exacto se remite a la política
     // publicada en la web, que sí sabe en qué modo está.
     { h: "11. Cookies y tecnologías similares",
-      p: "En la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma): dentro de la app no hay publicidad ni medición de terceros. <b>Publicidad:</b> las páginas de contenido de citasaura.es que se sostienen con anuncios (las guías y las preguntas frecuentes) muestran anuncios de Google AdSense, que puede guardar cookies para medirlos y personalizarlos. En esas páginas <b>se te pide consentimiento al entrar</b> y sin él no se usan cookies de publicidad ni se personalizan los anuncios; puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. El detalle de quién recoge ese consentimiento y qué implica rechazarlo está en el punto 11 de la política publicada en <b>citasaura.es/privacidad</b>. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
+      p: "En la aplicación usamos únicamente cookies y almacenamiento local <b>estrictamente necesarios</b> para que el Servicio funcione (sesión, seguridad, idioma). Durante las pruebas, los usuarios del plan Free pueden ver promociones internas claramente identificadas; no cargan redes publicitarias, no comparten datos con terceros y no generan ingresos. <b>Publicidad de terceros:</b> las páginas de contenido de citasaura.es (guías y preguntas frecuentes) podrán mostrar anuncios de Google AdSense cuando el servicio esté habilitado. En esas páginas <b>se te pide consentimiento al entrar</b> y sin él no se usan cookies de publicidad ni se personalizan los anuncios; puedes cambiar tu decisión en cualquier momento desde el enlace «Cookies» del pie de esas páginas. El detalle de quién recoge ese consentimiento y qué implica rechazarlo está en el punto 11 de la política publicada en <b>citasaura.es/privacidad</b>. Base jurídica: tu consentimiento (art. 6.1.a RGPD y art. 22.2 LSSI-CE), retirable sin coste." },
     { h: "12. Medidas de seguridad",
       p: "Aplicamos medidas técnicas y organizativas adecuadas al riesgo del tratamiento: transporte cifrado TLS 1.2+, cifrado en reposo de datos sensibles, control de acceso por roles, seudonimización, hashing de identificadores biométricos, registro de accesos y auditorías periódicas conforme al art. 32 RGPD y al Esquema Nacional de Seguridad cuando aplique." },
     { h: "13. Actualizaciones de esta política",
@@ -20395,6 +20429,19 @@ async function boot() {
     } catch {}
     // Cargar contenido y renderizar la pantalla pedida
     await loadContent();
+    // Vista visual segura de los anuncios internos. Sólo existe dentro del
+    // modo preview y nunca activa una red externa ni cambia la configuración.
+    if (previewParams.get("ads") === "demo") {
+      publicConfig.ads = Object.assign({}, publicConfig.ads || {}, {
+        enabled: true,
+        network: "demo",
+        only_free_plan: true,
+        test_mode: true,
+      });
+      // La vista de anuncios representa siempre el plan Free aunque la sesión
+      // de preview anterior hubiese conservado otro plan en localStorage.
+      if (state.user) state.user.plan = "free";
+    }
     try { document.documentElement.classList.remove("js-loading"); } catch {}
     try { const sp = document.getElementById("auraSplash"); if (sp) sp.remove(); } catch {}
     // Renderizador central para vistas previas del admin.

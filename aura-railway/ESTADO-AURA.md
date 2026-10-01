@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V993 · publicada: V992**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V994 · publicada: V993**
+
+### V994 (01/10/2026) — Prueba publicitaria interna y base para AdSense
+
+- Los usuarios Free pueden ver espacios claramente marcados como
+  «Publicidad · Prueba» en Explorar y Buscar; no sustituyen perfiles, no
+  cargan redes externas, no registran clics y no generan ingresos.
+- Premium, Gold y Platinum permanecen sin anuncios. Tampoco aparecen espacios
+  en Cerca, Mensajes, perfiles, acceso ni verificación.
+- Administración permite preparar de forma segura el modo Demo, mantener los
+  anuncios apagados por defecto y reutilizar después los mismos espacios para
+  AdSense. AdMob queda reservado para la futura aplicación Android.
+- La política de privacidad distingue las promociones internas de prueba de la
+  futura publicidad de terceros. La portada, robots y las 16 URL del sitemap
+  público siguen accesibles e indexables; el bloqueo actual de AdSense requiere
+  esperar a la siguiente revisión, no duplicar la portada existente.
+- Pendiente de una tarea futura: empaquetar Aura con Capacitor, validar los
+  flujos nativos y preparar su publicación en Google Play con AdMob.
 
 ### V993 (01/10/2026) — Icono instalable y apertura sin recortes
 

@@ -15640,7 +15640,7 @@ async function viewAdsAdmin(root){
 
   root.appendChild(viewTitle(
     "Anuncios",
-    "Configura la red publicitaria (AdSense, AdMob, GAM), los identificadores de slot y qué usuarios ven anuncios. Se sirven solo a los usuarios del plan Free por defecto.",
+    "Prueba espacios internos o configura una red publicitaria. Por defecto, sólo los usuarios del plan Free pueden verlos.",
     []
   ));
 
@@ -15687,19 +15687,12 @@ async function viewAdsAdmin(root){
   }
 
   const body = [
-    // V926 · Aviso antes del interruptor. Los anuncios de las guías y el FAQ no
-    // se tocan desde aquí: los sirve features_seo_pages.js con su propia puerta
-    // de consentimiento. "Anuncios activos" enciende los de DENTRO de la app, y
-    // ahí no hay ninguna puerta: encenderlo sin construirla antes incumpliría el
-    // RGPD y la política de consentimiento de Google, y dejaría en falso el
-    // punto 11 de la política de privacidad ("dentro de la app no hay
-    // publicidad"). Se dice aquí porque es aquí donde se pulsa.
+    // La demostración interna no carga terceros ni genera ingresos. Una red
+    // real sí requiere el consentimiento y la configuración correspondiente.
     el("p", { class: "muted", style: "margin:0 0 10px" },
-      "Este interruptor afecta SÓLO a los anuncios dentro de la app. Los de las guías y "
-      + "las preguntas frecuentes de citasaura.es se sirven aparte, con su propio aviso de "
-      + "cookies. Ojo: la app no tiene aviso de consentimiento, así que activar esto sin "
-      + "construirlo antes incumpliría el RGPD y dejaría en falso el punto 11 de la "
-      + "política de privacidad, que dice que dentro de la app no hay publicidad."),
+      "El modo Demo muestra únicamente promociones internas de prueba: no carga cookies, "
+      + "no comparte datos con terceros y no genera ingresos. No actives AdSense o GAM "
+      + "dentro de la app hasta completar su consentimiento publicitario."),
     el("div", { class: "grid-2" }, [
       toggleField("ads.enabled", "Anuncios activos", true),
       toggleField("ads.only_free_plan", "Mostrar solo a usuarios del plan Free", true),
@@ -15707,9 +15700,9 @@ async function viewAdsAdmin(root){
     el("div", { class: "grid-2" }, [
       selectField("ads.network", "Red publicitaria", [
         { value: "adsense", label: "Google AdSense (web)" },
-        { value: "admob",   label: "Google AdMob (móvil nativo — cae a AdSense en web)" },
+        { value: "admob",   label: "Google AdMob (reservado para la futura app Android)" },
         { value: "gam",     label: "Google Ad Manager (GAM/GPT)" },
-        { value: "demo",    label: "Demo / anuncios in-house" },
+        { value: "demo",    label: "Demo interna · sin seguimiento ni ingresos" },
       ], network),
       toggleField("ads.test_mode", "Modo test (no cuenta impresiones)", true),
     ]),
@@ -15721,6 +15714,7 @@ async function viewAdsAdmin(root){
     el("div", { class: "grid-2" }, [
       textField("ads.slot_discover_top", "Slot: Descubrir (arriba)", "1234567890"),
       textField("ads.slot_discover_bottom", "Slot: Descubrir (abajo)", "0987654321"),
+      textField("ads.slot_search", "Slot: Buscar", "2233445566"),
       textField("ads.slot_messages", "Slot: Mensajes", "1122334455"),
       textField("ads.slot_interstitial", "Slot: Intersticial (ya no se usa — ver nota abajo)", "5544332211"),
     ]),
@@ -15750,6 +15744,20 @@ async function viewAdsAdmin(root){
       textField("ads.interstitial_days", "Días activos (0=Dom … 6=Sáb, coma separado)", "1,2,3,4,5"),
     ]),
     el("div", { class: "form-actions" }, [
+      el("button", { class: "btn ghost", type: "button", onclick: () => {
+        const setValue = (name, value) => {
+          const input = form.querySelector(`[name="${name}"]`);
+          if (!input) return;
+          if (input.type === "checkbox") input.checked = !!value;
+          else input.value = String(value);
+        };
+        setValue("ads.enabled", true);
+        setValue("ads.only_free_plan", true);
+        setValue("ads.network", "demo");
+        setValue("ads.test_mode", true);
+        setValue("ads.interstitial_enabled", false);
+        toast("Prueba interna preparada. Pulsa Guardar cambios para activarla.");
+      }}, "Preparar prueba interna"),
       el("button", { class: "btn primary", type: "submit" }, "Guardar cambios"),
       el("button", { class: "btn ghost", type: "button", onclick: async () => {
         try {
@@ -15769,10 +15777,10 @@ async function viewAdsAdmin(root){
   const help = el("div", { class: "ads-help" }, [
     el("h4", {}, "¿Cómo configurar cada red?"),
     el("ul", {}, [
-      el("li", {}, [ el("strong", {}, "AdSense: "), "crea la propiedad, obtén tu Publisher ID (ca-pub-…) y define un slot por ubicación (Descubrir arriba, Descubrir abajo, Mensajes)." ]),
-      el("li", {}, [ el("strong", {}, "AdMob: "), "es SDK nativo iOS/Android. En web se sirve automáticamente vía AdSense con el mismo Publisher ID." ]),
-      el("li", {}, [ el("strong", {}, "GAM (Ad Manager): "), "usa rutas de slot con formato /NETWORK_CODE/nombre_slot. Rellena los tres slots con esa forma para que GPT los pinte." ]),
-      el("li", {}, [ el("strong", {}, "Demo: "), "no llama a ninguna red externa. Muestra creatividades in-house (útil para desarrollo/pruebas)." ]),
+      el("li", {}, [ el("strong", {}, "Demo: "), "es la opción segura para la prueba actual. Sólo muestra promociones internas en Explorar y Buscar." ]),
+      el("li", {}, [ el("strong", {}, "AdSense: "), "cuando Google apruebe la propiedad, se reutilizan los mismos espacios con el Publisher ID y los slots correspondientes." ]),
+      el("li", {}, [ el("strong", {}, "AdMob: "), "requiere la futura aplicación Android y su SDK nativo; nunca se carga como AdSense dentro de la web." ]),
+      el("li", {}, [ el("strong", {}, "GAM (Ad Manager): "), "usa rutas de slot con formato /NETWORK_CODE/nombre_slot y requiere consentimiento para publicidad de terceros." ]),
     ]),
     el("p", { class: "muted" }, "Los usuarios Premium, Gold y Platinum no ven anuncios mientras esté activado \"Mostrar solo a usuarios del plan Free\". Puedes forzar anuncios a usuarios individuales (aunque tengan plan Premium) o desactivarlos manualmente desde el panel \"Excepciones por usuario\"."),
   ]);
