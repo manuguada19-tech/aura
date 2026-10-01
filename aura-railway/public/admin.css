@@ -4727,6 +4727,16 @@ textarea.input { resize: vertical; min-height: 60px; }
 .fx-gdpr-overdue{display:inline-flex;padding:3px 7px;border-radius:999px;color:#fb7185;background:rgba(244,63,94,.12);font-weight:800}
 .backup-verification{margin-top:10px;padding:8px 10px;border-radius:9px;font-size:12px;font-weight:750}.backup-verification.ok{color:#34d399;background:rgba(16,185,129,.1)}.backup-verification.pending{color:#fbbf24;background:rgba(245,158,11,.1)}
 .backup-check-pill{display:inline-flex;margin-top:5px;padding:3px 7px;border-radius:999px;font-size:10.5px;font-weight:800}.backup-check-pill.ok{color:#34d399;background:rgba(16,185,129,.1)}.backup-check-pill.failed{color:#fb7185;background:rgba(244,63,94,.1)}.backup-check-pill.pending{color:#fbbf24;background:rgba(245,158,11,.1)}
+
+/* V1005 · Visitas reales de perfiles. */
+.profile-visits-admin-filters-v1005{margin-bottom:14px;border:1px solid var(--border);border-radius:14px;background:var(--panel)}
+.profile-visits-admin-table-v1005 .empty{padding:34px 18px;text-align:center;color:var(--text-muted)}
+.profile-visit-person-v1005{display:flex;align-items:center;gap:9px;min-width:0;padding:0;border:0;color:inherit;background:transparent;font:inherit;text-align:left;cursor:pointer}
+.profile-visit-person-v1005>span:last-child{display:grid;gap:2px;min-width:0}.profile-visit-person-v1005 strong,.profile-visit-person-v1005 small{display:block;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.profile-visit-person-v1005 small{color:var(--text-muted);font-size:10px}
+.profile-visit-source-v1005{display:inline-flex;padding:4px 8px;border-radius:999px;color:#2dd4bf;background:rgba(20,184,166,.1);font-size:10.5px;font-weight:850}
+.profile-visits-admin-pagination-v1005{display:flex;align-items:center;gap:8px;padding:12px 14px}
+.profile-visits-user-title-v1005{margin-top:22px!important}.profile-visits-user-v1005{display:grid;gap:10px;margin-bottom:22px}
+.profile-visits-user-list-v1005{display:grid;gap:7px}.profile-visits-user-row-v1005{display:flex;align-items:center;gap:10px;width:100%;padding:9px;border:1px solid var(--border);border-radius:11px;color:inherit;background:var(--panel-2);font:inherit;text-align:left;cursor:pointer}.profile-visits-user-row-v1005>span:last-child{display:grid;gap:2px;min-width:0}.profile-visits-user-row-v1005 strong,.profile-visits-user-row-v1005 small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.profile-visits-user-row-v1005 small{color:var(--text-muted);font-size:10.5px}
 @media(max-width:720px){
   .admin-live-state{padding:0 7px}.admin-live-state span:last-child{display:none}
   .admin-undo-toast{left:14px;right:14px;bottom:76px;width:auto;align-items:flex-start;flex-direction:column}.admin-undo-actions{width:100%}.admin-undo-actions .btn{flex:1}
@@ -4743,6 +4753,7 @@ textarea.input { resize: vertical; min-height: 60px; }
   .mobile-card-table td{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 0;border:0;text-align:right;overflow-wrap:anywhere}
   .mobile-card-table td:before{content:attr(data-label);flex:0 0 auto;color:var(--text-muted);font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;text-align:left}
   .mobile-card-table td.ta-right{justify-content:space-between}.mobile-card-table td.ta-right:before{content:"Acciones"}
+  .profile-visits-admin-filters-v1005>*{width:100%}.profile-visits-admin-pagination-v1005{flex-wrap:wrap}.profile-visits-admin-pagination-v1005 .spacer{display:none}.profile-visits-admin-pagination-v1005>span:first-child{width:100%}.profile-visits-admin-pagination-v1005 .btn{flex:1;justify-content:center}.profile-visit-person-v1005 strong,.profile-visit-person-v1005 small{max-width:190px}
 }
 
 /* V1001 · Administración del modo viajero. */

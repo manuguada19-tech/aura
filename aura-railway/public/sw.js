@@ -36,7 +36,8 @@
 // V1002 · incorpora la interfaz unificada de llamadas de voz y vídeo.
 // V1003 · añade la fuente compartida y actualizada de preguntas frecuentes.
 // V1004 · registra de verdad las solicitudes de copia de datos y amplía FAQ.
-const CACHE_VERSION = "aura-v123";
+// V1005 · incorpora visitas reales del perfil y la marca de conversación previa.
+const CACHE_VERSION = "aura-v124";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

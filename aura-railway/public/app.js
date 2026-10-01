@@ -1884,6 +1884,9 @@ const state = {
     nsfwOnly: false, notChattedToday: false, travelersOnly: false,
   },
   favorites: new Set(),
+  // V1005 · Perfiles con una conversación que ya contiene mensajes. Se usa
+  // solo para la señal visual «Ya hablasteis»; no sustituye matches ni chats.
+  chattedProfileIds: new Set(),
   // V980 · Perfiles consultados en Explorar, sincronizados con el servidor para
   // conservar tanto el cupo como la marca «Visto» al cerrar y volver a entrar.
   discoverSeenKeys: new Set(),
@@ -2357,6 +2360,33 @@ const datingApi = {
       if (!r.ok) return { ...data, error: data.error || "error", status: r.status };
       return data;
     } catch { return { error: "network", status: 0 }; }
+  },
+  async recordProfileVisit(targetId, source) {
+    if (!this._authed() || !Auth.get()) return null;
+    try {
+      const r = await fetch("/api/my/profile-visits", {
+        method: "POST", headers: this.headers(), keepalive: true,
+        body: JSON.stringify({ target_id: targetId, source }),
+      });
+      const data = await r.json().catch(() => ({}));
+      return r.ok ? data : { ...data, error: data.error || "error", status: r.status };
+    } catch { return { error: "network", status: 0 }; }
+  },
+  async profileVisitors() {
+    if (!this._authed() || !Auth.get()) return null;
+    try {
+      const r = await fetch("/api/my/profile-visitors", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
+  },
+  async chattedProfileIds() {
+    if (!this._authed() || !Auth.get()) return null;
+    try {
+      const r = await fetch("/api/my/chatted-profile-ids", { headers: this.headers(), cache: "no-store" });
+      if (!r.ok) return null;
+      return await r.json();
+    } catch { return null; }
   },
   async saveFilters(filters) {
     if (!this._authed()) return null;
@@ -8776,6 +8806,7 @@ function refreshBoostAction() { try { if (_boostActionRefresh) _boostActionRefre
 
 /* ---- Cerca de ti (pestaña propia del tabbar) ---- */
 function screenNearby(root) {
+  syncChattedProfileStateV1005().catch(() => {});
   root.appendChild(topbar("Cerca de ti", null, null));
   // V442: aviso visible cuando el GPS no está activo — sin él, "Cerca" no
   //       puede filtrar por distancia real ni mostrar personas realmente
@@ -9111,13 +9142,14 @@ function buildNowSection() {
       now.slice(0, 20).forEach(u => {
         const nowText = u.now_status.text;
         const cardCls = "now-card declared";
-        const card = el("button", { class: cardCls, type: "button", onclick: () => openProfile(u) }, [
+        const card = el("button", { class: cardCls, type: "button", onclick: () => openProfile(u, "nearby") }, [
           el("div", { class: "now-card-ava", style: `background-image:url('${u.photo}')` }, [
             el("span", { class: "now-card-bolt", html: `<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M13 2L4.5 13.5H11l-2 8.5L19.5 10H13z"/></svg>` }),
           ]),
           el("div", { class: "now-card-name" }, u.name || "Alguien"),
           el("div", { class: "now-card-text" }, nowText),
         ]);
+        decorateChattedProfile(card, u);
         strip.appendChild(card);
       });
       sec.hidden = false;
@@ -9596,6 +9628,7 @@ async function openNearbyMap() {
   const [first] = await Promise.all([
     fetchNearbyMap(null, null, mapFilters.radiusKm),
     syncFavoriteState(),
+    syncChattedProfileStateV1005(),
   ]);
   if (first && first.center && Number.isFinite(first.center.lat)) {
     start = { lat: first.center.lat, lng: first.center.lng };
@@ -9674,11 +9707,13 @@ async function openNearbyMap() {
     const hasNow = !!(u.now_status && u.now_status.text);
     if (hasNow) cls.push("now");
     if (u.traveler && u.traveler.active) cls.push("traveler");
+    if (hasChattedProfile(u)) cls.push("profile-chatted-v1005");
     const dot = u.online ? '<span class="map-pin-dot"></span>' : "";
     // V852 · Etiqueta del pin: "Prueba" para la cuenta ficticia; si no, "Nuevo"
     // cuando la cuenta es de reciente registro (destaca a quien acaba de llegar).
     let tag = "";
     if (u._test) tag = '<span class="map-pin-tag">Prueba</span>';
+    else if (hasChattedProfile(u)) tag = '<span class="map-pin-tag chatted">Ya hablasteis</span>';
     else if (u.traveler && u.traveler.active) tag = '<span class="map-pin-tag traveler">De viaje</span>';
     else if (isNewUser(u)) tag = '<span class="map-pin-tag new">Nuevo</span>';
     // V866 · Rayo (símbolo del estado) sobre el pin cuando busca ahora.
@@ -9708,7 +9743,7 @@ async function openNearbyMap() {
     if (u._test) uu._real = false;
     try { overlay.remove(); } catch {}
     document.body.classList.remove("map-open");
-    openProfileDetail(uu, { backTo: "nearby" });
+    openProfileDetail(uu, { backTo: "nearby", source: "map" });
   }
 
   // V763 · Hoja de acciones al tocar un pin: "Ver perfil" + (si es de prueba)
@@ -10791,7 +10826,8 @@ function buildNearbySection() {
                      : (distLabel ? `${u.city ? u.city + " · " : ""}${distLabel}` : (u.city || ""))),
           ]),
         ]);
-        card.addEventListener("click", () => openProfileDetail(u));
+        decorateChattedProfile(card, u);
+        card.addEventListener("click", () => openProfileDetail(u, { backTo: "nearby", source: "nearby" }));
         nearbyGrid.appendChild(card);
       });
       if (hidden > 0) {
@@ -10967,6 +11003,40 @@ function buildSeenBadge(u, className) {
   ]);
   paintSeenBadge(badge, hasSeenProfile(u));
   return badge;
+}
+
+function hasChattedProfile(u) {
+  return !!u && state.chattedProfileIds.has(Number(u.id));
+}
+function decorateChattedProfile(node, u) {
+  if (!node || !u || u.id == null) return node;
+  node.dataset.profileId = String(u.id);
+  const chatted = hasChattedProfile(u);
+  node.classList.toggle("profile-chatted-v1005", chatted);
+  let badge = node.querySelector(":scope > .profile-chatted-badge-v1005");
+  if (chatted && !badge) {
+    badge = el("span", { class: "profile-chatted-badge-v1005" }, "Ya hablasteis");
+    node.appendChild(badge);
+  } else if (!chatted && badge) {
+    badge.remove();
+  }
+  return node;
+}
+let chattedProfilesSyncPromiseV1005 = null;
+async function syncChattedProfileStateV1005() {
+  if (!state.user || !state.user.id) return false;
+  if (chattedProfilesSyncPromiseV1005) return chattedProfilesSyncPromiseV1005;
+  chattedProfilesSyncPromiseV1005 = (async () => {
+    const data = await datingApi.chattedProfileIds();
+    if (!data || !Array.isArray(data.ids)) return false;
+    state.chattedProfileIds = new Set(data.ids.map(Number).filter(Number.isFinite));
+    document.querySelectorAll("[data-profile-id]").forEach((node) => {
+      decorateChattedProfile(node, { id: Number(node.dataset.profileId) });
+    });
+    return true;
+  })();
+  try { return await chattedProfilesSyncPromiseV1005; }
+  finally { chattedProfilesSyncPromiseV1005 = null; }
 }
 let discoverSeenSyncPromise = null;
 async function syncDiscoverSeenState() {
@@ -11260,6 +11330,7 @@ async function loadDiscoverInto(stack, append = false) {
     datingApi.discover(state.zone, requestLimit),
     syncFavoriteState(),
     syncDiscoverSeenState(),
+    syncChattedProfileStateV1005(),
   ]);
   let users = discoverUsers;
   if (!users || users.length === 0) {
@@ -11380,16 +11451,17 @@ function renderDiscoverGrid(stack) {
         ]),
       ]),
     ]);
+    decorateChattedProfile(card, u);
     card.addEventListener("click", () => {
       markDiscoverProfileSeen(u, stack);
-      openProfileDetail(u);
+      openProfileDetail(u, { source: "discover" });
     });
     card.addEventListener("keydown", (e) => {
       if (e.target !== card) return;
       if (e.key !== "Enter" && e.key !== " ") return;
       e.preventDefault();
       markDiscoverProfileSeen(u, stack);
-      openProfileDetail(u);
+      openProfileDetail(u, { source: "discover" });
     });
     stack.appendChild(card);
   });
@@ -11475,11 +11547,12 @@ function buildSwipeCard(u, depth = 0) {
     onclick: (ev) => {
       ev.stopPropagation();
       markDiscoverProfileSeen(u, card.closest(".discover-stack"));
-      openProfileDetail(u);
+      openProfileDetail(u, { source: "discover" });
     },
     html: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg><span class="swipe-info-txt">Ver perfil</span>`
   });
   card.appendChild(infoBtn);
+  decorateChattedProfile(card, u);
   card.addEventListener("click", (e) => {
     // tapping images cycles photos
     const rect = card.getBoundingClientRect();
@@ -12077,6 +12150,7 @@ async function populateResults(grid, filter = "") {
     const [discoverUsers] = await Promise.all([
       datingApi.discover(state.zone, 30),
       syncFavoriteState(),
+      syncChattedProfileStateV1005(),
     ]);
     let users = discoverUsers;
     if (!users || users.length === 0) users = isPreviewMode() ? generateUsers(14, { zone: state.zone }) : []; // V637
@@ -12131,7 +12205,8 @@ function renderResults(grid, filter = "") {
         el("small", { class: li.off ? "gps-off" : "" }, meta),
       ]),
     ]);
-    card.addEventListener("click", () => openProfile(u));
+    decorateChattedProfile(card, u);
+    card.addEventListener("click", () => openProfile(u, "search"));
     grid.appendChild(card);
     // El anuncio de prueba suma una fila propia; nunca sustituye ni elimina
     // perfiles. En listas cortas se añade tras el último resultado.
@@ -12946,6 +13021,7 @@ function switchRow(label, checked, onChange) {
 
 /* ---- Likes ---- */
 function screenLikes(root) {
+  syncChattedProfileStateV1005().catch(() => {});
   // V755 · El título "Te gustan" era incorrecto: sugería "personas que a ti te
   // gustan", pero el contenido son los likes que TE HAN DADO + tus favoritos.
   // Usamos "Likes" (igual que la pestaña inferior); las sub-pestañas ya
@@ -12987,7 +13063,7 @@ function screenLikes(root) {
       class: "like-unlocked-wrap",
       type: "button",
       "aria-label": `Ver perfil de ${u.name}`,
-      onclick: () => openProfileDetail(u, { backTo: "likes" }),
+      onclick: () => openProfileDetail(u, { backTo: "likes", source: "likes" }),
     }, [
       card,
       el("div", { class: "info" }, [
@@ -13043,6 +13119,7 @@ function screenLikes(root) {
         ]),
       ]),
     ]);
+    decorateChattedProfile(wrap, u);
     return wrap;
   }
 
@@ -13064,7 +13141,8 @@ function screenLikes(root) {
       removeBtn,
       el("strong", { class: "favorite-card-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
     ]);
-    const open = () => openProfileDetail(u, { backTo: "likes" });
+    decorateChattedProfile(wrap, u);
+    const open = () => openProfileDetail(u, { backTo: "likes", source: "likes" });
     wrap.addEventListener("click", open);
     wrap.addEventListener("keydown", (e) => {
       if (e.target !== wrap) return;
@@ -14659,6 +14737,11 @@ function openPhotoViewer(src) {
   document.body.appendChild(overlay);
 }
 function openProfileDetail(u, opts = {}) {
+  const isRealVisit = !(opts && opts.selfPreview) && u && u._real && Number.isFinite(Number(u.id));
+  if (isRealVisit) {
+    const source = opts.source || (opts.backTo === "chat" ? "chat" : opts.backTo === "likes" ? "likes" : opts.backTo === "nearby" ? "nearby" : "discover");
+    datingApi.recordProfileVisit(Number(u.id), source).catch(() => {});
+  }
   document.body.classList.add("profile-open");
   render((root) => screenProfileDetail(root, u, opts));
 }
@@ -14670,6 +14753,7 @@ function screenProfileDetail(root, u, opts = {}) {
   const backLabel = selfPreview ? "Volver a mi perfil"
                   : backTo === "chat" ? "Volver al chat"
                   : backTo === "likes" ? "Volver a likes"
+                  : backTo === "visitors" ? "Volver a visitantes"
                   : backTo === "nearby" ? "Volver a cerca de ti"
                   : "Volver a descubrir";
   const backHandler = () => {
@@ -14682,6 +14766,9 @@ function screenProfileDetail(root, u, opts = {}) {
     } else if (backTo === "likes") {
       showApp();
       routeTab("likes");
+    } else if (backTo === "visitors") {
+      showApp();
+      render(screenProfileVisitors);
     } else if (backTo === "nearby") {
       showApp();
       routeTab("nearby");
@@ -15043,7 +15130,7 @@ function openChat(u, isNew = false, opts = {}) {
 function screenChat(root, u, isNew, opts = {}) {
   stopChatPolling();
   document.body.classList.add("chat-open");
-  const openProfileFromChat = () => { document.body.classList.remove("chat-open"); openProfileDetail(u, { backTo: "chat" }); };
+  const openProfileFromChat = () => { document.body.classList.remove("chat-open"); openProfileDetail(u, { backTo: "chat", source: "chat" }); };
   const planRankV1002 = { free: 0, premium: 1, gold: 2, platinum: 3 };
   const callAllowedV1002 = (key, minimum) => {
     const entitlement = state.entitlements?.[key];
@@ -15199,6 +15286,7 @@ function screenChat(root, u, isNew, opts = {}) {
     if (r.id > lastId) lastId = r.id;
     optimistic.dataset.msgId = String(r.id);
     optimistic.removeAttribute("data-pending");
+    if (u && Number.isFinite(Number(u.id))) state.chattedProfileIds.add(Number(u.id));
   };
   const sendPhoto = async () => {
     if (!state_.convId) return;
@@ -15663,7 +15751,7 @@ function openChatMenu(u) {
   const sheet = el("div", {}, [
     el("div", { class: "sheet-title" }, u.name),
     el("div", { class: "sheet-actions" }, [
-      el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); openProfile(u); } }, "Ver perfil"),
+      el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); openProfile(u, "chat"); } }, "Ver perfil"),
       el("button", { class: "btn btn-outline btn-block", onclick: () => { modal.close(); toast("Silenciado"); } }, "Silenciar notificaciones"),
       el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); openReport(u); } }, "Denunciar"),
       el("button", { class: "btn btn-danger btn-block", onclick: () => { modal.close(); confirmBlockUser(u); } }, "Bloquear"),
@@ -15719,7 +15807,10 @@ function openReport(u) {
 }
 
 /* ---- Profile (view of another user) ---- */
-function openProfile(u) {
+function openProfile(u, source = "search") {
+  if (u && u._real && Number.isFinite(Number(u.id))) {
+    datingApi.recordProfileVisit(Number(u.id), source).catch(() => {});
+  }
   render((root) => {
     root.appendChild(el("div", { class: "profile-hero", style: `background-image:url('${u.photo}')` }, [
       el("div", { class: "profile-topbar" }, [
@@ -15788,6 +15879,95 @@ function maskProfileEmail(value) {
   if (local.length <= 2) return local.charAt(0) + "••" + domain;
   if (local.length <= 4) return local.charAt(0) + "••" + local.slice(-1) + domain;
   return local.slice(0, 2) + "••••" + local.slice(-2) + domain;
+}
+
+function profileVisitDateV1005(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Fecha no disponible";
+  const diff = Date.now() - date.getTime();
+  if (diff < 60000) return "Ahora";
+  if (diff < 3600000) return `Hace ${Math.max(1, Math.floor(diff / 60000))} min`;
+  if (diff < 86400000) return `Hace ${Math.max(1, Math.floor(diff / 3600000))} h`;
+  return date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+
+function screenProfileVisitors(root) {
+  meSubHeader(root, "Quién vio mi perfil");
+  const body = el("div", { class: "profile-visitors-v1005" }, [
+    el("div", { class: "profile-visitors-loading-v1005" }, "Cargando visitas…"),
+  ]);
+  root.appendChild(body);
+  hideApp();
+  (async () => {
+    const data = await datingApi.profileVisitors();
+    body.innerHTML = "";
+    if (!data) {
+      body.appendChild(el("div", { class: "profile-visitors-empty-v1005" }, [
+        el("strong", {}, "No pudimos cargar las visitas"),
+        el("span", {}, "Comprueba la conexión y vuelve a intentarlo."),
+        el("button", { class: "btn btn-outline", onclick: () => render(screenProfileVisitors) }, "Reintentar"),
+      ]));
+      return;
+    }
+    const totals = data.totals || {};
+    body.appendChild(el("section", { class: "profile-visitors-hero-v1005" }, [
+      el("span", { class: "profile-visitors-eyebrow-v1005" }, "TU PERFIL"),
+      el("div", { class: "profile-visitors-number-v1005" }, String(totals.visits || 0)),
+      el("strong", {}, "visitas totales"),
+      el("div", { class: "profile-visitors-stats-v1005" }, [
+        el("div", {}, [el("b", {}, String(totals.unique_visitors || 0)), el("span", {}, "Personas")]),
+        el("div", {}, [el("b", {}, String(totals.visits_30d || 0)), el("span", {}, "Últimos 30 días")]),
+      ]),
+    ]));
+    body.appendChild(el("div", { class: "profile-visitors-note-v1005" }, "Una apertura cuenta como máximo una vez cada 24 horas por persona. Las visitas privadas no revelan la identidad."));
+
+    const items = Array.isArray(data.items) ? data.items : [];
+    if (!items.length) {
+      body.appendChild(el("div", { class: "profile-visitors-empty-v1005" }, [
+        el("strong", {}, "Todavía no hay visitas"),
+        el("span", {}, "Cuando alguien abra tu perfil completo aparecerá aquí."),
+      ]));
+      return;
+    }
+    const sourceNames = { discover: "Explorar", search: "Buscar", nearby: "Cerca", map: "Mapa", chat: "Chat", likes: "Likes", visitors: "Visitantes" };
+    const list = el("div", { class: "profile-visitors-list-v1005" });
+    items.forEach((item) => {
+      const hidden = item.private || item.locked;
+      const avatarNode = item.photo_url && !hidden
+        ? el("span", { class: "profile-visitor-avatar-v1005", style: `background-image:url('${item.photo_url}')` })
+        : el("span", { class: "profile-visitor-avatar-v1005 hidden" }, item.private ? "◌" : "□");
+      const title = item.private ? "Visita privada" : item.locked ? "Visitante oculto" : `${item.name || "Perfil"}${item.age != null ? ", " + item.age : ""}`;
+      const meta = item.private
+        ? "Usa el modo invisible"
+        : item.locked
+          ? "Disponible con Premium"
+          : [item.city, sourceNames[item.source] || "Aura"].filter(Boolean).join(" · ");
+      const row = el(hidden ? "div" : "button", {
+        class: "profile-visitor-row-v1005" + (hidden ? " hidden" : ""),
+        type: hidden ? undefined : "button",
+      }, [
+        avatarNode,
+        el("span", { class: "profile-visitor-copy-v1005" }, [el("strong", {}, title), el("small", {}, meta)]),
+        el("time", {}, profileVisitDateV1005(item.viewed_at)),
+      ]);
+      if (!hidden) row.addEventListener("click", () => openProfileDetail(mapApiUser({
+        id: Number(item.id), name: item.name, age: item.age, city: item.city,
+        photo_url: item.photo_url, photos: item.photo_url ? [item.photo_url] : [], verified: item.verified,
+      }), { backTo: "visitors", source: "visitors" }));
+      list.appendChild(row);
+    });
+    body.appendChild(el("h3", { class: "profile-visitors-title-v1005" }, "Visitas recientes"));
+    body.appendChild(list);
+    if (Number(data.locked_count || 0) > 0) {
+      body.appendChild(el("div", { class: "profile-visitors-upgrade-v1005" }, [
+        el("div", {}, [
+          el("strong", {}, `${data.locked_count} visitante${data.locked_count === 1 ? "" : "s"} más`),
+          el("span", {}, "Free muestra 3 identidades recientes. Premium, Gold y Platinum muestran todas."),
+        ]),
+        el("button", { class: "btn btn-brand", onclick: () => render(screenSubscriptions) }, "Ver planes"),
+      ]));
+    }
+  })();
 }
 
 // V991 · Vista previa real del perfil propio. Carga el perfil y sus fotos desde
@@ -15985,6 +16165,7 @@ function screenMe(root) {
       { icon: "🧾", title: "Pagos y facturas", sub: "Facturas, reembolsos y cobros pendientes", onClick: () => render(screenBilling) },
     ]},
     { title: "Beneficios", items: [
+      { icon: "◉", id: "meProfileVisitorsRow", title: "Quién vio mi perfil", sub: "Consulta tus visitas y visitantes", onClick: () => render(screenProfileVisitors) },
       { icon: "✈", title: "Modo viajero", sub: "Comparte ciudad y fechas sin cambiar tu GPS", onClick: () => render(screenTravelerMode) },
       { icon: "🚀", title: "Boost / Impulso", id: "meBoostRow", sub: "Destaca tu perfil y consulta el tiempo restante", onClick: () => render(screenBoost) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
@@ -16144,6 +16325,17 @@ function screenMe(root) {
         rowSub.textContent = avail > 0
           ? (avail + " Boost" + (avail === 1 ? "" : "s") + " disponible" + (avail === 1 ? "" : "s") + " · pulsa para destacar")
           : "Sin Boosts · consigue más para destacar tu perfil";
+      }
+    } catch {}
+  })();
+  (async () => {
+    try {
+      const data = await datingApi.profileVisitors();
+      const rowSub = document.querySelector("#meProfileVisitorsRow small");
+      if (data && rowSub) {
+        const visits = Number(data.totals?.visits || 0);
+        const people = Number(data.totals?.unique_visitors || 0);
+        rowSub.textContent = `${visits} visita${visits === 1 ? "" : "s"} · ${people} persona${people === 1 ? "" : "s"}`;
       }
     } catch {}
   })();

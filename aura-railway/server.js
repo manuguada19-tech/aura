@@ -1530,6 +1530,7 @@ const FEATURE_CATALOG_V997 = Object.freeze([
   { key: "superlikes_daily", label: "Super Likes", description: "Super Likes incluidos cada día.", group: "Descubrimiento", kind: "quota", unit: "Super Likes", status: "operational", next_phase: null },
   { key: "boosts_monthly", label: "Boost incluidos", description: "Boost incluidos cada mes; las compras adicionales se gestionan aparte.", group: "Visibilidad", kind: "quota", unit: "Boost", status: "operational", next_phase: null },
   { key: "likes_received_full", label: "Todos los likes recibidos", description: "Permite ver sin recortes quién ha dado Like.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
+  { key: "profile_visitors_visible", label: "Visitantes del perfil", description: "Personas identificadas que han abierto el perfil completo.", group: "Descubrimiento", kind: "quota", unit: "visitantes", status: "operational", next_phase: null },
   { key: "rewind", label: "Deshacer", description: "Recupera la última decisión de Explorar.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "invisible", label: "Modo invisible", description: "Control de visibilidad del perfil validado por el servidor.", group: "Privacidad", kind: "boolean", unit: null, status: "operational", next_phase: null },
   { key: "advanced_filters", label: "Filtros avanzados", description: "Amplía los criterios disponibles en los filtros.", group: "Descubrimiento", kind: "boolean", unit: null, status: "operational", next_phase: null },
@@ -1546,7 +1547,7 @@ const FEATURE_BY_KEY_V997 = new Map(FEATURE_CATALOG_V997.map((feature) => [featu
 const PLAN_ENTITLEMENT_DEFAULTS_V997 = Object.freeze({
   free: {
     profiles_visible: [true, 10, null], chats_monthly: [true, 5, "month"], ads_free: [false, null, null],
-    superlikes_daily: [true, 1, "day"], boosts_monthly: [false, 0, "month"], likes_received_full: [false, null, null],
+    superlikes_daily: [true, 1, "day"], boosts_monthly: [false, 0, "month"], likes_received_full: [false, null, null], profile_visitors_visible: [true, 3, null],
     rewind: [false, null, null], invisible: [false, null, null], advanced_filters: [false, null, null],
     read_receipts_monthly: [true, 10, "month"], traveler_current: [true, 7, "trip"], traveler_future: [false, 0, "trip"],
     traveler_city_limit: [true, 1, "trip"], audio_calls: [false, null, null], video_calls: [false, null, null],
@@ -1554,7 +1555,7 @@ const PLAN_ENTITLEMENT_DEFAULTS_V997 = Object.freeze({
   },
   premium: {
     profiles_visible: [true, 30, null], chats_monthly: [true, 50, "month"], ads_free: [true, null, null],
-    superlikes_daily: [true, 5, "day"], boosts_monthly: [false, 0, "month"], likes_received_full: [true, null, null],
+    superlikes_daily: [true, 5, "day"], boosts_monthly: [false, 0, "month"], likes_received_full: [true, null, null], profile_visitors_visible: [true, -1, null],
     rewind: [true, null, null], invisible: [true, null, null], advanced_filters: [false, null, null],
     read_receipts_monthly: [true, 100, "month"], traveler_current: [true, 30, "trip"], traveler_future: [true, 1, "trip"],
     traveler_city_limit: [true, 1, "trip"], audio_calls: [false, null, null], video_calls: [false, null, null],
@@ -1562,7 +1563,7 @@ const PLAN_ENTITLEMENT_DEFAULTS_V997 = Object.freeze({
   },
   gold: {
     profiles_visible: [true, 80, null], chats_monthly: [true, -1, "month"], ads_free: [true, null, null],
-    superlikes_daily: [true, 10, "day"], boosts_monthly: [true, 5, "month"], likes_received_full: [true, null, null],
+    superlikes_daily: [true, 10, "day"], boosts_monthly: [true, 5, "month"], likes_received_full: [true, null, null], profile_visitors_visible: [true, -1, null],
     rewind: [true, null, null], invisible: [true, null, null], advanced_filters: [true, null, null],
     read_receipts_monthly: [true, 500, "month"], traveler_current: [true, 30, "trip"], traveler_future: [true, 2, "trip"],
     traveler_city_limit: [true, 3, "trip"], audio_calls: [true, null, null], video_calls: [false, null, null],
@@ -1570,7 +1571,7 @@ const PLAN_ENTITLEMENT_DEFAULTS_V997 = Object.freeze({
   },
   platinum: {
     profiles_visible: [true, -1, null], chats_monthly: [true, -1, "month"], ads_free: [true, null, null],
-    superlikes_daily: [true, -1, "day"], boosts_monthly: [true, -1, "month"], likes_received_full: [true, null, null],
+    superlikes_daily: [true, -1, "day"], boosts_monthly: [true, -1, "month"], likes_received_full: [true, null, null], profile_visitors_visible: [true, -1, null],
     rewind: [true, null, null], invisible: [true, null, null], advanced_filters: [true, null, null],
     read_receipts_monthly: [true, -1, "month"], traveler_current: [true, 30, "trip"], traveler_future: [true, 6, "trip"],
     traveler_city_limit: [true, 10, "trip"], audio_calls: [true, null, null], video_calls: [true, null, null],
@@ -1757,6 +1758,18 @@ async function migrate() {
       UNIQUE KEY uniq_profile_view (viewer_id, target_id),
       INDEX idx_profile_view_target (target_id),
       INDEX idx_profile_view_last (last_viewed_at)
+    )`,
+    // V1005 · Aperturas reales del perfil completo. No se mezcla con
+    // profile_views, que representa tarjetas mostradas y consume su cuota.
+    `CREATE TABLE IF NOT EXISTS profile_visit_events (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      viewer_id INT NOT NULL,
+      viewed_id INT NOT NULL,
+      source ENUM('discover','search','nearby','map','chat','likes','visitors') NOT NULL DEFAULT 'discover',
+      viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_profile_visit_viewed (viewed_id, viewed_at),
+      INDEX idx_profile_visit_viewer (viewer_id, viewed_at),
+      INDEX idx_profile_visit_pair (viewer_id, viewed_id, viewed_at)
     )`,
     `CREATE TABLE IF NOT EXISTS blocks (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -4009,6 +4022,7 @@ async function purgeUserData(id, { keepBilling = true } = {}) {
     ["DELETE FROM matches WHERE user_a=? OR user_b=?", [uid, uid]],
     ["DELETE FROM favorites WHERE user_id=? OR target_id=?", [uid, uid]],
     ["DELETE FROM profile_views WHERE viewer_id=? OR target_id=?", [uid, uid]],
+    ["DELETE FROM profile_visit_events WHERE viewer_id=? OR viewed_id=?", [uid, uid]],
     ["DELETE FROM blocks WHERE user_id=? OR target_id=?", [uid, uid]],
     ["DELETE FROM notifications WHERE user_id=?", [uid]],
     ["DELETE FROM devices WHERE user_id=?", [uid]],
@@ -12396,6 +12410,198 @@ app.post("/api/my/profile-views", wrap(async (req, res) => {
       unlimited: !!entitlement?.unlimited,
     },
   });
+}));
+
+/* ---- Visitas reales al perfil completo ---- V1005
+   Esta tabla y estas rutas son independientes de profile_views: aquella mide
+   tarjetas mostradas y cuotas de Explorar; esta registra aperturas deliberadas
+   del perfil completo, como máximo una vez por pareja cada 24 horas. */
+const PROFILE_VISIT_SOURCES_V1005 = new Set(["discover", "search", "nearby", "map", "chat", "likes", "visitors"]);
+
+app.post("/api/my/profile-visits", wrap(async (req, res) => {
+  const me = readMyUserIdSigned(req);
+  if (!me) return res.status(401).json({ error: "signed_session_required" });
+  const target = parseInt(req.body?.target_id, 10);
+  const rawSource = String(req.body?.source || "discover").toLowerCase();
+  const source = PROFILE_VISIT_SOURCES_V1005.has(rawSource) ? rawSource : "discover";
+  if (!target || target === me) return res.status(400).json({ error: "invalid_target" });
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    // Serializa dos aperturas simultáneas del mismo visitante. Así no nacen
+    // duplicados aunque todavía no exista una fila para esta pareja.
+    const [viewerRows] = await conn.query("SELECT id FROM users WHERE id=? AND status='active' LIMIT 1 FOR UPDATE", [me]);
+    const [targetRows] = await conn.query("SELECT id FROM users WHERE id=? AND status='active' LIMIT 1", [target]);
+    if (!viewerRows.length || !targetRows.length) {
+      await conn.rollback();
+      return res.status(404).json({ error: "profile_not_found" });
+    }
+    const [blocked] = await conn.query(
+      "SELECT id FROM blocks WHERE (user_id=? AND target_id=?) OR (user_id=? AND target_id=?) LIMIT 1",
+      [me, target, target, me]
+    );
+    if (blocked.length) {
+      await conn.rollback();
+      return res.status(403).json({ error: "profile_unavailable" });
+    }
+    const [recent] = await conn.query(
+      "SELECT id,viewed_at FROM profile_visit_events WHERE viewer_id=? AND viewed_id=? AND viewed_at>DATE_SUB(NOW(),INTERVAL 24 HOUR) ORDER BY viewed_at DESC,id DESC LIMIT 1",
+      [me, target]
+    );
+    if (recent.length) {
+      await conn.commit();
+      return res.json({ ok: true, recorded: false, viewed_at: recent[0].viewed_at });
+    }
+    const [inserted] = await conn.execute(
+      "INSERT INTO profile_visit_events (viewer_id,viewed_id,source,viewed_at) VALUES (?,?,?,NOW())",
+      [me, target, source]
+    );
+    await conn.commit();
+    res.status(201).json({ ok: true, recorded: true, id: inserted.insertId, source });
+  } catch (error) {
+    try { await conn.rollback(); } catch {}
+    throw error;
+  } finally {
+    conn.release();
+  }
+}));
+
+app.get("/api/my/profile-visitors", wrap(async (req, res) => {
+  const me = readMyUserIdSigned(req);
+  if (!me) return res.status(401).json({ error: "signed_session_required" });
+  const [statsRows, rows, entitlement] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*) total_visits, COUNT(DISTINCT e.viewer_id) unique_visitors,
+              SUM(e.viewed_at>=DATE_SUB(NOW(),INTERVAL 30 DAY)) visits_30d
+         FROM profile_visit_events e
+         JOIN users u ON u.id=e.viewer_id AND u.status='active'
+        WHERE e.viewed_id=?
+          AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.user_id=? AND b.target_id=e.viewer_id) OR (b.user_id=e.viewer_id AND b.target_id=?))`, [me, me, me]
+    ).then(([items]) => items),
+    pool.query(
+      `SELECT e.viewer_id,e.source,e.viewed_at,u.name,u.age,u.city,u.verified,
+              COALESCE(NULLIF(u.photo_url,''),
+                (SELECT COALESCE(NULLIF(p.crop_url,''),p.url) FROM photos p
+                  WHERE p.user_id=u.id AND COALESCE(p.is_now_photo,0)=0
+                  ORDER BY p.is_primary DESC,p.id ASC LIMIT 1)) AS photo_url,
+              CASE WHEN
+                COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
+                AND EXISTS (SELECT 1 FROM plan_entitlements pe
+                  WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
+              THEN 1 ELSE 0 END AS is_private
+         FROM profile_visit_events e
+         JOIN (SELECT viewer_id,MAX(id) latest_id FROM profile_visit_events WHERE viewed_id=? GROUP BY viewer_id) latest ON latest.latest_id=e.id
+         JOIN users u ON u.id=e.viewer_id AND u.status='active'
+        WHERE e.viewed_id=?
+          AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.user_id=? AND b.target_id=e.viewer_id) OR (b.user_id=e.viewer_id AND b.target_id=?))
+        ORDER BY e.viewed_at DESC`, [me, me, me, me]
+    ).then(([items]) => items),
+    getUserEntitlementV998(me, "profile_visitors_visible"),
+  ]);
+  const stats = statsRows[0] || {};
+  const unlimited = !!entitlement?.unlimited;
+  const quota = unlimited ? Infinity : Math.max(0, Number(entitlement?.quota || 0));
+  let revealed = 0;
+  let lockedCount = 0;
+  const items = [];
+  rows.forEach((row) => {
+    const privateVisit = !!row.is_private;
+    const locked = !privateVisit && !unlimited && revealed >= quota;
+    if (!privateVisit && !locked) revealed++;
+    if (locked) { lockedCount++; return; }
+    if (privateVisit) {
+      items.push({ private: true, locked: false, name: "Visita privada", source: row.source, viewed_at: row.viewed_at });
+      return;
+    }
+    items.push({
+      id: row.viewer_id, name: row.name, age: row.age, city: row.city,
+      verified: !!row.verified, photo_url: row.photo_url || null,
+      private: false, locked: false, source: row.source, viewed_at: row.viewed_at,
+    });
+  });
+  res.set("Cache-Control", "private, no-store");
+  res.json({
+    ok: true,
+    totals: {
+      visits: Number(stats?.total_visits || 0),
+      unique_visitors: Number(stats?.unique_visitors || 0),
+      visits_30d: Number(stats?.visits_30d || 0),
+    },
+    entitlement: { unlimited, quota: unlimited ? null : quota },
+    locked_count: lockedCount,
+    items,
+  });
+}));
+
+app.get("/api/my/chatted-profile-ids", wrap(async (req, res) => {
+  const me = readMyUserIdSigned(req);
+  if (!me) return res.status(401).json({ error: "signed_session_required" });
+  const [rows] = await pool.query(
+    `SELECT DISTINCT CASE WHEN c.user_a=? THEN c.user_b ELSE c.user_a END profile_id
+       FROM conversations c
+      WHERE (c.user_a=? OR c.user_b=?)
+        AND EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=c.id LIMIT 1)
+        AND NOT EXISTS (SELECT 1 FROM blocks b
+          WHERE (b.user_id=? AND b.target_id=CASE WHEN c.user_a=? THEN c.user_b ELSE c.user_a END)
+             OR (b.target_id=? AND b.user_id=CASE WHEN c.user_a=? THEN c.user_b ELSE c.user_a END))`,
+    [me, me, me, me, me, me, me]
+  );
+  res.set("Cache-Control", "private, no-store");
+  res.json({ ok: true, ids: rows.map((row) => Number(row.profile_id)).filter(Number.isFinite) });
+}));
+
+app.get("/api/admin/profile-visits", requireAdmin, wrap(async (req, res) => {
+  const q = String(req.query.q || "").trim().slice(0, 100);
+  const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+  const where = q ? "WHERE va.name LIKE ? OR va.email LIKE ? OR vd.name LIKE ? OR vd.email LIKE ?" : "";
+  const args = q ? Array(4).fill(`%${q}%`) : [];
+  const [summaryRows, rows] = await Promise.all([
+    pool.query(`SELECT COUNT(*) visits,COUNT(DISTINCT viewer_id) visitors,COUNT(DISTINCT viewed_id) profiles FROM profile_visit_events`).then(([items]) => items),
+    pool.query(
+      `SELECT e.id,e.viewer_id,e.viewed_id,e.source,e.viewed_at,
+              va.name viewer_name,va.email viewer_email,va.photo_url viewer_photo,
+              vd.name viewed_name,vd.email viewed_email,vd.photo_url viewed_photo,
+              CASE WHEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(va.privacy_hidden),va.privacy_hidden,'{}'),'$.invisible')),'false')='true'
+                AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(va.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
+              THEN 1 ELSE 0 END AS viewer_invisible
+         FROM profile_visit_events e
+         JOIN users va ON va.id=e.viewer_id
+         JOIN users vd ON vd.id=e.viewed_id
+         ${where}
+        ORDER BY e.viewed_at DESC,e.id DESC LIMIT ? OFFSET ?`, [...args, limit, offset]
+    ).then(([items]) => items),
+  ]);
+  const summary = summaryRows[0] || {};
+  res.json({ ok: true, summary: summary || {}, rows, limit, offset });
+}));
+
+app.get("/api/admin/users/:uid/profile-visits", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.uid, 10);
+  if (!uid) return res.status(400).json({ error: "invalid_uid" });
+  const [totalRows, received, made] = await Promise.all([
+    pool.query(
+      `SELECT SUM(viewed_id=?) received_visits,SUM(viewer_id=?) made_visits,
+              COUNT(DISTINCT CASE WHEN viewed_id=? THEN viewer_id END) unique_visitors
+         FROM profile_visit_events WHERE viewer_id=? OR viewed_id=?`, [uid, uid, uid, uid, uid]
+    ).then(([items]) => items),
+    pool.query(
+      `SELECT e.viewer_id,e.source,e.viewed_at,u.name,u.email,u.photo_url,
+              CASE WHEN COALESCE(JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(u.privacy_hidden),u.privacy_hidden,'{}'),'$.invisible')),'false')='true'
+                AND EXISTS (SELECT 1 FROM plan_entitlements pe WHERE pe.plan_code=LOWER(COALESCE(u.plan,'free')) AND pe.feature_key='invisible' AND pe.enabled=1)
+              THEN 1 ELSE 0 END AS viewer_invisible
+         FROM profile_visit_events e JOIN users u ON u.id=e.viewer_id
+        WHERE e.viewed_id=? ORDER BY e.viewed_at DESC,e.id DESC LIMIT 200`, [uid]
+    ).then(([items]) => items),
+    pool.query(
+      `SELECT e.viewed_id,e.source,e.viewed_at,u.name,u.email,u.photo_url
+         FROM profile_visit_events e JOIN users u ON u.id=e.viewed_id
+        WHERE e.viewer_id=? ORDER BY e.viewed_at DESC,e.id DESC LIMIT 200`, [uid]
+    ).then(([items]) => items),
+  ]);
+  const totals = totalRows[0] || {};
+  res.json({ ok: true, totals: totals || {}, received, made });
 }));
 
 /* ---- Administración de vistos y favoritos por usuario ---- V980 */

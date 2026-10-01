@@ -1766,7 +1766,7 @@ function initAdminLiveUpdates() {
    ============================================================ */
 const VISTA_NIVEL = {
   // -- Solo lectura y arriba (1): mirar y el trabajo de moderación --
-  dashboard: 1, users: 1, traveler: 1, user_activity: 1, moderation: 1, reports: 1,
+  dashboard: 1, users: 1, traveler: 1, user_activity: 1, profile_visits: 1, moderation: 1, reports: 1,
   appeals: 1, tickets: 1, chats: 1, infractions: 1, kyc: 1, duplicates: 1,
   logs: 1, stats: 1, fx_now_status: 1, live: 1,
   // -- Administrador y arriba (3): hablarle a los usuarios y el contenido --
@@ -1923,7 +1923,7 @@ function route(view) {
     return;
   }
   const map = {
-    dashboard: viewDashboard, users: viewUsers, traveler: viewTravelerAdmin, moderation: viewModeration,
+    dashboard: viewDashboard, users: viewUsers, traveler: viewTravelerAdmin, profile_visits: viewProfileVisitsV1005, moderation: viewModeration,
     reports: viewReports, appeals: viewAppeals, tickets: viewTickets, chats: viewChatsAdmin, otp: viewOtpCodes,
     subscriptions: viewSubscriptions,
     payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, boost: viewBoostAdmin, stats: viewStats,
@@ -4205,6 +4205,83 @@ async function viewTravelerAdmin(root) {
   await refresh();
 }
 
+// V1005 · Auditoría de aperturas reales del perfil completo. Esta vista no
+// mezcla los eventos con las impresiones de tarjetas de «Perfiles vistos».
+async function viewProfileVisitsV1005(root) {
+  const state = { q: "", limit: 50, offset: 0 };
+  let searchTimer = null;
+  root.appendChild(viewTitle("Visitas de perfiles", "Aperturas reales del perfil completo, con origen y privacidad del visitante."));
+  const heroHost = el("div");
+  const search = el("input", { class: "input grow", type: "search", placeholder: "Buscar visitante o perfil visitado…" });
+  const reset = btn("Restablecer", "ghost sm", () => { state.q = ""; state.offset = 0; search.value = ""; refresh(); });
+  const filters = el("div", { class: "filter-bar profile-visits-admin-filters-v1005" }, [search, reset]);
+  const host = el("div", { class: "panel table-panel profile-visits-admin-table-v1005" });
+  root.appendChild(heroHost); root.appendChild(filters); root.appendChild(host);
+  search.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.q = search.value.trim(); state.offset = 0; refresh(); }, 280);
+  });
+
+  const personCell = (id, name, email, photo, invisible) => el("button", {
+    class: "profile-visit-person-v1005", type: "button", onclick: () => openUserDrawer(id, refresh),
+  }, [
+    avatar(photo, 34),
+    el("span", {}, [el("strong", {}, name || `#${id}`), el("small", {}, `${email || "Sin email"}${invisible ? " · Invisible" : ""}`)]),
+  ]);
+  const sourceNames = { discover: "Explorar", search: "Buscar", nearby: "Cerca", map: "Mapa", chat: "Chat", likes: "Likes", visitors: "Visitantes" };
+
+  async function refresh() {
+    host.replaceChildren(el("div", { class: "loading" }, "Cargando visitas…"));
+    const qs = new URLSearchParams({ limit: String(state.limit), offset: String(state.offset) });
+    if (state.q) qs.set("q", state.q);
+    try {
+      const data = await api.get(`/api/admin/profile-visits?${qs}`);
+      const summary = data.summary || {};
+      heroHost.replaceChildren(proHero({
+        icon: "◉", title: "Actividad de perfiles",
+        desc: "Cada pareja cuenta como máximo una vez cada 24 horas. El modo invisible se respeta en la app y queda indicado aquí para auditoría.",
+        gradA: "#087f6e", gradB: "#2563eb",
+        stats: [
+          { v: fmt.num(summary.visits), l: "Visitas" },
+          { v: fmt.num(summary.visitors), l: "Visitantes" },
+          { v: fmt.num(summary.profiles), l: "Perfiles visitados" },
+        ],
+      }));
+      host.innerHTML = "";
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (!rows.length) {
+        host.appendChild(el("div", { class: "empty" }, "No hay visitas que coincidan con la búsqueda."));
+        return;
+      }
+      const table = el("table", { class: "data-table mobile-card-table" });
+      table.appendChild(el("thead", {}, el("tr", {}, [
+        el("th", {}, "Visitante"), el("th", {}, "Perfil visitado"), el("th", {}, "Origen"), el("th", {}, "Fecha"),
+      ])));
+      const body = el("tbody");
+      rows.forEach((visit) => body.appendChild(el("tr", {}, [
+        el("td", { "data-label": "Visitante" }, personCell(visit.viewer_id, visit.viewer_name, visit.viewer_email, visit.viewer_photo, !!visit.viewer_invisible)),
+        el("td", { "data-label": "Perfil visitado" }, personCell(visit.viewed_id, visit.viewed_name, visit.viewed_email, visit.viewed_photo, false)),
+        el("td", { "data-label": "Origen" }, el("span", { class: "profile-visit-source-v1005" }, sourceNames[visit.source] || visit.source || "—")),
+        el("td", { "data-label": "Fecha" }, fmt.date(visit.viewed_at)),
+      ])));
+      table.appendChild(body);
+      host.appendChild(el("div", { class: "table-scroll" }, [table]));
+      const pager = el("div", { class: "pagination profile-visits-admin-pagination-v1005" }, [
+        el("span", {}, `Mostrando ${state.offset + 1}–${state.offset + rows.length}`),
+        el("span", { class: "spacer" }),
+        btn("Anterior", "ghost sm", () => { state.offset = Math.max(0, state.offset - state.limit); refresh(); }),
+        btn("Siguiente", "ghost sm", () => { state.offset += state.limit; refresh(); }),
+      ]);
+      pager.querySelectorAll("button")[0].disabled = state.offset === 0;
+      pager.querySelectorAll("button")[1].disabled = rows.length < state.limit;
+      host.appendChild(pager);
+    } catch (error) {
+      host.replaceChildren(el("div", { class: "empty" }, "No se pudieron cargar las visitas de perfiles."));
+    }
+  }
+  await refresh();
+}
+
 /* ================================================================
    V450+ · Auto-reglas para usuarios (auto-ban, auto-verify, etc.)
    ================================================================ */
@@ -4941,7 +5018,7 @@ async function openUserDrawer(id, onChange) {
   // Se cargan aparte para poder refrescar solo este bloque al restablecer una
   // vista o modificar Favoritos, sin cerrar la ficha ni disparar el autosave.
   const relationsHeader = el("div", { class: "section-header profile-relations-head" }, [
-    el("h3", {}, "Perfiles vistos y Favoritos"),
+    el("h3", {}, "Tarjetas mostradas y Favoritos"),
   ]);
   const relationsBox = el("div", { class: "profile-relations-admin" }, [
     el("div", { class: "empty small" }, "Cargando relaciones…"),
@@ -4965,13 +5042,13 @@ async function openUserDrawer(id, onChange) {
       relationsBox.innerHTML = "";
 
       relationsBox.appendChild(el("div", { class: "profile-relations-stats" }, [
-        el("div", {}, [el("strong", {}, String(totals.unique_profiles || 0)), el("span", {}, "Perfiles vistos")]),
-        el("div", {}, [el("strong", {}, String(totals.view_events || 0)), el("span", {}, "Visualizaciones")]),
+        el("div", {}, [el("strong", {}, String(totals.unique_profiles || 0)), el("span", {}, "Tarjetas distintas")]),
+        el("div", {}, [el("strong", {}, String(totals.view_events || 0)), el("span", {}, "Impresiones")]),
         el("div", {}, [el("strong", {}, String(totals.favorites || 0)), el("span", {}, "Favoritos")]),
       ]));
 
       const viewsHead = el("div", { class: "section-header compact" }, [
-        el("h4", {}, "Historial de perfiles vistos"),
+        el("h4", {}, "Tarjetas mostradas en Explorar"),
       ]);
       if (views.length) {
         viewsHead.appendChild(btn("Restablecer todas", "ghost xs danger", async () => {
@@ -5063,6 +5140,51 @@ async function openUserDrawer(id, onChange) {
     }
   }
   loadProfileRelations();
+
+  // V1005 · Aperturas del perfil completo, separadas expresamente de las
+  // impresiones de tarjetas anteriores. Administración conserva la identidad
+  // del visitante invisible para poder auditar incidencias.
+  form.appendChild(el("h3", { class: "profile-visits-user-title-v1005" }, "Visitas reales del perfil"));
+  const profileVisitsBox = el("div", { class: "profile-visits-user-v1005" }, [
+    el("div", { class: "empty small" }, "Cargando visitas reales…"),
+  ]);
+  form.appendChild(profileVisitsBox);
+  (async () => {
+    try {
+      const data = await api.get(`/api/admin/users/${id}/profile-visits`);
+      const totals = data.totals || {};
+      profileVisitsBox.innerHTML = "";
+      profileVisitsBox.appendChild(el("div", { class: "profile-relations-stats" }, [
+        el("div", {}, [el("strong", {}, String(totals.received_visits || 0)), el("span", {}, "Visitas recibidas")]),
+        el("div", {}, [el("strong", {}, String(totals.unique_visitors || 0)), el("span", {}, "Visitantes únicos")]),
+        el("div", {}, [el("strong", {}, String(totals.made_visits || 0)), el("span", {}, "Perfiles abiertos")]),
+      ]));
+      const sourceNames = { discover: "Explorar", search: "Buscar", nearby: "Cerca", map: "Mapa", chat: "Chat", likes: "Likes", visitors: "Visitantes" };
+      const renderVisitList = (title, rows, incoming) => {
+        profileVisitsBox.appendChild(el("div", { class: "section-header compact" }, [el("h4", {}, title)]));
+        if (!rows.length) {
+          profileVisitsBox.appendChild(el("div", { class: "empty small" }, incoming ? "Nadie ha abierto todavía este perfil." : "Este usuario no ha abierto perfiles completos todavía."));
+          return;
+        }
+        const list = el("div", { class: "profile-visits-user-list-v1005" });
+        rows.forEach((visit) => {
+          const otherId = incoming ? visit.viewer_id : visit.viewed_id;
+          list.appendChild(el("button", { type: "button", class: "profile-visits-user-row-v1005", onclick: () => openRelatedUser(otherId) }, [
+            avatar(visit.photo_url, 34),
+            el("span", {}, [
+              el("strong", {}, `${visit.name || "Perfil"}${incoming && visit.viewer_invisible ? " · Invisible" : ""}`),
+              el("small", {}, `${sourceNames[visit.source] || visit.source || "Aura"} · ${fmt.date(visit.viewed_at)}`),
+            ]),
+          ]));
+        });
+        profileVisitsBox.appendChild(list);
+      };
+      renderVisitList("Personas que visitaron su perfil", Array.isArray(data.received) ? data.received : [], true);
+      renderVisitList("Perfiles que abrió", Array.isArray(data.made) ? data.made : [], false);
+    } catch (error) {
+      profileVisitsBox.replaceChildren(el("div", { class: "empty small" }, "No se pudieron cargar las visitas reales."));
+    }
+  })();
 
   // --- Actividad reciente ---
   const activityHeader = el("div", { class: "section-header" }, [
