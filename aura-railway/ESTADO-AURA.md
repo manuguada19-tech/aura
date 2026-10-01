@@ -1,6 +1,18 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V990**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V991**
+
+### V991 (01/10/2026) — Perfil más claro sin retirar accesos
+
+- El menú conserva todas sus filas y añade «Ver mi perfil», una vista pública
+  propia sin acciones de Like, descarte ni favoritos.
+- El correo de la cabecera aparece parcialmente oculto y «Suscripción» mantiene
+  su etiqueta completa en español.
+- La fila KYC cambia entre «Verificar cuenta» y «Cuenta verificada» usando el
+  estado real del servidor; la pantalla de detalle conserva ese mismo título.
+- Los accesos se reordenan en Cuenta, Plan y facturación, Beneficios, Novedades,
+  Preferencias, Privacidad y seguridad, Ayuda y soporte, Información y normas y
+  Sesión y eliminación. No se elimina ninguna función del menú.
 
 ### V990 (01/10/2026) — Segunda tanda opcional del panel
 

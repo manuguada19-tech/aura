@@ -12473,6 +12473,7 @@ async function openFilters() {
   (async () => {
     try {
       const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
+      if (!r.ok) return;
       const d = await r.json().catch(() => ({}));
       _iAmVerified = !!d && d.kyc_status === "verified";
     } catch { _iAmVerified = false; }
@@ -14283,14 +14284,19 @@ function openProfileDetail(u, opts = {}) {
 function screenProfileDetail(root, u, opts = {}) {
   root.classList.add("screen-profile-detail");
   document.body.classList.add("profile-open");
+  const selfPreview = !!(opts && opts.selfPreview);
   const backTo = opts && opts.backTo; // "chat" | "likes" | "nearby" | undefined
-  const backLabel = backTo === "chat" ? "Volver al chat"
+  const backLabel = selfPreview ? "Volver a mi perfil"
+                  : backTo === "chat" ? "Volver al chat"
                   : backTo === "likes" ? "Volver a likes"
                   : backTo === "nearby" ? "Volver a cerca de ti"
                   : "Volver a descubrir";
   const backHandler = () => {
     document.body.classList.remove("profile-open");
-    if (backTo === "chat") {
+    if (selfPreview) {
+      showApp();
+      routeTab("me");
+    } else if (backTo === "chat") {
       openChat(u);
     } else if (backTo === "likes") {
       showApp();
@@ -14312,7 +14318,7 @@ function screenProfileDetail(root, u, opts = {}) {
       onclick: backHandler,
       html: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>`
     }),
-    el("div", { class: "pd-title" }, "Perfil"),
+    el("div", { class: "pd-title" }, selfPreview ? "Vista previa" : "Perfil"),
     el("span"),
   ]));
 
@@ -14514,29 +14520,44 @@ function screenProfileDetail(root, u, opts = {}) {
     wrap.appendChild(pc);
   }
 
-  // Actions
-  const returnTab = backTo === "likes" ? "likes" : "discover";
-  const pdReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
-  // V747 · Cada acción lleva su LEYENDA debajo para que se entienda qué hace.
-  const pdActItem = (btn, label) => el("div", { class: "pd-act-item" }, [
-    btn, el("span", { class: "pd-act-cap" }, label),
-  ]);
-  const pdFavOn = state.favorites.has(u.id);
-  const pdFavCap = el("span", { class: "pd-act-cap" }, pdFavOn ? "Guardado" : "Guardar");
-  const pdFavBtn = el("button", {
-    class: "pd-act pd-act-fav aura-favorite-control" + (pdFavOn ? " on" : ""),
-    type: "button", "data-favorite-id": u.id,
-    onclick: async (e) => {
-      e.stopPropagation();
-      pdFavBtn.disabled = true;
-      const nowFav = await toggleFav(u, pdFavBtn);
-      pdFavCap.textContent = nowFav ? "Guardado" : "Guardar";
-      pdFavBtn.disabled = false;
-    },
-    html: `<svg viewBox="0 0 24 24" width="29" height="29" aria-hidden="true"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`,
-  });
-  paintFavoriteControl(pdFavBtn, pdFavOn);
-  wrap.appendChild(el("div", { class: "pd-actions" }, [
+  // En la vista propia no mostramos acciones que solo tienen sentido sobre
+  // otras personas. La salida directa lleva al editor del perfil.
+  if (selfPreview) {
+    wrap.appendChild(el("div", { class: "pd-self-preview-actions" }, [
+      el("button", {
+        class: "btn btn-brand btn-block",
+        type: "button",
+        onclick: () => {
+          document.body.classList.remove("profile-open");
+          showApp();
+          render(screenEditProfile);
+        },
+      }, "Editar mi perfil"),
+    ]));
+  } else {
+    // Actions
+    const returnTab = backTo === "likes" ? "likes" : "discover";
+    const pdReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
+    // V747 · Cada acción lleva su LEYENDA debajo para que se entienda qué hace.
+    const pdActItem = (btn, label) => el("div", { class: "pd-act-item" }, [
+      btn, el("span", { class: "pd-act-cap" }, label),
+    ]);
+    const pdFavOn = state.favorites.has(u.id);
+    const pdFavCap = el("span", { class: "pd-act-cap" }, pdFavOn ? "Guardado" : "Guardar");
+    const pdFavBtn = el("button", {
+      class: "pd-act pd-act-fav aura-favorite-control" + (pdFavOn ? " on" : ""),
+      type: "button", "data-favorite-id": u.id,
+      onclick: async (e) => {
+        e.stopPropagation();
+        pdFavBtn.disabled = true;
+        const nowFav = await toggleFav(u, pdFavBtn);
+        pdFavCap.textContent = nowFav ? "Guardado" : "Guardar";
+        pdFavBtn.disabled = false;
+      },
+      html: `<svg viewBox="0 0 24 24" width="29" height="29" aria-hidden="true"><path d="M12 21s-8-5-8-11a4 4 0 018-2 4 4 0 018 2c0 6-8 11-8 11z"/></svg>`,
+    });
+    paintFavoriteControl(pdFavBtn, pdFavOn);
+    wrap.appendChild(el("div", { class: "pd-actions" }, [
     pdActItem(el("button", {
       class: "pd-act pd-act-pass",
       type: "button",
@@ -14594,8 +14615,9 @@ function screenProfileDetail(root, u, opts = {}) {
       },
       html: `<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 21s-8-5-8-11a4.5 4.5 0 018-3 4.5 4.5 0 018 3c0 6-8 11-8 11z"/></svg>`
     }), "Me gusta"),
-    el("div", { class: "pd-act-item" }, [pdFavBtn, pdFavCap]),
-  ]));
+      el("div", { class: "pd-act-item" }, [pdFavBtn, pdFavCap]),
+    ]));
+  }
 
   root.appendChild(wrap);
   // V747 · Oculta el aviso de scroll en cuanto el usuario empieza a desplazar.
@@ -15435,6 +15457,62 @@ function openProfile(u) {
 }
 
 /* ---- Me / Settings ---- */
+function maskProfileEmail(value) {
+  const email = String(value || "").trim();
+  const at = email.indexOf("@");
+  if (at <= 0) return email;
+  const local = email.slice(0, at);
+  const domain = email.slice(at);
+  if (local.length <= 2) return local.charAt(0) + "••" + domain;
+  if (local.length <= 4) return local.charAt(0) + "••" + local.slice(-1) + domain;
+  return local.slice(0, 2) + "••••" + local.slice(-2) + domain;
+}
+
+// V991 · Vista previa real del perfil propio. Carga el perfil y sus fotos desde
+// el servidor para enseñar la misma ficha pública, pero sin acciones de Like,
+// descarte o favoritos sobre la propia cuenta.
+async function openOwnProfilePreview() {
+  if (!state.user) return;
+  toast("Preparando vista previa…");
+  let profile = {};
+  let photos = [];
+  let verified = !!state.user.verified;
+  try {
+    const headers = Auth.apply({ "X-User-Id": String(state.user.id || "") });
+    const [profileRes, photosRes, statusRes] = await Promise.all([
+      fetch("/api/my/profile", { headers, cache: "no-store" }),
+      fetch("/api/my/photos", { headers, cache: "no-store" }),
+      fetch("/api/my/account-status", { headers, cache: "no-store" }),
+    ]);
+    const profileData = await profileRes.json().catch(() => ({}));
+    const photosData = await photosRes.json().catch(() => ({}));
+    const statusData = await statusRes.json().catch(() => ({}));
+    if (profileRes.ok && profileData && profileData.profile) profile = profileData.profile;
+    if (photosRes.ok && photosData && Array.isArray(photosData.items)) {
+      photos = photosData.items.map((p) => p && p.url).filter(Boolean);
+    }
+    if (statusRes.ok) verified = statusData && statusData.kyc_status === "verified";
+  } catch {}
+
+  const primaryPhoto = photos[0] || state.user.photo || "";
+  if (!primaryPhoto) {
+    toast("Añade al menos una foto para ver tu perfil");
+    render(screenMyPhotos);
+    return;
+  }
+  if (!photos.length) photos = [primaryPhoto];
+  state.myProfile = Object.assign({}, state.myProfile || {}, profile);
+  const previewUser = Object.assign({}, state.user, profile, {
+    id: state.user.id,
+    name: profile.name || state.user.name,
+    photo: primaryPhoto,
+    photos,
+    verified,
+    _real: false,
+  });
+  openProfileDetail(previewUser, { selfPreview: true });
+}
+
 function screenMe(root) {
   root.classList.add("screen-me");
   // V751 · Recuerda la posición de scroll del menú de perfil mientras el
@@ -15444,7 +15522,7 @@ function screenMe(root) {
   // cableado al avatar demo, por eso el perfil "no cambiaba" al elegir foto.
   const meAvatar = (state.user && state.user.photo) || T("content.me.avatar") || "https://i.pravatar.cc/300?img=32";
   const meName = state.user?.name || T("content.me.default_name") || "";
-  const meMail = state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico";
+  const meMail = maskProfileEmail(state.user?.email || T("content.me.default_email") || "Introduce tu correo electrónico");
   // V801 · La píldora de plan ahora refleja el plan REAL (antes estaba fija en
   // "★ Premium"). Se pinta con el plan actual y se re-sincroniza con el servidor
   // por si state.user aún no lo tenía cargado.
@@ -15465,20 +15543,30 @@ function screenMe(root) {
     html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`,
   });
   meNameRow.appendChild(meVerifiedBadge);
+  const applyMeVerificationState = (ok) => {
+    meVerifiedBadge.style.display = ok ? "" : "none";
+    const row = document.querySelector("#meVerifyRow");
+    if (!row) return;
+    const title = row.querySelector("strong");
+    const sub = row.querySelector("small");
+    if (title) title.textContent = ok ? "Cuenta verificada" : (T("content.me.item_verify") || "Verificar cuenta");
+    if (sub) sub.textContent = ok ? "Identidad confirmada · consulta el estado" : (T("content.me.item_verify_sub") || "Consigue el badge azul");
+  };
   (async () => {
     try {
       const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
+      if (!r.ok) return;
       const d = await r.json().catch(() => ({}));
       const ok = !!d && d.kyc_status === "verified";
       try { if (state.user) state.user.verified = ok; } catch {}
-      meVerifiedBadge.style.display = ok ? "" : "none";
+      applyMeVerificationState(ok);
     } catch {}
   })();
   root.appendChild(el("div", { class: "me-hero" }, [
     el("div", { class: "me-avatar tappable", style: `background-image:url('${meAvatar}')`, title: "Ver foto", role: "button", tabindex: "0", onclick: () => openAvatarViewer(meAvatar) }),
     el("div", {}, [
       meNameRow,
-      el("div", { class: "me-mail" }, meMail),
+      el("div", { class: "me-mail", title: "Correo oculto por privacidad" }, meMail),
       el("span", {
         class: "me-tier", id: "meTierBadge",
         style: _mePlan === "free" ? "background:rgba(255,255,255,.10);color:var(--text,#ecedf3);cursor:pointer" : "cursor:pointer",
@@ -15545,27 +15633,35 @@ function screenMe(root) {
   const themeSub = state.theme === "dark"
     ? (T("content.me.theme_dark") || "Oscuro")
     : (T("content.me.theme_light") || "Claro");
+  const initiallyVerified = !!(state.user && state.user.verified);
+  const subscriptionTitle = currentLang === "es"
+    ? "Suscripción"
+    : (T("content.me.item_subs") || "Suscripción");
 
   const groups = [
     { title: T("content.me.group_account") || "Cuenta", items: [
+      { icon: "👁️", title: "Ver mi perfil", sub: "Vista previa de cómo te ven los demás", onClick: openOwnProfilePreview },
       { icon: "👤", title: T("content.me.item_edit_profile") || "Editar perfil", onClick: () => render(screenEditProfile) },
       { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
-      { icon: "🛡️", title: T("content.me.item_verify") || "Verificar cuenta", sub: T("content.me.item_verify_sub") || "Consigue el badge azul", onClick: () => render(screenVerifyAccount) },
-      { icon: "📋", title: "Mi cuenta y estado", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
-      { icon: "💎", title: T("content.me.item_subs") || "Suscripción", sub: (getUserPlan() === "free" ? "Plan Free · descubre Premium" : ("Plan " + planLabel(getUserPlan()))), onClick: () => render(screenSubscriptions) },
+      { icon: "🛡️", id: "meVerifyRow", title: initiallyVerified ? "Cuenta verificada" : (T("content.me.item_verify") || "Verificar cuenta"), sub: initiallyVerified ? "Identidad confirmada · consulta el estado" : (T("content.me.item_verify_sub") || "Consigue el badge azul"), onClick: () => render(screenVerifyAccount) },
+      { icon: "📋", title: "Estado de la cuenta", sub: "Verificación, apelaciones e infracciones", onClick: () => render(screenAccountStatus) },
+    ]},
+    { title: "Plan y facturación", items: [
+      { icon: "💎", title: subscriptionTitle, sub: (getUserPlan() === "free" ? "Plan Free · descubre Premium" : ("Plan " + planLabel(getUserPlan()))), onClick: () => render(screenSubscriptions) },
       { icon: "🧾", title: "Pagos y facturas", sub: "Facturas, reembolsos y cobros pendientes", onClick: () => render(screenBilling) },
+    ]},
+    { title: "Beneficios", items: [
       { icon: "🚀", title: "Boost / Impulso", id: "meBoostRow", sub: "Destaca tu perfil y consulta el tiempo restante", onClick: () => render(screenBoost) },
       { icon: "👁", title: "Lecturas y estados de chat", sub: "Comprar créditos o ver mis packs", onClick: () => openReadsPaywall() },
       { icon: "🎁", title: "Ofertas y promociones", sub: "Cupones activos y campañas próximas", onClick: () => render(screenOffers) },
+      { icon: "🎮", title: "Progreso y logros", sub: "XP, nivel y misiones diarias", onClick: () => { try { window.aura2 && window.aura2.openGamification && window.aura2.openGamification(); } catch {} } },
+      { icon: "🎁", title: "Tienda de recompensas", sub: "Canjea tus XP por cupones y ventajas", onClick: () => { try { window.aura2 && window.aura2.openRewardsShop && window.aura2.openRewardsShop(); } catch {} } },
+      { icon: "🎫", title: "Mis cupones", sub: "Códigos y recompensas que has ganado", onClick: () => { try { window.aura2 && window.aura2.openMyRewards && window.aura2.openMyRewards(); } catch {} } },
     ]},
     { title: "Novedades", items: [
       { icon: "📨", title: "Bandeja de avisos", sub: "Avisos de canjes, mensajes del equipo y más", onClick: () => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} } },
       { icon: "📸", title: "Historias 24h", sub: "Publica y descubre historias efímeras", onClick: () => { try { window.aura2 && window.aura2.openStoriesFeed && window.aura2.openStoriesFeed(); } catch {} } },
-      { icon: "🎮", title: "Progreso y logros", sub: "XP, nivel y misiones diarias", onClick: () => { try { window.aura2 && window.aura2.openGamification && window.aura2.openGamification(); } catch {} } },
       { icon: "📅", title: "Quedadas", sub: "Eventos y planes con la comunidad", onClick: () => { try { window.aura2 && window.aura2.openEvents && window.aura2.openEvents(); } catch {} } },
-      { icon: "🎁", title: "Tienda de recompensas", sub: "Canjea tus XP por cupones y ventajas", onClick: () => { try { window.aura2 && window.aura2.openRewardsShop && window.aura2.openRewardsShop(); } catch {} } },
-      { icon: "🎫", title: "Mis cupones", sub: "Códigos y recompensas que has ganado", onClick: () => { try { window.aura2 && window.aura2.openMyRewards && window.aura2.openMyRewards(); } catch {} } },
-      { icon: "🔒", title: "Mis datos (GDPR)", sub: "Exporta o elimina tus datos personales", onClick: () => { try { window.aura2 && window.aura2.openGDPR && window.aura2.openGDPR(); } catch {} } },
     ]},
     { title: T("content.me.group_prefs") || "Preferencias", items: [
       { icon: "🎛️", title: T("content.me.item_filters") || "Filtros de descubrimiento", onClick: openFilters },
@@ -15650,18 +15746,21 @@ function screenMe(root) {
           : (T("content.me.item_gps_off") || "Permiso no otorgado"),
         onClick: () => openGpsPrivacySheet(),
       },
-      { icon: "📥", title: T("content.me.item_data") || "Descargar mis datos", sub: T("content.me.item_data_sub") || "Exporta un ZIP con toda tu información", onClick: () => render(screenDataExport) },
+      { icon: "🔒", title: "Gestionar mis datos (RGPD)", sub: "Acceso, rectificación y eliminación", onClick: () => { try { window.aura2 && window.aura2.openGDPR && window.aura2.openGDPR(); } catch {} } },
+      { icon: "📥", title: "Descargar copia de mis datos", sub: T("content.me.item_data_sub") || "Exporta un ZIP con toda tu información", onClick: () => render(screenDataExport) },
     ]},
-    { title: T("content.me.group_support") || "Soporte", items: [
+    { title: "Ayuda y soporte", items: [
       { icon: "🎫", title: T("content.me.item_ticket") || "Abrir un ticket", sub: T("content.me.item_ticket_sub") || "Soporte personalizado en <24 h", onClick: () => render(screenSupportTicket) },
       { icon: "❓", title: T("content.me.item_help") || "Centro de ayuda", onClick: () => render(screenInfoHelp) },
       { icon: "💬", title: T("content.me.item_faq") || "Preguntas frecuentes", onClick: () => render(screenInfoFaq) },
       { icon: "✉️", title: T("content.me.item_contact") || "Contacto", onClick: () => render(screenInfoContact) },
+    ]},
+    { title: "Información y normas", items: [
       { icon: "⭐", title: T("content.me.item_rules") || "Normas de la comunidad", onClick: () => render(screenInfoRules) },
       { icon: "📜", title: T("content.me.item_terms") || "Términos y privacidad", onClick: () => render(screenInfoTerms) },
       { icon: "ℹ️", title: T("content.me.item_about") || "Acerca de Aura", sub: T("content.me.version") || "Versión 1.0.0", onClick: () => render(screenAbout) },
     ]},
-    { title: T("content.me.group_danger") || "Cuenta", items: [
+    { title: "Sesión y eliminación", items: [
       { icon: "⏻", title: T("content.me.item_logout") || "Cerrar sesión", onClick: () => {
           state.user = null;
           try { localStorage.removeItem("aura-session"); } catch {}
@@ -16886,7 +16985,7 @@ function screenMyPhotos(root) {
 
 /* — Verificación — */
 function screenVerifyAccount(root) {
-  meSubHeader(root, T("content.me.item_verify") || "Verificar cuenta");
+  meSubHeader(root, (state.user && state.user.verified) ? "Cuenta verificada" : (T("content.me.item_verify") || "Verificar cuenta"));
   const wrap = el("div", { class: "info-wrap" });
   root.appendChild(wrap);
   hideApp();
@@ -16902,14 +17001,18 @@ function screenVerifyAccount(root) {
   ]));
 
   (async () => {
-    let verified = false;
+    let verified = !!(state.user && state.user.verified);
     try {
       const r = await fetch("/api/my/account-status", { headers: datingApi.headers(), cache: "no-store" });
-      const d = await r.json().catch(() => ({}));
-      verified = !!d && d.kyc_status === "verified";
-    } catch { verified = false; }
+      if (r.ok) {
+        const d = await r.json().catch(() => ({}));
+        verified = !!d && d.kyc_status === "verified";
+      }
+    } catch {}
     // Sincroniza el sello local para que el badge azul aparezca en el perfil.
     try { if (state.user) state.user.verified = verified; } catch {}
+    const title = root.querySelector(".topbar-title");
+    if (title) title.textContent = verified ? "Cuenta verificada" : (T("content.me.item_verify") || "Verificar cuenta");
     wrap.innerHTML = "";
     if (verified) { renderVerifiedState(wrap); }
     else { renderVerifyCta(wrap); }

@@ -2997,7 +2997,11 @@ body.account-suspended .restriction-banner .rb-close {
   background: #2a7dff; color: #fff;
   box-shadow: 0 2px 6px rgba(42,125,255,.45);
 }
-.me-mail { color: var(--text-soft); font-size: 13px; }
+.me-hero > div:nth-child(2) { min-width: 0; }
+.me-mail {
+  color: var(--text-soft); font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .me-tier {
   display: inline-flex; align-items: center; gap: 4px;
   background: linear-gradient(135deg, #f59e0b, #ef4444);
@@ -3019,6 +3023,7 @@ body.account-suspended .restriction-banner .rb-close {
   padding: 12px 20px; background: var(--surface); border-top: 1px solid var(--border);
   cursor: pointer;
 }
+.settings-item > div:nth-child(2) { min-width: 0; }
 .settings-item:hover { background: var(--surface-2); }
 .settings-item .ico {
   width: 34px; height: 34px; border-radius: 10px; background: var(--surface-2);
@@ -4755,6 +4760,7 @@ body.info-open .theme-toggle { display: none; }
   border-radius: 24px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.12);
 }
+.pd-self-preview-actions { padding: 22px 16px 0; }
 /* V747 · Cada acción es una columna: botón + leyenda debajo. */
 .pd-act-item {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
