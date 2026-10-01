@@ -7318,9 +7318,10 @@ try { window.computeDeviceFingerprint = computeDeviceFingerprint; } catch {}
 
 async function kycFetch(path, body) {
   const fp = await kycFingerprint();
+  const headers = { "Content-Type": "application/json", ...authHeaders() };
   const opts = {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Fingerprint": fp },
+    headers: { ...headers, "X-Fingerprint": fp },
     body: JSON.stringify({ ...(body || {}), fingerprint: fp }),
   };
   const r = await fetch(path, opts);

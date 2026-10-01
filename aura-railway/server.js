@@ -2201,6 +2201,7 @@ async function migrate() {
       liveness_score      DECIMAL(5,2) NULL,
       video_score         DECIMAL(5,2) NULL,
       provider            VARCHAR(40)  NULL,
+      didit_vendor_data   VARCHAR(120) NULL,
       didit_session_id    VARCHAR(80)  NULL,
       didit_session_url   VARCHAR(500) NULL,
       didit_status        VARCHAR(40)  NULL,
@@ -2228,7 +2229,8 @@ async function migrate() {
     /* Backfill columnas nuevas si la tabla ya existía sin ellas. */
     `ALTER TABLE identity_verifications
        ADD COLUMN IF NOT EXISTS provider          VARCHAR(40)  NULL AFTER video_score,
-       ADD COLUMN IF NOT EXISTS didit_session_id  VARCHAR(80)  NULL AFTER provider,
+       ADD COLUMN IF NOT EXISTS didit_vendor_data VARCHAR(120) NULL AFTER provider,
+       ADD COLUMN IF NOT EXISTS didit_session_id  VARCHAR(80)  NULL AFTER didit_vendor_data,
        ADD COLUMN IF NOT EXISTS didit_session_url VARCHAR(500) NULL AFTER didit_session_id,
        ADD COLUMN IF NOT EXISTS didit_status      VARCHAR(40)  NULL AFTER didit_session_url,
        ADD COLUMN IF NOT EXISTS didit_decision    VARCHAR(40)  NULL AFTER didit_status,
@@ -4979,6 +4981,31 @@ async function kycInsertPhoto(verId, kind, decoded, filePath = null) {
   );
 }
 
+/* V1007 · Didit vincula todas las sesiones que comparten vendor_data al mismo
+   usuario. Para cuentas ya existentes conservamos su referencia histórica
+   aprobada (por ejemplo aura:8); para registros nuevos usamos una referencia
+   determinista que no expone el correo. */
+async function kycDiditVendorData(userId, email) {
+  if (userId) {
+    const [previous] = await pool.query(
+      `SELECT id,didit_vendor_data,status
+         FROM identity_verifications
+        WHERE provider='didit' AND didit_session_id IS NOT NULL
+          AND (user_id=? OR email=?)
+        ORDER BY (status='verified') DESC,updated_at DESC,id DESC
+        LIMIT 1`,
+      [userId, email]
+    );
+    if (previous.length) {
+      return diditClient.stableVendorData({
+        existing: previous[0].didit_vendor_data || `aura:${previous[0].id}`,
+      });
+    }
+    return diditClient.stableVendorData({ userId });
+  }
+  return diditClient.stableVendorData({ email });
+}
+
 /* ---- 1) START ----------------------------------------------
    Crea sesión local + sesión en Didit (proveedor real). Devuelve
    la URL de Didit a la que redirigir al navegador del usuario.
@@ -4987,7 +5014,14 @@ async function kycInsertPhoto(verId, kind, decoded, filePath = null) {
 ------------------------------------------------------------- */
 app.post("/api/verify/id/start", wrap(async (req, res) => {
   const b = req.body || {};
-  const email = String(b.email || "").trim().toLowerCase().slice(0, 190) || null;
+  const signedUserId = verifyUserToken(readUserToken(req));
+  let email = String(b.email || "").trim().toLowerCase().slice(0, 190) || null;
+  if (signedUserId) {
+    const [accountRows] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [signedUserId]);
+    if (!accountRows.length) return res.status(401).json({ error: "unauthorized" });
+    email = String(accountRows[0].email || "").trim().toLowerCase().slice(0, 190) || null;
+  }
+  if (!email || !email.includes("@")) return res.status(400).json({ error: "email_required" });
   const { ip, ua, fp } = kycClientMeta(req);
   const blocked = await kycIsBlocked({ ip, fingerprint: fp, email });
   if (blocked) {
@@ -4999,11 +5033,14 @@ app.post("/api/verify/id/start", wrap(async (req, res) => {
   }
   const token = crypto.randomBytes(24).toString("hex");
   const expires = new Date(Date.now() + KYC_SESSION_TTL_HOURS * 3600 * 1000);
+  const diditVendorData = KYC_PROVIDER === "didit"
+    ? await kycDiditVendorData(signedUserId, email)
+    : null;
   const [ins] = await pool.execute(
     `INSERT INTO identity_verifications
-       (session_token, email, ip, fingerprint, user_agent, expires_at, provider)
-     VALUES (?,?,?,?,?,?,?)`,
-    [token, email, ip, fp, ua, expires, KYC_PROVIDER]
+       (session_token, user_id, email, ip, fingerprint, user_agent, expires_at, provider, didit_vendor_data)
+     VALUES (?,?,?,?,?,?,?,?,?)`,
+    [token, signedUserId || null, email, ip, fp, ua, expires, KYC_PROVIDER, diditVendorData]
   );
   const verId = ins.insertId;
 
@@ -5012,10 +5049,10 @@ app.post("/api/verify/id/start", wrap(async (req, res) => {
     try {
       const base = kycPublicBase(req);
       const ds = await diditClient.createSession({
-        vendor_data: `aura:${verId}`,
+        vendor_data: diditVendorData,
         callback: `${base}/api/verify/id/didit-return?token=${encodeURIComponent(token)}`,
         contact_details: email ? { email } : undefined,
-        metadata: { app: "citasaura", verId, email },
+        metadata: { app: "citasaura", verificationId: verId, accountId: signedUserId || null },
       });
       await kycUpdate(verId, {
         didit_session_id:  ds.session_id || null,

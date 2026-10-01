@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1006 (`f1f2cd6`, build `5d6fab064a92`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1006 (`f1f2cd6`, build `5d6fab064a92`) · siguiente preparada: V1007**
+
+### V1007 (preparada, sin commit ni publicación) — Identidad estable en Didit
+
+- Didit recibe una referencia estable por cuenta, en lugar del identificador
+  incremental de cada intento; las verificaciones posteriores quedan como
+  sesiones del mismo usuario y no crean identidades duplicadas.
+- Las cuentas verificadas existentes reutilizan su referencia histórica válida;
+  los registros nuevos emplean una referencia determinista que no expone el
+  correo electrónico.
+- Las verificaciones iniciadas desde una cuenta autenticada quedan asociadas a
+  su usuario local desde el comienzo y usan el correo confirmado del servidor.
+- La integración usa la API v3 actual de Didit y deja de incluir el correo en
+  metadatos auxiliares.
+- Las credenciales dejan de tener valores de respaldo en el código y deben
+  proceder exclusivamente de la configuración segura del despliegue.
+- Validada sintaxis, contrato del cliente Didit y ausencia de credenciales de
+  respaldo. No se contactó con Didit ni se modificaron datos reales.
 
 ### V1006 (02/10/2026) — Detalle administrativo de visitas
 

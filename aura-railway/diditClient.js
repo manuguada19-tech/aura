@@ -7,8 +7,7 @@
      - getDecision(sessionId)        → detalle de la decisión + medios
      - verifyWebhookSignature(body, headers) → HMAC-SHA256
    ----------------------------------------------------------------
-   Credenciales por variables de entorno (con fallback al valor del
-   panel Didit):
+   Credenciales exclusivamente por variables de entorno:
      DIDIT_API_KEY
      DIDIT_WORKFLOW_ID
      DIDIT_WEBHOOK_SECRET
@@ -18,17 +17,28 @@
 
 const crypto = require("crypto");
 
-const DIDIT_API_KEY        = process.env.DIDIT_API_KEY
-  || "g_Ecu0mVaT8pTploXcFYG9BtYgO7h3UIMvsFRxKDNNs";
-const DIDIT_WORKFLOW_ID    = process.env.DIDIT_WORKFLOW_ID
-  || "afb6ccb1-d276-4aa4-8b53-738114174f0a";
-const DIDIT_WEBHOOK_SECRET = process.env.DIDIT_WEBHOOK_SECRET
-  || "gDnOG0JHpL4VHYS1NloANpm4ov0Tt11focdzLSlqB70";
+const DIDIT_API_KEY        = String(process.env.DIDIT_API_KEY || "").trim();
+const DIDIT_WORKFLOW_ID    = String(process.env.DIDIT_WORKFLOW_ID || "").trim();
+const DIDIT_WEBHOOK_SECRET = String(process.env.DIDIT_WEBHOOK_SECRET || "").trim();
 const DIDIT_BASE_URL       = process.env.DIDIT_BASE_URL
   || "https://verification.didit.me";
 
+function stableVendorData({ userId, email, existing } = {}) {
+  const previous = String(existing || "").trim();
+  if (previous) return previous.slice(0, 120);
+  const uid = Number(userId);
+  if (Number.isInteger(uid) && uid > 0) return `aura:user:${uid}`;
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  if (!normalizedEmail || !normalizedEmail.includes("@")) {
+    throw new Error("didit_vendor_identity_required");
+  }
+  const digest = crypto.createHash("sha256").update(`citasaura|${normalizedEmail}`).digest("hex");
+  return `aura:email:${digest.slice(0, 32)}`;
+}
+
 /* ---------- HTTP helper ---------- */
 async function diditFetch(path, opts = {}) {
+  if (!DIDIT_API_KEY) throw new Error("didit_config_missing");
   const url = DIDIT_BASE_URL.replace(/\/$/, "") + path;
   const method = opts.method || "GET";
   const headers = {
@@ -60,6 +70,7 @@ async function diditFetch(path, opts = {}) {
      - contact_details: { email }  (opcional)
 ------------------------------------- */
 async function createSession(payload = {}) {
+  if (!DIDIT_WORKFLOW_ID) throw new Error("didit_workflow_missing");
   const body = {
     workflow_id: DIDIT_WORKFLOW_ID,
     vendor_data: payload.vendor_data || undefined,
@@ -67,7 +78,7 @@ async function createSession(payload = {}) {
     contact_details: payload.contact_details || undefined,
     metadata: payload.metadata || undefined,
   };
-  const data = await diditFetch("/v2/session/", { method: "POST", body });
+  const data = await diditFetch("/v3/session/", { method: "POST", body });
   return {
     session_id: data.session_id || data.id,
     session_number: data.session_number,
@@ -81,7 +92,7 @@ async function createSession(payload = {}) {
 /* ---------- getSession ---------- */
 async function getSession(sessionId) {
   if (!sessionId) throw new Error("session_id_required");
-  const data = await diditFetch("/v2/session/" + encodeURIComponent(sessionId) + "/");
+  const data = await diditFetch("/v3/session/" + encodeURIComponent(sessionId) + "/");
   return data;
 }
 
@@ -89,7 +100,7 @@ async function getSession(sessionId) {
 async function getDecision(sessionId) {
   if (!sessionId) throw new Error("session_id_required");
   const data = await diditFetch(
-    "/v2/session/" + encodeURIComponent(sessionId) + "/decision/"
+    "/v3/session/" + encodeURIComponent(sessionId) + "/decision/"
   );
   return data;
 }
@@ -101,7 +112,7 @@ async function getDecision(sessionId) {
    Tolerancia de 5 min para evitar replay.
 --------------------------------------------- */
 function verifyWebhookSignature(rawBody, headers) {
-  if (!rawBody || !headers) return false;
+  if (!rawBody || !headers || !DIDIT_WEBHOOK_SECRET) return false;
   const sig = String(headers["x-signature"] || headers["X-Signature"] || "").trim();
   const ts  = String(headers["x-timestamp"] || headers["X-Timestamp"] || "").trim();
   if (!sig) return false;
@@ -140,6 +151,7 @@ module.exports = {
   getDecision,
   verifyWebhookSignature,
   mapDidit,
+  stableVendorData,
   DIDIT_BASE_URL,
   DIDIT_WORKFLOW_ID,
 };
