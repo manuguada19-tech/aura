@@ -32,8 +32,8 @@
 // versión fuerza a las PWA ya instaladas a recibirlos sin recarga manual.
 // V991 · El perfil reorganiza sus secciones y añade una vista previa propia;
 // invalida el menú anterior en instalaciones que sigan abiertas.
-// V994 · actualiza los espacios de demostración y su presentación móvil.
-const CACHE_VERSION = "aura-v115";
+// V995 · sincroniza la pestaña activa en las vistas de prueba.
+const CACHE_VERSION = "aura-v116";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

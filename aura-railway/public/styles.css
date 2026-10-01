@@ -3235,6 +3235,32 @@ body.account-suspended .restriction-banner .rb-close {
   grid-column: 1 / -1;
   margin: 2px 0;
 }
+.discover > .ad-slot-discover {
+  flex: 0 0 auto;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  gap: 4px;
+  border-radius: 12px;
+}
+.discover > .ad-slot-discover .ad-network-body { min-height: 0; }
+.discover > .ad-slot-discover .ad-body {
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  gap: 8px;
+}
+.discover > .ad-slot-discover .ad-thumb {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+}
+.discover > .ad-slot-discover .ad-info strong { font-size: 12.5px; }
+.discover > .ad-slot-discover .ad-info small {
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.discover > .ad-slot-discover .ad-brand { display: none; }
+.discover > .ad-slot-discover .ad-cta { padding: 7px 10px; font-size: 11.5px; }
 [data-theme="dark"] .ad-slot { background: rgba(255,255,255,.04); }
 .ad-slot .ad-tag {
   display: flex; align-items: center; justify-content: space-between;
@@ -3971,6 +3997,32 @@ body.info-open .theme-toggle { display: none; }
   border: 1px solid var(--card-border, #e5e7eb);
   border-radius: 14px;
   padding: 14px 16px;
+}
+.about-card { padding-block: 4px; }
+.about-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 46px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--card-border, #eef0f4);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.about-row:last-child { border-bottom: 0; }
+.about-row span { color: var(--text-muted, #6b7280); }
+.about-row b {
+  color: var(--text, #14161d);
+  font-weight: 650;
+  text-align: right;
+}
+.about-footer {
+  padding: 20px 12px 4px;
+  color: var(--text-muted, #6b7280);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }
 /* Banner de estado del plan (p. ej. en Modo invisible) */
 .plan-status-banner {

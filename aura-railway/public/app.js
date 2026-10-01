@@ -8623,6 +8623,8 @@ function screenDiscover(root) {
       routeTab("discover");
     },
   }, "Restablecer");
+  const discoverAd = buildAdSlot("discover");
+  if (discoverAd) discoverAd.classList.add("ad-slot-discover");
   const discoverShell = el("div", { class: "discover" }, [
     el("div", { class: "discover-topbar" }, [
       el("span", {
@@ -8642,6 +8644,7 @@ function screenDiscover(root) {
       discoverResetBtn,
     ]),
     buildDiscoverViewBar(stack, actionRow),
+    discoverAd,
     el("div", { class: "discover-stack-wrap" }, [
       notices,
       stack,
@@ -8651,10 +8654,6 @@ function screenDiscover(root) {
   stack._discoverShell = discoverShell;
   discoverShell.classList.toggle("is-grid", stack._viewMode === "grid");
   root.appendChild(discoverShell);
-  // Un único espacio de prueba al final de Explorar. No altera ni sustituye
-  // perfiles y sólo se construye para el plan Free cuando está habilitado.
-  const adSlot = buildAdSlot("discover");
-  if (adSlot) root.appendChild(adSlot);
 }
 
 /* ---- Botón Boost de Descubrir con estado activo (V896) ----
@@ -18250,18 +18249,22 @@ function screenDataExport(root) {
 function screenAbout(root) {
   meSubHeader(root, T("content.me.item_about") || "Acerca de Aura");
   const wrap = el("div", { class: "info-wrap" });
+  const aboutVersion = String(T("content.me.version") || "1.0.0")
+    .replace(/^(versión|version)\s*/i, "") || "1.0.0";
   wrap.appendChild(infoHero(
     `<svg viewBox="0 0 100 100" width="34" height="34"><defs><linearGradient id="al" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff"/><stop offset="1" stop-color="#fff"/></linearGradient></defs><path fill="url(#al)" d="M50 88 C20 68 8 48 8 30 A22 22 0 0 1 50 22 A22 22 0 0 1 92 30 C92 48 80 68 50 88Z"/></svg>`,
     "Aura",
     T("content.me.about_p") || "Conexiones reales, momentos únicos."
   ));
-  wrap.appendChild(infoCard([
-    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_version") || "Versión"), el("b", {}, T("content.me.version") || "1.0.0") ]),
-    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_build") || "Build"), el("b", {}, "2026.07.31") ]),
-    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_company") || "Empresa"), el("b", {}, "Aura S.L.") ]),
-    el("div", { class: "pd-row" }, [ el("span", {}, T("content.me.about_country") || "País"), el("b", {}, "España") ]),
-  ]));
-  wrap.appendChild(el("div", { style: "text-align:center;padding:16px 0;color:var(--text-muted);font-size:12px" }, T("content.welcome.foot_copy") || "© 2026 Aura · Hecho con ❤ en España"));
+  const aboutCard = infoCard([
+    el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_version") || "Versión"), el("b", {}, aboutVersion) ]),
+    el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_build") || "Build"), el("b", {}, "2026.07.31") ]),
+    el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_company") || "Empresa"), el("b", {}, "Aura S.L.") ]),
+    el("div", { class: "about-row" }, [ el("span", {}, T("content.me.about_country") || "País"), el("b", {}, "España") ]),
+  ]);
+  aboutCard.classList.add("about-card");
+  wrap.appendChild(aboutCard);
+  wrap.appendChild(el("div", { class: "about-footer" }, T("content.welcome.foot_copy") || "© 2026 Aura · Hecho con ❤ en España"));
   root.appendChild(wrap);
   hideApp();
 }
@@ -20469,6 +20472,14 @@ async function boot() {
         try { syncDesktopApp(); } catch {} // V951
       } catch {}
     }
+    function activatePreviewTab(tab) {
+      state.currentTab = tab;
+      try {
+        $$(".tab", tabbar).forEach((button) => {
+          button.classList.toggle("active", button.dataset.tab === tab);
+        });
+      } catch {}
+    }
     function renderPreviewScreen(name) {
       const n = String(name || "").toLowerCase();
       // Preset básico para que las pantallas de registro no aparezcan vacías
@@ -20478,16 +20489,16 @@ async function boot() {
       } catch {}
       // Pantallas internas de la app (Diseño usa estos nombres de sección).
       if ((n === "discover" || n === "global" || n === "tabbar") && typeof screenDiscover === "function") {
-        try { seedPreviewSession(); render(screenDiscover); return; } catch {}
+        try { seedPreviewSession(); activatePreviewTab("discover"); render(screenDiscover); return; } catch {}
       }
       if (n === "likes" && typeof screenLikes === "function") {
-        try { seedPreviewSession(); render(screenLikes); return; } catch {}
+        try { seedPreviewSession(); activatePreviewTab("likes"); render(screenLikes); return; } catch {}
       }
       if (n === "chats" && typeof screenChats === "function") {
-        try { seedPreviewSession(); render(screenChats); return; } catch {}
+        try { seedPreviewSession(); activatePreviewTab("chats"); render(screenChats); return; } catch {}
       }
       if (n === "profile" && typeof screenMe === "function") {
-        try { seedPreviewSession(); render(screenMe); return; } catch {}
+        try { seedPreviewSession(); activatePreviewTab("me"); render(screenMe); return; } catch {}
       }
       if (n === "beta") {
         // En modo vista previa NO pasamos email demo: así el input muestra
@@ -20519,6 +20530,7 @@ async function boot() {
           state.user = state.user || { id: "preview", name: "Preview", email: "demo@aura.app", photo: "" };
           state.zone = state.zone || "hetero";
           try { tabbar.hidden = false; document.body.classList.add("app-open"); syncDesktopApp(); } catch {}
+          activatePreviewTab("search");
           render(screenSearch);
           return;
         } catch {}

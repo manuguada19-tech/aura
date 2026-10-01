@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 1 octubre 2026 · última versión preparada: V994 · publicada: V993**
+**Fecha de este resumen: 1 octubre 2026 · última versión preparada y publicada: V995**
+
+### V995 (01/10/2026) — Vistas de prueba y «Acerca de Aura»
+
+- Las vistas `preview` sincronizan la pestaña activa del menú inferior con la
+  pantalla mostrada. La prueba de Buscar ya no deja resaltado Explorar.
+- Explorar integra el espacio de prueba dentro de su composición visible, en
+  lugar de dejarlo después de una pantalla sin desplazamiento vertical.
+- El ajuste afecta sólo a las vistas de demostración; no cambia el plan ni la
+  navegación de ninguna cuenta real.
+- «Acerca de Aura» recupera una separación clara entre etiquetas y valores,
+  con filas legibles, divisores y pie correctamente espaciado en móvil.
 
 ### V994 (01/10/2026) — Prueba publicitaria interna y base para AdSense
 
