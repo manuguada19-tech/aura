@@ -19729,20 +19729,12 @@ function screenInfoFaq(root) {
   });
   c.appendChild(search);
 
-  // V794 · Categorías reorganizadas y ampliadas para cubrir todas las
-  // funciones actuales (filtros con deslizadores y unidades, avisos por
-  // correo/push/campanita, historias, recompensas, quedadas, llamadas…).
+  // V1003 · El contenido español vive en faq_content.js y se comparte con
+  // /faq y su JSON-LD. Aquí solo se conserva la presentación interactiva.
+  const faqContent = window.AURA_FAQ_ES || { categories: [], items: [] };
   const categories = [
-    { key: "all",       label: "Todas",         ic: "✨" },
-    { key: "empezar",   label: "Primeros pasos", ic: "🚀" },
-    { key: "perfil",    label: "Perfil",         ic: "🧑" },
-    { key: "descubrir", label: "Buscar",         ic: "🎚️" },
-    { key: "matches",   label: "Matches",        ic: "💫" },
-    { key: "chat",      label: "Chat",           ic: "💬" },
-    { key: "avisos",    label: "Avisos",         ic: "🔔" },
-    { key: "extras",    label: "Recompensas",    ic: "🎁" },
-    { key: "seguridad", label: "Seguridad",      ic: "🛡️" },
-    { key: "planes",    label: "Pagos",          ic: "💳" },
+    { key: "all", label: "Todas", ic: "✨" },
+    ...faqContent.categories.map((cat) => ({ key: cat.key, label: cat.label, ic: cat.icon })),
   ];
   const pills = el("div", { class: "faq-pills" });
   categories.forEach((cat, idx) => {
@@ -19757,73 +19749,7 @@ function screenInfoFaq(root) {
   });
   c.appendChild(pills);
 
-  // FAQ data — cada entrada: { cat, sub, q, a }. Las entradas se agrupan por
-  // categoría y, dentro, por subcategoría (subheader) para una lectura clara.
-  const faqData = [
-    // ----- Primeros pasos -----
-    { cat: "empezar", sub: "🔐 Cuenta", q: "¿Cómo creo una cuenta en Aura?", a: "Introduce tu correo, confirma el código de 6 dígitos que te enviamos y completa el perfil. Antes de enviar mensajes tendrás que superar la verificación de edad e identidad." },
-    { cat: "empezar", sub: "🔐 Cuenta", q: "No puedo acceder a mi cuenta, ¿qué hago?", a: "Comprueba que has escrito el mismo correo con el que te registraste y que tienes conexión. Aura puede pedirte un código de un solo uso y, si activaste 2FA, el código de tu aplicación autenticadora. Si sigues sin poder entrar, contacta con soporte." },
-    { cat: "empezar", sub: "🔐 Cuenta", q: "¿Puedo cambiar mi correo electrónico?", a: "El cambio de correo todavía no está disponible desde el perfil. Contacta con soporte para que revisemos tu caso de forma segura." },
-    { cat: "empezar", sub: "📲 Instalar la app", q: "¿Puedo instalar Aura como aplicación?", a: "Sí. Aura es una PWA: desde el navegador, cuando estés en tu Perfil verás el aviso «Instala Aura en tu móvil». Al instalarla se abre a pantalla completa y puede recibir avisos aunque esté cerrada." },
-    { cat: "empezar", sub: "📲 Instalar la app", q: "¿Aura funciona sin conexión?", a: "La app carga al instante incluso con conexión débil gracias a su almacenamiento local, pero para ver perfiles, chatear o buscar necesitas conexión a internet." },
-
-    // ----- Perfil y fotos -----
-    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Cómo edito mi perfil, fotos y biografía?", a: "En Perfil → Editar perfil puedes cambiar el nombre visible, biografía, ciudad, profesión, intereses y otros datos. Las imágenes se gestionan por separado desde Perfil → Mis fotos." },
-    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿En qué unidades introduzco mi altura y peso?", a: "Aura elige automáticamente las unidades habituales de tu país de registro (por ejemplo cm/kg en España, o ft·in/lb en países anglosajones). Puedes escribir el valor o usar el deslizador." },
-    { cat: "perfil", sub: "🧑 Tu perfil", q: "¿Puedo cambiar de zona (orientación)?", a: "Sí, pero cada zona es una comunidad independiente, así que cambiar de zona implica eliminar tu cuenta actual y registrarte de nuevo en la otra zona. Al hacerlo pierdes todos tus datos: perfil, fotos y biografía, todos tus matches y conversaciones, los likes dados y recibidos, tu historial, tus filtros guardados y tu plan o beneficios de suscripción activos. Es un cambio irreversible: antes de confirmarlo te mostramos un aviso con todo lo que se borra." },
-
-    // ----- Buscar y filtros -----
-    { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Cómo uso los filtros de descubrimiento?", a: "En Perfil → Filtros de descubrimiento ajustas edad, distancia, altura, peso y más. Cada filtro numérico tiene un deslizador cómodo y, si prefieres, también puedes escribir el valor exacto a mano." },
-    { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "¿Puedo cambiar las unidades (km/millas, cm/pies, kg/libras)?", a: "Sí. En cada filtro de altura, peso o distancia puedes alternar las unidades. Aura convierte el valor automáticamente para que compares con las unidades del país donde estás buscando." },
-    { cat: "descubrir", sub: "🎚️ Filtros de búsqueda", q: "Ajusté un filtro pero no lo quiero, ¿cómo lo quito?", a: "Deja el deslizador en su rango completo (mínimo–máximo) o borra el valor manual: ese filtro dejará de aplicarse y volverás a ver todos los perfiles." },
-    // V925 · Esta respuesta afirmaba que el algoritmo "aprende" de tu actividad.
-    // El feed real (GET /api/discover) es filtros duros + un orden fijo:
-    // boost activo → conectado → verificado → RAND(). No hay aprendizaje ni
-    // puntuación de afinidad. Corregida también en features_seo_pages.js (FAQ web).
-    { cat: "descubrir", sub: "💡 Recomendaciones", q: "¿Cómo mejora Aura los perfiles que me muestra?", a: "Tus filtros deciden quién puede aparecer (edad, ciudad, intereses, estilo de vida…) y el orden es siempre el mismo: primero quien tiene un Boost activo, después quien está conectado, después los perfiles verificados y el resto al azar. No hay ningún sistema que aprenda de tus likes. Para aparecer en más búsquedas, completa los campos de tu perfil y verifica la cuenta." },
-
-    // ----- Matches y likes -----
-    { cat: "matches", sub: "💫 Matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan «like» mutuamente. A partir de ese momento podéis chatear libremente." },
-    { cat: "matches", sub: "💫 Matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con un plan de pago los likes son ilimitados." },
-    { cat: "matches", sub: "↩️ Volver atrás", q: "¿Puedo deshacer un «no me gusta» o un like por error?", a: "Sí. Con un plan de pago, pulsa el botón «Volver» (la flecha ↩ a la izquierda de la fila de acciones) para deshacer tu última valoración y volver a ver ese perfil. Solo afecta a la última acción; si ya teníais match y os habíais escrito, por seguridad no se puede deshacer." },
-    { cat: "matches", sub: "⭐ Super like", q: "¿Qué es un super like?", a: "Es una reacción especial que destaca ante la otra persona que te ha interesado especialmente. Se gestiona aparte de los likes normales y puede estar sujeta al plan o a créditos disponibles." },
-
-    // ----- Chat y llamadas -----
-    { cat: "chat", sub: "💬 Mensajes", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. No pasan ningún filtro automático: si te llega algo inapropiado, denuncia la conversación y la revisa una persona en menos de 24 horas." },
-    { cat: "chat", sub: "💬 Mensajes", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona deshacéis el match, la conversación desaparece." },
-    { cat: "chat", sub: "❄️ Rompehielos y stickers", q: "¿Qué son los rompehielos y los stickers?", a: "Los rompehielos son preguntas sugeridas para empezar la conversación (plan Premium o superior) y los stickers son pegatinas divertidas (plan Oro o superior) para animar el chat." },
-    { cat: "chat", sub: "🌐 Traducción", q: "¿Puedo traducir los mensajes que recibo?", a: "Sí. Con Platinum puedes traducir dentro del chat el mensaje que elijas, sin salir de la conversación." },
-    { cat: "chat", sub: "📹 Llamadas", q: "¿Cómo hago una llamada?", a: "Desde una conversación permitida puedes iniciar una llamada de audio con Gold o una videollamada con Platinum. No necesitas instalar otra aplicación." },
-    { cat: "chat", sub: "🔒 Privacidad", q: "¿Los mensajes tienen cifrado de extremo a extremo?", a: "No. La comunicación viaja protegida mediante HTTPS, pero los mensajes no usan cifrado de extremo a extremo. Aura necesita poder atender denuncias y aplicar sus medidas de seguridad." },
-
-    // ----- Notificaciones -----
-    { cat: "avisos", sub: "🔔 Canales de aviso", q: "¿Qué avisos puedo recibir?", a: "Aura muestra avisos en la campanita y puede enviar notificaciones push para matches, likes, mensajes, recompensas y comunicaciones del equipo, según el tipo de aviso y tus permisos." },
-    { cat: "avisos", sub: "⚙️ Personalizar avisos", q: "¿Cómo elijo qué notificaciones recibo?", a: "Ve a Perfil → Notificaciones. Allí puedes activar o desactivar por separado los avisos dentro de la app y los push compatibles con tu dispositivo." },
-    { cat: "avisos", sub: "📱 Push en el móvil", q: "Activé el push pero no me llegan avisos", a: "Comprueba que aceptaste los permisos de notificación del navegador y que tienes Aura instalada. En iPhone los avisos push solo funcionan si añades Aura a la pantalla de inicio." },
-
-    // ----- Recompensas, historias y quedadas -----
-    { cat: "extras", sub: "🎁 Recompensas y canjes", q: "¿Qué son las recompensas y cómo las canjeo?", a: "Ganas puntos por tu actividad y progreso, y los canjeas por recompensas en la tienda de recompensas. Recibirás un aviso cuando un canje se apruebe o se conceda." },
-    { cat: "extras", sub: "🏆 Progreso", q: "¿Para qué sirve la sección de Progreso?", a: "Refleja tu actividad y logros en Aura. Completar acciones te da progreso y desbloquea recompensas." },
-    { cat: "extras", sub: "📸 Historias 24h", q: "¿Qué son las Historias 24h?", a: "Son publicaciones efímeras que desaparecen a las 24 horas. Sirven para mostrar tu día a día y llamar la atención de posibles matches. Las creas y ves desde Perfil → Historias." },
-    { cat: "extras", sub: "📅 Quedadas", q: "¿Cómo funcionan las quedadas o eventos?", a: "Desde Perfil → Quedadas puedes descubrir o crear eventos para conocer gente en persona de forma segura." },
-
-    // ----- Seguridad y privacidad -----
-    { cat: "seguridad", sub: "✅ Verificación", q: "¿Aura verifica los perfiles?", a: "Sí. Ofrecemos verificación por selfie, por documento y videoidentificación. Los perfiles verificados llevan un distintivo azul." },
-    { cat: "seguridad", sub: "🚫 Reportar y bloquear", q: "¿Cómo reporto o bloqueo a alguien?", a: "Desde el perfil o el chat, pulsa el icono de menú y elige «Reportar» o «Bloquear». Revisamos cada reporte en menos de 24 h." },
-    { cat: "seguridad", sub: "🚫 Reportar y bloquear", q: "¿Qué hago si detecto un bot o una estafa?", a: "Repórtalo de inmediato. Nuestro equipo antifraude actúa de forma proactiva y elimina las cuentas sospechosas." },
-    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Comparte Aura mis datos?", a: "Nunca vendemos tus datos. Solo compartimos lo mínimo necesario con proveedores certificados para hacer funcionar el servicio. Consulta la Política de privacidad." },
-    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo reviso los dispositivos con acceso a mi cuenta?", a: "Ve a Perfil → Dispositivos activos. Puedes cerrar de forma remota una sesión que no reconozcas y quitar de la lista los dispositivos cuya sesión ya está cerrada." },
-    { cat: "seguridad", sub: "🔒 Privacidad y datos", q: "¿Cómo elimino mi cuenta y mis datos?", a: "Desde Perfil → Eliminar cuenta. La acción es irreversible y tus datos se borran de forma permanente en un plazo máximo de 30 días, salvo los plazos legales aplicables." },
-    { cat: "seguridad", sub: "⚖️ Apelaciones", q: "¿Puedo apelar una sanción?", a: "Sí. La pantalla Mi cuenta y estado muestra tus infracciones y apelaciones. También puedes abrir el formulario desde el aviso de bloqueo o desde el enlace recibido por correo." },
-
-    // ----- Planes y pagos -----
-    { cat: "planes", sub: "💳 Suscripciones", q: "¿Cuánto cuestan los planes de pago?", a: "Hay planes Premium, Oro y Platino con opciones mensuales y anuales (la anual con descuento). Los precios exactos aparecen en la pantalla de suscripciones dentro de la app." },
-    { cat: "planes", sub: "💳 Suscripciones", q: "¿Qué incluye cada plan?", a: "Cada nivel cambia límites y funciones, como likes, chats nuevos, lecturas, perfiles cercanos, Boost y herramientas del chat. La comparación completa y vigente está en Perfil → Suscripción." },
-    { cat: "planes", sub: "⚡ Boost", q: "¿Los Boost forman parte de la suscripción?", a: "Los Boost son créditos separados que colocan temporalmente el perfil al principio del orden. Algunos planes pueden incluir una cantidad, y también existen packs cuando están habilitados." },
-    { cat: "planes", sub: "🔄 Gestionar y cancelar", q: "¿Cómo cancelo mi suscripción?", a: "Ve a Perfil → Pagos y facturas y pulsa «Cancelar renovación». La cancelación se programa automáticamente y conservarás el plan hasta el final del periodo ya pagado. Puedes reactivar la renovación desde la misma pantalla antes de esa fecha." },
-    { cat: "planes", sub: "🧾 Facturas y reembolsos", q: "¿Dónde veo y descargo mis facturas o reembolsos?", a: "Ve a Perfil → Pagos y facturas. Cada movimiento completado permite descargar su factura o justificante; si existe una factura rectificativa por un reembolso, también aparece para descargarla." },
-    { cat: "planes", sub: "⚠️ Pagos pendientes", q: "¿Cómo reintento un pago no efectuado?", a: "Ve a Perfil → Pagos y facturas. Los cobros fallidos o pendientes muestran «Reintentar cobro»; si tu banco requiere confirmación, Aura abrirá la página segura de Stripe para completarla." },
-  ];
+  const faqData = faqContent.items;
 
   const list = el("div", { class: "faq-list", id: "faqList" });
   const seenSub = new Set();

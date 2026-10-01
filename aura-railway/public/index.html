@@ -358,10 +358,18 @@
       var loaded = false;
       function load(ver){
         if (loaded) return; loaded = true;
-        var s = document.createElement("script");
-        s.src = "app.js?v=" + ver; s.async = false; document.body.appendChild(s);
-        var s2 = document.createElement("script");
-        s2.src = "features_ui.js?v=" + ver; s2.async = false; document.body.appendChild(s2);
+        function loadApp(){
+          var s = document.createElement("script");
+          s.src = "app.js?v=" + ver; s.async = false; document.body.appendChild(s);
+          var s2 = document.createElement("script");
+          s2.src = "features_ui.js?v=" + ver; s2.async = false; document.body.appendChild(s2);
+        }
+        // V1003 · Las FAQ se cargan primero porque app.js y /faq comparten la
+        // misma fuente. Un fallo aislado no debe impedir abrir el resto de Aura.
+        var faq = document.createElement("script");
+        faq.src = "faq_content.js?v=" + ver; faq.async = false;
+        faq.onload = loadApp; faq.onerror = loadApp;
+        document.body.appendChild(faq);
       }
       // Salvaguarda: si en 1200 ms no hemos resuelto el build, cargamos igual.
       var t = setTimeout(function(){ load(Date.now()); }, 1200);

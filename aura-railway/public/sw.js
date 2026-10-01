@@ -34,11 +34,13 @@
 // invalida el menú anterior en instalaciones que sigan abiertas.
 // V996 · elimina la atribución empresarial incorrecta de «Acerca de Aura».
 // V1002 · incorpora la interfaz unificada de llamadas de voz y vídeo.
-const CACHE_VERSION = "aura-v121";
+// V1003 · añade la fuente compartida y actualizada de preguntas frecuentes.
+const CACHE_VERSION = "aura-v122";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
   "./app.js",
+  "./faq_content.js",
   "./manifest.json",
 ];
 

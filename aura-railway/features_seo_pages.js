@@ -34,6 +34,9 @@
 
 const BASE = "https://citasaura.es";
 const SITE = "Aura";
+const FAQ_CONTENT_ES = require("./public/faq_content.js");
+const FAQ_CATEGORIES = FAQ_CONTENT_ES.categories;
+const FAQ = FAQ_CONTENT_ES.items;
 /* Fecha real del último cambio sustancial de las páginas generales. Antes el
    sitemap seguía anunciando 02/09 aunque la portada y Cómo funciona se
    reescribieron el 10/09. No se usa la fecha de arranque: fingir que todo cambia
@@ -41,7 +44,7 @@ const SITE = "Aura";
 const PAGE_LASTMOD = "2026-09-10";
 // El FAQ sí ha cambiado después que el resto de páginas generales. Mantener su
 // fecha separada evita fingir cambios en URLs que no se han tocado.
-const FAQ_LASTMOD = "2026-09-22";
+const FAQ_LASTMOD = FAQ_CONTENT_ES.updated;
 
 /* V930 · Dónde vive la app, ahora que "/" es contenido.
    --------------------------------------------------------------------
@@ -715,57 +718,9 @@ const FOOTER_EXTRA = [
   { label: "Términos", path: "/terminos" },
 ];
 
-// FAQ público. Cada respuesta describe funciones comprobadas en la app y evita
-// prometer pantallas o canales que todavía no existen.
-const FAQ = [
-  { cat: "Cuenta", q: "¿Cómo creo una cuenta en Aura?", a: "Introduce tu correo, confirma el código de 6 dígitos que te enviamos y completa el perfil. Antes de enviar mensajes tendrás que superar la verificación de edad e identidad." },
-  { cat: "Cuenta", q: "No puedo acceder a mi cuenta, ¿qué hago?", a: "Comprueba que has escrito el mismo correo con el que te registraste y que tienes conexión. Aura puede pedirte un código de un solo uso y, si activaste 2FA, el código de tu aplicación autenticadora. Si sigues sin poder entrar, contacta con soporte." },
-  { cat: "Cuenta", q: "¿Puedo cambiar mi correo electrónico?", a: "El cambio de correo todavía no está disponible desde el perfil. Contacta con soporte desde la propia app o desde la página de contacto para que revisemos tu caso de forma segura." },
-  { cat: "Cuenta", q: "¿Puedo instalar Aura como aplicación?", a: "Sí. Aura es una aplicación web instalable (PWA). Usa la opción «Instalar aplicación» o «Añadir a pantalla de inicio» de tu navegador; el nombre exacto depende del móvil y del navegador." },
-  { cat: "Cuenta", q: "¿Aura funciona sin conexión?", a: "La pantalla básica puede abrirse desde la caché, pero necesitas conexión a internet para cargar perfiles, verificarte, chatear, recibir datos nuevos o hacer pagos." },
-  { cat: "Cuenta", q: "¿Cómo elimino mi cuenta?", a: "Desde Perfil → Eliminar cuenta. La acción es irreversible y tus datos se borran de forma permanente en un plazo máximo de 30 días, salvo los plazos legales aplicables." },
-  { cat: "Perfil", q: "¿Cómo edito mi perfil, fotos y biografía?", a: "En Perfil → Editar perfil puedes cambiar el nombre visible, biografía, ciudad, profesión, intereses y otros datos. Las imágenes se gestionan por separado desde Perfil → Mis fotos." },
-  { cat: "Perfil", q: "¿Qué unidades usa Aura para altura, peso y distancia?", a: "Aura muestra automáticamente las unidades habituales de tu país y guarda los valores normalizados. En los filtros también puedes alternar entre kilómetros y millas, centímetros y pies, o kilos y libras." },
-  { cat: "Perfil", q: "¿Puedo cambiar de zona?", a: "Sí, pero las zonas son comunidades independientes. El cambio elimina la cuenta actual y obliga a registrarse de nuevo; se pierden perfil, fotos, matches, conversaciones, reacciones, filtros y beneficios activos. La app muestra esta consecuencia antes de confirmar." },
-  { cat: "Perfil", q: "¿Cómo uso los filtros de búsqueda?", a: "Abre los filtros desde Buscar y ajusta edad, distancia y los campos de perfil que te interesen. Los campos opcionales sin completar también pueden reducir los resultados cuando activas su filtro." },
-  { cat: "Perfil", q: "¿Cómo quito un filtro o recupero todos los resultados?", a: "Devuelve el control a su rango completo, borra el valor manual o usa «Restablecer filtros». Si aparecen pocos perfiles, amplía primero la edad y la distancia." },
-  { cat: "Perfil", q: "¿En qué orden aparecen los perfiles?", a: "Después de aplicar tus filtros, aparecen primero los Boost activos, luego las personas conectadas, después los perfiles verificados y finalmente el resto al azar. Aura no aprende de tus likes ni calcula una afinidad secreta." },
-  { cat: "Matches", q: "¿Qué es un match?", a: "Un match ocurre cuando dos personas se dan «like» mutuamente. A partir de ese momento podéis chatear libremente." },
-  { cat: "Matches", q: "¿Puedo deshacer una valoración por error?", a: "Sí, con un plan de pago puedes usar «Volver» para recuperar la última valoración. Solo afecta a la acción más reciente y no se puede usar si ya hubo match y mensajes." },
-  { cat: "Matches", q: "¿Existe un límite de likes al día?", a: "Los usuarios gratuitos tienen un límite diario razonable. Con Premium los likes son ilimitados." },
-  { cat: "Matches", q: "¿Qué es un super like?", a: "Es una reacción especial que destaca ante la otra persona que te ha interesado especialmente. Se gestiona aparte de los likes normales y puede estar sujeta al plan o a créditos disponibles." },
-  // V926 · Decía "todas pasan un filtro automático". Es la MISMA falsedad que
-  // corregí en V925 en el otro FAQ, escrita con otras palabras: mis
-  // comprobaciones buscaban "filtros automáticos de contenido" y "filtro
-  // automático de seguridad", y este "pasan un filtro automático" pasó por
-  // delante de ellas. Ahora la comprobación busca la frase, no la variante.
-  { cat: "Chats", q: "¿Puedo enviar fotos por chat?", a: "Sí, los usuarios verificados pueden enviar imágenes. No pasan ningún filtro automático: si recibes algo inapropiado, denuncia la conversación y la revisa una persona en menos de 24 horas." },
-  { cat: "Chats", q: "¿Cuándo se elimina un chat?", a: "Los chats permanecen mientras exista el match. Si tú o la otra persona os desmatcháis, la conversación desaparece." },
-  { cat: "Chats", q: "¿Puedo enviar notas de voz?", a: "Sí. Las notas de voz están disponibles desde el chat para los planes que incluyen esta función; la app indica si tu plan necesita una mejora." },
-  { cat: "Chats", q: "¿Qué son los rompehielos y los stickers?", a: "Los rompehielos son preguntas sugeridas para iniciar una conversación y están disponibles desde Premium. Los stickers se pueden enviar desde Gold; algunos packs exclusivos requieren Platinum." },
-  { cat: "Chats", q: "¿Puedo traducir un mensaje?", a: "Sí. La traducción dentro del chat está disponible con Platinum y se aplica al mensaje que elijas." },
-  { cat: "Chats", q: "¿Puedo hacer llamadas desde Aura?", a: "Sí. Las llamadas de audio están disponibles con Gold y las videollamadas con Platinum. Solo se pueden iniciar dentro de una conversación permitida por la app." },
-  { cat: "Chats", q: "¿Los mensajes tienen cifrado de extremo a extremo?", a: "No. La comunicación viaja protegida mediante HTTPS, pero los mensajes no usan cifrado de extremo a extremo. Aura necesita poder atender denuncias y aplicar sus medidas de seguridad." },
-  { cat: "Notificaciones", q: "¿Qué avisos puedo recibir?", a: "Aura muestra avisos en la campanita y puede enviar notificaciones push para matches, likes, mensajes, recompensas y comunicaciones del equipo, según el tipo de aviso y tus permisos." },
-  { cat: "Notificaciones", q: "¿Cómo elijo qué notificaciones recibo?", a: "Ve a Perfil → Notificaciones. Allí puedes activar o desactivar por separado los avisos dentro de la app y los push compatibles con tu dispositivo." },
-  { cat: "Notificaciones", q: "Activé el push pero no me llegan avisos, ¿qué reviso?", a: "Comprueba el permiso de notificaciones del navegador y que el push siga activo en Perfil → Notificaciones. En iPhone, las notificaciones web requieren haber añadido Aura a la pantalla de inicio." },
-  { cat: "Extras", q: "¿Qué son las recompensas?", a: "Son ventajas canjeables con los puntos que consigues mediante actividad y progreso. La tienda muestra los puntos necesarios, la disponibilidad y el estado de cada canje." },
-  { cat: "Extras", q: "¿Para qué sirve Progreso?", a: "La sección reúne tu nivel, experiencia, logros y misiones. Las acciones que puntúan y las recompensas disponibles se muestran dentro de la propia pantalla." },
-  { cat: "Extras", q: "¿Qué son las Historias 24 h?", a: "Son publicaciones temporales que desaparecen a las 24 horas. Puedes crearlas, verlas y ajustar su privacidad desde la sección de Historias." },
-  { cat: "Extras", q: "¿Cómo funcionan las quedadas?", a: "La sección Quedadas permite consultar eventos, crear uno y apuntarse. Revisa siempre los detalles y aplica las mismas precauciones que en cualquier encuentro presencial." },
-  { cat: "Seguridad", q: "¿Aura verifica los perfiles?", a: "Sí. La verificación de edad e identidad usa documento oficial, comparación facial mediante selfie y videoidentificación. Si el resultado automático no es concluyente, el caso puede pasar a revisión humana." },
-  { cat: "Seguridad", q: "¿Cómo reporto o bloqueo a alguien?", a: "Desde el perfil o el chat, pulsa el icono de menú y elige «Reportar» o «Bloquear». Revisamos cada reporte en menos de 24 h." },
-  { cat: "Seguridad", q: "¿Qué hago si detecto un bot o estafa?", a: "Repórtalo inmediatamente. Nuestro equipo antifraude actúa de forma proactiva y elimina cuentas sospechosas." },
-  { cat: "Seguridad", q: "¿Comparte Aura mis datos?", a: "Nunca vendemos tus datos. Solo compartimos lo mínimo necesario con proveedores certificados para hacer funcionar el servicio. Consulta la Política de privacidad." },
-  { cat: "Seguridad", q: "¿Cómo reviso los dispositivos con acceso a mi cuenta?", a: "Ve a Perfil → Dispositivos activos. Puedes cerrar de forma remota una sesión que no reconozcas y quitar de la lista los dispositivos cuya sesión ya está cerrada." },
-  { cat: "Seguridad", q: "¿Puedo apelar una sanción?", a: "Sí. La pantalla de estado de la cuenta muestra tus infracciones y apelaciones. También puedes abrir el formulario de apelación desde el aviso de bloqueo o desde el enlace recibido por correo." },
-  { cat: "Pagos", q: "¿Cuánto cuestan los planes de pago?", a: "Aura ofrece Premium, Gold y Platinum con facturación mensual o anual. Los precios y límites vigentes aparecen en la pantalla Suscripción de la app antes de pagar." },
-  { cat: "Pagos", q: "¿Qué incluye cada plan?", a: "Cada nivel cambia límites y funciones, como likes, chats nuevos, lecturas, perfiles cercanos, Boost y herramientas del chat. La comparación completa y vigente está en Perfil → Suscripción." },
-  { cat: "Pagos", q: "¿Los Boost forman parte de la suscripción?", a: "Los Boost son créditos separados que colocan temporalmente el perfil al principio del orden. Algunos planes pueden incluir una cantidad, y también existen packs cuando están habilitados." },
-  { cat: "Pagos", q: "¿Cómo cancelo mi suscripción?", a: "Ve a Perfil → Pagos y facturas y pulsa «Cancelar renovación». La cancelación se programa automáticamente y conservarás el plan hasta el final del periodo ya pagado. Puedes reactivar la renovación desde la misma pantalla antes de esa fecha." },
-  { cat: "Pagos", q: "¿Dónde veo y descargo mis facturas o reembolsos?", a: "Ve a Perfil → Pagos y facturas. Cada movimiento completado permite descargar su factura o justificante; si existe una factura rectificativa por un reembolso, también aparece para descargarla." },
-  { cat: "Pagos", q: "¿Cómo reintento un pago no efectuado?", a: "Ve a Perfil → Pagos y facturas. Los cobros fallidos o pendientes muestran «Reintentar cobro»; si tu banco requiere confirmación, Aura abrirá la página segura de Stripe para completarla." },
-];
+// V1003 · FAQ, categorías e introducciones proceden de
+// public/faq_content.js, la misma fuente que consume la aplicación.
+
 // Términos, portados 1:1 desde screenInfoTerms() (el HTML de <b>/<a> es propio)
 const TERMS = [
   { h: "1. Titularidad y datos identificativos del prestador (LSSI-CE art. 10)", p: "El servicio Aura (en adelante, «Aura» o «el Servicio»), accesible en <b>citasaura.es</b>, es operado por <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Bulevar Clara Campoamor 9</b>, España, e email de contacto <b>hola@citasaura.es</b>. Estos datos identifican al prestador del servicio de la sociedad de la información conforme al artículo 10 de la Ley 34/2002, de Servicios de la Sociedad de la Información y del Comercio Electrónico (LSSI-CE)." },
@@ -1653,25 +1608,17 @@ function pagePortada() {
    Las ENTRADILLAS son texto abierto, visible sin pulsar nada, que explica el
    tema antes de las preguntas concretas. V969 amplía además las respuestas con
    funciones comprobadas y elimina promesas que no existen en el producto. */
-const FAQ_ENTRADILLAS = {
-  Cuenta: "Una cuenta de Aura reúne un correo confirmado, una identidad comprobada y un perfil. El correo se valida con un código de seis dígitos; la identidad se revisa para confirmar la mayoría de edad y es necesaria antes de escribir. Puedes instalar Aura desde el navegador, aunque las funciones que consultan o envían datos necesitan conexión. El correo no se cambia todavía desde el perfil y debe gestionarse con soporte. Eliminar la cuenta sí es una acción directa y el borrado se completa como máximo en 30 días.",
-  Perfil: "Tu perfil y tus filtros cumplen funciones distintas. En el perfil decides qué información aportar y qué campos ocultar; en Buscar eliges qué características deben tener las personas que aparecen. Cuantos más filtros opcionales actives, más fácil es que alguien con ese dato sin rellenar quede fuera. El orden posterior no se personaliza en secreto: Boost, conexión, verificación y azar.",
-  Matches: "En Aura no hay puntuación de compatibilidad ni nada que aprenda de lo que haces. Lo que ves sale de dos pasos separados: primero tus filtros descartan (edad, distancia, género y los campos de estilo de vida que hayas activado; ojo, quien tenga ese campo vacío también queda descartado), y después lo que queda se ordena siempre igual: Boost activo, gente conectada, perfiles verificados y el resto al azar. Un match es que los dos hayáis dicho «me gusta»; hasta ese momento nadie puede escribirte. La cuenta gratuita tiene un tope diario de «me gusta» y Premium lo quita.",
-  Chats: "El chat se abre con el match y vive mientras el match exista: si cualquiera de los dos deshace el match, la conversación desaparece para ambos. Para escribir hace falta tener la edad verificada — no es una recomendación, el servidor lo comprueba en cada mensaje. Hay dos cosas que conviene saber antes de usarlo: las imágenes que se envían por chat <b>no</b> pasan ningún filtro automático, así que si recibes algo inapropiado lo que funciona es denunciar la conversación (la revisa una persona en menos de 24 horas); y los mensajes de texto no están cifrados de extremo a extremo, van por HTTPS y se guardan en la Unión Europea.",
-  Notificaciones: "Los avisos pueden aparecer dentro de Aura o como notificaciones push del navegador. Cada canal depende de tus preferencias y de los permisos del dispositivo; si el sistema ha bloqueado el permiso, Aura no puede volver a concedérselo por su cuenta. Los correos de seguridad o facturación se gestionan aparte de estos interruptores.",
-  Extras: "Recompensas, progreso, Historias y Quedadas son áreas independientes de la función principal de conocer perfiles. Algunas dependen del contenido o las campañas activadas en cada momento. En los encuentros presenciales, Aura facilita el evento pero no sustituye las precauciones personales: lugar público, contacto de confianza y transporte propio.",
-  Seguridad: "La verificación es el cimiento de todo lo demás: documento oficial, selfie con comparación facial y, si el sistema no queda seguro, revisión humana y videoidentificación. Quien no la pasa no escribe. A partir de ahí, las herramientas están en tus manos: bloquear es inmediato y silencioso (la otra persona no recibe ningún aviso), denunciar abre un caso que se revisa en menos de 24 horas, y las sanciones siguen una escalera pública que va del aviso al baneo permanente con bloqueo de IP y de dispositivo. Si crees que una sanción es un error, se puede apelar y la lee una persona.",
-  Pagos: "Aura se puede usar gratis y sin tarjeta. Los planes Premium, Gold y Platinum amplían límites y funciones; los Boost son créditos separados salvo los que incluya un plan. Los importes vigentes se muestran antes del pago. Desde Perfil → Pagos y facturas puedes cancelar la renovación, descargar documentos y reintentar cobros fallidos; para solicitar la revisión de un cargo o reembolso, contacta con soporte sin enviar datos completos de la tarjeta.",
-};
+// Las introducciones de cada categoría también se comparten con la app.
+
 
 function pageFaq() {
-  const cats = [...new Set(FAQ.map((f) => f.cat))];
-  const catNav = `<div class="cats">${cats.map((c) => `<a href="#${encodeURIComponent(c.toLowerCase())}">${esc(c)}</a>`).join("")}</div>`;
+  const cats = FAQ_CATEGORIES.filter((cat) => FAQ.some((item) => item.cat === cat.key));
+  const catNav = `<div class="cats">${cats.map((cat) => `<a href="#${encodeURIComponent(cat.key)}">${esc(cat.label)}</a>`).join("")}</div>`;
   let body = `<p style="font-size:18px;color:var(--soft);max-width:660px">Aquí están las dudas que nos llegan de verdad al correo de soporte, agrupadas por temas y con una explicación del tema antes de cada bloque. Si algo no cuadra con lo que ves en la app, escríbenos: preferimos corregir esta página a dejarla bonita.</p>${catNav}`;
-  cats.forEach((c) => {
-    body += `<h2 id="${encodeURIComponent(c.toLowerCase())}">${esc(c)}</h2>`;
-    if (FAQ_ENTRADILLAS[c]) body += `<p>${FAQ_ENTRADILLAS[c]}</p>`;
-    FAQ.filter((f) => f.cat === c).forEach((f) => {
+  cats.forEach((cat) => {
+    body += `<h2 id="${encodeURIComponent(cat.key)}">${esc(cat.label)}</h2>`;
+    if (cat.intro) body += `<p>${esc(cat.intro)}</p>`;
+    FAQ.filter((f) => f.cat === cat.key).forEach((f) => {
       body += `<details class="qa"><summary>${esc(f.q)}</summary><div class="a">${esc(f.a)}</div></details>`;
     });
   });
