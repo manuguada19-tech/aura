@@ -930,36 +930,13 @@ Eso es suficiente. El chat no guarda el proyecto; lo guarda el repo.
 
 ---
 
-## 0) SEGURIDAD — PENDIENTE, LEER PRIMERO
-
-Este repositorio **ha estado accesible en público** con credenciales escritas en
-este mismo archivo (claves de EmailJS). Comprobado el 8/09/2026 descargando el
-archivo sin autenticación: respondía 200.
-
-Pendiente de hacer, por orden:
-
-1. **Cambiar la clave privada de EmailJS** en su panel. Esto primero: mientras no
-   se cambie, la clave filtrada sigue funcionando aunque se borre del archivo.
-   Riesgo real: con esa clave se pueden enviar correos que salgan como Aura,
-   incluidos códigos OTP falsos a los usuarios.
-2. **Poner el repositorio en privado** (GitHub → Settings → Change repository
-   visibility).
-3. **Revocar el token personal de GitHub** que se usó para los push.
-4. Revisar si conviene rotar también las claves de Didit y las de Stripe.
-
-**Importante:** borrar los valores de este archivo (hecho en V917) **no borra el
-pasado**. Siguen en el historial de commits. Solo cambiar las claves en cada
-proveedor las desactiva de verdad.
-
----
-
 ## 1) Lo que funciona ya al 100% *(base montada en agosto; sigue vigente)*
 
 - Aura desplegada en Railway (`content-education-production-3b4b.up.railway.app`)
 - MySQL Railway operativa
 - Admin accesible con `manuguada19@gmail.com`
 - Backup merged importado (textos, diseño, config, emails)
-- **EmailJS** como fallback de SMTP → OTP y emails llegan a Gmail
+- **EmailJS** como sistema activo de envío → OTP, emails y plantillas funcionan
 - **Didit KYC** completo: registro → OTP → documento → selfie → vídeo → webhook `/api/verify/id/didit-webhook` funcionando (200 OK con firma HMAC válida)
 - **Mapa MapLibre GL** visible en admin > detalle usuario
 - **Botón "🗑 Eliminar usuario"** en admin > detalle usuario (borra user + identity_verifications)
@@ -988,10 +965,6 @@ PUBLIC_BASE_URL          = ídem
 DIDIT_API_KEY / DIDIT_WORKFLOW_ID / DIDIT_WEBHOOK_SECRET / DIDIT_BASE_URL
 KYC_PROVIDER             = didit
 Webhook Didit URL        = /api/verify/id/didit-webhook  (¡no /api/didit/webhook!)
-
-SMTP_HOST                = smtp.serviciodecorreo.es
-SMTP_PORT                = 587
-SMTP_PASS_<5 buzones>    (Arsys bloquea saliente desde Railway → EmailJS suple)
 
 EMAILJS_SERVICE_ID / EMAILJS_TEMPLATE_ID / EMAILJS_PUBLIC_KEY / EMAILJS_PRIVATE_KEY
 
@@ -1171,9 +1144,9 @@ Backend (`server.js`):
 
 > **Estado a 8/09/2026:** el punto 4.a **ya está resuelto** (V860–V878: la causa
 > era el umbral de precisión de 3000 m y que el PC pisaba la ubicación del móvil;
-> ahora son 300 m en la constante compartida `GPS_GOOD_ACCURACY_M`). Los puntos
-> 4.b y 4.c **siguen pendientes**. Se conserva el texto original de 4.a como
-> registro de la investigación.
+> ahora son 300 m en la constante compartida `GPS_GOOD_ACCURACY_M`). Se conserva
+> el texto original de 4.a como registro de la investigación. El cambio de DNS
+> del punto 4.b sigue pendiente.
 >
 > Queda además un detalle **sin arreglar** encontrado al revisar V880:
 > en `server.js` (~línea 6723) el geoip solo escribe la ubicación
@@ -1189,13 +1162,7 @@ Backend (`server.js`):
 - **Investigar en PC con DevTools abierto**: capturar red al pulsar "activar" y ver si `/api/my/gps/consent` y `/api/my/gps/report` se llaman y qué status devuelven.
 - Sospecha: `state.user.id` puede estar undefined al inicializar GPS.boot() antes de que login termine, o `watchPosition` no arranca.
 
-### 4.b) SMTP directo con Arsys
-- Arsys bloquea IPs de Railway a smtp.serviciodecorreo.es:587.
-- Traceroute enviado a admins de Arsys, caso escalado.
-- EmailJS suple mientras tanto → emails llegan bien.
-- Cuando Arsys responda, quitar bloqueo o probar de nuevo.
-
-### 4.c) DNS de citasaura.es a Railway
+### 4.b) DNS de citasaura.es a Railway
 - Cloudflare > citasaura.es > DNS > registro CNAME `www` apunta a `97pu9z85.mule.page`.
 - Cambiar destino a `content-education-production-3b4b.up.railway.app`.
 - Nube en GRIS (DNS only), NO naranja proxied.
