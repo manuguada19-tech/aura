@@ -4314,6 +4314,11 @@ let _lastScreenOpts = null;
 // posición y la restauramos al re-pintar screenMe. Se resetea al salir del
 // menú (cambiar de pestaña) para que una futura entrada limpia empiece arriba.
 let _meScrollTop = 0;
+// V1027 · Además del scroll, recordamos la categoría de Ajustes que estaba
+// abierta. Así, al volver desde Seguridad, Privacidad, Facturación, etc., el
+// usuario regresa al mismo contexto en vez de aterrizar en el menú inicial.
+let _meCategoryKeyV1027 = "cuenta";
+let _meCategoryOpenV1027 = false;
 const SECTION_MAP = {
   screenWelcome: "welcome",
   screenRegisterEmail: "welcome", screenRegisterOTP: "welcome",
@@ -4959,7 +4964,11 @@ async function routeTab(tab) {
   // V751 · Al salir del menú de perfil (cambiar a otra pestaña) olvidamos la
   // posición de scroll guardada, para que la próxima entrada empiece arriba.
   // Volver a "me" desde una sub-sección NO resetea (así se conserva la posición).
-  if (tab !== "me") _meScrollTop = 0;
+  if (tab !== "me") {
+    _meScrollTop = 0;
+    _meCategoryKeyV1027 = "cuenta";
+    _meCategoryOpenV1027 = false;
+  }
   // Ensure the bottom tabbar is visible when landing on a tab screen
   // (it gets hidden while inside a chat, profile detail or onboarding).
   tabbar.hidden = false;
@@ -16699,7 +16708,7 @@ function screenMe(root) {
   list.className = "profile-panels-v1023";
   const categoryButtons = new Map();
   const panels = new Map();
-  let selectedKey = "cuenta";
+  let selectedKey = _meCategoryKeyV1027 || "cuenta";
 
   profileGroups.forEach(group => {
     const navButton = el("button", { type:"button", "data-key":group.key }, [
@@ -16714,7 +16723,11 @@ function screenMe(root) {
     group.items.forEach(item => {
       const row = el("button", {
         class:"profile-action-row-v1023" + (item.danger ? " danger" : ""), type:"button",
-        "data-search":normalizeProfileSearchV1023(`${item.title} ${item.sub || ""}`), onclick:item.onClick,
+        "data-search":normalizeProfileSearchV1023(`${item.title} ${item.sub || ""}`), onclick:() => {
+          _meCategoryKeyV1027 = group.key;
+          _meCategoryOpenV1027 = true;
+          item.onClick();
+        },
       }, [
         el("span", { class:"profile-action-icon-v1023", "aria-hidden":"true" }, item.icon || "•"),
         el("span", { class:"profile-action-copy-v1023" }, [el("strong", {}, item.title), item.sub ? el("small", {}, item.sub) : null]),
@@ -16760,6 +16773,8 @@ function screenMe(root) {
 
   function activateProfileGroupV1023(key, scroll = false, reveal = true) {
     selectedKey = panels.has(key) ? key : "cuenta";
+    _meCategoryKeyV1027 = selectedKey;
+    _meCategoryOpenV1027 = !!reveal;
     settings.classList.toggle("profile-category-open-v1026", !!reveal);
     categoryButtons.forEach((button, buttonKey) => {
       const active = buttonKey === selectedKey;
@@ -16776,6 +16791,7 @@ function screenMe(root) {
     }
   }
   mobileCategoryBack.addEventListener("click", () => {
+    _meCategoryOpenV1027 = false;
     settings.classList.remove("profile-category-open-v1026");
     settings.scrollIntoView({ behavior:"smooth", block:"start" });
   });
@@ -16785,7 +16801,10 @@ function screenMe(root) {
     settings.classList.toggle("searching", !!query);
     categoryNav.hidden = !!query;
     mobileCategoryBack.hidden = !!query;
-    if (!query && window.matchMedia("(max-width:899px)").matches) settings.classList.remove("profile-category-open-v1026");
+    if (!query && window.matchMedia("(max-width:899px)").matches) {
+      _meCategoryOpenV1027 = false;
+      settings.classList.remove("profile-category-open-v1026");
+    }
     let total = 0;
     panels.forEach(panel => {
       const groupMatch = !!query && panel.dataset.search.includes(query);
@@ -16800,7 +16819,7 @@ function screenMe(root) {
     });
     noResults.hidden = !query || total > 0;
   });
-  activateProfileGroupV1023("cuenta", false, false);
+  activateProfileGroupV1023(_meCategoryKeyV1027, false, _meCategoryOpenV1027);
   root.appendChild(settings);
   // V895 · Subtítulo dinámico del acceso a Boost: refleja el estado real de la
   // bolsa (activo con minutos restantes, boosts disponibles, o ilimitado) sin
@@ -20737,7 +20756,7 @@ function screenInfoTerms(root) {
 
   const sections = [
     { h: "1. Titularidad y datos identificativos del prestador (LSSI-CE art. 10)",
-      p: "El servicio Aura (en adelante, «Aura» o «el Servicio»), accesible en <b>citasaura.es</b>, es operado por <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Bulevar Clara Campoamor 9</b>, España, e email de contacto <b>hola@citasaura.es</b>. Estos datos identifican al prestador del servicio de la sociedad de la información conforme al artículo 10 de la Ley 34/2002, de Servicios de la Sociedad de la Información y del Comercio Electrónico (LSSI-CE)." },
+      p: "El servicio Aura (en adelante, «Aura» o «el Servicio»), accesible en <b>citasaura.es</b>, es operado por <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Calle Alcalá de Henares 16, 19003 Guadalajara</b>, España, e email de contacto <b>hola@citasaura.es</b>. Estos datos identifican al prestador del servicio de la sociedad de la información conforme al artículo 10 de la Ley 34/2002, de Servicios de la Sociedad de la Información y del Comercio Electrónico (LSSI-CE)." },
     { h: "2. Objeto y aceptación de los términos",
       p: "Estos Términos regulan el acceso y uso de Aura, un servicio digital de encuentros personales. Al pulsar «Acepto» durante el registro, o al utilizar cualquier funcionalidad del Servicio, declaras haber leído, entendido y aceptado íntegramente estas condiciones. Si no estás conforme con alguna cláusula, no continúes con el registro y no uses la aplicación." },
     { h: "3. Requisitos para registrarte",
@@ -20769,7 +20788,7 @@ function screenInfoTerms(root) {
     { h: "16. Legislación aplicable y jurisdicción",
       p: "Estos Términos se rigen por la <b>legislación española y europea</b>. Las controversias que puedan surgir se someterán a los Juzgados y Tribunales del domicilio del consumidor, si eres persona consumidora. En caso contrario, a los Juzgados y Tribunales de la ciudad donde tenga su domicilio social el titular del Servicio, con renuncia expresa a cualquier otro fuero." },
     { h: "17. Resolución alternativa de litigios",
-      p: "Si eres consumidor residente en la Unión Europea, puedes acudir a la <b>plataforma europea de resolución de litigios en línea</b>: <a href='https://ec.europa.eu/consumers/odr' target='_blank' rel='noopener'>ec.europa.eu/consumers/odr</a>." },
+      p: "Si eres una persona consumidora, puedes acudir a los servicios públicos de consumo o a una entidad de resolución alternativa de litigios acreditada que resulte competente. La antigua plataforma europea de resolución de litigios en línea dejó de prestar servicio y ya no se ofrece como vía de reclamación." },
     { h: "18. Contacto legal y notificaciones",
       p: "Cualquier comunicación relativa a estos Términos se dirigirá a <b>seguridad@citasaura.es</b>. Aura te notificará mediante email a la dirección asociada a tu cuenta y, cuando proceda, mediante avisos dentro de la aplicación." },
   ];
@@ -20929,7 +20948,7 @@ function screenInfoPrivacy(root) {
 
   const secs = [
     { h: "1. Responsable del tratamiento",
-      p: "El responsable del tratamiento de tus datos personales es <b>[Nombre o razón social del titular]</b>, con NIF <b>[NIF]</b>, domicilio en <b>[dirección postal completa]</b>, España. Correo de contacto: <b>seguridad@citasaura.es</b>. Datos del Delegado de Protección de Datos (DPO), si aplica: <b>dpo@citasaura.es</b>. Los campos entre corchetes se completan con los datos definitivos antes del lanzamiento comercial." },
+      p: "El responsable del tratamiento de tus datos personales es <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Calle Alcalá de Henares 16, 19003 Guadalajara</b>, España. Correo de contacto para cuestiones de privacidad y ejercicio de derechos: <b>seguridad@citasaura.es</b>." },
     { h: "2. Categorías de datos que tratamos",
       p: "(a) <b>Datos identificativos y de contacto</b>: nombre, email, teléfono (opcional), fecha de nacimiento.<br>(b) <b>Datos del perfil</b>: fotos, biografía, género, orientación, altura, peso, etnia (opcional), ciudad, provincia, país, preferencias.<br>(c) <b>Datos biométricos</b> (categoría especial, art. 9 RGPD): imagen del documento de identidad, selfie y vídeo corto durante la verificación KYC.<br>(d) <b>Datos de uso</b>: matches, likes, mensajes, tiempo de uso, historial de suscripción.<br>(e) <b>Datos técnicos</b>: dirección IP, huella de dispositivo (fingerprint), sistema operativo, navegador, identificadores de sesión y cookies técnicas.<br>(f) <b>Datos de facturación</b>: producto contratado, importe, IVA. No almacenamos tarjetas: los pagos los procesa Stripe." },
     { h: "3. Finalidades y bases jurídicas del tratamiento",
