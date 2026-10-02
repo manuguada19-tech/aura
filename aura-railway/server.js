@@ -7368,6 +7368,25 @@ app.patch("/api/campaigns/:id", wrap(async (req, res) => {
 // -- Helpers --------------------------------------------------------------
 function pushEnabled() { return !!(webpush && process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY); }
 
+/* V1013 · Una única definición de los pasos del embudo. La reutilizan el
+   detalle administrativo y las audiencias push para que nunca discrepen. */
+function funnelStageCriterion(stage, alias = "u") {
+  const a = String(alias || "u").replace(/[^a-z0-9_]/gi, "") || "u";
+  return {
+    registered: "1=1",
+    profile: `(COALESCE(NULLIF(TRIM(${a}.bio),''),NULL) IS NOT NULL
+      AND COALESCE(NULLIF(TRIM(${a}.city),''),NULL) IS NOT NULL
+      AND (COALESCE(NULLIF(TRIM(${a}.photo_url),''),NULL) IS NOT NULL
+        OR EXISTS (SELECT 1 FROM photos fp WHERE fp.user_id=${a}.id AND COALESCE(fp.is_now_photo,0)=0)))`,
+    verified: `COALESCE(${a}.verified,0)=1`,
+    active: `COALESCE(${a}.last_login,'1970-01-01') >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+    liked: `EXISTS (SELECT 1 FROM likes fl WHERE fl.from_user=${a}.id AND fl.type IN ('like','super'))`,
+    matched: `EXISTS (SELECT 1 FROM matches fm WHERE fm.user_a=${a}.id OR fm.user_b=${a}.id)`,
+    messaged: `EXISTS (SELECT 1 FROM messages fmsg WHERE fmsg.sender_id=${a}.id)`,
+    paid: `COALESCE(${a}.plan,'free') IN ('premium','gold','platinum')`,
+  }[stage] || null;
+}
+
 async function buildAudienceQuery(segment, params) {
   params = params || {};
   const clauses = ["active = 1"];
@@ -7398,6 +7417,14 @@ async function buildAudienceQuery(segment, params) {
       const ids = Array.isArray(params.user_ids) ? params.user_ids.map(x=>parseInt(x,10)).filter(Boolean) : [];
       if (!ids.length) { clauses.push("1=0"); }
       else { clauses.push(`user_id IN (${ids.map(()=>"?").join(",")})`); args.push(...ids); }
+      break;
+    }
+    case "funnel_stage": {
+      const stage = String(params.stage || "");
+      const status = params.status === "completed" ? "completed" : "missing";
+      const criterion = funnelStageCriterion(stage, "fu");
+      if (!criterion) clauses.push("1=0");
+      else clauses.push(`user_id IN (SELECT fu.id FROM users fu WHERE ${status === "completed" ? criterion : `NOT (${criterion})`})`);
       break;
     }
     default: clauses.push("user_id IS NOT NULL");
@@ -20619,7 +20646,7 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
 
   const [
     reports, tickets, urgentTickets, kycRows, appeals, nowPhotos, devices,
-    emailQueued, emailFailed, pushQueued, pushFailed, errors24h, backupRows,
+    emailQueued, emailFailed, pushQueued, pushFailed, errors24h, backupRows, stalledUsers,
   ] = await Promise.all([
     adminScalar("SELECT COUNT(*) n FROM reports WHERE status IN ('open','reviewing','escalated')"),
     adminScalar("SELECT COUNT(*) n FROM support_tickets WHERE status <> 'closed'"),
@@ -20637,6 +20664,30 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     adminScalar("SELECT COALESCE(SUM(failed_count),0) n FROM push_campaigns WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
     adminScalar("SELECT COUNT(*) n FROM logs WHERE level='error' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"),
     adminRows("SELECT k,v FROM settings WHERE k IN ('backup.last_export_at','backup.last_snapshot_at','backup.last_snapshot_file','backup.last_full_export_at')"),
+    adminRows(`
+      SELECT 'profile' stage, 'Perfil pendiente más de 7 días' title,
+             COUNT(*) count, MIN(DATE_ADD(u.created_at, INTERVAL 7 DAY)) due_at
+        FROM users u
+       WHERE u.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+         AND NOT (${funnelStageCriterion("profile", "u")})
+      UNION ALL
+      SELECT 'verified', 'Verificación pendiente más de 7 días',
+             COUNT(*), MIN(DATE_ADD(u.created_at, INTERVAL 7 DAY))
+        FROM users u
+       WHERE u.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+         AND NOT (${funnelStageCriterion("verified", "u")})
+      UNION ALL
+      SELECT 'active', 'Sin actividad en los últimos 30 días',
+             COUNT(*), MIN(DATE_ADD(COALESCE(u.last_login,u.created_at), INTERVAL 30 DAY))
+        FROM users u
+       WHERE u.created_at < DATE_SUB(NOW(), INTERVAL 30 DAY)
+         AND NOT (${funnelStageCriterion("active", "u")})
+      UNION ALL
+      SELECT 'liked', 'Sin primer interés tras 7 días',
+             COUNT(*), MIN(DATE_ADD(u.created_at, INTERVAL 7 DAY))
+        FROM users u
+       WHERE u.created_at < DATE_SUB(NOW(), INTERVAL 7 DAY)
+         AND NOT (${funnelStageCriterion("liked", "u")})`),
   ]);
 
   // Mismo criterio que /api/admin/kyc/queue: una persona, un caso efectivo.
@@ -20695,6 +20746,24 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
              FIELD(severity,'critical','high','medium'), COALESCE(due_at, created_at), created_at ASC
     LIMIT 12`);
 
+  /* Alertas agregadas: nunca crean tareas ni cambian cuentas. Cada fila abre
+     directamente el conjunto pendiente del mismo paso del embudo. */
+  const funnelItems = (stalledUsers || [])
+    .filter(row => Number(row.count || 0) > 0)
+    .map((row, index) => ({
+      kind: "funnel",
+      id: `funnel:${row.stage}`,
+      stage: row.stage,
+      status: "missing",
+      count: Number(row.count || 0),
+      title: row.title,
+      detail: `${Number(row.count || 0)} usuarios · revisar el paso pendiente`,
+      severity: row.stage === "active" ? "critical" : "high",
+      created_at: row.due_at || new Date(Date.now() - (index + 1) * 1000).toISOString(),
+      due_at: row.due_at || null,
+      view_name: "user_funnel",
+    }));
+
   const technicalIssues = [];
   if (!dbOk) technicalIssues.push({ level: "critical", label: "Base de datos sin respuesta" });
   if (emailFailed) technicalIssues.push({ level: "danger", label: `${emailFailed} emails fallidos en 24 h` });
@@ -20735,7 +20804,8 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     ok: true,
     generated_at: new Date().toISOString(),
     queues,
-    work_items: workItems,
+    work_items: [...funnelItems, ...workItems],
+    stalled_users: funnelItems,
     health: {
       status: technicalIssues.length ? "attention" : "ok",
       ready: BOOT_READY,
@@ -20858,19 +20928,6 @@ app.get("/api/admin/user-funnel/:stage/users", requireAdmin, wrap(async (req, re
   const q = String(req.query.q || "").trim().slice(0, 120);
   const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
   const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
-  const criteria = {
-    registered: "1=1",
-    profile: `(COALESCE(NULLIF(TRIM(u.bio),''),NULL) IS NOT NULL
-      AND COALESCE(NULLIF(TRIM(u.city),''),NULL) IS NOT NULL
-      AND (COALESCE(NULLIF(TRIM(u.photo_url),''),NULL) IS NOT NULL
-        OR EXISTS (SELECT 1 FROM photos fp WHERE fp.user_id=u.id AND COALESCE(fp.is_now_photo,0)=0)))`,
-    verified: "COALESCE(u.verified,0)=1",
-    active: "COALESCE(u.last_login,'1970-01-01') >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
-    liked: "EXISTS (SELECT 1 FROM likes fl WHERE fl.from_user=u.id AND fl.type IN ('like','super'))",
-    matched: "EXISTS (SELECT 1 FROM matches fm WHERE fm.user_a=u.id OR fm.user_b=u.id)",
-    messaged: "EXISTS (SELECT 1 FROM messages fmsg WHERE fmsg.sender_id=u.id)",
-    paid: "COALESCE(u.plan,'free') IN ('premium','gold','platinum')",
-  };
   const requirement = {
     registered: "Cuenta registrada",
     profile: "Biografía, ciudad y al menos una foto",
@@ -20881,11 +20938,12 @@ app.get("/api/admin/user-funnel/:stage/users", requireAdmin, wrap(async (req, re
     messaged: "Enviar el primer mensaje",
     paid: "Activar Premium, Gold o Platinum",
   };
-  if (!criteria[stage]) return res.status(400).json({ error:"invalid_stage" });
+  const stageCriterion = funnelStageCriterion(stage, "u");
+  if (!stageCriterion) return res.status(400).json({ error:"invalid_stage" });
 
   const searchSql = q ? " AND (u.name LIKE ? OR u.email LIKE ? OR CAST(u.id AS CHAR)=?)" : "";
   const searchArgs = q ? [`%${q}%`, `%${q}%`, q] : [];
-  const completedSql = criteria[stage];
+  const completedSql = stageCriterion;
   const selectedSql = status === "completed" ? completedSql : `NOT (${completedSql})`;
   const [countResult, rowResult] = await Promise.all([
     pool.query(

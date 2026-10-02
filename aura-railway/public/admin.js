@@ -1416,6 +1416,23 @@ $("#themeBtn").addEventListener("click", () => {
       el("strong", {}, remaining ? (remaining === 1 ? "Escribe un carácter más" : "Busca en todo el panel") : "Busca en todo el panel"),
       el("span", {}, "Usuarios, tickets, denuncias, pagos y secciones. El buscador permanecerá abierto mientras trabajas."),
     ]));
+    const history = readSearchHistory();
+    if (history.length) {
+      const historyHead = el("div", { class:"gsearch-history-head" }, [
+        el("div", { class:"gsearch-group-title" }, "Búsquedas recientes"),
+        el("button", { class:"gsearch-history-clear", type:"button", onclick:() => {
+          try { localStorage.removeItem(SEARCH_HISTORY_KEY); } catch {}
+          renderIdle();
+        } }, "Borrar historial"),
+      ]);
+      const recent = el("div", { class:"gsearch-history-list" });
+      history.forEach(value => recent.appendChild(el("button", {
+        class:"gsearch-history-chip", type:"button", onclick:() => {
+          input.value = value; syncClearButton(); run(value); input.focus();
+        },
+      }, value)));
+      panel.append(historyHead, recent);
+    }
     let preferred = [];
     try {
       preferred = [
@@ -1447,67 +1464,36 @@ $("#themeBtn").addEventListener("click", () => {
   mobileClose.addEventListener("click", close);
   mobileScrim.addEventListener("click", close);
 
-  let timer = null, lastQ = "";
+  const SEARCH_HISTORY_KEY = "aura-admin-search-history-v1013";
+  const searchFilters = [
+    ["all", "Todo"], ["users", "Usuarios"], ["tickets", "Tickets"],
+    ["reports", "Denuncias"], ["payments", "Pagos"], ["sections", "Secciones"],
+  ];
+  let activeFilter = "all";
+  try { activeFilter = sessionStorage.getItem("aura-admin-search-filter") || "all"; } catch {}
+  if (!searchFilters.some(([key]) => key === activeFilter)) activeFilter = "all";
+  function readSearchHistory() {
+    try {
+      const values = JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || "[]");
+      return Array.isArray(values) ? values.filter(v => typeof v === "string" && v.trim().length >= 2).slice(0, 6) : [];
+    } catch { return []; }
+  }
+  function rememberSearch(value) {
+    const q = String(value || "").trim().slice(0, 100);
+    if (q.length < 2) return;
+    const next = [q, ...readSearchHistory().filter(v => v.toLocaleLowerCase("es") !== q.toLocaleLowerCase("es"))].slice(0, 6);
+    try { localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(next)); } catch {}
+  }
+
+  let timer = null, lastQ = "", lastSearchData = null;
   async function run(q) {
     lastQ = q;
     try {
       const data = await api.get("/api/admin/global-search?q=" + encodeURIComponent(q));
       if (q !== lastQ) return; // respuesta obsoleta
-      panel.innerHTML = "";
-      const groups = (data && data.groups) || {};
-      const needle = q.toLocaleLowerCase("es");
-      const modules = Array.from(document.querySelectorAll("#nav .nav-link[data-view]"))
-        .filter(n => n.style.display !== "none" && n.textContent.toLocaleLowerCase("es").includes(needle))
-        .slice(0, 6)
-        .map(n => ({ view: n.dataset.view, label:n.dataset.navLabel || n.querySelector("span:nth-of-type(2)")?.textContent?.trim() || n.textContent.replace(/[★☆]/g, "").trim() }));
-      const total = Object.values(groups).reduce((n, rows) => n + (Array.isArray(rows) ? rows.length : 0), 0) + modules.length;
-      if (!total) {
-        panel.appendChild(el("div", { style: "padding:10px 12px;opacity:.6;font-size:13px" }, "Sin resultados"));
-        open(); return;
-      }
-
-      const addGroup = (label, rows, formatter, onPick) => {
-        if (!Array.isArray(rows) || !rows.length) return;
-        panel.appendChild(el("div", { class: "gsearch-group-title" }, label));
-        rows.forEach((item) => {
-          const f = formatter(item);
-          const row = el("button", { class: "gsearch-result", type: "button" }, [
-            el("span", { class: `gsearch-type ${f.tone || ""}` }, f.icon || "•"),
-            el("span", { class: "gsearch-copy" }, [
-              el("strong", {}, f.title || "—"),
-              el("small", {}, f.detail || ""),
-            ]),
-            el("span", { class: "gsearch-arrow" }, "→"),
-          ]);
-          row.addEventListener("click", () => {
-            close(); input.value = ""; syncClearButton(); onPick(item);
-          });
-          panel.appendChild(row);
-        });
-      };
-
-      addGroup("Secciones", modules,
-        m => ({ icon: "↗", title: m.label, detail: "Abrir sección" }),
-        m => document.querySelector(`[data-view="${m.view}"]`)?.click());
-      addGroup("Usuarios", groups.users,
-        u => ({ icon: "U", tone: "rose", title: u.name || `Usuario #${u.id}`, detail: `#${u.id}${u.email ? " · " + u.email : ""}` }),
-        u => { try { openUserDrawer(u.id); } catch {} });
-      addGroup("Tickets", groups.tickets,
-        t => ({ icon: "T", tone: t.priority === "high" ? "red" : "amber", title: `${t.ref || "#" + t.id} · ${t.subject || "Sin asunto"}`, detail: `${t.email || ""} · ${t.status || ""}` }),
-        t => { route("tickets"); openTicketDrawer(t.id); });
-      addGroup("Denuncias", groups.reports,
-        r => ({ icon: "D", tone: "red", title: `Denuncia #${r.id} · ${r.reason || "Sin motivo"}`, detail: `Usuario #${r.target_id} · ${r.status || ""}` }),
-        r => { route("reports"); openReportDrawer(r.id); });
-      addGroup("Pagos", groups.payments,
-        p => ({ icon: "€", tone: "green", title: p.invoice_no || `Pago #${p.id}`, detail: `${p.email || ""} · ${fmt.eur(p.amount)} · ${p.status || ""}` }),
-        p => { route("payments"); openPaymentDrawer(p.id); });
-
-      /* Conserva una altura cómoda incluso cuando una búsqueda devuelve varias
-         categorías; el teclado puede seguir cerrándola con Escape. */
-      panel.querySelectorAll(".gsearch-result").forEach((row) => {
-        row.addEventListener("focus", () => row.scrollIntoView({ block: "nearest" }));
-      });
-      open();
+      lastSearchData = data;
+      rememberSearch(q);
+      renderSearchResults(q, data);
     } catch {
       if (q !== lastQ) return;
       panel.innerHTML = "";
@@ -1516,6 +1502,72 @@ $("#themeBtn").addEventListener("click", () => {
       ]));
       open();
     }
+  }
+
+  function renderSearchResults(q, data) {
+    panel.innerHTML = "";
+    const groups = (data && data.groups) || {};
+    const needle = q.toLocaleLowerCase("es");
+    const modules = Array.from(document.querySelectorAll("#nav .nav-link[data-view]"))
+      .filter(n => n.style.display !== "none" && n.textContent.toLocaleLowerCase("es").includes(needle))
+      .slice(0, 6)
+      .map(n => ({ view:n.dataset.view, label:n.dataset.navLabel || n.querySelector("span:nth-of-type(2)")?.textContent?.trim() || n.textContent.replace(/[★☆]/g, "").trim() }));
+    const counts = {
+      users:(groups.users || []).length, tickets:(groups.tickets || []).length,
+      reports:(groups.reports || []).length, payments:(groups.payments || []).length,
+      sections:modules.length,
+    };
+    counts.all = Object.values(counts).reduce((sum, value) => sum + value, 0);
+    const filters = el("div", { class:"gsearch-filters", role:"tablist", "aria-label":"Filtrar resultados" });
+    searchFilters.forEach(([key, label]) => {
+      const control = el("button", {
+        class:`gsearch-filter${activeFilter === key ? " active" : ""}`, type:"button", role:"tab",
+        "aria-selected":String(activeFilter === key), onclick:() => {
+          activeFilter = key;
+          try { sessionStorage.setItem("aura-admin-search-filter", key); } catch {}
+          renderSearchResults(q, lastSearchData || data);
+        },
+      }, `${label} · ${counts[key] || 0}`);
+      filters.appendChild(control);
+    });
+    panel.appendChild(filters);
+
+    const addGroup = (key, label, rows, formatter, onPick) => {
+      if (activeFilter !== "all" && activeFilter !== key) return;
+      if (!Array.isArray(rows) || !rows.length) return;
+      panel.appendChild(el("div", { class:"gsearch-group-title" }, label));
+      rows.forEach(item => {
+        const f = formatter(item);
+        const row = el("button", { class:"gsearch-result", type:"button" }, [
+          el("span", { class:`gsearch-type ${f.tone || ""}` }, f.icon || "•"),
+          el("span", { class:"gsearch-copy" }, [el("strong", {}, f.title || "—"), el("small", {}, f.detail || "")]),
+          el("span", { class:"gsearch-arrow" }, "→"),
+        ]);
+        row.addEventListener("click", () => { close(); input.value = ""; syncClearButton(); onPick(item); });
+        panel.appendChild(row);
+      });
+    };
+
+    addGroup("sections", "Secciones", modules,
+      m => ({ icon:"↗", title:m.label, detail:"Abrir sección" }),
+      m => document.querySelector(`[data-view="${m.view}"]`)?.click());
+    addGroup("users", "Usuarios", groups.users,
+      u => ({ icon:"U", tone:"rose", title:u.name || `Usuario #${u.id}`, detail:`#${u.id}${u.email ? " · " + u.email : ""}` }),
+      u => { try { openUserDrawer(u.id); } catch {} });
+    addGroup("tickets", "Tickets", groups.tickets,
+      t => ({ icon:"T", tone:t.priority === "high" ? "red" : "amber", title:`${t.ref || "#" + t.id} · ${t.subject || "Sin asunto"}`, detail:`${t.email || ""} · ${t.status || ""}` }),
+      t => { route("tickets"); openTicketDrawer(t.id); });
+    addGroup("reports", "Denuncias", groups.reports,
+      r => ({ icon:"D", tone:"red", title:`Denuncia #${r.id} · ${r.reason || "Sin motivo"}`, detail:`Usuario #${r.target_id} · ${r.status || ""}` }),
+      r => { route("reports"); openReportDrawer(r.id); });
+    addGroup("payments", "Pagos", groups.payments,
+      p => ({ icon:"€", tone:"green", title:p.invoice_no || `Pago #${p.id}`, detail:`${p.email || ""} · ${fmt.eur(p.amount)} · ${p.status || ""}` }),
+      p => { route("payments"); openPaymentDrawer(p.id); });
+
+    const shown = activeFilter === "all" ? counts.all : counts[activeFilter];
+    if (!shown) panel.appendChild(el("div", { class:"gsearch-empty" }, `Sin resultados en ${searchFilters.find(([key]) => key === activeFilter)?.[1] || "esta categoría"}.`));
+    panel.querySelectorAll(".gsearch-result").forEach(row => row.addEventListener("focus", () => row.scrollIntoView({ block:"nearest" })));
+    open();
   }
 
   input.addEventListener("input", () => {
@@ -1549,13 +1601,20 @@ $("#themeBtn").addEventListener("click", () => {
 
 /* Drawer */
 const drawer = {
-  open(node) {
+  open(node, mode) {
     const d = $("#drawer"), b = $("#drawerBody");
+    d.classList.toggle("user-profile-open", mode === "user-profile");
+    document.body.classList.toggle("user-profile-drawer-open", mode === "user-profile");
     b.innerHTML = ""; b.appendChild(node); d.hidden = false;
     d.querySelectorAll("[data-close]").forEach(x => x.addEventListener("click", drawer.close, { once: true }));
     document.addEventListener("keydown", drawer._esc);
   },
-  close() { $("#drawer").hidden = true; document.removeEventListener("keydown", drawer._esc); },
+  close() {
+    const d = $("#drawer");
+    d.hidden = true; d.classList.remove("user-profile-open");
+    document.body.classList.remove("user-profile-drawer-open");
+    document.removeEventListener("keydown", drawer._esc);
+  },
   _esc(e) { if (e.key === "Escape") drawer.close(); }
 };
 
@@ -2919,9 +2978,9 @@ async function viewIncidents(root) {
 
 /* V1010 · Cada tramo del embudo abre el listado de personas que lo han
    completado o lo tienen pendiente, con el requisito exacto y acceso a ficha. */
-function openUserFunnelDetails(stage, onUserChange) {
+function openUserFunnelDetails(stage, onUserChange, initialStatus) {
   const overlay = el("div", { class:"ac-overlay" });
-  const state = { status:stage.key === "registered" ? "completed" : "missing", q:"", offset:0, limit:25 };
+  const state = { status:initialStatus || (stage.key === "registered" ? "completed" : "missing"), q:"", offset:0, limit:25 };
   let searchTimer = null;
   let requestId = 0;
   const close = () => {
@@ -2943,10 +3002,20 @@ function openUserFunnelDetails(stage, onUserChange) {
   const resultMeta = el("div", { class:"funnel-detail-meta" });
   const list = el("div", { class:"funnel-user-list", "aria-live":"polite" });
   const pagination = el("div", { class:"funnel-detail-pagination" });
+  const useAudience = btn("Crear campaña", "primary sm", () => {
+    const draft = {
+      segment:"funnel_stage",
+      segment_params:{ stage:stage.key, status:state.status },
+      audience_label:`${stage.label} · ${state.status === "missing" ? "Pendientes" : "Completaron"}`,
+    };
+    try { sessionStorage.setItem("aura-admin-push-funnel-draft", JSON.stringify(draft)); } catch {}
+    close();
+    route("push_campaigns");
+  });
   const modal = el("section", { class:"ac-dialog funnel-detail-modal", role:"dialog", "aria-modal":"true", "aria-label":`Detalle: ${stage.label}` }, [
     el("header", { class:"funnel-detail-head" }, [
       el("div", {}, [el("small", {}, "DETALLE DEL EMBUDO"), el("h3", {}, stage.label), el("p", {}, stage.action)]),
-      btn("Cerrar", "ghost sm", close),
+      el("div", { class:"funnel-detail-head-actions" }, [useAudience, btn("Cerrar", "ghost sm", close)]),
     ]),
     el("div", { class:"funnel-detail-toolbar" }, [
       el("div", { class:"funnel-detail-tabs", role:"tablist", "aria-label":"Estado del paso" }, [pendingTab, completedTab]),
@@ -3051,6 +3120,8 @@ async function viewUserFunnel(root) {
   ]));
   const summary = el("div", { class:"funnel-summary" });
   const chart = el("div", { class:"user-funnel" });
+  let requestedStage = window.__pendingFunnelOpen || null;
+  window.__pendingFunnelOpen = null;
   root.append(summary, chart);
   async function load() {
     chart.innerHTML = "<div class='loading'>Calculando embudo…</div>";
@@ -3089,6 +3160,12 @@ async function viewUserFunnel(root) {
           ]),
         ]));
       });
+      if (requestedStage) {
+        const request = requestedStage;
+        requestedStage = null;
+        const stage = stages.find(item => item.key === request.stage);
+        if (stage) setTimeout(() => openUserFunnelDetails(stage, load, request.status || "missing"), 0);
+      }
     } catch (e) {
       chart.innerHTML = "";
       chart.appendChild(el("div", { class:"error" }, "No se pudo calcular el embudo. Vuelve a intentarlo."));
@@ -3248,6 +3325,9 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       timing, el("span", { class: "ops-go" }, "→"),
     ]);
     row.addEventListener("click", () => {
+      if (item.kind === "funnel") {
+        window.__pendingFunnelOpen = { stage:item.stage, status:item.status || "missing" };
+      }
       openDashboardSection(item.view_name, "Centro de trabajo");
       if (item.kind === "ticket") openTicketDrawer(item.id);
       else if (item.kind === "report") openReportDrawer(item.id);
@@ -6749,10 +6829,14 @@ async function openUserDrawer(id, onChange) {
     ]));
   }
 
-  drawer.open(el("div", { class: "drawer-wrap" }, [
+  drawer.open(el("div", { class: "drawer-wrap user-admin-drawer" }, [
+    el("header", { class:"user-drawer-mobile-head" }, [
+      el("button", { class:"user-drawer-back", type:"button", "data-close":true, "aria-label":"Volver al panel" }, "← Volver"),
+      el("div", {}, [el("strong", {}, "Ficha de usuario"), el("small", {}, u.name || `Usuario #${id}`)]),
+    ]),
     el("button", { class: "drawer-close", "data-close": true, "aria-label": "Cerrar" }, "×"),
     form,
-  ]));
+  ]), "user-profile");
   // Cargar contexto en vivo y refrescarlo cada 8s
   renderUserLive();
 
@@ -21733,6 +21817,11 @@ async function pickMessageOrTemplate(kind, promptLabel) {
    Campañas Push · envío masivo o segmentado de notificaciones
    ============================================================ */
 async function viewPushCampaigns(root) {
+  let funnelDraft = null;
+  try {
+    funnelDraft = JSON.parse(sessionStorage.getItem("aura-admin-push-funnel-draft") || "null");
+    sessionStorage.removeItem("aura-admin-push-funnel-draft");
+  } catch { funnelDraft = null; }
   root.appendChild(viewTitle(
     "🔔 Campañas Push",
     "Envía notificaciones push a tus usuarios: anuncios, ofertas, avisos de mantenimiento, novedades. Segmentación por zona, país, edad, premium/free o personas concretas buscándolas por nombre."
@@ -21838,8 +21927,12 @@ async function viewPushCampaigns(root) {
           tdAct.appendChild(btnSend);
         }
         const btnDup = el("button", { class: "btn btn-sm", style: "margin-right:4px" }, "📋 Duplicar");
+        let duplicateParams = {};
+        try { duplicateParams = typeof c.segment_params === "string" ? JSON.parse(c.segment_params || "{}") : (c.segment_params || {}); } catch {}
         btnDup.addEventListener("click", () => openCampaignEditor({
-          title: c.title, body: c.body, url: c.url, segment: c.segment
+          title: c.title, body: c.body, url: c.url, segment: c.segment,
+          segment_params:duplicateParams,
+          audience_label:c.segment === "funnel_stage" ? "Audiencia del embudo guardada" : "",
         }));
         tdAct.appendChild(btnDup);
         const btnDel = el("button", { class: "btn btn-sm danger" }, "🗑");
@@ -21861,9 +21954,20 @@ async function viewPushCampaigns(root) {
   btnRefresh.addEventListener("click", load);
   btnNew.addEventListener("click", () => openCampaignEditor());
   load();
+  if (funnelDraft?.segment === "funnel_stage") setTimeout(() => openCampaignEditor(funnelDraft), 0);
 
   function openCampaignEditor(prefill) {
     prefill = prefill || {};
+    const funnelLabels = {
+      registered:"Registro completado", profile:"Perfil preparado", verified:"Identidad verificada",
+      active:"Actividad reciente", liked:"Primer interés", matched:"Primer match",
+      messaged:"Primer mensaje", paid:"Plan de pago",
+    };
+    const funnelStage = String(prefill.segment_params?.stage || "");
+    if (prefill.segment === "funnel_stage" && !funnelLabels[funnelStage]) prefill.segment = "all";
+    if (prefill.segment === "funnel_stage" && !prefill.audience_label) {
+      prefill.audience_label = `${funnelLabels[funnelStage]} · ${prefill.segment_params?.status === "completed" ? "Completaron" : "Pendientes"}`;
+    }
     // Estilos base para inputs, se aplican con var() del tema activo.
     const INPUT_STYLE = "width:100%;padding:10px;background:var(--panel-2,#191d27);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:8px;font-size:14px;box-sizing:border-box";
     const INPUT_SM = "padding:8px;background:var(--panel-2,#191d27);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:6px;font-size:13px;box-sizing:border-box";
@@ -21872,6 +21976,13 @@ async function viewPushCampaigns(root) {
 
     modal.appendChild(el("h2", { style: "margin:0 0 4px;font-size:20px;color:var(--text,#ecedf3)" }, "🔔 Nueva campaña push"));
     modal.appendChild(el("p", { style: "margin:0 0 16px;color:var(--muted,#8f95a3);font-size:13px" }, "Diseña tu notificación y elige a quién enviarla."));
+    if (prefill.audience_label) {
+      modal.appendChild(el("div", { class:"campaign-prefill-notice" }, [
+        el("strong", {}, "Audiencia precargada desde el embudo"),
+        el("span", {}, prefill.audience_label),
+        el("small", {}, "La lista se calculará al enviar. Nada se envía hasta que lo confirmes."),
+      ]));
+    }
 
     // Plantillas rápidas
     const templates = [
@@ -21943,6 +22054,7 @@ async function viewPushCampaigns(root) {
       el("option", { value: "age" }, "🎂 Por rango de edad"),
       el("option", { value: "active_days" }, "⚡ Activos en los últimos N días"),
       el("option", { value: "user_ids" }, "🎯 Personas concretas (buscar por nombre)"),
+      el("option", { value: "funnel_stage", disabled:prefill.segment !== "funnel_stage" }, "📉 Paso del embudo (desde Embudo de usuarios)"),
       el("option", { value: "anon" }, "👻 Solo visitantes SIN cuenta (PWA anónima)"),
       el("option", { value: "anon_country" }, "👻🌎 Visitantes sin cuenta por país"),
       el("option", { value: "anon_lang" }, "👻🗣 Visitantes sin cuenta por idioma"),
@@ -21974,6 +22086,12 @@ async function viewPushCampaigns(root) {
         // V617 · Buscador por nombre/email con selección múltiple (chips), en lugar
         // de teclear IDs numéricos (que además abría el teclado numérico en móvil).
         segParamsWrap.appendChild(buildTargetUsersPicker());
+      } else if (v === "funnel_stage") {
+        const label = prefill.audience_label || "Audiencia dinámica del embudo";
+        segParamsWrap.appendChild(el("div", { class:"campaign-funnel-audience" }, [
+          el("strong", {}, label),
+          el("small", {}, "Se recalcula con los datos actuales cuando calcules la audiencia o envíes."),
+        ]));
       } else if (v === "anon_lang") {
         segParamsWrap.appendChild(el("input", { name: "lang", placeholder: "Ej: es, en, fr, pt", style: INPUT_SM + ";width:100%" }));
         segParamsWrap.appendChild(el("small", { style: "display:block;margin-top:4px;color:var(--muted,#8f95a3)" }, "Prefijo del idioma detectado por navigator.language en el visitante."));
@@ -22046,6 +22164,12 @@ async function viewPushCampaigns(root) {
       if (segSel.value === "user_ids") {
         p.user_ids = campaignTargetUsers.map(u => u.id);
         return p;
+      }
+      if (segSel.value === "funnel_stage") {
+        return {
+          stage:String(prefill.segment_params?.stage || ""),
+          status:prefill.segment_params?.status === "completed" ? "completed" : "missing",
+        };
       }
       segParamsWrap.querySelectorAll("input,select,textarea").forEach(i => {
         const name = i.name;
