@@ -1,6 +1,27 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1026 (`cb960cd`, build `43e8a10010da`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1027 (`8503f3f`, build `72b9374c751e`)**
+
+### V1027 (02/10/2026) — Contexto del Perfil y datos legales
+
+- Las siete categorías del Perfil incorporan colores suaves diferenciados. El
+  mismo color identifica la categoría, su cabecera y las acciones interiores,
+  conservando tamaños y contraste en temas claro y oscuro.
+- Al volver desde cualquier acción de Cuenta, Plan, Beneficios, Preferencias,
+  Privacidad, Ayuda o Sesión, Aura restaura la categoría que estaba abierta y
+  su posición; ya no devuelve al principio del menú. Al cambiar de pestaña sí
+  comienza de nuevo, como hasta ahora.
+- Términos y Privacidad muestran el domicilio confirmado «Calle Alcalá de
+  Henares 16, 19003 Guadalajara». La Política de Privacidad deja de mostrar
+  marcadores pendientes y señala a Manuel de Pedro, NIF 03137923X, como
+  responsable del tratamiento. También se retira el enlace a la plataforma ODR
+  europea clausurada y se mantiene una explicación vigente de las vías ADR.
+- Validada con datos simulados en 360×800, 390×844 y 1440×900: siete colores
+  distintos, retorno exacto a «Privacidad y seguridad», textos legibles y sin
+  desbordamiento horizontal. `node --check` y `git diff --check` correctos.
+  Publicada en commit `8503f3f`, build `72b9374c751e`; Railway terminó
+  correctamente y `/api/health` respondió `ready:true`. No se modificaron
+  usuarios reales.
 
 ### V1026 (02/10/2026) — Perfil móvil como lista de ajustes
 
