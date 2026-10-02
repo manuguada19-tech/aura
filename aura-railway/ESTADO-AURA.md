@@ -1,6 +1,29 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1031 (`9fee461`, build `643968653c4d`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1032 (`fcc789d`, build `50bcc60a929c`)**
+
+### V1032 (02/10/2026) — Inicio único y actualización silenciosa
+
+- Aura sustituye las distintas fases visibles de arranque por una sola pantalla
+  negra con el logo nítido, el texto «Iniciando Aura…» y una barra fina. El
+  logo procede del original de 1024 px, se muestra más pequeño y deja de
+  ampliarse mediante animación.
+- La actualización de la PWA se realiza silenciosamente y la comprobación de la
+  política anticapturas conserva la misma identidad visual. Así el flujo pasa
+  directamente de una única pantalla de inicio a la aplicación, sin mostrar
+  «Actualizando app…», «Preparando tu experiencia» ni una tarjeta separada
+  «Preparando Aura».
+- Durante esa pantalla no se cargan anuncios. Se mantienen los reintentos ante
+  errores temporales, la exención del superadmin y la protección de las cuentas
+  normales.
+- Validada con cuentas totalmente simuladas en 360×800, 390×844 y 1440×900,
+  incluyendo dos respuestas `503` antes de reconocer al superadmin y una cuenta
+  normal protegida. Sin desbordamiento horizontal; `node --check` y
+  `git diff --check` correctos. Publicada en commit `fcc789d`, build
+  `50bcc60a929c`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se utilizaron ni modificaron usuarios reales.
+- La publicación corresponde a la web/PWA. Los recursos equivalentes de Android
+  permanecen locales y la aplicación nativa todavía no se ha distribuido.
 
 ### V1031 (02/10/2026) — Verificación administrativa sin marca provisional
 
