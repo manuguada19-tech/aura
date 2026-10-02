@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1019 (`864343a`, build `b484a6922e8a`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1020 (`85400a5`, build `bdbc59ed7185`)**
+
+### V1020 (02/10/2026) — Restablecer filtros sin solapamiento
+
+- En las pantallas autenticadas, el selector flotante de tema queda oculto en
+  función de la pantalla renderizada y ya no depende únicamente de la clase
+  temporal de sesión o del selector CSS `:has()`.
+- Esto evita que la luna tape «Restablecer» en la cabecera de Explorar al
+  recuperar determinadas sesiones en Android. El tema continúa disponible en
+  «Perfil → Preferencias → Tema».
+- Validada con filtros activos y datos simulados en 360×800, 390×844 y
+  1440×900: «Restablecer» queda completo, el selector flotante no aparece y no
+  existe desbordamiento horizontal. `node --check` y `git diff --check`
+  correctos. Publicada en commit `85400a5`, build `bdbc59ed7185`; Railway
+  terminó correctamente y `/api/health` respondió `ready:true`.
 
 ### V1019 (02/10/2026) — Contacto de confianza independiente
 
