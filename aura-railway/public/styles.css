@@ -3507,7 +3507,8 @@ body.map-open .modal { z-index: 4100; }
    cambia desde Perfil → Tema, ocultamos el botón flotante cuando la app está
    abierta (tabbar visible). Sigue visible en bienvenida/onboarding. */
 body:has(#tabbar:not([hidden])) .theme-toggle,
-body.app-open .theme-toggle {
+body.app-open .theme-toggle,
+body.app-screen-active-v1020 .theme-toggle {
   display: none !important;
 }
 
@@ -3553,7 +3554,8 @@ body.app-open .theme-toggle {
   }
   .theme-toggle { right: 10px; top: 10px; }
   body:has(#tabbar:not([hidden])) .theme-toggle,
-  body.app-open .theme-toggle {
+  body.app-open .theme-toggle,
+  body.app-screen-active-v1020 .theme-toggle {
     display: none !important;
   }
 

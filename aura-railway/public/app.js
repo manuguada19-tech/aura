@@ -4338,6 +4338,11 @@ function render(screenFn, opts = {}) {
   }
   viewport.innerHTML = "";
   const section = SECTION_MAP[screenFn && screenFn.name] || "welcome";
+  // V1020 · El selector :has() y body.app-open no bastaban en algunos Android:
+  // al restaurar una sesión podían faltar durante un render y el botón flotante
+  // de tema reaparecía sobre «Restablecer». Esta clase depende directamente de
+  // la pantalla que se está pintando y mantiene el botón solo en acceso/registro.
+  document.body.classList.toggle("app-screen-active-v1020", section !== "welcome");
   const screen = el("div", { class: "screen", "data-section": section });
   viewport.appendChild(screen);
   screenFn(screen, opts);

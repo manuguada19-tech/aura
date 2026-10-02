@@ -40,8 +40,8 @@
 // V1008 · incorpora las FAQ traducidas a los cinco idiomas adicionales.
 // V1016 · añade el asistente, transparencia de recomendaciones y reintentos.
 // V1017 · incorpora llamadas de ayuda y corrige controles de Explorar/admin.
-// V1019 · separa el contacto de confianza del plan local de cita segura.
-const CACHE_VERSION = "aura-v129";
+// V1020 · evita que el selector de tema tape Restablecer en pantallas internas.
+const CACHE_VERSION = "aura-v130";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
