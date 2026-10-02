@@ -1338,7 +1338,7 @@ $("#themeBtn").addEventListener("click", () => {
   window.__setSidebarMode = applyMode;
 })();
 
-/* V1011 · Buscador global persistente. Al borrar caracteres ya no desaparece:
+/* V1012 · Buscador global persistente y capa móvil independiente. Al borrar caracteres ya no desaparece:
    conserva el panel, explica el mínimo y ofrece accesos rápidos. Solo se cierra
    con Escape, al elegir un resultado o al pulsar fuera. */
 (function wireGlobalSearch() {
@@ -1346,6 +1346,10 @@ $("#themeBtn").addEventListener("click", () => {
   const wrap = document.querySelector(".search-wrap");
   const mobileButton = document.getElementById("mobileSearchBtn");
   if (!input || !wrap) return;
+  const homeMarker = document.createComment("admin-search-home");
+  wrap.parentNode.insertBefore(homeMarker, wrap);
+  const mobileScrim = el("div", { class:"gsearch-mobile-scrim", hidden:true, "aria-hidden":"true" });
+  document.body.appendChild(mobileScrim);
 
   wrap.style.position = wrap.style.position || "relative";
   const panel = document.createElement("div");
@@ -1368,11 +1372,32 @@ $("#themeBtn").addEventListener("click", () => {
     title:"Borrar búsqueda", "aria-label":"Borrar búsqueda",
   }, "×");
   wrap.insertBefore(clearButton, shortcut || panel);
+  const mobileClose = el("button", { class:"gsearch-mobile-close", type:"button", "aria-label":"Cerrar buscador" }, "Cerrar");
+  wrap.insertBefore(mobileClose, panel);
+
+  function isMobile() { return window.matchMedia("(max-width:720px)").matches; }
+  function enterMobileMode() {
+    if (!isMobile()) return;
+    if (wrap.parentNode !== document.body) document.body.appendChild(wrap);
+    wrap.classList.add("mobile-open");
+    document.body.classList.add("admin-search-open");
+    mobileScrim.hidden = false;
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+  }
+  function leaveMobileMode() {
+    wrap.classList.remove("mobile-open");
+    document.body.classList.remove("admin-search-open");
+    mobileScrim.hidden = true;
+    panel.removeAttribute("aria-modal");
+    panel.removeAttribute("role");
+    if (homeMarker.parentNode && wrap.parentNode !== homeMarker.parentNode) homeMarker.parentNode.insertBefore(wrap, homeMarker.nextSibling);
+  }
 
   function close() {
     panel.style.display = "none"; panel.innerHTML = "";
     input.setAttribute("aria-expanded", "false");
-    if (window.matchMedia("(max-width:720px)").matches) wrap.classList.remove("mobile-open");
+    leaveMobileMode();
   }
   function open() { panel.style.display = "block"; input.setAttribute("aria-expanded", "true"); }
   function syncClearButton() {
@@ -1415,9 +1440,12 @@ $("#themeBtn").addEventListener("click", () => {
   }
 
   mobileButton?.addEventListener("click", () => {
-    wrap.classList.add("mobile-open");
+    if (document.body.classList.contains("admin-search-open")) { close(); return; }
+    enterMobileMode();
     requestAnimationFrame(() => { input.focus(); input.value.trim().length >= 2 ? run(input.value.trim()) : renderIdle(); });
   });
+  mobileClose.addEventListener("click", close);
+  mobileScrim.addEventListener("click", close);
 
   let timer = null, lastQ = "";
   async function run(q) {
@@ -1513,9 +1541,10 @@ $("#themeBtn").addEventListener("click", () => {
   // Atajo ⌘K / Ctrl+K para enfocar el buscador desde cualquier vista.
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
-      e.preventDefault(); input.focus(); input.select();
+      e.preventDefault(); enterMobileMode(); input.focus(); input.select();
     }
   });
+  window.addEventListener("resize", () => { if (!isMobile() && document.body.classList.contains("admin-search-open")) close(); });
 })();
 
 /* Drawer */
