@@ -23,9 +23,10 @@
   `bfcc202`. Railway completó el despliegue y `/api/health` volvió a responder
   `ready:true`; `/api/version` conserva el build `b8af0fea39d6` porque no cambió
   el código web servido.
-- La versión 1.1 todavía debe compilarse y firmarse localmente con el almacén
-  privado del propietario y subirse como nuevo AAB a la prueba interna de
-  Google Play. No está disponible para el público general.
+- La versión 1.1 fue compilada y firmada localmente con el almacén privado del
+  propietario. Google Play aceptó el AAB como versión `2 (1.1)` y se confirmó
+  «Guardar y publicar» en la prueba interna. No está disponible para el público
+  general.
 
 ### V1036 (02/10/2026) — Entrada limpia desde beta/revisión
 
