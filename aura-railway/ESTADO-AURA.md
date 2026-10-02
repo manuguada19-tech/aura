@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1017 (`5324c1b`, build `045fba29db03`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1018 (`70a1959`, build `f579859c467e`)**
+
+### V1018 (02/10/2026) — Protección disuasoria frente a capturas
+
+- Las cuentas de usuario muestran sobre la app una marca de agua repetida con
+  su identificador y fecha, bloquean la impresión y ocultan el contenido al
+  pasar la PWA a segundo plano. La tecla Impr Pant muestra además un aviso.
+- El panel de administración nunca carga esta protección. Si una cuenta de
+  usuario pertenece al propietario o a un miembro activo del equipo, el
+  servidor la reconoce mediante su token firmado y la deja exenta también
+  dentro de la app; el navegador no puede autodeclararse administrador.
+- El Centro de seguridad explica el estado y el alcance real de la medida. Una
+  web/PWA no puede impedir por completo las capturas del sistema operativo; la
+  protección disuade, identifica y reduce exposiciones accidentales sin fingir
+  una garantía técnica inexistente.
+- Validada con cuenta simulada: 12 marcas visibles, impresión sustituida por un
+  aviso, persistencia en subpantallas y excepción administrativa sin marca.
+  `node --check` y `git diff --check` correctos. Publicada en commit `70a1959`,
+  build `f579859c467e`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`.
 
 ### V1017 (02/10/2026) — Emergencias y controles administrativos visibles
 
