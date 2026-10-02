@@ -1,6 +1,19 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1021 (`408c5bc`, build `f3fb7aa4d030`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1022 (`d0b392a`, build público `f3fb7aa4d030`)**
+
+### V1022 (02/10/2026) — Superadmin sin marca de agua
+
+- La excepción anticapturas reconoce ahora directamente los roles activos
+  `moderator`, `admin` y `superadmin` guardados en la base de datos, además de
+  los correos y miembros del equipo ya admitidos.
+- La decisión continúa siendo exclusivamente del servidor: no se confía en el
+  rol almacenado o enviado por el navegador. Las cuentas normales mantienen la
+  protección de V1018.
+- Validada la sintaxis y la respuesta desplegada del endpoint sin usar una
+  cuenta real. Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. Al ser un cambio solo de servidor, la huella pública continúa
+  siendo `f3fb7aa4d030`.
 
 ### V1021 (02/10/2026) — Perfil compacto y tema accesible
 
