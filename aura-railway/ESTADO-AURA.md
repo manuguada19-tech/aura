@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1030 (`29af054`, build `d96576417ae8`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1031 (`9fee461`, build `643968653c4d`)**
+
+### V1031 (02/10/2026) — Verificación administrativa sin marca provisional
+
+- Al abrir una sesión, Aura oculta brevemente el contenido con la pantalla
+  neutra «Preparando Aura» mientras el servidor comprueba la política de
+  capturas. Una cuenta administrativa ya no llega a ver una marca de agua que
+  desaparece después.
+- Cuando termina la comprobación, el superadmin entra directamente sin marca.
+  Las cuentas normales pasan de la pantalla de espera a la protección habitual,
+  sin mostrar antes contenido desprotegido.
+- Validada con cuentas totalmente simuladas, incluyendo dos respuestas `503`
+  antes de la confirmación: durante la espera no apareció la marca y, tras la
+  respuesta válida, el superadmin quedó exento; el usuario normal conservó la
+  protección. Comprobada en 360×800, 390×844 y 1440×900. `node --check` y
+  `git diff --check` correctos. Publicada en commit `9fee461`, build
+  `643968653c4d`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se utilizaron ni modificaron usuarios reales.
 
 ### V1030 (02/10/2026) — Exención anticapturas resistente a despliegues
 
