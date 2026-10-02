@@ -1,6 +1,22 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1024 (`aba7c7f`, build `3fb56da26751`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1025 (`a570b52`, build `242eaf1e77f1`)**
+
+### V1025 (02/10/2026) — Selector de secciones reconocible
+
+- En el Perfil móvil se elimina el desplegable ambiguo «¿Qué quieres
+  gestionar?». En su lugar aparece una tarjeta que identifica la sección
+  actual y muestra una acción explícita «Cambiar».
+- Al pulsar «Cambiar» se ven las siete categorías como botones grandes en
+  una cuadrícula de dos columnas. Al escoger una, la cuadrícula se cierra y
+  se abre directamente la categoría seleccionada, sin añadir desplazamiento
+  permanente a la pantalla.
+- En escritorio se conserva el menú lateral completo. Validada con datos
+  simulados en 360×800, 390×844 y 1440×900: cambio de categoría correcto,
+  sin el antiguo `select` y sin desbordamiento horizontal. `node --check` y
+  `git diff --check` correctos. Publicada en commit `a570b52`, build
+  `242eaf1e77f1`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se modificaron usuarios reales.
 
 ### V1024 (02/10/2026) — Cronología actualizada al limpiar
 
