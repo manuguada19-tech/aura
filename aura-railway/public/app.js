@@ -10717,20 +10717,20 @@ async function openNearbyMap() {
 -------------------------------------------------------------------- */
 const DEMO_ADS = [
   {
-    title: "Espacio publicitario de prueba",
-    body: "Estamos probando una ubicación discreta. No es un anuncio real ni genera ingresos.",
-    cta: "Entendido",
-    icon: "AD",
-    brand: "Prueba de Aura",
+    title: "Planes que empiezan cerca de ti",
+    body: "Ideas locales para compartir este fin de semana.",
+    cta: "Descubrir",
+    icon: "BR",
+    brand: "Brisa · Contenido de muestra",
     action: "notice",
   },
   {
-    title: "Aura Premium",
-    body: "Disfruta de Aura sin espacios publicitarios y con más funciones.",
-    cta: "Ver planes",
-    icon: "A",
-    brand: "Promoción interna",
-    action: "plans",
+    title: "Encuentra un plan diferente",
+    body: "Experiencias seleccionadas para disfrutar en compañía.",
+    cta: "Ver opciones",
+    icon: "NX",
+    brand: "Nexo · Contenido de muestra",
+    action: "notice",
   },
 ];
 
@@ -10804,7 +10804,7 @@ function renderDemoAdInto(container, placement) {
     el("button", { class: "ad-cta", type: "button",
       onclick: () => {
         if (ad.action === "plans") render(screenSubscriptions);
-        else toast("Es una demostración interna: no abre enlaces ni registra clics");
+        else toast("Vista de demostración: no abre enlaces ni registra actividad");
       } }, ad.cta),
   ]));
 }
@@ -10824,7 +10824,7 @@ function buildAdSlot(placement) {
     "aria-label": isDemo ? "Publicidad de prueba" : "Publicidad",
   }, [
     el("div", { class: "ad-tag" }, [
-      el("span", {}, isDemo ? "Publicidad · Prueba" : "Publicidad"),
+      el("span", {}, "Publicidad"),
       el("button", { class: "ad-remove", type: "button", title: "Quitar anuncios con Premium",
         onclick: () => render(screenSubscriptions) }, "Quitar"),
     ]),
