@@ -20812,7 +20812,7 @@ app.get("/api/admin/incidents", wrap(async (req, res) => {
 
 /* V1009 · Embudo real de usuarios. Cada tramo cuenta personas únicas y no
    eventos, para que las conversiones no se inflen por actividad repetida. */
-app.get("/api/admin/user-funnel", wrap(async (_req, res) => {
+app.get("/api/admin/user-funnel", requireAdmin, wrap(async (_req, res) => {
   const count = (sql, args = []) => adminScalar(sql, args);
   const [registered, profileReady, verified, active30d, liked, matched, messaged, paid] = await Promise.all([
     count("SELECT COUNT(*) n FROM users"),
@@ -20847,6 +20847,89 @@ app.get("/api/admin/user-funnel", wrap(async (_req, res) => {
   });
   res.set("Cache-Control", "no-store");
   res.json({ ok:true, generated_at:new Date().toISOString(), stages });
+}));
+
+/* V1010 · Detalle navegable del embudo. Devuelve únicamente los datos
+   administrativos necesarios para localizar cada cuenta y explica el
+   requisito exacto que le falta, sin modificarla ni exponer datos sensibles. */
+app.get("/api/admin/user-funnel/:stage/users", requireAdmin, wrap(async (req, res) => {
+  const stage = String(req.params.stage || "");
+  const status = req.query.status === "completed" ? "completed" : "missing";
+  const q = String(req.query.q || "").trim().slice(0, 120);
+  const limit = Math.min(100, Math.max(1, Number.parseInt(req.query.limit, 10) || 25));
+  const offset = Math.max(0, Number.parseInt(req.query.offset, 10) || 0);
+  const criteria = {
+    registered: "1=1",
+    profile: `(COALESCE(NULLIF(TRIM(u.bio),''),NULL) IS NOT NULL
+      AND COALESCE(NULLIF(TRIM(u.city),''),NULL) IS NOT NULL
+      AND (COALESCE(NULLIF(TRIM(u.photo_url),''),NULL) IS NOT NULL
+        OR EXISTS (SELECT 1 FROM photos fp WHERE fp.user_id=u.id AND COALESCE(fp.is_now_photo,0)=0)))`,
+    verified: "COALESCE(u.verified,0)=1",
+    active: "COALESCE(u.last_login,'1970-01-01') >= DATE_SUB(NOW(), INTERVAL 30 DAY)",
+    liked: "EXISTS (SELECT 1 FROM likes fl WHERE fl.from_user=u.id AND fl.type IN ('like','super'))",
+    matched: "EXISTS (SELECT 1 FROM matches fm WHERE fm.user_a=u.id OR fm.user_b=u.id)",
+    messaged: "EXISTS (SELECT 1 FROM messages fmsg WHERE fmsg.sender_id=u.id)",
+    paid: "COALESCE(u.plan,'free') IN ('premium','gold','platinum')",
+  };
+  const requirement = {
+    registered: "Cuenta registrada",
+    profile: "Biografía, ciudad y al menos una foto",
+    verified: "Verificación de identidad aprobada",
+    active: "Inicio de sesión en los últimos 30 días",
+    liked: "Enviar un Like o Super Like",
+    matched: "Conseguir el primer match",
+    messaged: "Enviar el primer mensaje",
+    paid: "Activar Premium, Gold o Platinum",
+  };
+  if (!criteria[stage]) return res.status(400).json({ error:"invalid_stage" });
+
+  const searchSql = q ? " AND (u.name LIKE ? OR u.email LIKE ? OR CAST(u.id AS CHAR)=?)" : "";
+  const searchArgs = q ? [`%${q}%`, `%${q}%`, q] : [];
+  const completedSql = criteria[stage];
+  const selectedSql = status === "completed" ? completedSql : `NOT (${completedSql})`;
+  const [countResult, rowResult] = await Promise.all([
+    pool.query(
+      `SELECT COUNT(*) total,
+              SUM(CASE WHEN ${completedSql} THEN 1 ELSE 0 END) completed
+         FROM users u WHERE 1=1${searchSql}`,
+      searchArgs
+    ),
+    pool.query(
+      `SELECT u.id,u.name,u.email,u.plan,u.status,u.last_login,u.created_at,u.verified,
+              COALESCE(NULLIF(u.photo_url,''),
+                (SELECT COALESCE(NULLIF(p.crop_url,''),p.url)
+                   FROM photos p
+                  WHERE p.user_id=u.id AND COALESCE(p.is_now_photo,0)=0
+                  ORDER BY p.is_primary DESC,p.id ASC LIMIT 1)) photo_url,
+              COALESCE(NULLIF(TRIM(u.bio),''),NULL) IS NOT NULL has_bio,
+              COALESCE(NULLIF(TRIM(u.city),''),NULL) IS NOT NULL has_city,
+              (COALESCE(NULLIF(TRIM(u.photo_url),''),NULL) IS NOT NULL
+                OR EXISTS (SELECT 1 FROM photos pf WHERE pf.user_id=u.id AND COALESCE(pf.is_now_photo,0)=0)) has_photo
+         FROM users u
+        WHERE (${selectedSql})${searchSql}
+        ORDER BY COALESCE(u.last_login,u.created_at) DESC,u.id DESC
+        LIMIT ? OFFSET ?`,
+      [...searchArgs, limit, offset]
+    ),
+  ]);
+  const counts = countResult[0][0] || {};
+  const rows = rowResult[0] || [];
+  const completed = Number(counts.completed || 0);
+  const total = Number(counts.total || 0);
+  const items = rows.map((row) => {
+    const missing = [];
+    if (status === "missing") {
+      if (stage === "profile") {
+        if (!Number(row.has_bio)) missing.push("Biografía");
+        if (!Number(row.has_city)) missing.push("Ciudad");
+        if (!Number(row.has_photo)) missing.push("Foto");
+      } else if (stage !== "registered") missing.push(requirement[stage]);
+    }
+    delete row.has_bio; delete row.has_city; delete row.has_photo;
+    return { ...row, missing };
+  });
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, stage, status, requirement:requirement[stage], counts:{ completed, missing:total-completed }, total:status === "completed" ? completed : total-completed, limit, offset, rows:items });
 }));
 
 /* V1009 · Estado de integridad del registro. Recalcula en lectura la huella

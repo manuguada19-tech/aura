@@ -2811,6 +2811,128 @@ async function viewIncidents(root) {
   await load();
 }
 
+/* V1010 · Cada tramo del embudo abre el listado de personas que lo han
+   completado o lo tienen pendiente, con el requisito exacto y acceso a ficha. */
+function openUserFunnelDetails(stage, onUserChange) {
+  const overlay = el("div", { class:"ac-overlay" });
+  const state = { status:stage.key === "registered" ? "completed" : "missing", q:"", offset:0, limit:25 };
+  let searchTimer = null;
+  let requestId = 0;
+  const close = () => {
+    clearTimeout(searchTimer);
+    document.removeEventListener("keydown", onKey);
+    overlay.remove();
+  };
+  const onKey = (event) => { if (event.key === "Escape") close(); };
+  const pendingTab = btn("Pendientes", "ghost sm", () => selectStatus("missing"));
+  const completedTab = btn("Completaron", "ghost sm", () => selectStatus("completed"));
+  const query = el("input", {
+    class:"input funnel-detail-search", type:"search",
+    placeholder:"Buscar por nombre, email o ID…", "aria-label":"Buscar usuarios del embudo",
+    oninput:event => {
+      state.q = event.target.value.trim(); state.offset = 0;
+      clearTimeout(searchTimer); searchTimer = setTimeout(load, 220);
+    },
+  });
+  const resultMeta = el("div", { class:"funnel-detail-meta" });
+  const list = el("div", { class:"funnel-user-list", "aria-live":"polite" });
+  const pagination = el("div", { class:"funnel-detail-pagination" });
+  const modal = el("section", { class:"ac-dialog funnel-detail-modal", role:"dialog", "aria-modal":"true", "aria-label":`Detalle: ${stage.label}` }, [
+    el("header", { class:"funnel-detail-head" }, [
+      el("div", {}, [el("small", {}, "DETALLE DEL EMBUDO"), el("h3", {}, stage.label), el("p", {}, stage.action)]),
+      btn("Cerrar", "ghost sm", close),
+    ]),
+    el("div", { class:"funnel-detail-toolbar" }, [
+      el("div", { class:"funnel-detail-tabs", role:"tablist", "aria-label":"Estado del paso" }, [pendingTab, completedTab]),
+      query,
+    ]),
+    resultMeta, list, pagination,
+  ]);
+  overlay.append(el("div", { class:"ac-scrim", onclick:close }), modal);
+  document.body.appendChild(overlay);
+  document.addEventListener("keydown", onKey);
+
+  function selectStatus(status) {
+    if (state.status === status) return;
+    state.status = status; state.offset = 0; load();
+  }
+  function updateTabs(counts) {
+    pendingTab.textContent = `Pendientes · ${fmt.num(counts.missing || 0)}`;
+    completedTab.textContent = `Completaron · ${fmt.num(counts.completed || 0)}`;
+    [[pendingTab,"missing"],[completedTab,"completed"]].forEach(([button,status]) => {
+      const active = state.status === status;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      button.setAttribute("role", "tab");
+    });
+  }
+  function userActivity(row) {
+    return row.last_login ? `Última actividad ${fmt.reldate(row.last_login)}` : "Sin inicios de sesión";
+  }
+  function renderRows(data) {
+    list.innerHTML = "";
+    resultMeta.textContent = `${fmt.num(data.total || 0)} ${data.total === 1 ? "persona" : "personas"} en esta vista`;
+    if (!(data.rows || []).length) {
+      list.appendChild(el("div", { class:"funnel-detail-empty" }, state.q
+        ? "No hay usuarios que coincidan con la búsqueda."
+        : state.status === "missing" ? "Ningún usuario tiene pendiente este paso." : "Ningún usuario ha completado este paso."));
+      return;
+    }
+    data.rows.forEach(row => {
+      const missing = Array.isArray(row.missing) ? row.missing : [];
+      const requirement = state.status === "missing"
+        ? el("div", { class:"funnel-user-requirements missing" }, [
+            el("strong", {}, "Falta"),
+            el("div", {}, missing.map(item => el("span", {}, item))),
+          ])
+        : el("div", { class:"funnel-user-requirements complete" }, [
+            el("strong", {}, "Completado"), el("span", {}, data.requirement || stage.action),
+          ]);
+      const open = btn("Abrir ficha", "primary sm", async () => {
+        close();
+        try { await openUserDrawer(row.id, onUserChange); }
+        catch (error) { toast(error?.message || "No se pudo abrir la ficha", 3500); }
+      });
+      list.appendChild(el("article", { class:"funnel-user-row" }, [
+        el("div", { class:"funnel-user-identity" }, [
+          avatar(row.photo_url, 42),
+          el("div", {}, [el("strong", {}, row.name || "Sin nombre"), el("span", {}, row.email || `Usuario #${row.id}`), el("small", {}, `ID ${row.id}`)]),
+        ]),
+        el("div", { class:"funnel-user-facts" }, [planTag(row.plan || "free"), statusTag(row.status || "active"), el("small", {}, userActivity(row))]),
+        requirement,
+        open,
+      ]));
+    });
+  }
+  function renderPagination(data) {
+    pagination.innerHTML = "";
+    const from = data.total ? state.offset + 1 : 0;
+    const to = Math.min(state.offset + state.limit, Number(data.total || 0));
+    const previous = btn("Anterior", "ghost sm", () => { state.offset = Math.max(0, state.offset - state.limit); load(); });
+    const next = btn("Siguiente", "ghost sm", () => { state.offset += state.limit; load(); });
+    previous.disabled = state.offset === 0;
+    next.disabled = state.offset + state.limit >= Number(data.total || 0);
+    pagination.append(previous, el("span", {}, `${fmt.num(from)}–${fmt.num(to)} de ${fmt.num(data.total || 0)}`), next);
+  }
+  async function load() {
+    const thisRequest = ++requestId;
+    list.innerHTML = "<div class='loading'>Cargando usuarios…</div>";
+    pagination.innerHTML = "";
+    try {
+      const params = new URLSearchParams({ status:state.status, q:state.q, limit:String(state.limit), offset:String(state.offset) });
+      const data = await api.get(`/api/admin/user-funnel/${encodeURIComponent(stage.key)}/users?${params}`);
+      if (thisRequest !== requestId) return;
+      updateTabs(data.counts || {}); renderRows(data); renderPagination(data);
+    } catch (error) {
+      if (thisRequest !== requestId) return;
+      list.innerHTML = "";
+      list.appendChild(el("div", { class:"error" }, "No se pudo cargar el detalle del embudo. Vuelve a intentarlo."));
+    }
+  }
+  load();
+  setTimeout(() => query.focus(), 40);
+}
+
 /* V1009 · Embudo de activación y conversión con personas únicas. */
 async function viewUserFunnel(root) {
   root.appendChild(viewTitle("Embudo de usuarios",
@@ -2841,7 +2963,14 @@ async function viewUserFunnel(root) {
       chart.innerHTML = "";
       stages.forEach((stage, index) => {
         const width = registered ? Math.max(6, Math.round(Number(stage.value || 0) / registered * 100)) : 6;
-        chart.appendChild(el("article", { class:"funnel-stage" }, [
+        const pending = Math.max(0, registered - Number(stage.value || 0));
+        const openStage = () => openUserFunnelDetails(stage, load);
+        chart.appendChild(el("article", {
+          class:"funnel-stage", role:"button", tabindex:"0",
+          "aria-label":`${stage.label}: abrir usuarios completados y pendientes`,
+          onclick:openStage,
+          onkeydown:event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openStage(); } },
+        }, [
           el("div", { class:"funnel-stage-index" }, String(index + 1).padStart(2,"0")),
           el("div", { class:"funnel-stage-copy" }, [
             el("div", { class:"funnel-stage-head" }, [
@@ -2850,6 +2979,7 @@ async function viewUserFunnel(root) {
             ]),
             el("div", { class:"funnel-track" }, [el("span", { style:`width:${width}%` })]),
             el("small", {}, `${stage.action} · ${stage.from_previous}% del paso anterior · ${stage.from_registered}% del registro`),
+            el("div", { class:"funnel-stage-link" }, `${fmt.num(pending)} pendientes · Ver personas y detalles`),
           ]),
         ]));
       });
