@@ -16694,28 +16694,8 @@ function screenMe(root) {
   const normalizeProfileSearchV1023 = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const search = el("input", { class:"profile-search-v1023", type:"search", placeholder:"Buscar en los ajustes", "aria-label":"Buscar en los ajustes" });
   const categoryNav = el("nav", { class:"profile-category-nav-v1023", "aria-label":"Categorías del perfil" });
-  // V1025 · El select nativo parecía una tarjeta sin acción. Este control
-  // dice de forma explícita qué se está viendo y ofrece un botón «Cambiar»;
-  // al abrirlo aparecen todas las categorías como botones grandes.
-  const mobileSectionIcon = el("span", { class:"profile-current-icon-v1025", html:profileConceptIconV1021(profileGroups[0].glyph) });
-  const mobileSectionTitle = el("strong", {}, profileGroups[0].title);
-  const mobileSectionToggle = el("button", {
-    class:"profile-section-toggle-v1025", type:"button", "aria-expanded":"false", "aria-controls":"profileCategoryNavV1025",
-  }, [
-    mobileSectionIcon,
-    el("span", {}, [el("small", {}, "Sección actual"), mobileSectionTitle]),
-    el("b", {}, "Cambiar"),
-  ]);
-  const mobileSectionSwitcher = el("div", { class:"profile-section-switcher-v1025" }, [
-    el("span", {}, "Ajustes que estás viendo"), mobileSectionToggle,
-  ]);
-  categoryNav.id = "profileCategoryNavV1025";
-  mobileSectionToggle.addEventListener("click", () => {
-    const open = !categoryNav.classList.contains("mobile-open-v1025");
-    categoryNav.classList.toggle("mobile-open-v1025", open);
-    mobileSectionToggle.setAttribute("aria-expanded", open ? "true" : "false");
-    mobileSectionToggle.querySelector("b").textContent = open ? "Cerrar" : "Cambiar";
-  });
+  // V1026 · Patrón de ajustes nativo: en móvil primero se ven todas las
+  // secciones como una lista uniforme y cada una abre su propia pantalla.
   list.className = "profile-panels-v1023";
   const categoryButtons = new Map();
   const panels = new Map();
@@ -16725,7 +16705,7 @@ function screenMe(root) {
     const navButton = el("button", { type:"button", "data-key":group.key }, [
       el("span", { class:"profile-category-icon-v1023", html:profileConceptIconV1021(group.glyph) }),
       el("span", {}, [el("strong", {}, group.title), el("small", {}, group.sub)]),
-      el("b", {}, String(group.items.length)),
+      el("b", { "aria-hidden":"true" }, "›"),
     ]);
     categoryButtons.set(group.key, navButton);
     categoryNav.appendChild(navButton);
@@ -16762,27 +16742,25 @@ function screenMe(root) {
     el("strong", {}, "No encontramos ese ajuste"),
     el("span", {}, "Prueba con otra palabra o elige una categoría."),
   ]);
-  const settingsLayout = el("div", { class:"profile-settings-layout-v1023" }, [categoryNav, list, noResults]);
+  const mobileCategoryBack = el("button", { class:"profile-category-back-v1026", type:"button" }, [
+    el("span", { "aria-hidden":"true" }, "‹"), "Todos los ajustes",
+  ]);
+  const panelArea = el("div", { class:"profile-panel-area-v1026" }, [mobileCategoryBack, list]);
+  const settingsLayout = el("div", { class:"profile-settings-layout-v1023" }, [categoryNav, panelArea, noResults]);
   const settings = el("section", { class:"profile-settings-v1023", "aria-labelledby":"profileSettingsTitleV1023" }, [
     el("div", { class:"profile-settings-top-v1023" }, [
       el("div", { class:"profile-block-title-v1023" }, [
         el("h2", { id:"profileSettingsTitleV1023" }, "Ajustes"),
-        el("p", {}, "Muestra solo la categoría que necesitas."),
+        el("p", {}, "Elige una sección para gestionar tu cuenta."),
       ]),
       search,
     ]),
-    mobileSectionSwitcher,
     settingsLayout,
   ]);
 
-  function activateProfileGroupV1023(key, scroll = false) {
+  function activateProfileGroupV1023(key, scroll = false, reveal = true) {
     selectedKey = panels.has(key) ? key : "cuenta";
-    const selectedGroup = profileGroups.find(group => group.key === selectedKey) || profileGroups[0];
-    mobileSectionIcon.innerHTML = profileConceptIconV1021(selectedGroup.glyph);
-    mobileSectionTitle.textContent = selectedGroup.title;
-    categoryNav.classList.remove("mobile-open-v1025");
-    mobileSectionToggle.setAttribute("aria-expanded", "false");
-    mobileSectionToggle.querySelector("b").textContent = "Cambiar";
+    settings.classList.toggle("profile-category-open-v1026", !!reveal);
     categoryButtons.forEach((button, buttonKey) => {
       const active = buttonKey === selectedKey;
       button.classList.toggle("active", active);
@@ -16794,20 +16772,20 @@ function screenMe(root) {
     });
     noResults.hidden = true;
     if (scroll && window.matchMedia("(max-width:899px)").matches) {
-      list.scrollIntoView({ behavior:"smooth", block:"start" });
+      settings.scrollIntoView({ behavior:"smooth", block:"start" });
     }
   }
+  mobileCategoryBack.addEventListener("click", () => {
+    settings.classList.remove("profile-category-open-v1026");
+    settings.scrollIntoView({ behavior:"smooth", block:"start" });
+  });
   categoryButtons.forEach((button, key) => button.addEventListener("click", () => activateProfileGroupV1023(key, true)));
   search.addEventListener("input", () => {
     const query = normalizeProfileSearchV1023(search.value.trim());
     settings.classList.toggle("searching", !!query);
-    if (query) {
-      categoryNav.classList.remove("mobile-open-v1025");
-      mobileSectionToggle.setAttribute("aria-expanded", "false");
-      mobileSectionToggle.querySelector("b").textContent = "Cambiar";
-    }
     categoryNav.hidden = !!query;
-    mobileSectionSwitcher.hidden = !!query;
+    mobileCategoryBack.hidden = !!query;
+    if (!query && window.matchMedia("(max-width:899px)").matches) settings.classList.remove("profile-category-open-v1026");
     let total = 0;
     panels.forEach(panel => {
       const groupMatch = !!query && panel.dataset.search.includes(query);
@@ -16822,7 +16800,7 @@ function screenMe(root) {
     });
     noResults.hidden = !query || total > 0;
   });
-  activateProfileGroupV1023("cuenta");
+  activateProfileGroupV1023("cuenta", false, false);
   root.appendChild(settings);
   // V895 · Subtítulo dinámico del acceso a Boost: refleja el estado real de la
   // bolsa (activo con minutos restantes, boosts disponibles, o ilimitado) sin
