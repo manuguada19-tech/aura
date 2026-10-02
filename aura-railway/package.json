@@ -7,6 +7,8 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
     "compression": "^1.8.1",
     "express": "^4.19.2",
     "geoip-lite": "^1.4.10",
@@ -14,5 +16,8 @@
     "nodemailer": "^6.9.14",
     "pdfkit": "^0.20.2",
     "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.2"
   }
 }

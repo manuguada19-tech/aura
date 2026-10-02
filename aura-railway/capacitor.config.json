@@ -1,0 +1,16 @@
+{
+  "appId": "es.citasaura.app",
+  "appName": "Aura",
+  "webDir": "public",
+  "server": {
+    "url": "https://citasaura.es/index.html",
+    "cleartext": false,
+    "allowNavigation": [
+      "citasaura.es"
+    ]
+  },
+  "android": {
+    "allowMixedContent": false,
+    "webContentsDebuggingEnabled": false
+  }
+}
