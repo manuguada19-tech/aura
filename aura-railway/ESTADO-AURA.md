@@ -1,6 +1,17 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1014 (`0e70420`, build `be1d9d4ea15a`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1015 (`8f55589`, build `ed4cbc510709`)**
+
+### V1015 (02/10/2026) — Cierre visible de campañas push
+
+- El editor de campañas push incorpora una `×` accesible en la esquina superior
+  derecha. Permanece visible al desplazarse por formularios largos y funciona
+  tanto en móvil como en escritorio.
+- La `×`, el botón «Cancelar», el fondo exterior y Escape reutilizan el mismo
+  cierre limpio; cerrar nunca guarda ni envía la campaña.
+- Validada con datos simulados a 390 px y 1440 px, sin desbordamiento ni errores
+  de página. Publicada en commit `8f55589`, build `ed4cbc510709`; Railway terminó
+  correctamente y `/api/health` respondió `ready:true`.
 
 ### V1014 (02/10/2026) — Cola de trabajo descartable
 
