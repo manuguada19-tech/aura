@@ -22848,6 +22848,21 @@ function authHeaders() {
    excepción para cuentas administrativas; el panel admin no carga este código. */
 let captureProtectionEnabledV1018 = false;
 let capturePolicySeqV1018 = 0;
+let capturePolicyRetryTimerV1030 = null;
+let capturePolicyRetryCountV1030 = 0;
+function clearCapturePolicyRetryV1030() {
+  if (capturePolicyRetryTimerV1030) clearTimeout(capturePolicyRetryTimerV1030);
+  capturePolicyRetryTimerV1030 = null;
+  capturePolicyRetryCountV1030 = 0;
+}
+function scheduleCapturePolicyRetryV1030() {
+  if (capturePolicyRetryTimerV1030 || !state?.user?.id || capturePolicyRetryCountV1030 >= 12) return;
+  const delay = Math.min(30000, 4000 * Math.pow(1.5, capturePolicyRetryCountV1030++));
+  capturePolicyRetryTimerV1030 = setTimeout(() => {
+    capturePolicyRetryTimerV1030 = null;
+    syncCaptureProtectionV1018();
+  }, delay);
+}
 function captureWatermarkTextV1018() {
   const id = state?.user?.id == null ? "—" : String(state.user.id);
   const date = new Date().toLocaleDateString("es-ES", { day:"2-digit",month:"2-digit",year:"numeric" });
@@ -22879,7 +22894,11 @@ function setCaptureProtectionV1018(enabled) {
 }
 async function syncCaptureProtectionV1018() {
   const seq = ++capturePolicySeqV1018;
-  if (!state?.user?.id || isPreviewMode()) { setCaptureProtectionV1018(false); return; }
+  if (!state?.user?.id || isPreviewMode()) {
+    clearCapturePolicyRetryV1030();
+    setCaptureProtectionV1018(false);
+    return;
+  }
   // Protegido mientras se valida la excepción: nunca hay un destello sin marca.
   setCaptureProtectionV1018(true);
   try {
@@ -22898,9 +22917,23 @@ async function syncCaptureProtectionV1018() {
       ({ response, data } = await requestPolicy());
     }
     if (seq !== capturePolicySeqV1018) return;
+    // V1030 · Durante un despliegue el shell puede cargar antes de que la API
+    // termine de arrancar. Un 503 dejaba la marca activa toda la sesión porque
+    // la política no se volvía a consultar. Conservamos la protección mientras
+    // tanto y repetimos automáticamente cuando el servidor esté disponible.
+    if (!response.ok || !data || data.ok !== true) {
+      if (response.status === 401 || response.status === 429 || response.status >= 500) {
+        scheduleCapturePolicyRetryV1030();
+      }
+      return;
+    }
+    clearCapturePolicyRetryV1030();
     setCaptureProtectionV1018(!(data && data.admin_exempt === true));
   } catch {
-    if (seq === capturePolicySeqV1018) setCaptureProtectionV1018(true);
+    if (seq === capturePolicySeqV1018) {
+      setCaptureProtectionV1018(true);
+      scheduleCapturePolicyRetryV1030();
+    }
   }
 }
 (function installCaptureProtectionV1018() {
@@ -22908,7 +22941,16 @@ async function syncCaptureProtectionV1018() {
     if (captureProtectionEnabledV1018) document.body.classList.add("capture-background-v1018");
   };
   const reveal = () => document.body.classList.remove("capture-background-v1018");
-  document.addEventListener("visibilitychange", () => document.hidden ? conceal() : reveal());
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) conceal();
+    else {
+      reveal();
+      if (captureProtectionEnabledV1018 && state?.user?.id) syncCaptureProtectionV1018();
+    }
+  });
+  window.addEventListener("online", () => {
+    if (captureProtectionEnabledV1018 && state?.user?.id) syncCaptureProtectionV1018();
+  });
   window.addEventListener("pagehide", conceal);
   window.addEventListener("pageshow", reveal);
   window.addEventListener("blur", () => setTimeout(() => { if (!document.hasFocus()) conceal(); }, 80));
