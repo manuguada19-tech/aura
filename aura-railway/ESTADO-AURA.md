@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1018 (`70a1959`, build `f579859c467e`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1019 (`864343a`, build `b484a6922e8a`)**
+
+### V1019 (02/10/2026) — Contacto de confianza independiente
+
+- «Perfil → Privacidad y seguridad → Centro de seguridad → Necesito ayuda
+  ahora → Añadir un contacto de confianza» abre ahora su propio formulario de
+  teléfono y email opcional, sin redirigir a «Planificar una cita segura».
+- El contacto se guarda mediante el endpoint autenticado existente y, tras
+  guardarlo, el mismo bloque permite llamarlo o cambiarlo. Aura no llama ni
+  envía mensajes o emails automáticamente.
+- El Centro de seguridad deja de leer el contacto del borrador local de una
+  cita. «Preparar una cita» sigue siendo una herramienta separada y su texto ya
+  no presenta el contacto de confianza como parte de ese flujo.
+- Validada con datos simulados en 390×844 y 1440×900: alta, actualización,
+  enlace telefónico, permanencia en la pantalla y ausencia de desbordamiento.
+  `node --check` y `git diff --check` correctos. Publicada en commit `864343a`,
+  build `b484a6922e8a`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se modificaron usuarios reales.
+- La aplicación Android nativa y la elección de su identificador de paquete
+  quedan pospuestas por indicación del usuario.
 
 ### V1018 (02/10/2026) — Protección disuasoria frente a capturas
 
