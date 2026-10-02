@@ -4693,6 +4693,20 @@ function showApp() {
   routeTab(state.currentTab);
 }
 
+// V1036 · Entrada limpia desde las pantallas de beta/revisión. Esos accesos
+// se realizan al final de una pantalla desplazable y antes llamaban primero a
+// showApp() y después pintaban Explorar otra vez. El doble render conservaba
+// estados visuales distintos (contenido de Explorar con «Perfil» marcado) y
+// podía arrastrar la posición de scroll del formulario de acceso.
+function enterAppFromAccessGateV1036() {
+  state.pendingDeepLink = null;
+  state.currentTab = "discover";
+  try { sessionStorage.removeItem("aura_deep_link"); } catch {}
+  try { history.replaceState(null, "", "/explorar"); } catch {}
+  try { viewport.scrollTop = 0; } catch {}
+  showApp();
+}
+
 // Rutas soportadas para deep-links desde emails o accesos directos.
 // Se resuelven contra location.pathname al arrancar (ver boot()).
 const DEEP_LINK_TABS = {
@@ -4993,6 +5007,15 @@ async function routeTab(tab) {
   };
   const safeTab = map[tab] ? tab : "discover";
   state.currentTab = safeTab;
+  // V1036 · Toda navegación, también la programática, actualiza la pestaña
+  // activa. Antes solo lo hacían los clics y algunos deep-links, por lo que
+  // podía verse Explorar mientras «Perfil» seguía resaltado.
+  try {
+    $$(".tab", tabbar).forEach((button) => {
+      button.classList.toggle("active", button.dataset.tab === safeTab);
+    });
+  } catch {}
+  try { viewport.scrollTop = 0; } catch {}
   if (safeTab === "discover" || safeTab === "search") {
     try { await activateDiscoveryFilterScope(safeTab); } catch {}
   }
@@ -6430,6 +6453,7 @@ function showPrivateBetaScreen(opts) {
       state.user = {
         id: d.user.id, name: d.user.name || "", email: d.user.email,
         photo: d.user.photo_url || "", role: d.user.role || "superadmin",
+        plan: d.user.plan || "platinum", zone: d.user.zone || state.zone || "hetero",
       };
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       // V708 · Capturar el token firmado que ahora devuelve el backend, para
@@ -6441,8 +6465,8 @@ function showPrivateBetaScreen(opts) {
       adminFb.className = "beta-admin-fb beta-feedback-ok";
       adminFb.textContent = T("content.beta.admin_ok") || "Acceso concedido ✓";
       setTimeout(() => {
-        try { showApp(); } catch {}
-        try { render(screenDiscover); } catch { try { location.reload(); } catch {} }
+        try { enterAppFromAccessGateV1036(); }
+        catch { try { location.reload(); } catch {} }
       }, 400);
     } catch {
       adminFb.hidden = false;
@@ -6560,7 +6584,13 @@ function showReviewScreen(opts) {
     const open = adminPanel.hidden;
     adminPanel.hidden = !open;
     adminToggle.setAttribute("aria-expanded", open ? "true" : "false");
-    if (open) { try { adminInput.focus(); } catch {} }
+    if (open) {
+      try { adminInput.focus({ preventScroll: true }); } catch { try { adminInput.focus(); } catch {} }
+      // La pantalla puede necesitar unos píxeles extra al desplegar el campo.
+      // Los desplazamos automáticamente para que el usuario no tenga que
+      // buscar a mano el botón de entrada.
+      try { requestAnimationFrame(() => adminBox.scrollIntoView({ block: "nearest", behavior: "smooth" })); } catch {}
+    }
   });
   adminBtn.addEventListener("click", async () => {
     const code = (adminInput.value || "").trim();
@@ -6591,6 +6621,7 @@ function showReviewScreen(opts) {
       state.user = {
         id: d.user.id, name: d.user.name || "", email: d.user.email,
         photo: d.user.photo_url || "", role: d.user.role || "superadmin",
+        plan: d.user.plan || "platinum", zone: d.user.zone || state.zone || "hetero",
       };
       try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
       // V708 · Capturar el token firmado que ahora devuelve el backend, para
@@ -6602,8 +6633,8 @@ function showReviewScreen(opts) {
       adminFb.className = "beta-admin-fb beta-feedback-ok";
       adminFb.textContent = T("content.beta.admin_ok") || "Acceso concedido ✓";
       setTimeout(() => {
-        try { showApp(); } catch {}
-        try { render(screenDiscover); } catch { try { location.reload(); } catch {} }
+        try { enterAppFromAccessGateV1036(); }
+        catch { try { location.reload(); } catch {} }
       }, 400);
     } catch {
       adminFb.hidden = false;
