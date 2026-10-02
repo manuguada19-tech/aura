@@ -1,8 +1,8 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1008 (`6d7bc6c`, build `cf601c9ad3cf`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1009 (`f7a3077`, build `df097ab0b04c`)**
 
-### V1009 (02/10/2026) — Operaciones y acompañamiento de usuarios (preparada)
+### V1009 (02/10/2026) — Operaciones y acompañamiento de usuarios
 
 - Administración incorpora vistas permanentes de «Incidencias técnicas» y
   «Embudo de usuarios», con filtros, reintentos seguros y conversiones basadas
@@ -22,7 +22,11 @@
 - «Recuperación de cuenta» reúne correo, 2FA, códigos y dispositivos; permite
   regenerar códigos solo tras confirmar un TOTP. «Problemas para entrar» deja de
   usar el código ficticio y reutiliza el flujo real de acceso/OTP/2FA.
-- No se han modificado datos reales. Pendiente de validación visual y publicación.
+- Validada sintaxis, FAQ en seis idiomas, vistas de 390 y 1440 píxeles sin
+  desbordamiento, persistencia local del plan seguro y protección de endpoints
+  administrativos. Publicada en commit `f7a3077`, build `df097ab0b04c`;
+  Railway finalizó correctamente y `/api/health` respondió `ready:true`. No se
+  modificaron datos reales durante la validación.
 
 ### V1008 (02/10/2026) — FAQ multilingües
 
