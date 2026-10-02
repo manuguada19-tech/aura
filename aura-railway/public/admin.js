@@ -5089,16 +5089,37 @@ async function openUserDrawer(id, onChange) {
   // V1016 · Resumen 360 antes de los formularios extensos. Es plegable para
   // mantener la ficha compacta y combina hitos con el stream real.
   const timelineStateV1017 = el("span", { class:"user-360-state-v1016" }, "Cargando…");
+  // V1024 · Una carga anterior puede terminar después del borrado y volver a
+  // pintar eventos que ya no existen. Guardamos una secuencia de peticiones y
+  // el último estado visible para descartar esas respuestas antiguas y poder
+  // actualizar la cronología en cuanto el DELETE termina.
+  let timelineRequestV1024 = 0;
+  let timelineItemsV1024 = [];
+  let timelineSummaryV1024 = null;
   const clearTimelineV1017 = btn("Limpiar actividad", "ghost xs danger", async () => {
     if (!(await askConfirm("¿Eliminar todos los eventos de actividad de esta cuenta?\n\nSe borrarán los eventos de prueba, accesos y telemetría. Los hitos reales —alta, primer match o primer mensaje— se conservarán.", { okText:"Limpiar actividad",danger:true }))) return;
     clearTimelineV1017.disabled = true;
+    clearTimelineV1017.textContent = "Limpiando…";
+    clearTimelineV1017.setAttribute("aria-busy", "true");
     try {
       const result = await api.del(`/api/admin/activity/user/${id}/stream`);
+      // Invalida cualquier GET iniciado antes del DELETE y retira al instante
+      // los eventos del stream. Los hitos de cuenta no llevan id y se conservan.
+      timelineRequestV1024++;
+      timelineItemsV1024 = timelineItemsV1024.filter(item => !item.id);
+      renderTimeline360V1024(timelineItemsV1024, timelineSummaryV1024);
+      if (typeof clearStreamViewV1024 === "function") clearStreamViewV1024();
       toast(`Actividad eliminada (${result.deleted || 0} eventos). Los hitos de cuenta se conservan.`);
-      await loadTimeline360V1017();
-      if (typeof loadStream === "function") await loadStream();
+      await Promise.all([
+        loadTimeline360V1017(),
+        typeof loadStream === "function" ? loadStream() : Promise.resolve(),
+      ]);
     } catch (error) { toast("No se pudo limpiar la actividad: " + (error.message || "error")); }
-    finally { clearTimelineV1017.disabled = nivelUsuario() < 3; }
+    finally {
+      clearTimelineV1017.textContent = "Limpiar actividad";
+      clearTimelineV1017.removeAttribute("aria-busy");
+      clearTimelineV1017.disabled = nivelUsuario() < 3;
+    }
   });
   if (nivelUsuario() < 3) {
     clearTimelineV1017.disabled = true;
@@ -5112,32 +5133,50 @@ async function openUserDrawer(id, onChange) {
     el("div", { class:"user-360-list-v1016" }, [el("div", { class:"loading" }, "Ordenando actividad…")]),
   ]);
   form.appendChild(timeline360);
-  async function loadTimeline360V1017() {
+  function renderTimeline360V1024(items, summary) {
     const list = timeline360.querySelector(".user-360-list-v1016");
+    const s = summary || {};
+    if (summary) timelineStateV1017.textContent = `${s.verified ? "Verificada" : "Sin verificar"} · ${String(s.plan || "free").toUpperCase()} · ${s.status || "active"}`;
+    list.innerHTML = "";
+    if (!items.length) { list.appendChild(el("div", { class:"empty small" }, "Sin hitos registrados.")); return; }
+    items.slice(0,12).forEach(item => {
+      const remove = item.id && nivelUsuario() >= 3 ? el("button", {
+        class:"btn ghost xs danger user-360-delete-v1017",type:"button",title:"Eliminar este evento de actividad","aria-label":`Eliminar ${item.title || "evento"}`,
+        onclick:async () => {
+          if (!(await askConfirm(`¿Eliminar el evento “${item.title || "Evento"}” de esta cronología?`, { okText:"Eliminar evento",danger:true }))) return;
+          try {
+            await api.del(`/api/admin/activity/stream/${item.id}`);
+            timelineRequestV1024++;
+            timelineItemsV1024 = timelineItemsV1024.filter(current => current.id !== item.id);
+            renderTimeline360V1024(timelineItemsV1024, timelineSummaryV1024);
+            toast("Evento eliminado");
+            await Promise.all([
+              loadTimeline360V1017(),
+              typeof loadStream === "function" ? loadStream() : Promise.resolve(),
+            ]);
+          } catch (error) { toast("No se pudo eliminar: " + (error.message || "error")); }
+        },
+      }, "×") : null;
+      list.appendChild(el("article", { class:`user-360-event-v1016 ${item.kind || "event"}` }, [
+        el("span", { class:"user-360-dot-v1016" }),el("span", {}, [el("strong", {}, item.title || "Evento"),el("small", {}, item.detail || "Sin detalle")]),el("time", {}, fmt.reldate(item.created_at)),remove,
+      ]));
+    });
+    if (items.length > 12) list.appendChild(el("small", { class:"muted" }, `${items.length - 12} eventos más disponibles en “Eventos (stream)”.`));
+  }
+  async function loadTimeline360V1017() {
+    const requestId = ++timelineRequestV1024;
+    timelineStateV1017.setAttribute("aria-busy", "true");
     try {
-      const data = await api.get(`/api/admin/users/${id}/timeline`); const items = data.items || []; const s = data.summary || {};
-      timelineStateV1017.textContent = `${s.verified ? "Verificada" : "Sin verificar"} · ${String(s.plan || "free").toUpperCase()} · ${s.status || "active"}`;
-      list.innerHTML = "";
-      if (!items.length) { list.appendChild(el("div", { class:"empty small" }, "Sin hitos registrados.")); return; }
-      items.slice(0,12).forEach(item => {
-        const remove = item.id && nivelUsuario() >= 3 ? el("button", {
-          class:"btn ghost xs danger user-360-delete-v1017",type:"button",title:"Eliminar este evento de actividad","aria-label":`Eliminar ${item.title || "evento"}`,
-          onclick:async () => {
-            if (!(await askConfirm(`¿Eliminar el evento “${item.title || "Evento"}” de esta cronología?`, { okText:"Eliminar evento",danger:true }))) return;
-            try {
-              await api.del(`/api/admin/activity/stream/${item.id}`);
-              toast("Evento eliminado");
-              await loadTimeline360V1017();
-              if (typeof loadStream === "function") await loadStream();
-            } catch (error) { toast("No se pudo eliminar: " + (error.message || "error")); }
-          },
-        }, "×") : null;
-        list.appendChild(el("article", { class:`user-360-event-v1016 ${item.kind || "event"}` }, [
-          el("span", { class:"user-360-dot-v1016" }),el("span", {}, [el("strong", {}, item.title || "Evento"),el("small", {}, item.detail || "Sin detalle")]),el("time", {}, fmt.reldate(item.created_at)),remove,
-        ]));
-      });
-      if (items.length > 12) list.appendChild(el("small", { class:"muted" }, `${items.length - 12} eventos más disponibles en “Eventos (stream)”.`));
-    } catch { list.replaceChildren(el("div", { class:"empty small" }, "No se pudo cargar la cronología.")); }
+      const data = await api.get(`/api/admin/users/${id}/timeline?refresh=${Date.now()}`);
+      if (requestId !== timelineRequestV1024) return;
+      timelineItemsV1024 = Array.isArray(data.items) ? data.items : [];
+      timelineSummaryV1024 = data.summary || {};
+      renderTimeline360V1024(timelineItemsV1024, timelineSummaryV1024);
+    } catch {
+      if (requestId === timelineRequestV1024) list.replaceChildren(el("div", { class:"empty small" }, "No se pudo cargar la cronología."));
+    } finally {
+      if (requestId === timelineRequestV1024) timelineStateV1017.removeAttribute("aria-busy");
+    }
   }
   loadTimeline360V1017();
 
@@ -5909,12 +5948,24 @@ async function openUserDrawer(id, onChange) {
   // es prueba de qué hizo una cuenta: borrarlo debe ser una decisión.
   const clearStreamButtonV1017 = btn("Vaciar stream", "ghost xs danger", async () => {
       if (!(await askConfirm("¿Borrar TODOS los eventos del stream de este usuario? Logins y telemetría guardados desaparecerán de la ficha.", { okText: "Vaciar stream", danger: true }))) return;
+      clearStreamButtonV1017.disabled = true;
+      clearStreamButtonV1017.textContent = "Vaciando…";
+      clearStreamButtonV1017.setAttribute("aria-busy", "true");
       try {
         const r = await api.del("/api/admin/activity/user/" + id + "/stream");
+        streamRequestV1024++;
+        clearStreamViewV1024();
+        timelineRequestV1024++;
+        timelineItemsV1024 = timelineItemsV1024.filter(item => !item.id);
+        renderTimeline360V1024(timelineItemsV1024, timelineSummaryV1024);
         toast(`Stream vaciado (${r.deleted || 0} eventos)`);
-        await loadStream();
-        await loadTimeline360V1017();
+        await Promise.all([loadStream(), loadTimeline360V1017()]);
       } catch { toast("No se pudo vaciar el stream"); }
+      finally {
+        clearStreamButtonV1017.textContent = "Vaciar stream";
+        clearStreamButtonV1017.removeAttribute("aria-busy");
+        clearStreamButtonV1017.disabled = nivelUsuario() < 3;
+      }
     });
   if (nivelUsuario() < 3) { clearStreamButtonV1017.disabled = true; clearStreamButtonV1017.title = "Necesita el rango Administrador"; }
   const streamHeader = el("div", { class: "section-header" }, [
@@ -5924,6 +5975,11 @@ async function openUserDrawer(id, onChange) {
   form.appendChild(streamHeader);
   const streamBox = el("div", { class: "empty small" }, "Cargando eventos…");
   form.appendChild(streamBox);
+  let streamRequestV1024 = 0;
+  function clearStreamViewV1024() {
+    streamBox.className = "empty small";
+    streamBox.textContent = "Sin eventos en el stream.";
+  }
 
   // V936 · Muchos eventos del stream no llevan `detail` (2fa_enabled,
   // gps_consent_granted…), y la columna salía como un guion seco. Traducimos
@@ -5952,8 +6008,11 @@ async function openUserDrawer(id, onChange) {
     backguard_exit_prompt: "Aviso de salida mostrado por la guardia anti-'atrás'",
   };
   async function loadStream() {
+    const requestId = ++streamRequestV1024;
+    streamBox.setAttribute("aria-busy", "true");
     try {
-      const r = await api.get("/api/admin/activity/user/" + id + "?limit=100");
+      const r = await api.get("/api/admin/activity/user/" + id + "?limit=100&refresh=" + Date.now());
+      if (requestId !== streamRequestV1024) return;
       const items = (r && r.items) || [];
       streamBox.innerHTML = "";
       if (!items.length) { streamBox.className = "empty small"; streamBox.textContent = "Sin eventos en el stream."; return; }
@@ -5977,9 +6036,12 @@ async function openUserDrawer(id, onChange) {
             if (!(await askConfirm("¿Borrar este evento del stream?", { okText: "Borrar", danger: true }))) return;
             try {
               await api.del("/api/admin/activity/stream/" + ev.id);
+              streamRequestV1024++;
+              timelineRequestV1024++;
+              timelineItemsV1024 = timelineItemsV1024.filter(item => item.id !== ev.id);
+              renderTimeline360V1024(timelineItemsV1024, timelineSummaryV1024);
               toast("Evento borrado");
-              await loadStream();
-              await loadTimeline360V1017();
+              await Promise.all([loadStream(), loadTimeline360V1017()]);
             } catch { toast("No se pudo borrar el evento"); }
           }) : el("small", { class:"muted",title:"Necesita el rango Administrador" }, "Solo lectura")),
         ]));
@@ -5987,8 +6049,11 @@ async function openUserDrawer(id, onChange) {
       t.appendChild(tb);
       streamBox.appendChild(el("div", { class: "table-scroll" }, [ t ]));
     } catch {
+      if (requestId !== streamRequestV1024) return;
       streamBox.className = "empty small";
       streamBox.textContent = "No se pudieron cargar los eventos.";
+    } finally {
+      if (requestId === streamRequestV1024) streamBox.removeAttribute("aria-busy");
     }
   }
   loadStream();
