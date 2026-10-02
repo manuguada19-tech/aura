@@ -16388,7 +16388,7 @@ function profileConceptIconV1021(path) {
 }
 
 function screenMe(root) {
-  root.classList.add("screen-me", "profile-concept-v1021");
+  root.classList.add("screen-me", "profile-accessible-v1023");
   // V751 · Recuerda la posición de scroll del menú de perfil mientras el
   // usuario navega por él, para restaurarla al volver de una sub-sección.
   root.addEventListener("scroll", () => { _meScrollTop = root.scrollTop || 0; }, { passive: true });
@@ -16408,33 +16408,33 @@ function screenMe(root) {
   // con el sello local (state.user.verified) y, además, se confirma con el
   // servidor de forma asíncrona por si el sello local aún no estaba puesto.
   const meVerifiedBadge = el("span", {
-    class: "profile-hub-verified-v1021", title: "Cuenta verificada",
+    class: "profile-verified-v1023", title: "Cuenta verificada",
     style: (state.user && state.user.verified) ? "" : "display:none",
     "aria-label":"Cuenta verificada",
   }, "✓");
-  const verificationCopy = el("small", {}, (state.user && state.user.verified) ? "Perfil completo · Cuenta verificada" : "Revisa el estado y completa tu perfil");
+  const verificationCopy = el("small", {}, (state.user && state.user.verified) ? "Identidad verificada" : "Revisa la verificación y completa tu perfil");
   const planBadge = el("span", {
-    class:"profile-hub-plan-v1021", id:"meTierBadge", role:"button", tabindex:"0",
+    class:"profile-hub-plan-v1021 profile-plan-v1023", id:"meTierBadge", role:"button", tabindex:"0",
     onclick:() => render(screenSubscriptions),
   }, _mePlan === "free" ? "FREE · MEJORAR" : planLabel(_mePlan).toUpperCase());
   const bellIcon = profileConceptIconV1021("M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4");
-  const profileHero = el("section", { class:"profile-hub-hero-v1021" }, [
-    el("div", { class:"profile-hub-top-v1021" }, [
-      el("span", {}, "TU ESPACIO"),
+  const profileHero = el("section", { class:"profile-header-v1023" }, [
+    el("div", { class:"profile-header-top-v1023" }, [
+      el("div", {}, [el("span", {}, "MI CUENTA"), el("h1", {}, "Perfil y ajustes")]),
       el("button", {
-        class:"profile-hub-alerts-v1021 me-bell", type:"button", title:"Notificaciones", "aria-label":"Notificaciones",
+        class:"profile-alerts-v1023 me-bell", type:"button", title:"Notificaciones", "aria-label":"Notificaciones",
         onclick:() => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} },
       }, [el("span", { class:"me-bell-ico", html:bellIcon }), el("span", { class:"me-bell-badge", style:"display:none" }, "0")]),
     ]),
-    el("div", { class:"profile-hub-person-v1021" }, [
-      el("div", { class:"profile-hub-avatar-v1021", style:`background-image:url('${meAvatar}')`, title:"Ver foto", role:"button", tabindex:"0", onclick:() => openAvatarViewer(meAvatar) }, [meVerifiedBadge]),
-      el("div", {}, [
-        el("div", { class:"profile-hub-name-v1021" }, [el("h1", {}, meName), planBadge]),
+    el("div", { class:"profile-identity-v1023" }, [
+      el("div", { class:"profile-avatar-v1023", style:`background-image:url('${meAvatar}')`, title:"Ver foto", role:"button", tabindex:"0", onclick:() => openAvatarViewer(meAvatar) }, [meVerifiedBadge]),
+      el("div", { class:"profile-identity-copy-v1023" }, [
+        el("div", { class:"profile-name-v1023" }, [el("h2", {}, meName), planBadge]),
         el("p", { title:"Correo oculto por privacidad" }, meMail),
         verificationCopy,
       ]),
     ]),
-    el("div", { class:"profile-hub-main-actions-v1021" }, [
+    el("div", { class:"profile-main-actions-v1023" }, [
       el("button", { type:"button", onclick:openOwnProfilePreview }, [el("span", { html:profileConceptIconV1021("M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0") }), "Ver mi perfil"]),
       el("button", { type:"button", onclick:() => render(screenEditProfile) }, [el("span", { html:profileConceptIconV1021("M4 20h4l11-11-4-4L4 16v4M13.5 6.5l4 4") }), "Editar perfil"]),
     ]),
@@ -16442,7 +16442,7 @@ function screenMe(root) {
   root.appendChild(profileHero);
   const applyMeVerificationState = (ok) => {
     meVerifiedBadge.style.display = ok ? "" : "none";
-    verificationCopy.textContent = ok ? "Perfil completo · Cuenta verificada" : "Revisa el estado y completa tu perfil";
+    verificationCopy.textContent = ok ? "Identidad verificada" : "Revisa la verificación y completa tu perfil";
     const row = document.querySelector("#meVerifyRow");
     if (!row) return;
     const title = row.querySelector("strong");
@@ -16498,21 +16498,6 @@ function screenMe(root) {
       statusBanner.appendChild(box);
     } catch {}
   })();
-
-  // V1009 · Resumen accionable del alta. Solo ocupa espacio mientras quedan
-  // pasos; al completarlos desaparece y la guía sigue disponible en el menú.
-  const firstStepsBanner = el("div", { class:"first-steps-banner-slot-v1009" });
-  root.appendChild(firstStepsBanner);
-  loadFirstStepsV1009().then(steps => {
-    const done = steps.filter(step => step.done).length;
-    if (done >= steps.length) return;
-    const next = steps.find(step => !step.done);
-    firstStepsBanner.appendChild(el("button", { class:"first-steps-banner-v1009", type:"button", onclick:() => render(screenFirstStepsV1009) }, [
-      el("span", { class:"first-steps-banner-ring-v1009", style:`--progress:${Math.round(done / steps.length * 360)}deg` }, [el("b", {}, `${done}/${steps.length}`)]),
-      el("span", { class:"first-steps-banner-copy-v1009" }, [el("strong", {}, "Continúa preparando tu cuenta"), el("small", {}, `Siguiente: ${next?.title || "revisar pasos"}`)]),
-      el("span", { class:"chev" }, "›"),
-    ]));
-  }).catch(() => {});
 
   const list = el("div", { class: "settings-list" });
   const zoneSub = state.zone === "lgtb"
@@ -16670,23 +16655,6 @@ function screenMe(root) {
       { icon: "🗑️", title: T("content.me.item_delete") || "Eliminar cuenta", danger: true, sub: T("content.me.item_delete_sub") || "Acción irreversible", onClick: () => openDeleteAccountSheet() },
     ]},
   ];
-  const quickItems = [
-    { title:"Seguridad", sub:"Centro y ayuda", glyph:"M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4M8.5 12l2.2 2.2 4.8-5", action:() => render(screenSafetyCenter) },
-    { title:"Suscripción", sub:getUserPlan() === "free" ? "Mejorar plan" : `Plan ${planLabel(getUserPlan())}`, glyph:"M12 3l4 6-4 12-4-12 4-6M4 9h16M4 9l8 12 8-12", action:() => render(screenSubscriptions) },
-    { title:"Cuenta", sub:"Estado y acceso", glyph:"M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10", action:() => render(screenAccountStatus) },
-    { title:"Preferencias", sub:"Filtros y avisos", glyph:"M4 6h16M7 12h10M10 18h4", action:() => {
-      const section = root.querySelector('[data-profile-section="preferencias"]');
-      if (section) { section.open = true; section.scrollIntoView({ behavior:"smooth", block:"start" }); }
-    } },
-  ];
-  root.appendChild(el("section", { class:"profile-quick-v1021", "aria-label":"Accesos rápidos" }, quickItems.map(item =>
-    el("button", { type:"button", onclick:item.action }, [
-      el("span", { class:"profile-quick-icon-v1021", html:profileConceptIconV1021(item.glyph) }),
-      el("span", {}, [el("strong", {}, item.title), el("small", {}, item.sub)]),
-      el("b", {}, "›"),
-    ])
-  )));
-
   const themeMode = currentAuraThemeModeV1021();
   const appearanceModes = [
     { id:"system", label:"Sistema", glyph:"M4 5h16v11H4zM9 20h6M12 16v4" },
@@ -16694,7 +16662,7 @@ function screenMe(root) {
     { id:"dark", label:"Oscuro", glyph:"M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2z" },
   ];
   const appearanceButtons = appearanceModes.map(mode => el("button", {
-    class:"profile-appearance-option-v1021" + (mode.id === themeMode ? " active" : ""), type:"button", "data-mode":mode.id,
+    class:"profile-theme-button-v1023" + (mode.id === themeMode ? " active" : ""), type:"button", "data-mode":mode.id,
     "aria-pressed":mode.id === themeMode ? "true" : "false",
   }, [el("span", { html:profileConceptIconV1021(mode.glyph) }), el("b", {}, mode.label)]));
   appearanceButtons.forEach(button => button.addEventListener("click", () => {
@@ -16706,13 +16674,16 @@ function screenMe(root) {
     applyAuraThemeModeV1021(button.dataset.mode);
     toast(`Tema: ${button.textContent.trim()}`);
   }));
-  root.appendChild(el("section", { class:"profile-appearance-v1021" }, [
-    el("div", {}, [el("strong", {}, "Apariencia"), el("small", {}, "Elige cómo quieres ver Aura")]),
-    el("div", { class:"profile-appearance-switch-v1021", role:"group", "aria-label":"Tema de la aplicación" }, appearanceButtons),
+  root.appendChild(el("section", { class:"profile-theme-v1023", "aria-labelledby":"profileThemeTitleV1023" }, [
+    el("div", { class:"profile-block-title-v1023" }, [
+      el("h2", { id:"profileThemeTitleV1023" }, "Apariencia"),
+      el("p", {}, "Elige el tema que te resulte más cómodo."),
+    ]),
+    el("div", { class:"profile-theme-options-v1023", role:"group", "aria-label":"Tema de la aplicación" }, appearanceButtons),
   ]));
 
-  const compactGroups = [
-    { key:"cuenta", title:"Cuenta y perfil", sub:"Identidad, fotos y estado", glyph:"M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10", items:groups[0].items, open:true },
+  const profileGroups = [
+    { key:"cuenta", title:"Cuenta y perfil", sub:"Identidad, fotos y estado", glyph:"M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10", items:groups[0].items },
     { key:"plan", title:groups[1].title, sub:"Suscripción, pagos y facturas", glyph:"M12 3l4 6-4 12-4-12 4-6M4 9h16", items:groups[1].items },
     { key:"beneficios", title:"Beneficios y novedades", sub:"Visitas, viajes, historias y recompensas", glyph:"M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", items:[...groups[2].items, ...groups[3].items] },
     { key:"preferencias", title:groups[4].title, sub:"Descubrimiento, zona, avisos e idioma", glyph:"M4 6h16M7 12h10M10 18h4", items:groups[4].items.filter(item => item.title !== (T("content.me.item_theme") || "Tema")) },
@@ -16720,45 +16691,114 @@ function screenMe(root) {
     { key:"ayuda", title:"Ayuda e información", sub:"Soporte, normas y documentación", glyph:"M12 17h.01M9.1 9a3 3 0 1 1 4.4 2.65c-.9.45-1.5 1.05-1.5 2.35M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20", items:[...groups[6].items, ...groups[7].items] },
     { key:"sesion", title:groups[8].title, sub:"Salir o eliminar la cuenta", glyph:"M10 17l5-5-5-5M15 12H3M14 4h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5", items:groups[8].items },
   ];
-  const search = el("input", { class:"profile-settings-search-v1021", type:"search", placeholder:"Buscar un ajuste", "aria-label":"Buscar un ajuste" });
-  root.appendChild(el("div", { class:"profile-settings-heading-v1021" }, [
-    el("div", {}, [el("span", {}, "CONFIGURACIÓN"), el("h2", {}, "Todo en su sitio")]), search,
-  ]));
-  list.className = "profile-sections-v1021";
-  compactGroups.forEach(group => {
-    const body = el("div", { class:"profile-section-body-v1021" });
+  const normalizeProfileSearchV1023 = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const search = el("input", { class:"profile-search-v1023", type:"search", placeholder:"Buscar en los ajustes", "aria-label":"Buscar en los ajustes" });
+  const categorySelect = el("select", { class:"profile-category-select-v1023", "aria-label":"Categoría de ajustes" }, profileGroups.map(group =>
+    el("option", { value:group.key }, `${group.title} (${group.items.length})`)
+  ));
+  const mobilePicker = el("label", { class:"profile-mobile-picker-v1023" }, [
+    el("span", {}, "¿Qué quieres gestionar?"), categorySelect,
+  ]);
+  const categoryNav = el("nav", { class:"profile-category-nav-v1023", "aria-label":"Categorías del perfil" });
+  list.className = "profile-panels-v1023";
+  const categoryButtons = new Map();
+  const panels = new Map();
+  let selectedKey = "cuenta";
+
+  profileGroups.forEach(group => {
+    const navButton = el("button", { type:"button", "data-key":group.key }, [
+      el("span", { class:"profile-category-icon-v1023", html:profileConceptIconV1021(group.glyph) }),
+      el("span", {}, [el("strong", {}, group.title), el("small", {}, group.sub)]),
+      el("b", {}, String(group.items.length)),
+    ]);
+    categoryButtons.set(group.key, navButton);
+    categoryNav.appendChild(navButton);
+
+    const rows = el("div", { class:"profile-panel-rows-v1023" });
     group.items.forEach(item => {
       const row = el("button", {
-        class:"profile-section-row-v1021" + (item.danger ? " danger" : ""), type:"button",
-        "data-search":`${item.title} ${item.sub || ""}`.toLowerCase(), onclick:item.onClick,
-      }, [el("span", {}, [el("strong", {}, item.title), item.sub ? el("small", {}, item.sub) : null]), el("b", {}, "›")]);
+        class:"profile-action-row-v1023" + (item.danger ? " danger" : ""), type:"button",
+        "data-search":normalizeProfileSearchV1023(`${item.title} ${item.sub || ""}`), onclick:item.onClick,
+      }, [
+        el("span", { class:"profile-action-icon-v1023", "aria-hidden":"true" }, item.icon || "•"),
+        el("span", { class:"profile-action-copy-v1023" }, [el("strong", {}, item.title), item.sub ? el("small", {}, item.sub) : null]),
+        el("b", { class:"profile-action-arrow-v1023", "aria-hidden":"true" }, "›"),
+      ]);
       if (item.id) row.id = item.id;
-      body.appendChild(row);
+      rows.appendChild(row);
     });
-    const details = el("details", { class:"profile-section-v1021", open:!!group.open, "data-profile-section":group.key, "data-search":`${group.title} ${group.sub}`.toLowerCase() }, [
-      el("summary", {}, [
-        el("span", { class:"profile-section-icon-v1021", html:profileConceptIconV1021(group.glyph) }),
-        el("span", {}, [el("strong", {}, group.title), el("small", {}, group.sub)]),
-        el("span", { class:"profile-section-count-v1021" }, String(group.items.length)),
-        el("span", { class:"profile-section-chevron-v1021" }, "⌄"),
-      ]), body,
+    const panel = el("section", {
+      class:"profile-panel-v1023", "data-key":group.key,
+      "data-search":normalizeProfileSearchV1023(`${group.title} ${group.sub}`),
+      "aria-labelledby":`profilePanelTitle-${group.key}`,
+    }, [
+      el("header", { class:"profile-panel-heading-v1023" }, [
+        el("span", { class:"profile-panel-icon-v1023", html:profileConceptIconV1021(group.glyph) }),
+        el("div", {}, [el("h2", { id:`profilePanelTitle-${group.key}` }, group.title), el("p", {}, group.sub)]),
+      ]),
+      rows,
     ]);
-    list.appendChild(details);
+    panels.set(group.key, panel);
+    list.appendChild(panel);
   });
+
+  const noResults = el("div", { class:"profile-no-results-v1023", hidden:true }, [
+    el("strong", {}, "No encontramos ese ajuste"),
+    el("span", {}, "Prueba con otra palabra o elige una categoría."),
+  ]);
+  const settingsLayout = el("div", { class:"profile-settings-layout-v1023" }, [categoryNav, list, noResults]);
+  const settings = el("section", { class:"profile-settings-v1023", "aria-labelledby":"profileSettingsTitleV1023" }, [
+    el("div", { class:"profile-settings-top-v1023" }, [
+      el("div", { class:"profile-block-title-v1023" }, [
+        el("h2", { id:"profileSettingsTitleV1023" }, "Ajustes"),
+        el("p", {}, "Muestra solo la categoría que necesitas."),
+      ]),
+      search,
+    ]),
+    mobilePicker,
+    settingsLayout,
+  ]);
+
+  function activateProfileGroupV1023(key, scroll = false) {
+    selectedKey = panels.has(key) ? key : "cuenta";
+    categorySelect.value = selectedKey;
+    categoryButtons.forEach((button, buttonKey) => {
+      const active = buttonKey === selectedKey;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-current", active ? "page" : "false");
+    });
+    panels.forEach((panel, panelKey) => {
+      panel.hidden = panelKey !== selectedKey;
+      panel.querySelectorAll(".profile-action-row-v1023").forEach(row => { row.hidden = false; });
+    });
+    noResults.hidden = true;
+    if (scroll && window.matchMedia("(max-width:899px)").matches) {
+      list.scrollIntoView({ behavior:"smooth", block:"start" });
+    }
+  }
+  categoryButtons.forEach((button, key) => button.addEventListener("click", () => activateProfileGroupV1023(key)));
+  categorySelect.addEventListener("change", () => activateProfileGroupV1023(categorySelect.value, true));
   search.addEventListener("input", () => {
-    const query = search.value.trim().toLowerCase();
-    list.querySelectorAll(".profile-section-v1021").forEach(details => {
+    const query = normalizeProfileSearchV1023(search.value.trim());
+    settings.classList.toggle("searching", !!query);
+    categoryNav.hidden = !!query;
+    mobilePicker.hidden = !!query;
+    let total = 0;
+    panels.forEach(panel => {
+      const groupMatch = !!query && panel.dataset.search.includes(query);
       let visibleRows = 0;
-      details.querySelectorAll(".profile-section-row-v1021").forEach(row => {
-        const visible = !query || row.dataset.search.includes(query) || details.dataset.search.includes(query);
+      panel.querySelectorAll(".profile-action-row-v1023").forEach(row => {
+        const visible = !query || groupMatch || row.dataset.search.includes(query);
         row.hidden = !visible;
         if (visible) visibleRows++;
       });
-      details.hidden = visibleRows === 0;
-      if (query && visibleRows) details.open = true;
+      panel.hidden = query ? visibleRows === 0 : panel.dataset.key !== selectedKey;
+      total += visibleRows;
     });
+    noResults.hidden = !query || total > 0;
   });
-  root.appendChild(list);
+  activateProfileGroupV1023("cuenta");
+  root.appendChild(settings);
   // V895 · Subtítulo dinámico del acceso a Boost: refleja el estado real de la
   // bolsa (activo con minutos restantes, boosts disponibles, o ilimitado) sin
   // que el usuario tenga que entrar. Es informativo; si falla, deja el texto fijo.
@@ -19076,12 +19116,14 @@ function screenSafetyCenter(root) {
     "Consulta las medidas que has tomado y el estado de los casos enviados al equipo de Aura."
   ));
   const captureIsProtectedV1018 = !!captureProtectionEnabledV1018;
-  wrap.appendChild(el("section", { class:"capture-status-v1018","aria-label":"Protección frente a capturas" }, [
-    el("strong", {}, captureIsProtectedV1018 ? "Protección frente a capturas activa" : "Capturas permitidas para administración"),
-    el("small", {}, captureIsProtectedV1018
-      ? "La app añade una marca de cuenta, bloquea la impresión y oculta el contenido al pasar a segundo plano. El sistema operativo puede seguir realizando capturas."
-      : "Esta sesión administrativa o vista previa no lleva marca de agua ni bloqueo de impresión."),
-  ]));
+  // V1023 · El estado interno de excepción administrativa no se presenta en
+  // la interfaz. Solo las cuentas protegidas reciben la explicación útil.
+  if (captureIsProtectedV1018) {
+    wrap.appendChild(el("section", { class:"capture-status-v1018","aria-label":"Protección frente a capturas" }, [
+      el("strong", {}, "Protección frente a capturas activa"),
+      el("small", {}, "La app añade una marca de cuenta, bloquea la impresión y oculta el contenido al pasar a segundo plano. El sistema operativo puede seguir realizando capturas."),
+    ]));
+  }
   const trustedContactV1017 = el("div", { class:"trusted-contact-slot-v1017" }, [el("small", { class:"muted" }, "Buscando tu contacto de confianza…")]);
   const emergencyHelpV1017 = el("details", { class:"emergency-help-v1017" }, [
     el("summary", {}, "Necesito ayuda ahora"),

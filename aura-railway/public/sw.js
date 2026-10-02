@@ -42,7 +42,8 @@
 // V1017 · incorpora llamadas de ayuda y corrige controles de Explorar/admin.
 // V1020 · evita que el selector de tema tape Restablecer en pantallas internas.
 // V1021 · publica el nuevo Perfil compacto y su selector Sistema/Claro/Oscuro.
-const CACHE_VERSION = "aura-v131";
+// V1023 · sustituye el Perfil por una navegación accesible de categoría única.
+const CACHE_VERSION = "aura-v132";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
