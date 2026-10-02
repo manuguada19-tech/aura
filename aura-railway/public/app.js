@@ -4601,9 +4601,9 @@ try {
   if (__mqP.addEventListener) __mqP.addEventListener("change", __resyncDesktopApp);
 } catch {}
 
-// V1034 · La primera consulta de Explorar espera a esta sincronización. Antes
-// se pintaba el feed con el estado local y syncUserPlan() lo volvía a pintar al
-// recibir plan/entitlements/zona, provocando dos búsquedas visibles seguidas.
+// V1034/V1035 · Contexto inicial compartido con Explorar. Las comprobaciones
+// independientes se ejecutan en paralelo con la consulta de perfiles para no
+// sumar sus latencias, pero syncUserPlan() no vuelve a pintar el feed.
 let startupUserContextPromiseV1034 = null;
 function showApp() {
   tabbar.hidden = false;
@@ -4617,10 +4617,11 @@ function showApp() {
     try {
       await chatApi.ensure();
       await Auth.refresh();
-      await syncCaptureProtectionV1018();
       startHeartbeat();
-      await syncUserPlan({ suppressRerender: true });
-      await syncOwnIdentityForFilters(true); // V984 · filtros acordes al género/orientación propios
+      await Promise.all([
+        syncUserPlan({ suppressRerender: true }),
+        syncOwnIdentityForFilters(true), // V984 · filtros acordes al género/orientación propios
+      ]);
     } catch {}
   })();
   // Pedir permiso de notificaciones y suscribir dispositivo (una sola vez).
@@ -11470,25 +11471,36 @@ function buildSwipeStack() {
 // Carga perfiles reales en el stack. En la app real, si no hay usuarios
 // reales se deja vacío (empty state). Solo la vista previa del admin usa demo.
 async function loadDiscoverInto(stack, append = false) {
-  // La primera carga espera el contexto definitivo de la cuenta. De este modo
-  // solo aparece una búsqueda y la consulta ya usa la zona y el plan correctos.
+  // La primera carga comparte la espera con el contexto de cuenta en vez de
+  // ejecutarla después. Con un token ya disponible, todas las peticiones salen
+  // en paralelo y el tiempo visible lo marca una sola ronda de red.
   const startupSync = startupUserContextPromiseV1034;
-  if (startupSync) {
-    try { await startupSync; } catch {}
-    if (startupUserContextPromiseV1034 === startupSync) startupUserContextPromiseV1034 = null;
-    if (!stack.isConnected) return;
-    try { stack._refreshQuota?.(); } catch {}
-  }
-  const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
   // V980 · Pedimos una tanda amplia porque los perfiles ya vistos no consumen
   // cupo otra vez. El filtro se hace después de sincronizar el historial real.
   const requestLimit = 100;
-  const [discoverUsers] = await Promise.all([
-    datingApi.discover(state.zone, requestLimit),
+  // Las sesiones antiguas sin token sí esperan primero su renovación; las
+  // sesiones normales empiezan a buscar inmediatamente con su token vigente.
+  if (startupSync && !Auth.get()) {
+    try { await startupSync; } catch {}
+  }
+  const requestedZone = state.zone || "hetero";
+  let [discoverUsers] = await Promise.all([
+    datingApi.discover(requestedZone, requestLimit),
+    startupSync || Promise.resolve(),
     syncFavoriteState(),
     syncDiscoverSeenState(),
     syncChattedProfileStateV1005(),
   ]);
+  if (startupUserContextPromiseV1034 === startupSync) startupUserContextPromiseV1034 = null;
+  if (!stack.isConnected) return;
+  // Si la zona cambió realmente en otro dispositivo, se corrige en segundo
+  // plano sin vaciar el mazo ni volver a enseñar «Buscando…».
+  if (state.zone && state.zone !== requestedZone) {
+    const correctedUsers = await datingApi.discover(state.zone, requestLimit);
+    if (Array.isArray(correctedUsers)) discoverUsers = correctedUsers;
+  }
+  try { stack._refreshQuota?.(); } catch {}
+  const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
   let users = discoverUsers;
   if (!users || users.length === 0) {
     // V637 · Sin usuarios reales → vacío en la app real; demo solo en preview.
