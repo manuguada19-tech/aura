@@ -4812,6 +4812,10 @@ textarea.input { resize: vertical; min-height: 60px; }
 }
 @keyframes userDrawerIn{from{transform:translateY(12px);opacity:.65}to{transform:none;opacity:1}}
 
+/* V1015 · Cierre siempre visible del editor de campañas push. */
+.campaign-editor-close{position:sticky;top:8px;z-index:6;float:right;display:grid;place-items:center;width:38px;height:38px;margin:-8px -8px 6px 12px;padding:0;border:1px solid var(--border);border-radius:11px;background:var(--panel-2);color:var(--text-soft);box-shadow:0 6px 18px rgba(0,0,0,.2);font-size:23px;line-height:1;cursor:pointer}.campaign-editor-close:hover,.campaign-editor-close:focus-visible{border-color:rgba(239,68,68,.5);background:rgba(239,68,68,.12);color:#f87171;outline:none}.campaign-editor-modal>h2:first-of-type{padding-right:42px}
+@media(max-width:720px){.campaign-editor-overlay{padding:8px!important}.campaign-editor-modal{margin:8px 0!important;padding:18px!important;border-radius:16px!important}.campaign-editor-close{top:max(8px,env(safe-area-inset-top));width:44px;height:44px;margin:-5px -5px 8px 10px;font-size:26px}.campaign-editor-modal>h2:first-of-type{padding-right:48px;font-size:19px!important}}
+
 /* V1001 · Administración del modo viajero. */
 .traveler-admin-filters{margin-bottom:14px;border:1px solid var(--border);border-radius:14px;background:var(--panel)}
 .traveler-admin-table .empty{padding:34px 18px;text-align:center;color:var(--text-muted)}

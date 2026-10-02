@@ -22007,8 +22007,17 @@ async function viewPushCampaigns(root) {
     // Estilos base para inputs, se aplican con var() del tema activo.
     const INPUT_STYLE = "width:100%;padding:10px;background:var(--panel-2,#191d27);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:8px;font-size:14px;box-sizing:border-box";
     const INPUT_SM = "padding:8px;background:var(--panel-2,#191d27);color:var(--text,#ecedf3);border:1px solid var(--border,#262a36);border-radius:6px;font-size:13px;box-sizing:border-box";
-    const overlay = el("div", { style: "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto" });
-    const modal = el("div", { style: "background:var(--panel,#14171f);color:var(--text,#ecedf3);max-width:600px;width:100%;border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);margin:20px 0;border:1px solid var(--border,#262a36)" });
+    const overlay = el("div", { class:"campaign-editor-overlay", style: "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow-y:auto" });
+    const modal = el("div", { class:"campaign-editor-modal", role:"dialog", "aria-modal":"true", "aria-label":"Nueva campaña push", style: "position:relative;background:var(--panel,#14171f);color:var(--text,#ecedf3);max-width:600px;width:100%;border-radius:14px;padding:22px;box-shadow:0 20px 60px rgba(0,0,0,.5);margin:20px 0;border:1px solid var(--border,#262a36)" });
+    const closeEditor = () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      overlay.remove();
+    };
+    const closeOnEscape = event => { if (event.key === "Escape") closeEditor(); };
+    modal.appendChild(el("button", {
+      class:"campaign-editor-close", type:"button", title:"Cerrar campaña",
+      "aria-label":"Cerrar editor de campaña", onclick:closeEditor,
+    }, "×"));
 
     modal.appendChild(el("h2", { style: "margin:0 0 4px;font-size:20px;color:var(--text,#ecedf3)" }, "🔔 Nueva campaña push"));
     modal.appendChild(el("p", { style: "margin:0 0 16px;color:var(--muted,#8f95a3);font-size:13px" }, "Diseña tu notificación y elige a quién enviarla."));
@@ -22314,7 +22323,7 @@ async function viewPushCampaigns(root) {
     // Acciones
     const foot = el("div", { style: "display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;margin-top:16px" });
     const btnCancel = el("button", { class: "btn", style: "flex:1 1 auto;min-width:120px" }, "Cancelar");
-    btnCancel.addEventListener("click", () => overlay.remove());
+    btnCancel.addEventListener("click", closeEditor);
     const btnDraft = el("button", { class: "btn", style: "flex:1 1 auto;min-width:140px" }, "💾 Guardar borrador");
     const btnSchedule = el("button", { class: "btn", style: "flex:1 1 auto;min-width:120px" }, "⏰ Programar");
     const btnSend = el("button", { class: "btn primary", style: "flex:1 1 auto;min-width:140px" }, "📢 Enviar ahora");
@@ -22342,7 +22351,7 @@ async function viewPushCampaigns(root) {
       try {
         const j = await api.post("/api/admin/push/campaigns", payload);
         toast("Campaña creada: #" + j.id);
-        overlay.remove();
+        closeEditor();
         load();
       } catch(e) { alert("Error: " + e.message); }
     }
@@ -22352,9 +22361,11 @@ async function viewPushCampaigns(root) {
     foot.appendChild(btnCancel); foot.appendChild(btnDraft); foot.appendChild(btnSchedule); foot.appendChild(btnSend);
     modal.appendChild(foot);
 
-    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) closeEditor(); });
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
+    document.addEventListener("keydown", closeOnEscape);
+    setTimeout(() => modal.querySelector("input,textarea,select")?.focus(), 30);
   }
 }
 
