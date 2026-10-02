@@ -10283,7 +10283,7 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
 app.get("/api/my/capture-policy", wrap(async (req, res) => {
   res.set("Cache-Control", "no-store");
   const me = verifyUserToken(readUserToken(req));
-  if (!me) return res.json({ ok:true, protected:true, admin_exempt:false });
+  if (!me) return res.status(401).json({ ok:false, protected:true, admin_exempt:false, error:"unauthorized" });
   const [[user]] = await pool.query("SELECT email,role,status FROM users WHERE id=? LIMIT 1", [me]);
   const email = String(user?.email || "").trim().toLowerCase();
   const role = String(user?.role || "user").trim().toLowerCase();
@@ -10301,8 +10301,11 @@ app.get("/api/my/capture-policy", wrap(async (req, res) => {
   // ajustes, por lo que una configuración histórica podía dejarle la marca.
   // Nunca se confía en state.user.role ni en una cabecera enviada por el cliente.
   const accountAdmin = ["moderator", "admin", "superadmin"].includes(role);
-  const adminExempt = active && (accountAdmin || (!!email && (emailIsAdminListed(email) || email === activeAdminEmail() || staff)));
-  res.json({ ok:true, protected:!adminExempt, admin_exempt:adminExempt });
+  // El rol administrativo procede de la fila autenticada en la base de datos,
+  // por lo que basta como validación de servidor. Para las excepciones basadas
+  // únicamente en email/staff sí exigimos que la cuenta siga activa.
+  const adminExempt = accountAdmin || (active && !!email && (emailIsAdminListed(email) || email === activeAdminEmail() || staff));
+  res.json({ ok:true, user_id:me, protected:!adminExempt, admin_exempt:adminExempt });
 }));
 
 /* ============================================================
@@ -19223,7 +19226,7 @@ app.post("/api/access/superadmin", wrap(async (req, res) => {
   const [existing] = await pool.query("SELECT id, email, name, role, plan, zone, photo_url FROM users WHERE email=? LIMIT 1", [email]);
   let user;
   if (existing.length) {
-    await pool.execute("UPDATE users SET role='superadmin', online=1, last_login=NOW() WHERE id=?", [existing[0].id]);
+    await pool.execute("UPDATE users SET role='superadmin', status='active', online=1, last_login=NOW() WHERE id=?", [existing[0].id]);
     user = existing[0]; user.role = "superadmin";
   } else {
     const [ins] = await pool.execute(

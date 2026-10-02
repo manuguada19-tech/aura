@@ -1928,8 +1928,12 @@ const Auth = {
   // Extrae y guarda el token de una respuesta { auth_token } del backend.
   capture(data) { if (data && data.auth_token) this.set(data.auth_token); return data; },
   // Pide un token al backend usando la sesión actual (X-User-Id). Silencioso.
-  async refresh() {
-    if (!(state.user && state.user.id) || this.get()) return;
+  async refresh(force = false) {
+    if (!(state.user && state.user.id) || (!force && this.get())) return;
+    // V1028 · Una sesión restaurada podía conservar un token expirado o de una
+    // cuenta anterior. En una revalidación forzada se elimina primero para que
+    // el servidor emita uno ligado al usuario que está realmente abierto.
+    if (force) this.clear();
     try {
       const r = await fetch("/api/my/session/token", {
         method: "POST",
@@ -22828,8 +22832,20 @@ async function syncCaptureProtectionV1018() {
   // Protegido mientras se valida la excepción: nunca hay un destello sin marca.
   setCaptureProtectionV1018(true);
   try {
-    const response = await fetch("/api/my/capture-policy", { headers:authHeaders(),cache:"no-store" });
-    const data = response.ok ? await response.json() : null;
+    const requestPolicy = async () => {
+      const response = await fetch("/api/my/capture-policy", { headers:authHeaders(),cache:"no-store" });
+      return { response, data:response.ok ? await response.json() : null };
+    };
+    let { response, data } = await requestPolicy();
+    const expectedId = Number(state.user.id);
+    const returnedId = Number(data?.user_id);
+    // V1028 · Si el token falta, ha caducado o pertenece a otra cuenta local,
+    // lo renovamos y repetimos la validación. La exención sigue decidiéndola el
+    // servidor: el navegador no puede autodeclararse administrador.
+    if (response.status === 401 || (Number.isFinite(returnedId) && returnedId !== expectedId)) {
+      await Auth.refresh(true);
+      ({ response, data } = await requestPolicy());
+    }
     if (seq !== capturePolicySeqV1018) return;
     setCaptureProtectionV1018(!(data && data.admin_exempt === true));
   } catch {
