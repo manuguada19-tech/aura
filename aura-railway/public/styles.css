@@ -3046,10 +3046,6 @@ body.account-suspended .restriction-banner .rb-close {
   position:relative; display:grid; gap:16px; padding:18px 16px;
   border-bottom:1px solid var(--border); background:var(--surface);
 }
-.profile-header-v1023::before {
-  content:""; position:absolute; inset:0 auto 0 0; width:6px;
-  background:linear-gradient(180deg,var(--brand-1),var(--brand-2));
-}
 .profile-header-top-v1023 { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; }
 .profile-header-top-v1023>div { display:grid; gap:3px; }
 .profile-header-top-v1023>div>span { color:var(--brand-1); font-size:14px; font-weight:850; letter-spacing:.1em; }

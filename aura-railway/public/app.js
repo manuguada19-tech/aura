@@ -4601,6 +4601,10 @@ try {
   if (__mqP.addEventListener) __mqP.addEventListener("change", __resyncDesktopApp);
 } catch {}
 
+// V1034 · La primera consulta de Explorar espera a esta sincronización. Antes
+// se pintaba el feed con el estado local y syncUserPlan() lo volvía a pintar al
+// recibir plan/entitlements/zona, provocando dos búsquedas visibles seguidas.
+let startupUserContextPromiseV1034 = null;
 function showApp() {
   tabbar.hidden = false;
   document.body.classList.add("app-open");
@@ -4609,13 +4613,13 @@ function showApp() {
   // Ensure the current user is registered in DB for real chat + start heartbeat.
   // Auth.refresh() consigue un token de sesión firmado de forma silenciosa para
   // las sesiones antiguas que aún no lo tienen (migración previa al modo estricto).
-  (async () => {
+  startupUserContextPromiseV1034 = (async () => {
     try {
       await chatApi.ensure();
       await Auth.refresh();
       await syncCaptureProtectionV1018();
       startHeartbeat();
-      await syncUserPlan();
+      await syncUserPlan({ suppressRerender: true });
       await syncOwnIdentityForFilters(true); // V984 · filtros acordes al género/orientación propios
     } catch {}
   })();
@@ -11251,7 +11255,7 @@ function markDiscoverProfileSeen(u, stack) {
 // que ve el admin). Aquí lo corregimos de forma centralizada: pedimos el plan
 // al backend (/api/my/reads/status ya lo devuelve) y lo persistimos en
 // state.user + localStorage, refrescando la etiqueta del perfil si está visible.
-async function syncUserPlan() {
+async function syncUserPlan(options = {}) {
   try {
     if (!state.user || !state.user.id) return;
     const [r, entitlementResponse] = await Promise.all([
@@ -11284,7 +11288,7 @@ async function syncUserPlan() {
     // V975 · Si el plan llegó después del primer pintado, el cupo de Explorar
     // o Cerca no puede quedarse congelado en Free. Repintamos esas pantallas
     // cuando cambia el plan; un cambio de zona conserva el comportamiento previo.
-    if (zoneChanged || ((prevPlan !== plan || entitlementsChanged) && (state.currentTab === "discover" || state.currentTab === "nearby"))) {
+    if (!options.suppressRerender && (zoneChanged || ((prevPlan !== plan || entitlementsChanged) && (state.currentTab === "discover" || state.currentTab === "nearby")))) {
       try { _rerender(); } catch {}
     }
     // V811 · Al detectar que el usuario ha vuelto al plan gratuito desde uno de
@@ -11369,8 +11373,8 @@ function openPlanLimitModal(hiddenCount) {
    cuadrícula propia de Aura. La misma barra deja siempre visible el cupo real
    del plan; no hace falta agotar el feed para descubrir cuántos perfiles hay. */
 function buildDiscoverViewBar(stack, actionRow) {
-  const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
-  const plan = planLabel(getUserPlan());
+  let limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
+  let plan = planLabel(getUserPlan());
   const quotaValue = el("strong", { class: "discover-quota-value" },
     limit === Infinity ? `${plan} · ∞ perfiles` : `${plan} · ${limit} perfiles`);
   const quotaUsed = el("span", { class: "discover-quota-used", "aria-live": "polite" }, "Cargando…");
@@ -11386,6 +11390,12 @@ function buildDiscoverViewBar(stack, actionRow) {
   });
 
   function refreshQuota() {
+    // El plan puede terminar de sincronizarse con la pantalla ya montada. Se
+    // actualiza el resumen sin reconstruir Explorar ni consultar otra vez.
+    limit = getProfilesLimit();
+    plan = planLabel(getUserPlan());
+    stack._profileLimit = limit;
+    quotaValue.textContent = limit === Infinity ? `${plan} · ∞ perfiles` : `${plan} · ${limit} perfiles`;
     const seenTotal = getDiscoverSeenCount();
     const seen = limit === Infinity ? seenTotal : Math.min(seenTotal, limit);
     const availableNow = Array.isArray(stack._users)
@@ -11460,6 +11470,15 @@ function buildSwipeStack() {
 // Carga perfiles reales en el stack. En la app real, si no hay usuarios
 // reales se deja vacío (empty state). Solo la vista previa del admin usa demo.
 async function loadDiscoverInto(stack, append = false) {
+  // La primera carga espera el contexto definitivo de la cuenta. De este modo
+  // solo aparece una búsqueda y la consulta ya usa la zona y el plan correctos.
+  const startupSync = startupUserContextPromiseV1034;
+  if (startupSync) {
+    try { await startupSync; } catch {}
+    if (startupUserContextPromiseV1034 === startupSync) startupUserContextPromiseV1034 = null;
+    if (!stack.isConnected) return;
+    try { stack._refreshQuota?.(); } catch {}
+  }
   const limit = stack._profileLimit == null ? getProfilesLimit() : stack._profileLimit;
   // V980 · Pedimos una tanda amplia porque los perfiles ya vistos no consumen
   // cupo otra vez. El filtro se hace después de sincronizar el historial real.
