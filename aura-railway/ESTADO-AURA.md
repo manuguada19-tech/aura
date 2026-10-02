@@ -1,6 +1,22 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1029 (`b7be742`, build `2659b83d3716`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1030 (`29af054`, build `d96576417ae8`)**
+
+### V1030 (02/10/2026) — Exención anticapturas resistente a despliegues
+
+- Si la PWA consulta la política anticapturas mientras Railway todavía está
+  arrancando y recibe un error temporal, mantiene la protección y vuelve a
+  comprobarla automáticamente. La marca ya no queda fijada durante toda la
+  sesión del superadmin por un `503` transitorio.
+- La política también se resincroniza al recuperar conexión y al volver a la
+  PWA desde segundo plano. La decisión continúa procediendo del servidor; el
+  navegador no puede conceder la exención por sí mismo.
+- Validada con cuentas totalmente simuladas: tras dos respuestas `503`, la
+  tercera comprobación retiró la marca al superadmin; una cuenta normal la
+  conservó. Comprobada sin desbordamiento en 360×800, 390×844 y 1440×900.
+  `node --check` y `git diff --check` correctos. Publicada en commit `29af054`,
+  build `d96576417ae8`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se utilizaron ni modificaron usuarios reales.
 
 ### V1029 (02/10/2026) — Usuarios del mapa en lista paginada
 
