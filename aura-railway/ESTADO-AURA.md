@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1032 (`fcc789d`, build `50bcc60a929c`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1033 (`f7fa1c4`, build `bc45189edfc4`)**
+
+### V1033 (02/10/2026) — Inicio de la PWA alineado con el splash
+
+- Los cuatro iconos instalables de la PWA, incluidos los adaptables de Android,
+  usan ahora el mismo sello completo y nítido del splash sobre fondo negro. El
+  arranque del sistema deja de mostrar el símbolo antiguo antes de «Iniciando
+  Aura…» y ambas fases mantienen una identidad visual continua.
+- Se renuevan las versiones del manifiesto, los iconos y la caché del service
+  worker para que las instalaciones existentes reciban los recursos nuevos.
+  La breve pantalla técnica creada por Android/Chrome no se puede eliminar desde
+  una PWA, pero ya no introduce un logo visualmente distinto.
+- Validada localmente en 360×800, 390×844 y 1440×900, sin desbordamiento
+  horizontal. El manifiesto es JSON válido; `node --check` y `git diff --check`
+  correctos. Publicada en commit `f7fa1c4`, build `bc45189edfc4`; Railway
+  terminó correctamente y `/api/health` respondió `ready:true`. No se utilizaron
+  ni modificaron usuarios reales.
+- La aplicación Android nativa continúa local y todavía no se ha distribuido.
 
 ### V1032 (02/10/2026) — Inicio único y actualización silenciosa
 
