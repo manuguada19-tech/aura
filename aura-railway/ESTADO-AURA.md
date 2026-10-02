@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1033 (`f7fa1c4`, build `bc45189edfc4`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1034 (`0f499fe`, build `938c0cf33c21`)**
+
+### V1034 (02/10/2026) — Explorar sin doble carga y Perfil limpio
+
+- El arranque de una sesión espera a confirmar plan, prestaciones, zona e
+  identidad antes de solicitar los perfiles de Explorar. «Buscando personas
+  cerca…» aparece una sola vez y el resultado deja de mostrarse y recargarse
+  inmediatamente después.
+- Los cambios de plan actualizan el resumen visible de Explorar sin reconstruir
+  la pantalla ni lanzar otra consulta. Las recargas posteriores solicitadas por
+  navegación o filtros conservan su comportamiento.
+- Se elimina la raya degradada naranja/rosa situada a la izquierda de la
+  cabecera del Perfil. Era únicamente decorativa y no representaba avisos ni el
+  estado de la cuenta.
+- Validada con cuentas y perfiles totalmente simulados en 360×800, 390×844 y
+  1440×900: una sola petición a `/api/discover` por arranque, dos perfiles
+  mostrados, raya ausente y sin desbordamiento horizontal. `node --check` y
+  `git diff --check` correctos. Publicada en commit `0f499fe`, build
+  `938c0cf33c21`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se utilizaron ni modificaron usuarios reales.
 
 ### V1033 (02/10/2026) — Inicio de la PWA alineado con el splash
 
