@@ -1,6 +1,31 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1036 (`ae0fc58`, build `b8af0fea39d6`)**
+**Fecha de este resumen: 2 octubre 2026 · PWA publicada: V1036 (`ae0fc58`, build `b8af0fea39d6`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### Android 1.1 (versionCode 2) — Proyecto nativo publicado en GitHub
+
+- Incorporado a `main` el proyecto Android nativo completo con identificador
+  `es.citasaura.app`, preparado como versión 1.1 y `versionCode 2` para el
+  siguiente lanzamiento de prueba interna en Google Play.
+- Mantiene `FLAG_SECURE`, barras del sistema oscuras, zonas seguras de Android
+  15 y acceso a la PWA únicamente mediante HTTPS en `citasaura.es`.
+- La pantalla de revisión aprovecha toda la altura disponible, oculta en ese
+  acceso el selector flotante claro/oscuro y conserva tipografía legible sin
+  desplazamiento inicial.
+- El acceso administrativo se presenta como un panel independiente sobre el
+  teclado. La adaptación distingue si Android ya redujo el WebView para no
+  descontar dos veces la altura del teclado ni desplazar el formulario.
+- Validada con datos simulados en 360×800, 390×844 y 1440×900, además de la
+  comprobación final del propietario en el dispositivo Android real. No se
+  utilizaron cuentas reales ni se enviaron campañas.
+- `node --check`, `git diff --check`, validación JSON/XML y comprobación del
+  JavaScript nativo correctos. Publicado el código fuente en el commit
+  `bfcc202`. Railway completó el despliegue y `/api/health` volvió a responder
+  `ready:true`; `/api/version` conserva el build `b8af0fea39d6` porque no cambió
+  el código web servido.
+- La versión 1.1 todavía debe compilarse y firmarse localmente con el almacén
+  privado del propietario y subirse como nuevo AAB a la prueba interna de
+  Google Play. No está disponible para el público general.
 
 ### V1036 (02/10/2026) — Entrada limpia desde beta/revisión
 
