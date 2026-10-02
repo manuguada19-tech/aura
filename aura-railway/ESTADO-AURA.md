@@ -1,6 +1,21 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1013 (`fe04113`, build `6d9a43f7c54a`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1014 (`0e70420`, build `be1d9d4ea15a`)**
+
+### V1014 (02/10/2026) — Cola de trabajo descartable
+
+- «Panel → Centro de trabajo → Siguiente por atender» incorpora una `×` en
+  cada fila para quitarla individualmente y el botón «Vaciar lista» para retirar
+  de una vez todos los elementos actuales, con confirmación previa.
+- Descartar solo oculta la entrada en la cola personal del administrador: no
+  borra ni modifica usuarios, tickets, denuncias o apelaciones. Las alertas
+  agregadas del embudo reaparecen si cambia su número de afectados.
+- La preferencia queda persistida por cuenta administrativa y las entradas
+  antiguas se limpian automáticamente después de 90 días.
+- Validada con datos simulados: descarte individual, vaciado completo,
+  confirmación, refresco del panel y cero errores de página. Publicada en commit
+  `0e70420`, build `be1d9d4ea15a`; Railway finalizó correctamente y
+  `/api/health` respondió `ready:true`. No se alteraron datos reales.
 
 ### V1013 (02/10/2026) — Administración accionable y móvil
 
