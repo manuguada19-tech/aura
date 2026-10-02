@@ -1,6 +1,26 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1012 (`eb40f5a`, build `e46388c95b73`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1013 (`fe04113`, build `6d9a43f7c54a`)**
+
+### V1013 (02/10/2026) — Administración accionable y móvil
+
+- El buscador global incorpora filtros por Todo, Usuarios, Tickets, Denuncias,
+  Pagos y Secciones, con recuentos por categoría y filtro recordado durante la
+  sesión. Guarda localmente las seis consultas recientes y permite repetirlas o
+  borrar el historial completo.
+- El detalle del embudo permite convertir cualquier pestaña de pendientes o
+  completados en audiencia dinámica de una campaña push. Abre el editor ya
+  precargado, recalcula la audiencia al usarla y nunca envía automáticamente.
+- El Centro de trabajo añade alertas agregadas de perfiles, verificaciones,
+  actividad e interés estancados. Cada alerta abre directamente el paso y la
+  pestaña Pendientes correspondientes del embudo.
+- La ficha administrativa de usuario ocupa el 100% de la pantalla móvil, con
+  cabecera fija, nombre y botón Volver; conserva el autosave y todas las acciones.
+- Validada con respuestas simuladas en 1440 px y 390×844: filtros, historial,
+  borrado, navegación alerta→embudo, precarga de campaña y ficha completa; sin
+  desbordamiento ni errores de página. No se enviaron campañas ni se modificaron
+  usuarios. Publicada en commit `fe04113`, build `6d9a43f7c54a`; Railway terminó
+  correctamente y `/api/health` respondió `ready:true`.
 
 ### V1012 (02/10/2026) — Buscador móvil corregido
 
