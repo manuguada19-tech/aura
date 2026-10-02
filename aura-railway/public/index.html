@@ -194,7 +194,10 @@
   <script>
     (function(){
       try {
-        var t = localStorage.getItem("aura-theme") || "dark";
+        var mode = localStorage.getItem("aura-theme-mode-v1021");
+        var t = mode === "system"
+          ? ((window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light")
+          : ((mode === "light" || mode === "dark") ? mode : (localStorage.getItem("aura-theme") || "dark"));
         document.documentElement.dataset.theme = t;
       } catch(e) { document.documentElement.dataset.theme = "dark"; }
       // Vista previa del panel de admin (iframe con ?preview=…). El iframe hereda

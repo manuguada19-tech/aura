@@ -1866,7 +1866,14 @@ const state = {
   // y luego syncUserPlan lo cambiaba a lgtb y lo vaciaba). syncUserPlan sigue
   // siendo la fuente de verdad y corrige si el servidor difiere.
   zone: (() => { try { const u = JSON.parse(localStorage.getItem("aura-session") || "null"); return (u && (u.zone === "hetero" || u.zone === "lgtb")) ? u.zone : null; } catch { return null; } })(), // 'hetero' | 'lgtb'
-  theme: localStorage.getItem("aura-theme") || "dark",
+  theme: (() => {
+    try {
+      const mode = localStorage.getItem("aura-theme-mode-v1021");
+      if (mode === "system") return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      if (mode === "light" || mode === "dark") return mode;
+      return localStorage.getItem("aura-theme") || "dark";
+    } catch { return "dark"; }
+  })(),
   currentTab: "discover",
   currentTag: null,
   filters: {
@@ -3709,10 +3716,23 @@ function paintThemeBackground() {
 }
 paintThemeBackground();
 
-function _toggleAuraTheme() {
-  state.theme = state.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = state.theme;
-  localStorage.setItem("aura-theme", state.theme);
+function currentAuraThemeModeV1021() {
+  try {
+    const saved = localStorage.getItem("aura-theme-mode-v1021");
+    return ["system", "light", "dark"].includes(saved) ? saved : state.theme;
+  } catch { return state.theme; }
+}
+function applyAuraThemeModeV1021(mode) {
+  const safeMode = ["system", "light", "dark"].includes(mode) ? mode : "system";
+  const resolved = safeMode === "system"
+    ? (window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+    : safeMode;
+  state.theme = resolved;
+  document.documentElement.dataset.theme = resolved;
+  try {
+    localStorage.setItem("aura-theme-mode-v1021", safeMode);
+    localStorage.setItem("aura-theme", resolved);
+  } catch {}
   paintThemeBackground();
   try { applyDesign(); } catch(e){}
   // Rebuild logo (welcome hero + side brand) so the light/dark variant swaps
@@ -3722,9 +3742,19 @@ function _toggleAuraTheme() {
     applyContent();
   } catch(e){}
 }
+function _toggleAuraTheme() {
+  applyAuraThemeModeV1021(state.theme === "light" ? "dark" : "light");
+}
 $("#themeToggle").addEventListener("click", _toggleAuraTheme);
 const _themeCardEl = document.getElementById("themeCard");
 if (_themeCardEl) _themeCardEl.addEventListener("click", _toggleAuraTheme);
+try {
+  const _systemThemeV1021 = window.matchMedia("(prefers-color-scheme: dark)");
+  const _syncSystemThemeV1021 = () => {
+    if (currentAuraThemeModeV1021() === "system") applyAuraThemeModeV1021("system");
+  };
+  if (_systemThemeV1021.addEventListener) _systemThemeV1021.addEventListener("change", _syncSystemThemeV1021);
+} catch {}
 
 /* ---------- Mock data ----------
    V637 · Los perfiles demo (generateUsers) SOLO deben aparecer en la vista
@@ -11215,6 +11245,10 @@ function updateMeTierBadge() {
   const badge = document.getElementById("meTierBadge");
   if (!badge) return;
   const plan = getUserPlan();
+  if (badge.classList.contains("profile-hub-plan-v1021")) {
+    badge.textContent = plan === "free" ? "FREE · MEJORAR" : planLabel(plan).toUpperCase();
+    return;
+  }
   if (plan === "free") {
     badge.textContent = "Plan Free · Mejorar";
     badge.setAttribute("style", "background:rgba(255,255,255,.10);color:var(--text,#ecedf3);cursor:pointer");
@@ -16348,8 +16382,13 @@ async function openOwnProfilePreview() {
   openProfileDetail(previewUser, { selfPreview: true });
 }
 
+/* V1021 · Iconos del nuevo centro de Perfil. */
+function profileConceptIconV1021(path) {
+  return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="${path}"/></svg>`;
+}
+
 function screenMe(root) {
-  root.classList.add("screen-me");
+  root.classList.add("screen-me", "profile-concept-v1021");
   // V751 · Recuerda la posición de scroll del menú de perfil mientras el
   // usuario navega por él, para restaurarla al volver de una sub-sección.
   root.addEventListener("scroll", () => { _meScrollTop = root.scrollTop || 0; }, { passive: true });
@@ -16362,24 +16401,48 @@ function screenMe(root) {
   // "★ Premium"). Se pinta con el plan actual y se re-sincroniza con el servidor
   // por si state.user aún no lo tenía cargado.
   const _mePlan = getUserPlan();
-  const meTier = _mePlan === "free" ? "Plan Free · Mejorar" : ("★ " + planLabel(_mePlan));
   // V801 · Re-sincroniza el plan real con el servidor (self-heal) y actualiza la
   // píldora/gates aunque state.user aún no lo tuviera cargado.
   try { syncUserPlan(); } catch {}
   // V771 · Distintivo azul junto al nombre si la cuenta está verificada. Se pinta
   // con el sello local (state.user.verified) y, además, se confirma con el
   // servidor de forma asíncrona por si el sello local aún no estaba puesto.
-  const meNameRow = el("div", { class: "me-name-row" }, [
-    el("h3", { class: "me-name" }, meName),
-  ]);
   const meVerifiedBadge = el("span", {
-    class: "me-verified-badge", title: "Cuenta verificada",
+    class: "profile-hub-verified-v1021", title: "Cuenta verificada",
     style: (state.user && state.user.verified) ? "" : "display:none",
-    html: `<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`,
-  });
-  meNameRow.appendChild(meVerifiedBadge);
+    "aria-label":"Cuenta verificada",
+  }, "✓");
+  const verificationCopy = el("small", {}, (state.user && state.user.verified) ? "Perfil completo · Cuenta verificada" : "Revisa el estado y completa tu perfil");
+  const planBadge = el("span", {
+    class:"profile-hub-plan-v1021", id:"meTierBadge", role:"button", tabindex:"0",
+    onclick:() => render(screenSubscriptions),
+  }, _mePlan === "free" ? "FREE · MEJORAR" : planLabel(_mePlan).toUpperCase());
+  const bellIcon = profileConceptIconV1021("M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4");
+  const profileHero = el("section", { class:"profile-hub-hero-v1021" }, [
+    el("div", { class:"profile-hub-top-v1021" }, [
+      el("span", {}, "TU ESPACIO"),
+      el("button", {
+        class:"profile-hub-alerts-v1021 me-bell", type:"button", title:"Notificaciones", "aria-label":"Notificaciones",
+        onclick:() => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} },
+      }, [el("span", { class:"me-bell-ico", html:bellIcon }), el("span", { class:"me-bell-badge", style:"display:none" }, "0")]),
+    ]),
+    el("div", { class:"profile-hub-person-v1021" }, [
+      el("div", { class:"profile-hub-avatar-v1021", style:`background-image:url('${meAvatar}')`, title:"Ver foto", role:"button", tabindex:"0", onclick:() => openAvatarViewer(meAvatar) }, [meVerifiedBadge]),
+      el("div", {}, [
+        el("div", { class:"profile-hub-name-v1021" }, [el("h1", {}, meName), planBadge]),
+        el("p", { title:"Correo oculto por privacidad" }, meMail),
+        verificationCopy,
+      ]),
+    ]),
+    el("div", { class:"profile-hub-main-actions-v1021" }, [
+      el("button", { type:"button", onclick:openOwnProfilePreview }, [el("span", { html:profileConceptIconV1021("M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0") }), "Ver mi perfil"]),
+      el("button", { type:"button", onclick:() => render(screenEditProfile) }, [el("span", { html:profileConceptIconV1021("M4 20h4l11-11-4-4L4 16v4M13.5 6.5l4 4") }), "Editar perfil"]),
+    ]),
+  ]);
+  root.appendChild(profileHero);
   const applyMeVerificationState = (ok) => {
     meVerifiedBadge.style.display = ok ? "" : "none";
+    verificationCopy.textContent = ok ? "Perfil completo · Cuenta verificada" : "Revisa el estado y completa tu perfil";
     const row = document.querySelector("#meVerifyRow");
     if (!row) return;
     const title = row.querySelector("strong");
@@ -16397,31 +16460,6 @@ function screenMe(root) {
       applyMeVerificationState(ok);
     } catch {}
   })();
-  root.appendChild(el("div", { class: "me-hero" }, [
-    el("div", { class: "me-avatar tappable", style: `background-image:url('${meAvatar}')`, title: "Ver foto", role: "button", tabindex: "0", onclick: () => openAvatarViewer(meAvatar) }),
-    el("div", {}, [
-      meNameRow,
-      el("div", { class: "me-mail", title: "Correo oculto por privacidad" }, meMail),
-      el("span", {
-        class: "me-tier", id: "meTierBadge",
-        style: _mePlan === "free" ? "background:rgba(255,255,255,.10);color:var(--text,#ecedf3);cursor:pointer" : "cursor:pointer",
-        onclick: () => render(screenSubscriptions),
-      }, meTier),
-    ]),
-    el("div", { class: "me-hero-actions" }, [
-      // V587 · Campanita de notificaciones in-app con badge de no leídas
-      el("button", {
-        class: "me-bell",
-        title: "Notificaciones",
-        onclick: () => { try { window.aura2 && window.aura2.openNotifications && window.aura2.openNotifications(); } catch {} },
-      }, [
-        el("span", { class: "me-bell-ico" }, "🔔"),
-        el("span", { class: "me-bell-badge", style: "display:none" }, "0"),
-      ]),
-      // V709 · Botón "Editar" retirado: ya existe la opción "Editar perfil"
-      // en la lista de ajustes (grupo Cuenta), evitando la acción duplicada.
-    ]),
-  ]));
   // Actualiza el badge nada más pintar la pantalla
   try { window.aura2 && window.aura2.updateNotifBadge && window.aura2.updateNotifBadge(); } catch {}
 
@@ -16591,7 +16629,7 @@ function screenMe(root) {
       { icon: "◉", title: "Privacidad y visibilidad", sub: (INVISIBLE_PLANS.has(getUserPlan()) ? "Perfil, distancia y actividad" : "Controles básicos · Invisible desde Premium"), onClick: () => render(screenInvisibleMode) },
       { icon: "◇", title: "Seguridad y dispositivos", sub: "Sesiones, 2FA y bloqueo remoto", onClick: () => render(screenSessionSecurity) },
       { icon: "△", title: "Centro de seguridad", sub: "Bloqueos, denuncias y apelaciones", onClick: () => render(screenSafetyCenter) },
-      { icon: "◇", title: "Planificar una cita segura", sub: "Checklist y contacto de confianza · sin seguimiento", onClick: () => render(screenSafeDateV1009) },
+      { icon: "◇", title: "Planificar una cita segura", sub: "Checklist personal antes de quedar · sin seguimiento", onClick: () => render(screenSafeDateV1009) },
       { icon: "⌁", title: "Recuperación de cuenta", sub: "Correo, 2FA, códigos y dispositivos", onClick: () => render(screenRecoveryCenterV1009) },
       {
         icon: "📍",
@@ -16632,17 +16670,92 @@ function screenMe(root) {
       { icon: "🗑️", title: T("content.me.item_delete") || "Eliminar cuenta", danger: true, sub: T("content.me.item_delete_sub") || "Acción irreversible", onClick: () => openDeleteAccountSheet() },
     ]},
   ];
-  groups.forEach(g => {
-    if (g.title) list.appendChild(el("div", { class: "settings-section" }, g.title));
-    g.items.forEach(it => {
-      const subEl = it.sub ? el("small", {}, it.sub) : null;
-      const row = el("div", { class: "settings-item" + (it.danger ? " danger" : ""), onclick: it.onClick }, [
-        el("div", { class: "ico" }, it.icon),
-        el("div", {}, [ el("strong", {}, it.title), subEl ]),
-        el("span", { class: "chev", html: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg>` }),
-      ]);
-      if (it.id) row.id = it.id;
-      list.appendChild(row);
+  const quickItems = [
+    { title:"Seguridad", sub:"Centro y ayuda", glyph:"M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4M8.5 12l2.2 2.2 4.8-5", action:() => render(screenSafetyCenter) },
+    { title:"Suscripción", sub:getUserPlan() === "free" ? "Mejorar plan" : `Plan ${planLabel(getUserPlan())}`, glyph:"M12 3l4 6-4 12-4-12 4-6M4 9h16M4 9l8 12 8-12", action:() => render(screenSubscriptions) },
+    { title:"Cuenta", sub:"Estado y acceso", glyph:"M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10", action:() => render(screenAccountStatus) },
+    { title:"Preferencias", sub:"Filtros y avisos", glyph:"M4 6h16M7 12h10M10 18h4", action:() => {
+      const section = root.querySelector('[data-profile-section="preferencias"]');
+      if (section) { section.open = true; section.scrollIntoView({ behavior:"smooth", block:"start" }); }
+    } },
+  ];
+  root.appendChild(el("section", { class:"profile-quick-v1021", "aria-label":"Accesos rápidos" }, quickItems.map(item =>
+    el("button", { type:"button", onclick:item.action }, [
+      el("span", { class:"profile-quick-icon-v1021", html:profileConceptIconV1021(item.glyph) }),
+      el("span", {}, [el("strong", {}, item.title), el("small", {}, item.sub)]),
+      el("b", {}, "›"),
+    ])
+  )));
+
+  const themeMode = currentAuraThemeModeV1021();
+  const appearanceModes = [
+    { id:"system", label:"Sistema", glyph:"M4 5h16v11H4zM9 20h6M12 16v4" },
+    { id:"light", label:"Claro", glyph:"M12 4V2M12 22v-2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M18.4 5.6l1.4-1.4M4.2 19.8l1.4-1.4M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0" },
+    { id:"dark", label:"Oscuro", glyph:"M20.5 14.2A8.5 8.5 0 0 1 9.8 3.5 8.5 8.5 0 1 0 20.5 14.2z" },
+  ];
+  const appearanceButtons = appearanceModes.map(mode => el("button", {
+    class:"profile-appearance-option-v1021" + (mode.id === themeMode ? " active" : ""), type:"button", "data-mode":mode.id,
+    "aria-pressed":mode.id === themeMode ? "true" : "false",
+  }, [el("span", { html:profileConceptIconV1021(mode.glyph) }), el("b", {}, mode.label)]));
+  appearanceButtons.forEach(button => button.addEventListener("click", () => {
+    appearanceButtons.forEach(item => {
+      const active = item === button;
+      item.classList.toggle("active", active);
+      item.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    applyAuraThemeModeV1021(button.dataset.mode);
+    toast(`Tema: ${button.textContent.trim()}`);
+  }));
+  root.appendChild(el("section", { class:"profile-appearance-v1021" }, [
+    el("div", {}, [el("strong", {}, "Apariencia"), el("small", {}, "Elige cómo quieres ver Aura")]),
+    el("div", { class:"profile-appearance-switch-v1021", role:"group", "aria-label":"Tema de la aplicación" }, appearanceButtons),
+  ]));
+
+  const compactGroups = [
+    { key:"cuenta", title:"Cuenta y perfil", sub:"Identidad, fotos y estado", glyph:"M20 21a8 8 0 0 0-16 0M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10", items:groups[0].items, open:true },
+    { key:"plan", title:groups[1].title, sub:"Suscripción, pagos y facturas", glyph:"M12 3l4 6-4 12-4-12 4-6M4 9h16", items:groups[1].items },
+    { key:"beneficios", title:"Beneficios y novedades", sub:"Visitas, viajes, historias y recompensas", glyph:"M12 2l3 7h7l-6 4 2 8-6-5-6 5 2-8-6-4h7z", items:[...groups[2].items, ...groups[3].items] },
+    { key:"preferencias", title:groups[4].title, sub:"Descubrimiento, zona, avisos e idioma", glyph:"M4 6h16M7 12h10M10 18h4", items:groups[4].items.filter(item => item.title !== (T("content.me.item_theme") || "Tema")) },
+    { key:"privacidad", title:groups[5].title, sub:"Visibilidad, acceso, recuperación y datos", glyph:"M12 3l8 4v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4", items:groups[5].items },
+    { key:"ayuda", title:"Ayuda e información", sub:"Soporte, normas y documentación", glyph:"M12 17h.01M9.1 9a3 3 0 1 1 4.4 2.65c-.9.45-1.5 1.05-1.5 2.35M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20", items:[...groups[6].items, ...groups[7].items] },
+    { key:"sesion", title:groups[8].title, sub:"Salir o eliminar la cuenta", glyph:"M10 17l5-5-5-5M15 12H3M14 4h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5", items:groups[8].items },
+  ];
+  const search = el("input", { class:"profile-settings-search-v1021", type:"search", placeholder:"Buscar un ajuste", "aria-label":"Buscar un ajuste" });
+  root.appendChild(el("div", { class:"profile-settings-heading-v1021" }, [
+    el("div", {}, [el("span", {}, "CONFIGURACIÓN"), el("h2", {}, "Todo en su sitio")]), search,
+  ]));
+  list.className = "profile-sections-v1021";
+  compactGroups.forEach(group => {
+    const body = el("div", { class:"profile-section-body-v1021" });
+    group.items.forEach(item => {
+      const row = el("button", {
+        class:"profile-section-row-v1021" + (item.danger ? " danger" : ""), type:"button",
+        "data-search":`${item.title} ${item.sub || ""}`.toLowerCase(), onclick:item.onClick,
+      }, [el("span", {}, [el("strong", {}, item.title), item.sub ? el("small", {}, item.sub) : null]), el("b", {}, "›")]);
+      if (item.id) row.id = item.id;
+      body.appendChild(row);
+    });
+    const details = el("details", { class:"profile-section-v1021", open:!!group.open, "data-profile-section":group.key, "data-search":`${group.title} ${group.sub}`.toLowerCase() }, [
+      el("summary", {}, [
+        el("span", { class:"profile-section-icon-v1021", html:profileConceptIconV1021(group.glyph) }),
+        el("span", {}, [el("strong", {}, group.title), el("small", {}, group.sub)]),
+        el("span", { class:"profile-section-count-v1021" }, String(group.items.length)),
+        el("span", { class:"profile-section-chevron-v1021" }, "⌄"),
+      ]), body,
+    ]);
+    list.appendChild(details);
+  });
+  search.addEventListener("input", () => {
+    const query = search.value.trim().toLowerCase();
+    list.querySelectorAll(".profile-section-v1021").forEach(details => {
+      let visibleRows = 0;
+      details.querySelectorAll(".profile-section-row-v1021").forEach(row => {
+        const visible = !query || row.dataset.search.includes(query) || details.dataset.search.includes(query);
+        row.hidden = !visible;
+        if (visible) visibleRows++;
+      });
+      details.hidden = visibleRows === 0;
+      if (query && visibleRows) details.open = true;
     });
   });
   root.appendChild(list);
