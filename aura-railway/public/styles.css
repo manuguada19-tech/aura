@@ -3119,14 +3119,46 @@ body.account-suspended .restriction-banner .rb-close {
 }
 .profile-search-v1023::placeholder { color:var(--text-muted); opacity:1; }
 .profile-search-v1023:focus { border-color:var(--brand-1); box-shadow:0 0 0 4px color-mix(in srgb,var(--brand-1) 13%,transparent); }
-.profile-mobile-picker-v1023 { display:grid; gap:8px; }
-.profile-mobile-picker-v1023>span { color:var(--text); font-size:16px; font-weight:800; }
-.profile-category-select-v1023 {
-  width:100%; min-height:54px; padding:0 42px 0 14px; border:1px solid var(--border); border-radius:14px;
-  color:var(--text); background:var(--surface-2); font:inherit; font-size:16px; font-weight:700;
+.profile-section-switcher-v1025 { display:grid; gap:8px; }
+.profile-section-switcher-v1025>span { color:var(--text); font-size:16px; font-weight:800; }
+.profile-section-toggle-v1025 {
+  width:100%; min-height:66px; display:grid; grid-template-columns:42px minmax(0,1fr) auto; align-items:center; gap:11px;
+  padding:10px 12px; border:1px solid color-mix(in srgb,var(--brand-1) 30%,var(--border)); border-radius:15px;
+  color:var(--text); background:color-mix(in srgb,var(--brand-1) 7%,var(--surface-2)); font:inherit; text-align:left; cursor:pointer;
 }
+.profile-section-toggle-v1025:focus-visible { outline:3px solid color-mix(in srgb,var(--brand-1) 35%,transparent); outline-offset:2px; }
+.profile-current-icon-v1025 { width:42px; height:42px; display:grid; place-items:center; border-radius:12px; color:var(--brand-1); background:var(--surface); }
+.profile-current-icon-v1025 svg { width:22px; height:22px; }
+.profile-section-toggle-v1025>span:nth-child(2) { min-width:0; display:grid; gap:2px; }
+.profile-section-toggle-v1025 small { color:var(--text-muted); font-size:12px; font-weight:700; }
+.profile-section-toggle-v1025 strong { color:var(--text); font-size:16px; line-height:1.25; }
+.profile-section-toggle-v1025 b { padding:8px 10px; border-radius:10px; color:#fff; background:var(--grad-brand); font-size:13px; }
 .profile-settings-layout-v1023 { min-width:0; }
-.profile-category-nav-v1023 { display:none; }
+.profile-category-nav-v1023 {
+  display:none; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; margin:0 0 20px;
+}
+.profile-category-nav-v1023.mobile-open-v1025 { display:grid; }
+.profile-category-nav-v1023>button {
+  position:relative; min-width:0; min-height:86px; display:grid; grid-template-columns:38px minmax(0,1fr);
+  align-items:center; gap:9px; padding:12px 10px; border:1px solid var(--border); border-radius:14px;
+  color:var(--text); background:var(--surface-2); font:inherit; text-align:left; cursor:pointer;
+}
+.profile-category-nav-v1023>button:hover { background:color-mix(in srgb,var(--brand-1) 6%,var(--surface-2)); }
+.profile-category-nav-v1023>button.active {
+  border-color:color-mix(in srgb,var(--brand-1) 52%,var(--border));
+  background:color-mix(in srgb,var(--brand-1) 11%,var(--surface-2));
+  box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--brand-1) 18%,transparent);
+}
+.profile-category-icon-v1023 { width:38px; height:38px; display:grid; place-items:center; border-radius:12px; color:var(--brand-1); background:var(--surface); }
+.profile-category-icon-v1023 svg { width:21px; height:21px; }
+.profile-category-nav-v1023>button>span:nth-child(2) { min-width:0; display:grid; gap:3px; }
+.profile-category-nav-v1023 strong { font-size:15px; line-height:1.25; }
+.profile-category-nav-v1023 small { display:none; }
+.profile-category-nav-v1023 b {
+  display:none; position:absolute; right:7px; top:7px; min-width:22px; height:22px; padding:0 5px; place-items:center;
+  border-radius:999px; color:var(--text-muted); background:var(--surface); font-size:12px;
+}
+.profile-category-nav-v1023>button:last-child:nth-child(odd) { grid-column:1/-1; }
 .profile-panels-v1023 { min-width:0; }
 .profile-panel-v1023 { min-width:0; }
 .profile-panel-heading-v1023 { display:flex; align-items:center; gap:13px; padding:2px 0 14px; border-bottom:1px solid var(--border); }
@@ -3167,9 +3199,9 @@ body.account-suspended .restriction-banner .rb-close {
   .profile-accessible-v1023 .profile-main-actions-v1023 { width:370px; align-self:center; }
   .profile-accessible-v1023 .profile-theme-v1023 { grid-template-columns:minmax(200px,1fr) minmax(440px,620px); align-items:center; }
   .profile-accessible-v1023 .profile-settings-top-v1023 { grid-template-columns:minmax(0,1fr) 360px; align-items:center; }
-  .profile-accessible-v1023 .profile-mobile-picker-v1023 { display:none; }
+  .profile-accessible-v1023 .profile-section-switcher-v1025 { display:none; }
   .profile-accessible-v1023 .profile-settings-layout-v1023 { display:grid; grid-template-columns:310px minmax(0,1fr); gap:24px; align-items:start; }
-  .profile-accessible-v1023 .profile-category-nav-v1023 { display:grid; gap:7px; }
+  .profile-accessible-v1023 .profile-category-nav-v1023 { display:grid; grid-template-columns:1fr; gap:7px; margin:0; }
   .profile-accessible-v1023 .profile-category-nav-v1023>button {
     min-width:0; display:grid; grid-template-columns:44px minmax(0,1fr) 28px; align-items:center; gap:11px; padding:11px;
     border:1px solid transparent; border-radius:14px; color:var(--text); background:transparent; font:inherit; text-align:left; cursor:pointer;
@@ -3179,8 +3211,9 @@ body.account-suspended .restriction-banner .rb-close {
   .profile-accessible-v1023 .profile-category-icon-v1023 { width:44px; height:44px; display:grid; place-items:center; border-radius:13px; color:var(--brand-1); background:var(--surface-2); }
   .profile-accessible-v1023 .profile-category-nav-v1023>button>span:nth-child(2) { min-width:0; display:grid; gap:3px; }
   .profile-accessible-v1023 .profile-category-nav-v1023 strong { font-size:16px; line-height:1.25; }
-  .profile-accessible-v1023 .profile-category-nav-v1023 small { color:var(--text-muted); font-size:14px; line-height:1.35; }
-  .profile-accessible-v1023 .profile-category-nav-v1023 b { width:28px; height:28px; display:grid; place-items:center; border-radius:50%; color:var(--text-muted); background:var(--surface-2); font-size:13px; }
+  .profile-accessible-v1023 .profile-category-nav-v1023 small { display:block; color:var(--text-muted); font-size:14px; line-height:1.35; }
+  .profile-accessible-v1023 .profile-category-nav-v1023 b { position:static; width:28px; height:28px; padding:0; display:grid; place-items:center; border-radius:50%; color:var(--text-muted); background:var(--surface-2); font-size:13px; }
+  .profile-accessible-v1023 .profile-category-nav-v1023>button:last-child:nth-child(odd) { grid-column:auto; }
   .profile-accessible-v1023 .profile-settings-v1023.searching .profile-settings-layout-v1023 { grid-template-columns:1fr; }
   .profile-accessible-v1023 .profile-settings-v1023.searching .profile-panels-v1023 { display:grid; grid-template-columns:1fr 1fr; gap:22px; align-items:start; }
 }

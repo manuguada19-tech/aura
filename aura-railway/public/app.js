@@ -16693,13 +16693,29 @@ function screenMe(root) {
   ];
   const normalizeProfileSearchV1023 = value => String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const search = el("input", { class:"profile-search-v1023", type:"search", placeholder:"Buscar en los ajustes", "aria-label":"Buscar en los ajustes" });
-  const categorySelect = el("select", { class:"profile-category-select-v1023", "aria-label":"Categoría de ajustes" }, profileGroups.map(group =>
-    el("option", { value:group.key }, `${group.title} (${group.items.length})`)
-  ));
-  const mobilePicker = el("label", { class:"profile-mobile-picker-v1023" }, [
-    el("span", {}, "¿Qué quieres gestionar?"), categorySelect,
-  ]);
   const categoryNav = el("nav", { class:"profile-category-nav-v1023", "aria-label":"Categorías del perfil" });
+  // V1025 · El select nativo parecía una tarjeta sin acción. Este control
+  // dice de forma explícita qué se está viendo y ofrece un botón «Cambiar»;
+  // al abrirlo aparecen todas las categorías como botones grandes.
+  const mobileSectionIcon = el("span", { class:"profile-current-icon-v1025", html:profileConceptIconV1021(profileGroups[0].glyph) });
+  const mobileSectionTitle = el("strong", {}, profileGroups[0].title);
+  const mobileSectionToggle = el("button", {
+    class:"profile-section-toggle-v1025", type:"button", "aria-expanded":"false", "aria-controls":"profileCategoryNavV1025",
+  }, [
+    mobileSectionIcon,
+    el("span", {}, [el("small", {}, "Sección actual"), mobileSectionTitle]),
+    el("b", {}, "Cambiar"),
+  ]);
+  const mobileSectionSwitcher = el("div", { class:"profile-section-switcher-v1025" }, [
+    el("span", {}, "Ajustes que estás viendo"), mobileSectionToggle,
+  ]);
+  categoryNav.id = "profileCategoryNavV1025";
+  mobileSectionToggle.addEventListener("click", () => {
+    const open = !categoryNav.classList.contains("mobile-open-v1025");
+    categoryNav.classList.toggle("mobile-open-v1025", open);
+    mobileSectionToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    mobileSectionToggle.querySelector("b").textContent = open ? "Cerrar" : "Cambiar";
+  });
   list.className = "profile-panels-v1023";
   const categoryButtons = new Map();
   const panels = new Map();
@@ -16755,13 +16771,18 @@ function screenMe(root) {
       ]),
       search,
     ]),
-    mobilePicker,
+    mobileSectionSwitcher,
     settingsLayout,
   ]);
 
   function activateProfileGroupV1023(key, scroll = false) {
     selectedKey = panels.has(key) ? key : "cuenta";
-    categorySelect.value = selectedKey;
+    const selectedGroup = profileGroups.find(group => group.key === selectedKey) || profileGroups[0];
+    mobileSectionIcon.innerHTML = profileConceptIconV1021(selectedGroup.glyph);
+    mobileSectionTitle.textContent = selectedGroup.title;
+    categoryNav.classList.remove("mobile-open-v1025");
+    mobileSectionToggle.setAttribute("aria-expanded", "false");
+    mobileSectionToggle.querySelector("b").textContent = "Cambiar";
     categoryButtons.forEach((button, buttonKey) => {
       const active = buttonKey === selectedKey;
       button.classList.toggle("active", active);
@@ -16776,13 +16797,17 @@ function screenMe(root) {
       list.scrollIntoView({ behavior:"smooth", block:"start" });
     }
   }
-  categoryButtons.forEach((button, key) => button.addEventListener("click", () => activateProfileGroupV1023(key)));
-  categorySelect.addEventListener("change", () => activateProfileGroupV1023(categorySelect.value, true));
+  categoryButtons.forEach((button, key) => button.addEventListener("click", () => activateProfileGroupV1023(key, true)));
   search.addEventListener("input", () => {
     const query = normalizeProfileSearchV1023(search.value.trim());
     settings.classList.toggle("searching", !!query);
+    if (query) {
+      categoryNav.classList.remove("mobile-open-v1025");
+      mobileSectionToggle.setAttribute("aria-expanded", "false");
+      mobileSectionToggle.querySelector("b").textContent = "Cambiar";
+    }
     categoryNav.hidden = !!query;
-    mobilePicker.hidden = !!query;
+    mobileSectionSwitcher.hidden = !!query;
     let total = 0;
     panels.forEach(panel => {
       const groupMatch = !!query && panel.dataset.search.includes(query);
