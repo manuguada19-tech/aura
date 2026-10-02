@@ -22850,6 +22850,29 @@ let captureProtectionEnabledV1018 = false;
 let capturePolicySeqV1018 = 0;
 let capturePolicyRetryTimerV1030 = null;
 let capturePolicyRetryCountV1030 = 0;
+let capturePolicyPendingV1031 = false;
+function ensureCapturePolicyGateV1031() {
+  let gate = document.getElementById("capturePolicyGateV1031");
+  if (!gate) {
+    gate = el("div", {
+      id:"capturePolicyGateV1031", class:"capture-policy-gate-v1031",
+      role:"status", "aria-live":"polite", "aria-label":"Preparando Aura",
+    }, [
+      el("div", { class:"capture-policy-gate-card-v1031" }, [
+        el("span", { class:"capture-policy-gate-spinner-v1031", "aria-hidden":"true" }),
+        el("strong", {}, "Preparando Aura"),
+        el("small", {}, "Verificando la protección de esta sesión…"),
+      ]),
+    ]);
+    document.body.appendChild(gate);
+  }
+  return gate;
+}
+function setCapturePolicyPendingV1031(pending) {
+  capturePolicyPendingV1031 = !!pending;
+  if (capturePolicyPendingV1031) ensureCapturePolicyGateV1031();
+  document.body.classList.toggle("capture-policy-pending-v1031", capturePolicyPendingV1031);
+}
 function clearCapturePolicyRetryV1030() {
   if (capturePolicyRetryTimerV1030) clearTimeout(capturePolicyRetryTimerV1030);
   capturePolicyRetryTimerV1030 = null;
@@ -22896,11 +22919,16 @@ async function syncCaptureProtectionV1018() {
   const seq = ++capturePolicySeqV1018;
   if (!state?.user?.id || isPreviewMode()) {
     clearCapturePolicyRetryV1030();
+    setCapturePolicyPendingV1031(false);
     setCaptureProtectionV1018(false);
     return;
   }
-  // Protegido mientras se valida la excepción: nunca hay un destello sin marca.
-  setCaptureProtectionV1018(true);
+  // V1031 · Mientras el servidor decide, ocultamos el contenido con una espera
+  // neutra en vez de enseñar provisionalmente la marca. Así una cuenta admin
+  // nunca ve una marca que no le corresponde y una cuenta normal tampoco llega
+  // a mostrar contenido desprotegido antes de validar la política.
+  setCapturePolicyPendingV1031(true);
+  setCaptureProtectionV1018(false);
   try {
     const requestPolicy = async () => {
       const response = await fetch("/api/my/capture-policy", { headers:authHeaders(),cache:"no-store" });
@@ -22924,14 +22952,17 @@ async function syncCaptureProtectionV1018() {
     if (!response.ok || !data || data.ok !== true) {
       if (response.status === 401 || response.status === 429 || response.status >= 500) {
         scheduleCapturePolicyRetryV1030();
+      } else {
+        setCaptureProtectionV1018(true);
+        setCapturePolicyPendingV1031(false);
       }
       return;
     }
     clearCapturePolicyRetryV1030();
     setCaptureProtectionV1018(!(data && data.admin_exempt === true));
+    setCapturePolicyPendingV1031(false);
   } catch {
     if (seq === capturePolicySeqV1018) {
-      setCaptureProtectionV1018(true);
       scheduleCapturePolicyRetryV1030();
     }
   }
@@ -22945,11 +22976,11 @@ async function syncCaptureProtectionV1018() {
     if (document.hidden) conceal();
     else {
       reveal();
-      if (captureProtectionEnabledV1018 && state?.user?.id) syncCaptureProtectionV1018();
+      if ((capturePolicyPendingV1031 || captureProtectionEnabledV1018) && state?.user?.id) syncCaptureProtectionV1018();
     }
   });
   window.addEventListener("online", () => {
-    if (captureProtectionEnabledV1018 && state?.user?.id) syncCaptureProtectionV1018();
+    if ((capturePolicyPendingV1031 || captureProtectionEnabledV1018) && state?.user?.id) syncCaptureProtectionV1018();
   });
   window.addEventListener("pagehide", conceal);
   window.addEventListener("pageshow", reveal);
