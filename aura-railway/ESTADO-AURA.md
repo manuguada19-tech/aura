@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1020 (`85400a5`, build `bdbc59ed7185`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1021 (`408c5bc`, build `f3fb7aa4d030`)**
+
+### V1021 (02/10/2026) — Perfil compacto y tema accesible
+
+- «Perfil» estrena una cabecera visual con foto, plan, verificación,
+  notificaciones y accesos directos a la vista y edición del perfil.
+- Las funciones existentes se conservan, pero ahora se organizan en siete
+  secciones plegables con buscador. Solo «Cuenta y perfil» aparece abierta al
+  entrar, reduciendo notablemente el desplazamiento inicial.
+- Se añaden accesos rápidos a Seguridad, Suscripción, Cuenta y Preferencias, y
+  un selector visible «Sistema / Claro / Oscuro» que recuerda la elección y
+  sigue los cambios del dispositivo cuando se usa «Sistema».
+- «Planificar una cita segura» se describe como checklist personal para no
+  volver a mezclarla con el contacto de confianza del Centro de seguridad.
+- Validada con datos simulados en 360×800, 390×844 y 1440×900: sin
+  desbordamiento horizontal, buscador y accesos rápidos correctos, tema
+  persistente y dos columnas en escritorio. `node --check` y
+  `git diff --check` correctos. Publicada en commit `408c5bc`, build
+  `f3fb7aa4d030`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se modificaron usuarios reales.
 
 ### V1020 (02/10/2026) — Restablecer filtros sin solapamiento
 
