@@ -9838,6 +9838,11 @@ html body .welcome-logo { margin-top: 20px !important; margin-bottom: 10px !impo
     height: auto;
     min-height: 0;
   }
+  /* Android nativo calcula el espacio libre real hasta la navegación inferior.
+     Sólo desplaza la fila cuando sobra espacio, sin reducir ni recortar la tarjeta. */
+  .aura-native-android .screen-discover .action-row {
+    transform: translateY(var(--aura-native-actions-shift, 0px));
+  }
   .action-row { flex: 0 0 auto; padding: 12px 0 4px; }
 }
 /* V612 · Capa de avisos SUPERPUESTA sobre el borde superior de la tarjeta.
@@ -10890,6 +10895,101 @@ body.map-open { overflow: hidden; }
 .map-people-grid .result-card .info { padding: 6px 9px; border-radius: 13px; }
 .map-people-grid .result-card .info strong { font-size: 13px; line-height: 1.15; }
 .map-people-grid .result-card .info small { font-size: 11px; }
+.map-people-grid.summary {
+  display: block;
+  overflow: visible;
+  padding-top: 2px;
+}
+.map-people-more {
+  width: 100%; min-height: 72px; padding: 10px 12px;
+  display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--brand-1) 34%, var(--border));
+  border-radius: 16px; color: var(--text); text-align: left; cursor: pointer;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  box-shadow: 0 8px 22px rgba(0,0,0,.18);
+}
+.map-people-more-avatars { display: flex; align-items: center; padding-left: 4px; }
+.map-people-more-avatar {
+  width: 42px; height: 42px; margin-left: -9px; border-radius: 50%;
+  background-size: cover; background-position: center; background-color: var(--surface);
+  border: 2px solid var(--surface); box-shadow: 0 3px 10px rgba(0,0,0,.25);
+}
+.map-people-more-avatar:first-child { margin-left: 0; }
+.map-people-more-copy { display: flex; flex-direction: column; min-width: 0; }
+.map-people-more-copy strong { font-size: 15px; line-height: 1.2; }
+.map-people-more-copy small { margin-top: 3px; font-size: 12px; color: var(--text-soft); }
+.map-people-more-arrow, .map-user-list-arrow { font-size: 28px; line-height: 1; color: var(--brand-1); }
+.map-people-guide {
+  margin: 8px 2px 0; padding-top: 8px; border-top: 1px solid var(--border);
+  color: var(--text-soft); font-size: 11.5px; line-height: 1.35;
+}
+
+/* Lista central abierta desde el resumen del mapa. */
+body.map-open .modal:has(.map-user-list-sheet) { align-items: center; padding: 16px; }
+body.map-open .modal-sheet:has(.map-user-list-sheet) {
+  width: min(460px, 100%); max-height: min(82dvh, 660px);
+  border-radius: 22px; padding-top: 0; overflow: hidden;
+  border: 1px solid var(--border); box-shadow: 0 28px 80px rgba(0,0,0,.5);
+}
+body.map-open .modal-sheet:has(.map-user-list-sheet)::before { display: none; }
+.map-user-list-sheet { padding: 16px; }
+.map-user-list-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 14px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--border);
+}
+.map-user-list-head .sheet-title { padding: 0; }
+.map-user-list-head small { display: block; margin-top: 2px; color: var(--text-soft); font-size: 12px; }
+.map-user-list-close {
+  width: 38px; height: 38px; flex: 0 0 auto; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  font-size: 25px; line-height: 1; cursor: pointer;
+}
+.map-user-list {
+  display: grid; gap: 8px; max-height: min(62dvh, 520px); overflow-y: auto;
+  padding: 12px 2px 2px; scrollbar-width: thin;
+}
+.map-user-list-row {
+  width: 100%; display: grid; grid-template-columns: 58px minmax(0,1fr) 24px;
+  align-items: center; gap: 12px; padding: 9px; border-radius: 15px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  text-align: left; cursor: pointer;
+}
+.map-user-list-row[hidden] { display: none; }
+.map-user-list-avatar {
+  position: relative; width: 58px; height: 64px; border-radius: 13px;
+  background-size: cover; background-position: center; background-color: var(--surface);
+}
+.map-user-list-online {
+  position: absolute; right: -2px; top: -2px; width: 12px; height: 12px;
+  border-radius: 50%; background: #22c55e; border: 2px solid var(--surface-2);
+}
+.map-user-list-copy { display: flex; flex-direction: column; min-width: 0; }
+.map-user-list-copy strong { font-size: 15px; line-height: 1.2; }
+.map-user-list-copy small {
+  margin-top: 3px; color: var(--text-soft); font-size: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.map-user-list-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.map-user-list-badge {
+  padding: 3px 7px; border-radius: 999px; font-size: 10px; font-weight: 800;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.map-user-list-badge.test { color: #1a1200; background: #fbbf24; border-color: transparent; }
+.map-user-list-badge.online { color: #fff; background: #16a34a; border-color: transparent; }
+.map-user-list-badge.verified { color: #fff; background: #2a7dff; border-color: transparent; }
+.map-user-list-pagination {
+  display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+}
+.map-user-list-pagination[hidden] { display: none; }
+.map-user-list-page { color: var(--text-soft); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.map-user-list-page-btn {
+  min-height: 38px; padding: 0 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  font-size: 12px; font-weight: 750;
+}
+.map-user-list-page-btn:last-child { justify-self: end; }
+.map-user-list-page-btn:disabled { opacity: .4; cursor: default; }
 /* V843 · La cuenta de prueba conserva su etiqueta "Prueba" (arriba-izquierda,
    donde iría el corazón) y un borde ámbar para distinguirla. */
 .map-people-grid .result-card.test { outline: 2px solid #f59e0b; outline-offset: -2px; }

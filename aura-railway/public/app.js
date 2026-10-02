@@ -9649,9 +9649,8 @@ async function openNearbyMap() {
   ]);
   overlay.appendChild(searchHereBtn);
 
-  // V840 · Panel inferior de personas en forma de CUADRÍCULA con foto (igual que
-  // "Buscar"), no un carrusel horizontal. Debajo se mantiene el texto de "no hay
-  // nadie cerca" cuando la búsqueda no arroja resultados.
+  // Panel inferior compacto: muestra el total y abre una lista central. Así el
+  // mapa no pierde altura aunque existan muchas personas en la zona.
   const peopleTitleMain = el("span", { class: "map-people-title-main" }, "Personas en esta zona");
   // V922 · Estos textos decían "mueve el mapa para ver quién hay cerca", que era
   // verdad mientras el mapa buscaba solo. Ahora hay que pulsar el botón, y el texto
@@ -9659,12 +9658,14 @@ async function openNearbyMap() {
   const peopleTitleSub = el("small", {}, "Mueve el mapa y pulsa “Buscar cerca de aquí”");
   const peopleGrid = el("div", { class: "map-people-grid" });
   const peopleEmpty = el("div", { class: "map-people-empty", hidden: true });
+  const peopleGuide = el("div", { class: "map-people-guide" }, "Mueve el mapa y pulsa «Buscar cerca de aquí» para actualizar esta zona.");
   const peoplePanel = el("div", { class: "map-people" }, [
     el("div", { class: "map-people-head" }, [
       el("div", { class: "map-people-title" }, [ peopleTitleMain, peopleTitleSub ]),
     ]),
     peopleGrid,
     peopleEmpty,
+    peopleGuide,
   ]);
   overlay.appendChild(peoplePanel);
 
@@ -10003,28 +10004,66 @@ async function openNearbyMap() {
     return n;
   }
 
-  // V763 · Cuadrícula tipo Grindr con las personas cercanas del mapa. Se abre
-  // desde el botón "Cuadrícula" y desde la hoja cuando hay varias personas.
-  function openGridSheet() {
+  // Lista central de personas cercanas. El mapa conserva un resumen compacto y,
+  // cuando hay varias, este diálogo ofrece filas grandes y legibles sin reducir
+  // las fotografías a miniaturas dentro del propio mapa.
+  function openPeopleList() {
     const list = visibleList();
-    const grid = el("div", { class: "map-grid" });
-    list.forEach(u => {
-      const cell = el("button", { class: "map-grid-cell" + (u._test ? " test" : ""), type: "button",
-        style: `background-image:url('${u.photo || ""}')`,
-        onclick: () => { try { modal.close(); } catch {} openUserProfile(u); } }, [
-        u.online ? el("span", { class: "map-grid-dot" }) : null,
-      u._test ? el("span", { class: "map-grid-tag" }, "Prueba") : null,
-        u.traveler && u.traveler.active ? el("span", { class: "map-grid-traveler" }, "✈ De viaje") : null,
-        el("span", { class: "map-grid-name" }, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+    const userList = el("div", { class: "map-user-list" });
+    const pageSize = 5;
+    let pageIndex = 0;
+    const rows = list.map((u, index) => {
+      const li = locDistanceInfo(u);
+      const meta = [u.city || "", li.text || ""].filter(Boolean).join(" · ");
+      const badges = [];
+      if (u._test) badges.push(el("span", { class: "map-user-list-badge test" }, "Prueba"));
+      else if (u.online) badges.push(el("span", { class: "map-user-list-badge online" }, "En línea"));
+      if (!u._test && u.verified) badges.push(el("span", { class: "map-user-list-badge verified" }, "Verificado"));
+      const row = el("button", {
+        class: "map-user-list-row", type: "button",
+        onclick: () => { try { modal.close(); } catch {} openUserProfile(u); },
+      }, [
+        el("span", { class: "map-user-list-avatar", style: `background-image:url('${u.photo || ""}')` }, [
+          u.online ? el("span", { class: "map-user-list-online", "aria-label": "En línea" }) : null,
+        ]),
+        el("span", { class: "map-user-list-copy" }, [
+          el("strong", {}, `${u.name}${u.age != null ? ", " + u.age : ""}`),
+          meta ? el("small", {}, meta) : null,
+          badges.length ? el("span", { class: "map-user-list-badges" }, badges) : null,
+        ]),
+        el("span", { class: "map-user-list-arrow", "aria-hidden": "true" }, "›"),
       ]);
-      grid.appendChild(cell);
+      row.dataset.page = String(Math.floor(index / pageSize));
+      userList.appendChild(row);
+      return row;
     });
-    const sheet = el("div", {}, [
-      el("div", { class: "sheet-title" }, `Personas cerca (${list.length})`),
-      list.length ? grid : el("div", { class: "sheet-body" }, "No hay nadie que coincida con los filtros en esta zona."),
-      el("div", { class: "sheet-actions" }, [
-        el("button", { class: "btn btn-outline btn-block", "data-close": true }, "Cerrar"),
+    const pageCount = Math.max(1, Math.ceil(list.length / pageSize));
+    const pageLabel = el("span", { class: "map-user-list-page" });
+    const prevBtn = el("button", { class: "map-user-list-page-btn", type: "button" }, "Anterior");
+    const nextBtn = el("button", { class: "map-user-list-page-btn", type: "button" }, "Siguiente");
+    function paintPage() {
+      rows.forEach(row => { row.hidden = Number(row.dataset.page) !== pageIndex; });
+      prevBtn.disabled = pageIndex === 0;
+      nextBtn.disabled = pageIndex >= pageCount - 1;
+      pageLabel.textContent = `Página ${pageIndex + 1} de ${pageCount}`;
+      userList.scrollTop = 0;
+    }
+    prevBtn.addEventListener("click", () => { if (pageIndex > 0) { pageIndex--; paintPage(); } });
+    nextBtn.addEventListener("click", () => { if (pageIndex < pageCount - 1) { pageIndex++; paintPage(); } });
+    const pagination = el("div", { class: "map-user-list-pagination", hidden: pageCount <= 1 }, [
+      prevBtn, pageLabel, nextBtn,
+    ]);
+    paintPage();
+    const sheet = el("div", { class: "map-user-list-sheet" }, [
+      el("div", { class: "map-user-list-head" }, [
+        el("div", {}, [
+          el("div", { class: "sheet-title" }, "Usuarios en esta zona"),
+          el("small", {}, `${list.length} ${list.length === 1 ? "perfil disponible" : "perfiles disponibles"} · distancias desde el pin`),
+        ]),
+        el("button", { class: "map-user-list-close", type: "button", "data-close": true, "aria-label": "Cerrar" }, "×"),
       ]),
+      list.length ? userList : el("div", { class: "sheet-body" }, "No hay nadie que coincida con los filtros en esta zona."),
+      pagination,
     ]);
     try { modal.open(sheet); } catch {}
   }
@@ -10067,11 +10106,9 @@ async function openNearbyMap() {
     return card;
   }
 
-  // V840 · Rellena la CUADRÍCULA inferior de personas + el título con recuento.
-  // Debajo se mantiene un texto de "no hay nadie cerca" cuando la lista queda
-  // vacía (el usuario pidió que ese texto siga apareciendo si no hay nadie).
+  // Rellena el resumen inferior con el total. Las personas se eligen en la lista
+  // central paginada para no encoger tarjetas ni ocupar el mapa.
   function renderPeople(list) {
-    const realCount = list.filter(u => !u._test).length;
     peopleTitleMain.textContent = list.length
       ? `Personas en esta zona · ${list.length}`
       : "Personas en esta zona";
@@ -10084,11 +10121,11 @@ async function openNearbyMap() {
       pinAway = Number.isFinite(dHome) && dHome >= 1;
     } catch {}
     peopleTitleSub.textContent = list.length
-      ? (pinAway
-          ? "Distancias respecto al pin"
-          : (realCount ? "Toca una foto para ver su perfil" : "Solo la cuenta de prueba por ahora"))
+      ? (pinAway ? "Distancias respecto al pin" : "Pulsa «Ver usuarios» para elegir un perfil")
       : "Mueve el mapa a otra zona y pulsa “Buscar cerca de aquí”";
     peopleGrid.innerHTML = "";
+    peopleGrid.classList.remove("single", "multiple");
+    peopleGrid.classList.toggle("summary", list.length > 0);
     if (!list.length) {
       peopleGrid.hidden = true;
       peopleEmpty.hidden = false;
@@ -10097,7 +10134,21 @@ async function openNearbyMap() {
     }
     peopleGrid.hidden = false;
     peopleEmpty.hidden = true;
-    list.forEach(u => peopleGrid.appendChild(peopleCard(u)));
+    const avatars = el("span", { class: "map-people-more-avatars", "aria-hidden": "true" });
+    list.slice(0, 3).forEach(u => avatars.appendChild(el("span", {
+      class: "map-people-more-avatar", style: `background-image:url('${u.photo || ""}')`,
+    })));
+    peopleGrid.appendChild(el("button", {
+      class: "map-people-more", type: "button", onclick: openPeopleList,
+      "aria-label": list.length === 1 ? "Ver el usuario de esta zona" : `Ver los ${list.length} usuarios de esta zona`,
+    }, [
+      avatars,
+      el("span", { class: "map-people-more-copy" }, [
+        el("strong", {}, list.length === 1 ? "Ver usuario" : `Ver los ${list.length} usuarios`),
+        el("small", {}, list.length === 1 ? "Abrir perfil disponible" : "Abrir lista paginada"),
+      ]),
+      el("span", { class: "map-people-more-arrow", "aria-hidden": "true" }, "›"),
+    ]));
   }
 
   function repaint() {
