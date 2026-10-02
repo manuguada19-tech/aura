@@ -39,7 +39,8 @@
 // V1005 · incorpora visitas reales del perfil y la marca de conversación previa.
 // V1008 · incorpora las FAQ traducidas a los cinco idiomas adicionales.
 // V1016 · añade el asistente, transparencia de recomendaciones y reintentos.
-const CACHE_VERSION = "aura-v126";
+// V1017 · incorpora llamadas de ayuda y corrige controles de Explorar/admin.
+const CACHE_VERSION = "aura-v127";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

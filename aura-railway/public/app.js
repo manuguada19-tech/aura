@@ -18824,6 +18824,55 @@ function screenBlockedUsers(root) {
 /* — V985 · Centro de seguridad —
    Unifica bloqueos, denuncias enviadas y apelaciones sin mezclar los tres
    conceptos ni exponer información interna de moderación. */
+function emergencyDialNumberV1017(value) {
+  const raw = String(value || "").trim();
+  const match = raw.match(/\+?\d[\d\s().-]{4,}\d/);
+  if (!match) return "";
+  const dial = match[0].replace(/(?!^)\D/g, "");
+  return /^\+?\d{5,15}$/.test(dial) ? dial : "";
+}
+
+function emergencyCallV1017(number, title, detail, featured = false) {
+  return el("a", {
+    class:`emergency-call-v1017${featured ? " featured" : ""}`,
+    href:`tel:${number}`,
+    "aria-label":`Llamar al ${number}: ${title}`,
+  }, [
+    el("strong", {}, [el("span", { class:"emergency-number-v1017" }, number), title]),
+    el("small", {}, detail),
+  ]);
+}
+
+async function loadTrustedEmergencyContactV1017(host) {
+  let label = "";
+  let phone = "";
+  try {
+    const saved = safeDatePlanV1009();
+    label = String(saved.contact || "").trim();
+    phone = emergencyDialNumberV1017(label);
+  } catch {}
+  try {
+    const response = await fetch("/api/my/emergency-contacts", { headers:authHeaders() });
+    if (response.ok) {
+      const data = await response.json();
+      const stored = String(data.emergency_phone || "").trim();
+      if (emergencyDialNumberV1017(stored)) { label = stored; phone = emergencyDialNumberV1017(stored); }
+    }
+  } catch {}
+  host.innerHTML = "";
+  if (phone) {
+    host.appendChild(el("a", { class:"trusted-call-v1017",href:`tel:${phone}` }, [
+      el("span", {}, [el("strong", {}, "Llamar a mi contacto de confianza"),el("small", {}, label || phone)]),
+      el("b", { "aria-hidden":"true" }, "Llamar"),
+    ]));
+  } else {
+    host.appendChild(el("button", { class:"trusted-call-v1017 empty",type:"button",onclick:() => render(screenSafeDateV1009) }, [
+      el("span", {}, [el("strong", {}, "Añadir un contacto de confianza"),el("small", {}, "Guarda su teléfono en tu plan de cita segura")]),
+      el("b", { "aria-hidden":"true" }, "Añadir"),
+    ]));
+  }
+}
+
 function screenSafetyCenter(root) {
   meSubHeader(root, "Centro de seguridad");
   root.classList.add("safety-center-screen");
@@ -18833,12 +18882,31 @@ function screenSafetyCenter(root) {
     "Tu espacio seguro",
     "Consulta las medidas que has tomado y el estado de los casos enviados al equipo de Aura."
   ));
+  const trustedContactV1017 = el("div", { class:"trusted-contact-slot-v1017" }, [el("small", { class:"muted" }, "Buscando tu contacto de confianza…")]);
+  const emergencyHelpV1017 = el("details", { class:"emergency-help-v1017" }, [
+    el("summary", {}, "Necesito ayuda ahora"),
+    el("div", { class:"emergency-help-body-v1017" }, [
+      el("p", {}, "Si existe peligro inmediato, aléjate a un lugar seguro y llama. Aura abre el marcador, pero nunca realiza una llamada sin que tú pulses."),
+      el("strong", { class:"emergency-country-v1017" }, "Números de ayuda en España"),
+      el("div", { class:"emergency-grid-v1017" }, [
+        emergencyCallV1017("112", "Emergencias", "Atención general · España y Unión Europea", true),
+        emergencyCallV1017("091", "Policía Nacional", "Emergencias policiales"),
+        emergencyCallV1017("062", "Guardia Civil", "Seguridad y auxilio"),
+        emergencyCallV1017("061", "Urgencias sanitarias", "Disponible según comunidad autónoma"),
+        emergencyCallV1017("016", "Violencia contra las mujeres", "Información y asesoramiento 24 horas"),
+        emergencyCallV1017("024", "Línea 024", "Atención ante conducta suicida"),
+      ]),
+      trustedContactV1017,
+      el("small", { class:"emergency-note-v1017" }, "Si estás fuera de España, utiliza el número de emergencias del país en el que te encuentres."),
+    ]),
+  ]);
   wrap.appendChild(el("section", { class:"safety-quick-v1016","aria-label":"Acciones rápidas de seguridad" }, [
     el("button", { type:"button",onclick:() => routeTab("chats") }, [el("strong", {}, "Bloquear o denunciar"),el("small", {}, "Abre un chat y usa el menú ⋯")]),
     el("button", { type:"button",onclick:() => render(screenSafeDateV1009) }, [el("strong", {}, "Preparar una cita"),el("small", {}, "Checklist y contacto de confianza")]),
     el("button", { type:"button",onclick:() => render(screenSessionSecurity) }, [el("strong", {}, "Proteger mi acceso"),el("small", {}, "Sesiones, 2FA y dispositivo perdido")]),
-    el("details", {}, [el("summary", {}, "Necesito ayuda ahora"),el("p", {}, "Si existe peligro inmediato, aléjate a un lugar seguro y contacta con los servicios de emergencia de tu zona. Aura no sustituye a emergencias.")]),
+    emergencyHelpV1017,
   ]));
+  loadTrustedEmergencyContactV1017(trustedContactV1017);
 
   const tabs = el("div", { class: "safety-tabs", role: "tablist" });
   const content = el("div", { class: "safety-content" }, [el("p", { class: "muted" }, "Cargando…")]);

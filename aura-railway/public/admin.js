@@ -4391,6 +4391,26 @@ async function viewUsers(root){
   ]));
   root.appendChild(adv);
 
+  // V1017 · La barra masiva antes solo existía después de marcar una casilla.
+  // Esta guía permanece visible para que la función se pueda descubrir también
+  // en móvil, donde la cabecera de la tabla queda oculta.
+  let visibleUserIdsV1017 = [];
+  const bulkGuideCopyV1017 = el("span", {}, [
+    el("strong", {}, "Acciones masivas"),
+    el("small", {}, "Selecciona una o varias cuentas; la barra de acciones aparecerá aquí."),
+  ]);
+  const bulkGuideButtonV1017 = btn("Seleccionar esta página", "ghost sm", () => {
+    const allSelected = visibleUserIdsV1017.length > 0 && visibleUserIdsV1017.every(uid => selectedIds.has(uid));
+    visibleUserIdsV1017.forEach(uid => allSelected ? selectedIds.delete(uid) : selectedIds.add(uid));
+    document.querySelectorAll("#usersViewTable input.row-cb").forEach(cb => { cb.checked = selectedIds.has(Number(cb.dataset.userId)); });
+    updateBulkBar();
+  });
+  const bulkGuideV1017 = el("section", { class:"bulk-guide-v1017","aria-label":"Cómo usar las acciones masivas" }, [
+    bulkGuideCopyV1017,
+    bulkGuideButtonV1017,
+  ]);
+  root.appendChild(bulkGuideV1017);
+
   // Bulk bar (aparece al seleccionar)
   const bulkBar = el("div", { class: "bulk-bar", id: "usersBulkBar" });
   const bulkCount = el("span", { class: "count" }, "0 seleccionados");
@@ -4473,9 +4493,15 @@ async function viewUsers(root){
   function updateBulkBar() {
     bulkBar.classList.toggle("on", selectedIds.size > 0);
     bulkCount.textContent = `${selectedIds.size} seleccionados`;
+    const currentSelected = visibleUserIdsV1017.filter(uid => selectedIds.has(uid)).length;
+    bulkGuideCopyV1017.querySelector("small").textContent = selectedIds.size
+      ? `${selectedIds.size} cuenta(s) seleccionada(s). Usa la barra que aparece junto a esta guía.`
+      : "Selecciona una o varias cuentas; la barra de acciones aparecerá aquí.";
+    bulkGuideButtonV1017.textContent = visibleUserIdsV1017.length && currentSelected === visibleUserIdsV1017.length
+      ? "Deseleccionar esta página" : "Seleccionar esta página";
   }
 
-  const tableWrap = el("div", { class: "panel table-panel" });
+  const tableWrap = el("div", { class: "panel table-panel", id:"usersViewTable" });
   root.appendChild(tableWrap);
 
   async function refresh() {
@@ -4497,6 +4523,7 @@ async function viewUsers(root){
     params.set("limit", state.limit);
     params.set("offset", state.offset);
     const data = await api.get("/api/users?" + params.toString());
+    visibleUserIdsV1017 = (data.rows || []).map(user => Number(user.id)).filter(Boolean);
     tableWrap.innerHTML = "";
     const table = el("table", { class: "data-table" });
     const headCb = el("input", { type: "checkbox", title: "Seleccionar todos" });
@@ -4514,7 +4541,7 @@ async function viewUsers(root){
     ])]));
     const tb = el("tbody");
     data.rows.forEach(u => {
-      const rowCb = el("input", { type: "checkbox", class: "row-cb" });
+      const rowCb = el("input", { type: "checkbox", class: "row-cb", "data-user-id":String(u.id), "aria-label":`Seleccionar a ${u.name || u.email || "este usuario"} para acciones masivas` });
       if (selectedIds.has(u.id)) rowCb.checked = true;
       rowCb.addEventListener("change", () => {
         if (rowCb.checked) selectedIds.add(u.id); else selectedIds.delete(u.id);
@@ -4530,7 +4557,7 @@ async function viewUsers(root){
         ].filter(Boolean)),
       ]);
       tb.appendChild(el("tr", {}, [
-        el("td", {}, rowCb),
+        el("td", { class:"user-select-cell-v1017" }, [rowCb,el("span", {}, "Seleccionar para acciones masivas")]),
         el("td", {}, [userCell]),
         el("td", {}, tag(u.zone === "lgtb" ? "🌈 LGTB" : "💗 Hetero", u.zone==="lgtb"?"zone-lgtb":"zone-hetero")),
         el("td", {}, planTag(u.plan)),
@@ -5061,24 +5088,58 @@ async function openUserDrawer(id, onChange) {
 
   // V1016 · Resumen 360 antes de los formularios extensos. Es plegable para
   // mantener la ficha compacta y combina hitos con el stream real.
+  const timelineStateV1017 = el("span", { class:"user-360-state-v1016" }, "Cargando…");
+  const clearTimelineV1017 = btn("Limpiar actividad", "ghost xs danger", async () => {
+    if (!(await askConfirm("¿Eliminar todos los eventos de actividad de esta cuenta?\n\nSe borrarán los eventos de prueba, accesos y telemetría. Los hitos reales —alta, primer match o primer mensaje— se conservarán.", { okText:"Limpiar actividad",danger:true }))) return;
+    clearTimelineV1017.disabled = true;
+    try {
+      const result = await api.del(`/api/admin/activity/user/${id}/stream`);
+      toast(`Actividad eliminada (${result.deleted || 0} eventos). Los hitos de cuenta se conservan.`);
+      await loadTimeline360V1017();
+      if (typeof loadStream === "function") await loadStream();
+    } catch (error) { toast("No se pudo limpiar la actividad: " + (error.message || "error")); }
+    finally { clearTimelineV1017.disabled = nivelUsuario() < 3; }
+  });
+  if (nivelUsuario() < 3) {
+    clearTimelineV1017.disabled = true;
+    clearTimelineV1017.title = "Necesita el rango Administrador";
+  }
   const timeline360 = el("section", { class:"user-360-v1016" }, [
-    el("header", {}, [el("span", {}, [el("small", {}, "VISTA 360"),el("h3", {}, "Cronología de la cuenta")]),el("span", { class:"user-360-state-v1016" }, "Cargando…")]),
+    el("header", {}, [
+      el("span", {}, [el("small", {}, "VISTA 360"),el("h3", {}, "Cronología de la cuenta")]),
+      el("span", { class:"user-360-actions-v1017" }, [timelineStateV1017,clearTimelineV1017]),
+    ]),
     el("div", { class:"user-360-list-v1016" }, [el("div", { class:"loading" }, "Ordenando actividad…")]),
   ]);
   form.appendChild(timeline360);
-  (async () => {
+  async function loadTimeline360V1017() {
     const list = timeline360.querySelector(".user-360-list-v1016");
     try {
       const data = await api.get(`/api/admin/users/${id}/timeline`); const items = data.items || []; const s = data.summary || {};
-      timeline360.querySelector(".user-360-state-v1016").textContent = `${s.verified ? "Verificada" : "Sin verificar"} · ${String(s.plan || "free").toUpperCase()} · ${s.status || "active"}`;
+      timelineStateV1017.textContent = `${s.verified ? "Verificada" : "Sin verificar"} · ${String(s.plan || "free").toUpperCase()} · ${s.status || "active"}`;
       list.innerHTML = "";
       if (!items.length) { list.appendChild(el("div", { class:"empty small" }, "Sin hitos registrados.")); return; }
-      items.slice(0,12).forEach(item => list.appendChild(el("article", { class:`user-360-event-v1016 ${item.kind || "event"}` }, [
-        el("span", { class:"user-360-dot-v1016" }),el("span", {}, [el("strong", {}, item.title || "Evento"),el("small", {}, item.detail || "Sin detalle")]),el("time", {}, fmt.reldate(item.created_at)),
-      ])));
+      items.slice(0,12).forEach(item => {
+        const remove = item.id && nivelUsuario() >= 3 ? el("button", {
+          class:"btn ghost xs danger user-360-delete-v1017",type:"button",title:"Eliminar este evento de actividad","aria-label":`Eliminar ${item.title || "evento"}`,
+          onclick:async () => {
+            if (!(await askConfirm(`¿Eliminar el evento “${item.title || "Evento"}” de esta cronología?`, { okText:"Eliminar evento",danger:true }))) return;
+            try {
+              await api.del(`/api/admin/activity/stream/${item.id}`);
+              toast("Evento eliminado");
+              await loadTimeline360V1017();
+              if (typeof loadStream === "function") await loadStream();
+            } catch (error) { toast("No se pudo eliminar: " + (error.message || "error")); }
+          },
+        }, "×") : null;
+        list.appendChild(el("article", { class:`user-360-event-v1016 ${item.kind || "event"}` }, [
+          el("span", { class:"user-360-dot-v1016" }),el("span", {}, [el("strong", {}, item.title || "Evento"),el("small", {}, item.detail || "Sin detalle")]),el("time", {}, fmt.reldate(item.created_at)),remove,
+        ]));
+      });
       if (items.length > 12) list.appendChild(el("small", { class:"muted" }, `${items.length - 12} eventos más disponibles en “Eventos (stream)”.`));
     } catch { list.replaceChildren(el("div", { class:"empty small" }, "No se pudo cargar la cronología.")); }
-  })();
+  }
+  loadTimeline360V1017();
 
   // V799 · Última conexión AUTOMÁTICA y NO editable. Se muestra en solo lectura
   // (la fecha/hora la gestiona el sistema al iniciar sesión el usuario).
@@ -5846,16 +5907,19 @@ async function openUserDrawer(id, onChange) {
   // V934 · El stream se puede limpiar: botón de vaciado completo en la
   // cabecera y borrado fila a fila. Ambos con confirmación, porque el stream
   // es prueba de qué hizo una cuenta: borrarlo debe ser una decisión.
-  const streamHeader = el("div", { class: "section-header" }, [
-    el("h3", {}, "Eventos (stream)"),
-    btn("Vaciar stream", "ghost xs danger", async () => {
+  const clearStreamButtonV1017 = btn("Vaciar stream", "ghost xs danger", async () => {
       if (!(await askConfirm("¿Borrar TODOS los eventos del stream de este usuario? Logins y telemetría guardados desaparecerán de la ficha.", { okText: "Vaciar stream", danger: true }))) return;
       try {
         const r = await api.del("/api/admin/activity/user/" + id + "/stream");
         toast(`Stream vaciado (${r.deleted || 0} eventos)`);
         await loadStream();
+        await loadTimeline360V1017();
       } catch { toast("No se pudo vaciar el stream"); }
-    }),
+    });
+  if (nivelUsuario() < 3) { clearStreamButtonV1017.disabled = true; clearStreamButtonV1017.title = "Necesita el rango Administrador"; }
+  const streamHeader = el("div", { class: "section-header" }, [
+    el("h3", {}, "Eventos (stream)"),
+    clearStreamButtonV1017,
   ]);
   form.appendChild(streamHeader);
   const streamBox = el("div", { class: "empty small" }, "Cargando eventos…");
@@ -5909,14 +5973,15 @@ async function openUserDrawer(id, onChange) {
                 ? el("small", { style: "opacity:0.7" }, STREAM_DETAIL_LABELS[ev.event])
                 : "—")),
           el("td", {}, ev.ip || "—"),
-          el("td", {}, btn("Borrar", "ghost xs danger", async () => {
+          el("td", {}, nivelUsuario() >= 3 ? btn("Borrar", "ghost xs danger", async () => {
             if (!(await askConfirm("¿Borrar este evento del stream?", { okText: "Borrar", danger: true }))) return;
             try {
               await api.del("/api/admin/activity/stream/" + ev.id);
               toast("Evento borrado");
               await loadStream();
+              await loadTimeline360V1017();
             } catch { toast("No se pudo borrar el evento"); }
-          })),
+          }) : el("small", { class:"muted",title:"Necesita el rango Administrador" }, "Solo lectura")),
         ]));
       });
       t.appendChild(tb);

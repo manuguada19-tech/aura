@@ -1402,6 +1402,10 @@ const ESCRITURA = [
   [/^(POST|PATCH) \/api\/users$/, 3],
   [/^PATCH \/api\/users\/[^/]+$/, 3],
   [/^DELETE \/api\/users\/[^/]+\/activity$/, 3],
+  // La cronología 360 solo elimina eventos de actividad; los hitos derivados
+  // de la cuenta se conservan. Disponible desde rango Administrador.
+  [/^DELETE \/api\/admin\/activity\/user\/[^/]+\/stream$/, 3],
+  [/^DELETE \/api\/admin\/activity\/stream\/[^/]+$/, 3],
   [/^(POST|PUT|DELETE) \/api\/admin\/users\/[^/]+\/(profile-views|favorites)(\/|$)/, 3],
   // V1001 · Un viaje declarado se puede consultar desde cualquier rango, pero
   // eliminarlo modifica datos del usuario y queda reservado a Administrador.
