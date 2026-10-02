@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1027 (`8503f3f`, build `72b9374c751e`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1028 (`fb9b423`, build `7f09e235fce6`)**
+
+### V1028 (02/10/2026) — Exención anticapturas resincronizada
+
+- La app detecta si la política anticapturas recibió un token caducado o ligado
+  a otra cuenta, solicita uno nuevo y repite automáticamente la validación. Un
+  token antiguo ya no deja permanentemente la marca de agua al superadmin.
+- La respuesta de política incluye el usuario validado para impedir cruces de
+  sesión. La exención continúa dependiendo únicamente del token firmado y del
+  rol o pertenencia administrativa comprobados por el servidor; el navegador
+  no puede concedérsela a sí mismo.
+- El acceso reservado de superadmin reactiva explícitamente una cuenta
+  existente, además de restaurar su rol, evitando estados históricos
+  incompatibles.
+- Validada con una sesión simulada que comenzaba con un token de otra cuenta:
+  hubo una única renovación, la segunda política reconoció la cuenta 30 y se
+  retiraron la marca y la protección. `node --check` y `git diff --check`
+  correctos. Publicada en commit `fb9b423`, build `7f09e235fce6`; Railway
+  terminó correctamente y `/api/health` respondió `ready:true`. No se
+  modificaron usuarios reales.
 
 ### V1027 (02/10/2026) — Contexto del Perfil y datos legales
 
