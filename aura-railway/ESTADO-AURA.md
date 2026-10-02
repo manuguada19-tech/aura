@@ -2,6 +2,28 @@
 
 **Fecha de este resumen: 2 octubre 2026 · última publicada: V1008 (`6d7bc6c`, build `cf601c9ad3cf`)**
 
+### V1009 (02/10/2026) — Operaciones y acompañamiento de usuarios (preparada)
+
+- Administración incorpora vistas permanentes de «Incidencias técnicas» y
+  «Embudo de usuarios», con filtros, reintentos seguros y conversiones basadas
+  en personas únicas desde registro hasta plan de pago.
+- Auditoría recalcula la huella SHA-256 de los últimos 500 registros y muestra
+  firmas válidas, entradas antiguas sin firma, alteraciones y actividad de 24 h.
+- «Textos de la app» añade matriz de cobertura por idioma, comprobación de las
+  46 FAQ en los seis catálogos, previsualización por idioma y un historial de
+  versiones restaurable que conserva una copia del estado previo.
+- Perfil incorpora «Primeros pasos», con progreso real de correo, foto, perfil,
+  verificación y 2FA; la tarjeta desaparece al completar todos los pasos.
+- Los vacíos principales de Explorar, Buscar, Likes, Chats y Bloqueados explican
+  qué sucede y ofrecen una acción concreta en vez de dejar la pantalla cerrada.
+- «Planificar una cita segura» guarda el plan solo en el navegador y lo comparte
+  únicamente por iniciativa del usuario; Aura no sigue la ubicación ni envía el
+  contacto de confianza automáticamente.
+- «Recuperación de cuenta» reúne correo, 2FA, códigos y dispositivos; permite
+  regenerar códigos solo tras confirmar un TOTP. «Problemas para entrar» deja de
+  usar el código ficticio y reutiliza el flujo real de acceso/OTP/2FA.
+- No se han modificado datos reales. Pendiente de validación visual y publicación.
+
 ### V1008 (02/10/2026) — FAQ multilingües
 
 - Las 46 preguntas frecuentes están disponibles en español, inglés, francés,

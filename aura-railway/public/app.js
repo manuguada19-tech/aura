@@ -2,7 +2,7 @@
    AMORA — Dating App Demo (single-file SPA)
    Author: MuleRun Super Agent
    ================================================================ */
-window.__AURA_VER__ = "V237";
+window.__AURA_VER__ = "V1009";
 
 /* ---------- Utilities ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -166,7 +166,7 @@ const contentFallback = {
   "content.login.title": "Bienvenido de nuevo",
   "content.login.subtitle": "Nos alegra verte otra vez.",
   "content.login.button": "Entrar",
-  "content.login.forgot": "¿Olvidaste tu contraseña?",
+  "content.login.forgot": "¿Problemas para entrar?",
   "content.tabs.discover": "Explorar",
   "content.tabs.search": "Buscar",
   "content.tabs.likes": "Likes",
@@ -4308,7 +4308,8 @@ const SECTION_MAP = {
   screenInfoHelp: "info", screenInfoFaq: "info", screenInfoTerms: "info",
   screenInfoPrivacy: "info", screenInfoContact: "info", screenInfoRules: "info",
   screenInfoPreferences: "info", screenInfoKycPolicy: "info",
-  screenSupportTicket: "info",
+  screenSupportTicket: "info", screenFirstStepsV1009: "profile",
+  screenSafeDateV1009: "profile", screenRecoveryCenterV1009: "profile",
 };
 function render(screenFn, opts = {}) {
   _lastScreenFn = screenFn;
@@ -8320,22 +8321,49 @@ function openLoginOtpPrompt(email, demoCode) {
 
 /* ---- Forgot ---- */
 function screenForgot(root) {
-  root.appendChild(topbar("Recuperar contraseña", () => render(screenLogin)));
-  const form = el("form", { class: "form" });
+  root.appendChild(topbar("Recuperar acceso", () => render(screenLogin)));
+  const form = el("form", { class: "form recovery-access-v1009" });
   form.appendChild(el("div", { class: "form-hero" }, [
     el("h2", {}, "Recupera tu acceso"),
-    el("p", {}, "Enviaremos un código a tu correo para restablecer la contraseña."),
+    el("p", {}, "Usa el mismo correo con el que creaste la cuenta. Aura aplicará la verificación disponible sin pedirte datos sensibles."),
   ]));
   const inp = el("input", { type: "email", placeholder: emailPlaceholder("content.forgot.email_placeholder") });
   form.appendChild(el("div", { class: "field" }, [ el("label", {}, "Email"), inp ]));
-  form.appendChild(el("button", { class: "btn btn-brand btn-block" }, "Enviar código"));
-  form.addEventListener("submit", (e) => {
+  const submit = el("button", { class: "btn btn-brand btn-block" }, "Continuar de forma segura");
+  form.appendChild(submit);
+  form.appendChild(el("div", { class:"recovery-access-help-v1009" }, [
+    el("strong", {}, "Qué puedes necesitar"),
+    el("ul", {}, [
+      el("li", {}, "Un código enviado al correo, si la protección por email está activa."),
+      el("li", {}, "Tu app autenticadora o un código de recuperación, si activaste 2FA."),
+      el("li", {}, "Soporte si perdiste también el acceso al correo; nunca te pedirá un código válido."),
+    ]),
+  ]));
+  form.addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!inp.value.includes("@")) return toast("Introduce un email válido");
-    state.registration.email = inp.value;
-    state.registration.code = String(rand(100000, 999999));
-    toast(`Código enviado (demo: ${state.registration.code})`);
-    render(screenRegisterOTP);
+    const email = inp.value.trim().toLowerCase();
+    submit.disabled = true; submit.textContent = "Comprobando…";
+    try {
+      const r = await fetch("/api/login", { method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ email, recovery:true, lang:currentLang }) });
+      const data = await r.json().catch(() => ({}));
+      if (r.status === 403 && (data.status === "suspended" || data.status === "banned" || data.status === "restricted")) {
+        showBlockedAccount(data.reason || "Tu cuenta no puede iniciar sesión.", { kind:data.status, reason:data.reason || "", email, untilDate:data.expires_at || null });
+        return;
+      }
+      if (r.ok && data.needs_2fa) { openTwoFactorLoginPrompt(data.email || email); return; }
+      if (r.ok && data.needs_otp) { openLoginOtpPrompt(data.email || email, data.demoCode || null); return; }
+      if (!r.ok || !data.ok) {
+        toast(r.status === 404 ? "No encontramos una cuenta con ese correo" : "No se pudo comprobar la cuenta");
+        submit.disabled=false; submit.textContent="Continuar de forma segura"; return;
+      }
+      state.user = { id:data.user.id, name:data.user.name, email:data.user.email, photo:data.user.photo_url, role:data.user.role };
+      state.zone = data.user.zone || state.zone || "hetero"; Auth.capture(data);
+      try { localStorage.setItem("aura-session", JSON.stringify(state.user)); } catch {}
+      toast("Acceso recuperado"); setTimeout(() => showApp(), 300);
+    } catch {
+      toast("No se pudo conectar con el servidor"); submit.disabled=false; submit.textContent="Continuar de forma segura";
+    }
   });
   root.appendChild(form);
   hideApp();
@@ -11413,6 +11441,10 @@ function renderDiscoverGrid(stack) {
       el("div", { class: "discover-grid-empty" }, [
         el("strong", {}, "Aún no hay perfiles disponibles"),
         el("small", {}, "Prueba a ampliar tus filtros o vuelve más tarde."),
+        el("div", { class:"actionable-empty-actions-v1009" }, [
+          el("button", { class:"btn btn-brand btn-sm", onclick:openFilters }, "Revisar filtros"),
+          el("button", { class:"btn btn-outline btn-sm", onclick:() => loadDiscoverInto(stack, false) }, "Volver a buscar"),
+        ]),
       ]),
     ]));
     return;
@@ -12171,8 +12203,10 @@ function renderResults(grid, filter = "") {
   if (searchNowOnly) filtered = filtered.filter(searchingNow);
   if (filtered.length === 0) {
     grid.innerHTML = searchNowOnly
-      ? `<div class="empty" style="grid-column:1/-1"><h3>Nadie buscando ahora</h3><p>Ahora mismo no hay perfiles activos. Prueba a quitar "Buscan ahora".</p></div>`
-      : `<div class="empty" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Prueba a ampliar los filtros o cambiar el término.</p></div>`;
+      ? `<div class="empty actionable-empty-v1009" style="grid-column:1/-1"><h3>Nadie buscando ahora</h3><p>Ahora mismo no hay perfiles activos. Quita «Buscan ahora» para ver el resto.</p><button class="btn btn-brand btn-sm" data-empty-action>Revisar filtros</button></div>`
+      : `<div class="empty actionable-empty-v1009" style="grid-column:1/-1"><h3>Sin resultados</h3><p>Amplía edad o distancia, restablece filtros o cambia el término.</p><button class="btn btn-brand btn-sm" data-empty-action>Revisar filtros</button></div>`;
+    const emptyAction = grid.querySelector("[data-empty-action]");
+    if (emptyAction) emptyAction.addEventListener("click", openFilters);
     return;
   }
   let testAdInserted = false;
@@ -13179,7 +13213,8 @@ function screenLikes(root) {
     if (!users) users = isPreviewMode() ? generateUsers(8, { zone: state.zone }) : [];
     grid.innerHTML = "";
     if (users.length === 0) {
-      grid.innerHTML = `<div class="empty" style="grid-column:1/-1"><h3>Aún no tienes likes</h3><p>Sigue descubriendo perfiles: cuando alguien te dé like aparecerá aquí.</p></div>`;
+      grid.innerHTML = `<div class="empty actionable-empty-v1009" style="grid-column:1/-1"><h3>Aún no tienes likes</h3><p>Sigue descubriendo perfiles: cuando alguien te dé like aparecerá aquí.</p><button class="btn btn-brand btn-sm" data-empty-discover>Ir a Explorar</button></div>`;
+      grid.querySelector("[data-empty-discover]")?.addEventListener("click", () => routeTab("discover"));
       premiumCta.style.display = "none";
       return;
     }
@@ -13953,7 +13988,11 @@ function screenChats(root) {
     } catch {}
   })();
 
-  const empty = el("div", { style: "padding:24px;text-align:center;color:var(--text-muted)" }, "No tienes conversaciones todavía. Toca un match para empezar a chatear.");
+  const empty = el("div", { class:"empty actionable-empty-v1009", style: "padding:24px;text-align:center;color:var(--text-muted)" }, [
+    el("h3", {}, "Todavía no hay conversaciones"),
+    el("p", {}, "El chat se abre cuando el interés es mutuo. Explora perfiles para conseguir tu primer match."),
+    el("button", { class:"btn btn-brand btn-sm", onclick:() => routeTab("discover") }, "Ir a Explorar"),
+  ]);
 
   (async () => {
     const convos = await chatApi.listConversations();
@@ -15893,6 +15932,223 @@ function profileVisitDateV1005(value) {
   return date.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
 }
 
+/* V1009 · Primeros pasos. Calcula el estado con datos reales del perfil y no
+   guarda un progreso paralelo que pudiera quedarse desactualizado. */
+async function loadFirstStepsV1009() {
+  if (typeof isPreviewMode === "function" && isPreviewMode()) {
+    return [
+      { key:"email", title:"Correo confirmado", detail:"de••••mo@aura.app", done:true, action:null },
+      { key:"photo", title:"Añade tu primera foto", detail:"Ayuda a que otras personas reconozcan tu perfil.", done:true, action:() => {} },
+      { key:"profile", title:"Completa tu presentación", detail:"Biografía y ciudad hacen el perfil más útil.", done:false, action:() => {} },
+      { key:"verify", title:"Verifica tu identidad", detail:"Confirma que eres una persona real.", done:false, action:() => {} },
+      { key:"secure", title:"Protege la cuenta", detail:"Activa 2FA y guarda códigos de recuperación.", done:false, action:() => {} },
+    ];
+  }
+  const headers = Auth.apply({ "X-User-Id": String(state.user?.id || "") });
+  const [profileResult, photosResult, accountResult, twofaResult] = await Promise.allSettled([
+    fetch("/api/my/profile", { headers, cache:"no-store" }).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch("/api/my/photos", { headers, cache:"no-store" }).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch("/api/my/account-status", { headers, cache:"no-store" }).then(r => r.ok ? r.json() : Promise.reject()),
+    fetch("/api/2fa/status", { headers, cache:"no-store" }).then(r => r.ok ? r.json() : Promise.reject()),
+  ]);
+  const profile = profileResult.status === "fulfilled" ? (profileResult.value.profile || {}) : {};
+  const photos = photosResult.status === "fulfilled" ? (photosResult.value.items || []) : [];
+  const account = accountResult.status === "fulfilled" ? accountResult.value : {};
+  const twofa = twofaResult.status === "fulfilled" ? twofaResult.value : {};
+  return [
+    { key:"email", title:"Correo confirmado", detail:maskProfileEmail(state.user?.email || ""), done:!!state.user?.email, action:null },
+    { key:"photo", title:"Añade tu primera foto", detail:"Ayuda a que otras personas reconozcan tu perfil.", done:photos.length > 0 || !!state.user?.photo, action:() => render(screenMyPhotos) },
+    { key:"profile", title:"Completa tu presentación", detail:"Biografía y ciudad hacen el perfil más útil.", done:!!String(profile.bio || "").trim() && !!String(profile.city || "").trim(), action:() => render(screenEditProfile) },
+    { key:"verify", title:"Verifica tu identidad", detail:"Confirma que eres una persona real y desbloquea funciones protegidas.", done:account.kyc_status === "verified", action:() => render(screenVerifyAccount) },
+    { key:"secure", title:"Protege la cuenta", detail:"Activa 2FA y guarda códigos de recuperación.", done:!!twofa.enabled && Number(twofa.recovery_remaining || 0) > 0, action:() => render(screenRecoveryCenterV1009) },
+  ];
+}
+
+function screenFirstStepsV1009(root) {
+  meSubHeader(root, "Primeros pasos");
+  root.classList.add("first-steps-screen-v1009");
+  const wrap = el("div", { class:"first-steps-v1009" }, [el("div", { class:"loading" }, "Revisando tu cuenta…")]);
+  root.appendChild(wrap); hideApp();
+  loadFirstStepsV1009().then(steps => {
+    wrap.innerHTML = "";
+    const completed = steps.filter(s => s.done).length;
+    const percent = Math.round(completed / steps.length * 100);
+    wrap.appendChild(el("section", { class:"first-steps-hero-v1009" }, [
+      el("span", { class:"first-steps-kicker-v1009" }, completed === steps.length ? "TODO LISTO" : "PREPARA TU CUENTA"),
+      el("div", { class:"first-steps-progress-v1009" }, [
+        el("strong", {}, `${percent}%`),
+        el("div", {}, [el("b", {}, `${completed} de ${steps.length} pasos`), el("span", {}, completed === steps.length ? "Tu cuenta está preparada." : "Completa cada punto desde esta guía.")]),
+      ]),
+      el("div", { class:"first-steps-track-v1009" }, [el("span", { style:`width:${percent}%` })]),
+    ]));
+    const list = el("div", { class:"first-steps-list-v1009" });
+    steps.forEach((step, index) => {
+      const row = el(step.done || !step.action ? "div" : "button", {
+        class:`first-step-v1009${step.done ? " done" : ""}`,
+        type:step.done || !step.action ? undefined : "button",
+      }, [
+        el("span", { class:"first-step-mark-v1009" }, step.done ? "✓" : String(index + 1)),
+        el("span", { class:"first-step-copy-v1009" }, [el("strong", {}, step.title), el("small", {}, step.done ? "Completado" : step.detail)]),
+        el("span", { class:"first-step-go-v1009" }, step.done ? "Hecho" : "Abrir"),
+      ]);
+      if (!step.done && step.action) row.addEventListener("click", step.action);
+      list.appendChild(row);
+    });
+    wrap.appendChild(list);
+    wrap.appendChild(el("p", { class:"first-steps-note-v1009" }, "Puedes volver aquí cuando quieras desde Perfil → Primeros pasos. El progreso se calcula con los datos reales de tu cuenta."));
+  }).catch(() => {
+    wrap.innerHTML = "";
+    wrap.appendChild(el("div", { class:"empty" }, [
+      el("h3", {}, "No pudimos revisar los pasos"),
+      el("p", {}, "Comprueba tu conexión y vuelve a intentarlo."),
+      el("button", { class:"btn btn-outline", onclick:() => render(screenFirstStepsV1009) }, "Reintentar"),
+    ]));
+  });
+}
+
+function safeDatePlanV1009() {
+  try { return JSON.parse(localStorage.getItem("aura-safe-date-plan-v1009") || "null") || {}; } catch { return {}; }
+}
+
+function screenSafeDateV1009(root) {
+  meSubHeader(root, "Planificar una cita segura");
+  root.classList.add("safe-date-screen-v1009");
+  const saved = safeDatePlanV1009();
+  const wrap = el("div", { class:"safe-date-v1009" });
+  wrap.appendChild(el("section", { class:"safe-date-hero-v1009" }, [
+    el("span", { class:"safe-date-shield-v1009" }, "◇"),
+    el("div", {}, [el("h2", {}, "Tu plan, bajo tu control"), el("p", {}, "Prepara los datos que quieras compartir con una persona de confianza. Aura no sigue tu ubicación ni envía nada automáticamente.")]),
+  ]));
+  const form = el("form", { class:"safe-date-form-v1009" });
+  const field = (label, input) => el("label", { class:"field" }, [el("span", {}, label), input]);
+  const who = el("input", { class:"input", name:"who", value:saved.who || "", placeholder:"Nombre o alias de tu cita" });
+  const place = el("input", { class:"input", name:"place", value:saved.place || "", placeholder:"Lugar público y dirección" });
+  const when = el("input", { class:"input", name:"when", type:"datetime-local", value:saved.when || "" });
+  const checkin = el("input", { class:"input", name:"checkin", type:"datetime-local", value:saved.checkin || "" });
+  const contact = el("input", { class:"input", name:"contact", value:saved.contact || "", placeholder:"Nombre, teléfono o email" });
+  form.append(
+    field("Con quién", who), field("Lugar de encuentro", place), field("Fecha y hora", when),
+    field("Hora acordada para avisar que estás bien", checkin), field("Contacto de confianza", contact)
+  );
+  const checks = el("div", { class:"safe-date-checks-v1009" });
+  [
+    ["public_place","Quedar en un lugar público"],
+    ["own_transport","Mantener una forma propia de volver"],
+    ["share_plan","Compartir este plan antes de salir"],
+    ["boundaries","Acordar límites y poder cancelar en cualquier momento"],
+  ].forEach(([key,label]) => checks.appendChild(el("label", {}, [
+    el("input", { type:"checkbox", name:key, checked:!!saved[key] }), el("span", {}, label),
+  ])));
+  form.appendChild(checks);
+  const actions = el("div", { class:"safe-date-actions-v1009" });
+  const save = el("button", { class:"btn btn-brand", type:"submit" }, "Guardar en este dispositivo");
+  const share = el("button", { class:"btn btn-outline", type:"button" }, "Compartir plan");
+  actions.append(save, share); form.appendChild(actions);
+  form.appendChild(el("p", { class:"safe-date-privacy-v1009" }, "Privacidad: este borrador se guarda solo en este navegador. No se comparte con Aura, con tu cita ni con tu contacto hasta que pulses «Compartir plan»."));
+  wrap.appendChild(form);
+  wrap.appendChild(el("section", { class:"safe-date-help-v1009" }, [
+    el("strong", {}, "Si algo no te da buena espina"),
+    el("p", {}, "Vete a un lugar seguro, contacta con alguien de confianza y usa los servicios de emergencia de tu zona si existe peligro inmediato. Puedes bloquear o denunciar desde el perfil o el chat."),
+    el("button", { class:"btn btn-ghost", onclick:() => render(screenSafetyCenter) }, "Abrir Centro de seguridad"),
+  ]));
+  form.addEventListener("submit", e => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(form).entries());
+    form.querySelectorAll('input[type="checkbox"]').forEach(input => { data[input.name] = input.checked; });
+    try { localStorage.setItem("aura-safe-date-plan-v1009", JSON.stringify(data)); toast("Plan guardado solo en este dispositivo"); }
+    catch { toast("No se pudo guardar el plan"); }
+  });
+  share.addEventListener("click", async () => {
+    const data = Object.fromEntries(new FormData(form).entries());
+    const text = ["Mi plan de cita segura en Aura", `Con: ${data.who || "Por confirmar"}`, `Lugar: ${data.place || "Por confirmar"}`, `Fecha: ${data.when ? new Date(data.when).toLocaleString() : "Por confirmar"}`, `Te avisaré a las: ${data.checkin ? new Date(data.checkin).toLocaleString() : "Por confirmar"}`, "Si no aviso, por favor llámame."].join("\n");
+    try {
+      if (navigator.share) await navigator.share({ title:"Plan de cita segura", text });
+      else { await navigator.clipboard.writeText(text); toast("Plan copiado; envíalo a tu contacto de confianza"); }
+    } catch (e) { if (e?.name !== "AbortError") toast("No se pudo compartir"); }
+  });
+  root.appendChild(wrap); hideApp();
+}
+
+function showRecoveryCodesV1009(codes) {
+  const box = el("div", { class:"recovery-codes-v1009" }, [
+    el("h3", {}, "Nuevos códigos de recuperación"),
+    el("p", {}, "Los códigos anteriores ya no funcionan. Guarda estos en un lugar seguro; Aura solo conserva sus huellas, no puede volver a mostrarlos."),
+    el("pre", {}, codes.join("\n")),
+    el("div", { class:"recovery-code-actions-v1009" }, [
+      el("button", { class:"btn btn-outline", onclick:async() => { try { await navigator.clipboard.writeText(codes.join("\n")); toast("Códigos copiados"); } catch { toast("No se pudieron copiar"); } } }, "Copiar"),
+      el("button", { class:"btn btn-brand", onclick:() => {
+        const blob = new Blob([`Aura · Códigos de recuperación\n\n${codes.join("\n")}\n`], { type:"text/plain" });
+        const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href=url; a.download="aura-codigos-recuperacion.txt"; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      } }, "Descargar"),
+    ]),
+  ]);
+  modal.open(box);
+}
+
+function regenerateRecoveryCodesV1009(onDone) {
+  const form = el("form", { class:"recovery-confirm-v1009" }, [
+    el("h3", {}, "Crear códigos nuevos"),
+    el("p", {}, "Confirma con un código de 6 dígitos de tu app autenticadora. Esta medida evita que una sesión abierta pueda sustituir tus códigos sin permiso."),
+  ]);
+  const token = el("input", { class:"input", inputmode:"numeric", maxlength:"6", placeholder:"123456", required:true });
+  form.append(token, el("div", { class:"sheet-actions" }, [
+    el("button", { class:"btn btn-ghost", type:"button", "data-close":true }, "Cancelar"),
+    el("button", { class:"btn btn-brand", type:"submit" }, "Generar e invalidar anteriores"),
+  ]));
+  form.addEventListener("submit", async e => {
+    e.preventDefault(); const submit = form.querySelector('[type="submit"]'); submit.disabled=true;
+    try {
+      const r = await fetch("/api/2fa/recovery/regenerate", { method:"POST", headers:Auth.apply({ "Content-Type":"application/json", "X-User-Id":String(state.user?.id || "") }), body:JSON.stringify({ token:token.value.trim() }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data.ok) throw new Error(data.error || "failed");
+      modal.close(); showRecoveryCodesV1009(data.recovery_codes || []); if (onDone) onDone();
+    } catch (err) { toast(err.message === "invalid_code" ? "Código incorrecto" : "No se pudieron generar los códigos"); submit.disabled=false; }
+  });
+  modal.open(form); setTimeout(() => token.focus(), 80);
+}
+
+function screenRecoveryCenterV1009(root) {
+  meSubHeader(root, "Recuperación de cuenta");
+  root.classList.add("recovery-center-screen-v1009");
+  const wrap = el("div", { class:"recovery-center-v1009" });
+  wrap.appendChild(el("section", { class:"recovery-hero-v1009" }, [
+    el("span", {}, "⌁"),
+    el("div", {}, [el("h2", {}, "Mantén una vía de vuelta"), el("p", {}, "Comprueba tus opciones antes de perder un dispositivo. Soporte nunca te pedirá una contraseña ni un código válido.")]),
+  ]));
+  const status = el("div", { class:"recovery-status-v1009" }, [el("div", { class:"loading" }, "Comprobando protección…")]);
+  wrap.appendChild(status);
+  const actions = el("div", { class:"recovery-actions-v1009" }, [
+    el("button", { onclick:() => render(screenSessionSecurity) }, [el("strong", {}, "Revisar dispositivos"), el("small", {}, "Cierra cualquier sesión que no reconozcas")]),
+    el("button", { onclick:() => render(screenSecurity) }, [el("strong", {}, "Gestionar 2FA"), el("small", {}, "Activa o desactiva la app autenticadora")]),
+    el("button", { onclick:() => render(screenSupportTicket) }, [el("strong", {}, "No reconozco un acceso"), el("small", {}, "Abre un ticket de seguridad")]),
+  ]);
+  wrap.append(actions, el("div", { class:"recovery-help-v1009" }, [
+    el("strong", {}, "Si ya no puedes entrar"),
+    el("p", {}, "Desde la pantalla de acceso pulsa «Recuperar acceso». Usa el correo registrado y completa el código enviado. Si tienes 2FA, necesitarás la app autenticadora o uno de tus códigos de recuperación."),
+  ]));
+  root.appendChild(wrap); hideApp();
+  async function load() {
+    try {
+      let data;
+      if (typeof isPreviewMode === "function" && isPreviewMode()) data = { ok:true, enabled:true, recovery_remaining:6 };
+      else {
+        const r = await fetch("/api/2fa/status", { headers:Auth.apply({ "X-User-Id":String(state.user?.id || "") }), cache:"no-store" });
+        data = await r.json(); if (!r.ok) throw new Error();
+      }
+      status.innerHTML = "";
+      status.append(
+        el("div", {}, [el("span", {}, "Correo de acceso"), el("strong", {}, maskProfileEmail(state.user?.email || "—")), el("small", {}, "Confirmado en esta sesión")]),
+        el("div", {}, [el("span", {}, "Verificación en 2 pasos"), el("strong", {}, data.enabled ? "Activada" : "No activada"), el("small", {}, data.enabled ? `${data.recovery_remaining || 0} códigos disponibles` : "Recomendado para proteger la cuenta")])
+      );
+      if (data.enabled) status.appendChild(el("button", { class:"btn btn-outline", onclick:() => regenerateRecoveryCodesV1009(load) }, "Crear códigos nuevos"));
+      else status.appendChild(el("button", { class:"btn btn-brand", onclick:() => openTwoFactorSetup(load) }, "Activar 2FA"));
+    } catch {
+      status.innerHTML = ""; status.appendChild(el("div", { class:"empty" }, [el("p", {}, "No se pudo cargar el estado."), el("button", { class:"btn btn-outline", onclick:load }, "Reintentar")]));
+    }
+  }
+  load();
+}
+
 function screenProfileVisitors(root) {
   meSubHeader(root, "Quién vio mi perfil");
   const body = el("div", { class: "profile-visitors-v1005" }, [
@@ -16142,6 +16398,21 @@ function screenMe(root) {
     } catch {}
   })();
 
+  // V1009 · Resumen accionable del alta. Solo ocupa espacio mientras quedan
+  // pasos; al completarlos desaparece y la guía sigue disponible en el menú.
+  const firstStepsBanner = el("div", { class:"first-steps-banner-slot-v1009" });
+  root.appendChild(firstStepsBanner);
+  loadFirstStepsV1009().then(steps => {
+    const done = steps.filter(step => step.done).length;
+    if (done >= steps.length) return;
+    const next = steps.find(step => !step.done);
+    firstStepsBanner.appendChild(el("button", { class:"first-steps-banner-v1009", type:"button", onclick:() => render(screenFirstStepsV1009) }, [
+      el("span", { class:"first-steps-banner-ring-v1009", style:`--progress:${Math.round(done / steps.length * 360)}deg` }, [el("b", {}, `${done}/${steps.length}`)]),
+      el("span", { class:"first-steps-banner-copy-v1009" }, [el("strong", {}, "Continúa preparando tu cuenta"), el("small", {}, `Siguiente: ${next?.title || "revisar pasos"}`)]),
+      el("span", { class:"chev" }, "›"),
+    ]));
+  }).catch(() => {});
+
   const list = el("div", { class: "settings-list" });
   const zoneSub = state.zone === "lgtb"
     ? (T("content.zone.lgtb.title") || "Zona LGTB+")
@@ -16156,6 +16427,7 @@ function screenMe(root) {
 
   const groups = [
     { title: T("content.me.group_account") || "Cuenta", items: [
+      { icon: "✓", title: "Primeros pasos", sub: "Checklist de perfil, verificación y seguridad", onClick: () => render(screenFirstStepsV1009) },
       { icon: "👁️", title: "Ver mi perfil", sub: "Vista previa de cómo te ven los demás", onClick: openOwnProfilePreview },
       { icon: "👤", title: T("content.me.item_edit_profile") || "Editar perfil", onClick: () => render(screenEditProfile) },
       { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
@@ -16256,6 +16528,8 @@ function screenMe(root) {
       { icon: "◉", title: "Privacidad y visibilidad", sub: (INVISIBLE_PLANS.has(getUserPlan()) ? "Perfil, distancia y actividad" : "Controles básicos · Invisible desde Premium"), onClick: () => render(screenInvisibleMode) },
       { icon: "◇", title: "Seguridad y dispositivos", sub: "Sesiones, 2FA y bloqueo remoto", onClick: () => render(screenSessionSecurity) },
       { icon: "△", title: "Centro de seguridad", sub: "Bloqueos, denuncias y apelaciones", onClick: () => render(screenSafetyCenter) },
+      { icon: "◇", title: "Planificar una cita segura", sub: "Checklist y contacto de confianza · sin seguimiento", onClick: () => render(screenSafeDateV1009) },
+      { icon: "⌁", title: "Recuperación de cuenta", sub: "Correo, 2FA, códigos y dispositivos", onClick: () => render(screenRecoveryCenterV1009) },
       {
         icon: "📍",
         title: T("content.me.item_gps") || "Ubicación (GPS)",
@@ -18452,7 +18726,8 @@ function screenBlockedUsers(root) {
     wrap.innerHTML = "";
     wrap.appendChild(el("div", { class: "empty" }, [
       el("h3", {}, T("content.me.blocked_empty_h") || "Sin usuarios bloqueados"),
-      el("p", {}, T("content.me.blocked_empty_p") || "Cuando bloquees a alguien aparecerá aquí."),
+      el("p", {}, "Aquí aparecerán las personas que bloquees desde un perfil o conversación."),
+      el("button", { class:"btn btn-outline btn-sm", onclick:() => render(screenSafetyCenter) }, "Abrir Centro de seguridad"),
     ]));
   };
 
@@ -20931,6 +21206,11 @@ async function boot() {
   const previewScreen = previewParams.get("preview");
   const isPreview = !!previewScreen;
   if (isPreview) {
+    const previewLang = String(previewParams.get("lang") || "").toLowerCase();
+    if (["es","en","fr","de","it","pt"].includes(previewLang)) {
+      currentLang = previewLang;
+      document.documentElement.setAttribute("lang", previewLang);
+    }
     // Aplicar tema preferido antes de pintar nada
     const t = previewParams.get("theme");
     if (t === "dark" || t === "light") {
@@ -21047,6 +21327,15 @@ async function boot() {
       if ((n === "subscriptions" || n === "plans") && typeof screenSubscriptions === "function") {
         try { seedPreviewSession(); activatePreviewTab("me"); render(screenSubscriptions); return; } catch {}
       }
+      if ((n === "first-steps" || n === "onboarding") && typeof screenFirstStepsV1009 === "function") {
+        try { seedPreviewSession(); activatePreviewTab("me"); render(screenFirstStepsV1009); return; } catch {}
+      }
+      if ((n === "safe-date" || n === "cita-segura") && typeof screenSafeDateV1009 === "function") {
+        try { seedPreviewSession(); activatePreviewTab("me"); render(screenSafeDateV1009); return; } catch {}
+      }
+      if ((n === "recovery" || n === "recuperacion") && typeof screenRecoveryCenterV1009 === "function") {
+        try { seedPreviewSession(); activatePreviewTab("me"); render(screenRecoveryCenterV1009); return; } catch {}
+      }
       if ((n === "traveler" || n === "viajero") && typeof screenTravelerMode === "function") {
         try { seedPreviewSession(); state.user.plan = "gold"; activatePreviewTab("me"); render(screenTravelerMode); return; } catch {}
       }
@@ -21073,6 +21362,9 @@ async function boot() {
       }
       if (n === "login" && typeof screenLogin === "function") {
         try { render(screenLogin); return; } catch {}
+      }
+      if (n === "faq" && typeof screenInfoFaq === "function") {
+        try { seedPreviewSession(); render(screenInfoFaq); return; } catch {}
       }
       if ((n === "search" || n === "tabs") && typeof screenSearch === "function") {
         try {

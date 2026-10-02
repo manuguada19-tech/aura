@@ -1485,6 +1485,8 @@ $("#nav").addEventListener("click", (e) => {
       { view: "newsletter",        label: "Newsletter",             emoji: "📰", before: "emails" },
       { view: "popups",            label: "Popups y avisos in-app", emoji: "🪧", before: "emails" },
       { view: "push_campaigns",    label: "Campañas push",          emoji: "🚀", before: "emails" },
+      { view: "user_funnel",       label: "Embudo de usuarios",     emoji: "📈", before: "stats" },
+      { view: "incidents",         label: "Incidencias técnicas",   emoji: "🩺", before: "logs" },
       { view: "device_incidents",  label: "Dispositivos perdidos",  emoji: "📱", before: "kyc" },
       { view: "staff",             label: "Staff y permisos",       emoji: "🧑‍💼", before: "settings" },
       { view: "audit",             label: "Auditoría",              emoji: "🧾", before: "logs" },
@@ -1786,7 +1788,7 @@ const VISTA_NIVEL = {
   fx_gdpr: 3, fx_vault: 3, fx_heatmap: 3,
   // -- Solo el dueño (4) --
   // Ajustes, equipo, copias de datos y auditoría: las llaves de la casa.
-  settings: 4, backup: 4, staff: 4, audit: 4,
+  settings: 4, backup: 4, staff: 4, audit: 4, incidents: 4, user_funnel: 3,
   // Dinero, y el resto de módulos cuyas escrituras el servidor todavía no
   // tiene clasificadas para el equipo: se esconden en vez de dejar pantallas
   // donde todo da 403. Si quieres abrir alguna a los administradores, se añade
@@ -1941,6 +1943,8 @@ function route(view) {
     popups: viewPopups,
     push_campaigns: viewPushCampaigns,
     device_incidents: viewDeviceIncidents,
+    incidents: viewIncidents,
+    user_funnel: viewUserFunnel,
     audit: viewAuditLog,
     // Legacy: 'live' redirige a chats (fusionado en V410)
     live: viewChatsAdmin,
@@ -2717,6 +2721,144 @@ async function openIncidentsCenter() {
   }
   overlay.appendChild(el("div",{class:"ac-scrim",onclick:close}));overlay.appendChild(modal);document.body.appendChild(overlay);
   document.addEventListener("keydown",onKey);await load();timer=setInterval(load,30000);
+}
+
+/* V1009 · Centro técnico como pantalla estable del menú. El modal del Panel se
+   conserva como acceso rápido, pero aquí se puede filtrar, revisar y reintentar. */
+async function viewIncidents(root) {
+  root.appendChild(viewTitle("Incidencias técnicas",
+    "Fallos reales de email, push y servidor reunidos en una sola cola operativa.",
+    [btn("Actualizar", "primary sm", () => load())]));
+  root.appendChild(sectionLegend("Cómo trabajar esta cola", [
+    ["1", "Prioriza errores y envíos atascados más antiguos"],
+    ["2", "Reintenta solo cuando el botón esté disponible"],
+    ["3", "Una campaña parcialmente entregada nunca se duplica"],
+    ["4", "Usa Logs para investigar errores sin reintento automático"],
+  ]));
+  const filters = el("div", { class:"incident-page-filters" });
+  const kind = el("select", { class:"input" }, [
+    el("option", { value:"" }, "Todos los tipos"),
+    el("option", { value:"email" }, "Emails"),
+    el("option", { value:"push" }, "Push"),
+    el("option", { value:"log" }, "Errores del sistema"),
+  ]);
+  const query = el("input", { class:"input", type:"search", placeholder:"Buscar por título o detalle…" });
+  filters.append(kind, query);
+  root.appendChild(filters);
+  const kpis = el("div", { class:"incident-kpis" });
+  const list = el("div", { class:"incident-list incident-page-list" });
+  root.append(kpis, list);
+  let items = [];
+
+  function renderRows() {
+    const q = query.value.trim().toLowerCase();
+    const visible = items.filter(item => (!kind.value || item.kind === kind.value)
+      && (!q || `${item.title || ""} ${item.detail || ""}`.toLowerCase().includes(q)));
+    list.innerHTML = "";
+    if (!visible.length) {
+      list.appendChild(el("div", { class:"ops-modal-empty" }, items.length
+        ? "No hay incidencias que coincidan con estos filtros."
+        : "No hay incidencias activas. El sistema está al día."));
+      return;
+    }
+    visible.forEach(item => {
+      const actions = el("div", { class:"incident-actions" });
+      if (item.retryable) {
+        const retry = btn("Reintentar", "primary sm", async () => {
+          retry.disabled = true; retry.textContent = "Reintentando…";
+          try {
+            await api.post(`/api/admin/incidents/${encodeURIComponent(item.kind)}/${item.source_id}/retry`, {});
+            toast("Reintento iniciado"); await load();
+          } catch (e) {
+            toast(e.message || "No se pudo reintentar", "err");
+            retry.disabled = false; retry.textContent = "Reintentar";
+          }
+        });
+        actions.appendChild(retry);
+      } else if (item.kind === "log") {
+        actions.appendChild(btn("Abrir logs", "ghost sm", () => route("logs")));
+      }
+      list.appendChild(el("article", { class:`incident-row ${item.kind || "log"}` }, [
+        el("div", { class:"incident-copy" }, [
+          el("div", { class:"incident-title" }, [
+            el("strong", {}, item.title || "Incidencia"),
+            el("span", { class:`chip xs ${item.status === "failed" || item.status === "error" ? "t-warn" : ""}` }, item.status || "—"),
+          ]),
+          el("p", {}, item.detail || "Sin detalle"),
+          el("time", {}, item.created_at ? new Date(item.created_at).toLocaleString() : "—"),
+        ]), actions,
+      ]));
+    });
+  }
+  kind.addEventListener("change", renderRows);
+  query.addEventListener("input", renderRows);
+  async function load() {
+    list.innerHTML = "<div class='loading'>Comprobando incidencias…</div>";
+    try {
+      const data = await api.get("/api/admin/incidents");
+      items = data.items || [];
+      const c = data.counts || {};
+      kpis.innerHTML = "";
+      [["Total",c.total],["Emails",c.email],["Push",c.push],["Errores",c.errors]].forEach(([label,value]) => {
+        kpis.appendChild(el("div", {}, [el("strong", {}, String(value || 0)), el("span", {}, label)]));
+      });
+      renderRows();
+    } catch (e) {
+      list.innerHTML = "";
+      list.appendChild(el("div", { class:"error" }, "No se pudo cargar la cola. Comprueba Estado técnico o vuelve a intentarlo."));
+    }
+  }
+  await load();
+}
+
+/* V1009 · Embudo de activación y conversión con personas únicas. */
+async function viewUserFunnel(root) {
+  root.appendChild(viewTitle("Embudo de usuarios",
+    "Detecta en qué paso se detienen las personas, desde el registro hasta el plan de pago.",
+    [btn("Actualizar", "primary sm", () => load())]));
+  root.appendChild(sectionLegend("Cómo leerlo", [
+    ["%", "El porcentaje grande compara cada paso con el anterior"],
+    ["∑", "La cifra secundaria compara con todos los registros"],
+    ["↘", "Una caída ayuda a decidir qué pantalla o mensaje mejorar"],
+  ]));
+  const summary = el("div", { class:"funnel-summary" });
+  const chart = el("div", { class:"user-funnel" });
+  root.append(summary, chart);
+  async function load() {
+    chart.innerHTML = "<div class='loading'>Calculando embudo…</div>";
+    try {
+      const data = await api.get("/api/admin/user-funnel");
+      const stages = data.stages || [];
+      const registered = Number(stages[0]?.value || 0);
+      const end = Number(stages.at(-1)?.value || 0);
+      summary.innerHTML = "";
+      summary.append(
+        el("div", {}, [el("strong", {}, fmt.num(registered)), el("span", {}, "Cuentas registradas")]),
+        el("div", {}, [el("strong", {}, fmt.num(end)), el("span", {}, "Planes de pago")]),
+        el("div", {}, [el("strong", {}, `${registered ? Math.round(end / registered * 1000) / 10 : 0}%`), el("span", {}, "Conversión total")]),
+        el("div", {}, [el("strong", {}, new Date(data.generated_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})), el("span", {}, "Último cálculo")])
+      );
+      chart.innerHTML = "";
+      stages.forEach((stage, index) => {
+        const width = registered ? Math.max(6, Math.round(Number(stage.value || 0) / registered * 100)) : 6;
+        chart.appendChild(el("article", { class:"funnel-stage" }, [
+          el("div", { class:"funnel-stage-index" }, String(index + 1).padStart(2,"0")),
+          el("div", { class:"funnel-stage-copy" }, [
+            el("div", { class:"funnel-stage-head" }, [
+              el("strong", {}, stage.label),
+              el("b", {}, fmt.num(stage.value || 0)),
+            ]),
+            el("div", { class:"funnel-track" }, [el("span", { style:`width:${width}%` })]),
+            el("small", {}, `${stage.action} · ${stage.from_previous}% del paso anterior · ${stage.from_registered}% del registro`),
+          ]),
+        ]));
+      });
+    } catch (e) {
+      chart.innerHTML = "";
+      chart.appendChild(el("div", { class:"error" }, "No se pudo calcular el embudo. Vuelve a intentarlo."));
+    }
+  }
+  await load();
 }
 
 async function openDataConsistency() {
@@ -7265,6 +7407,27 @@ async function viewAuditLog(root) {
     "Registro de acciones de administración: quién, qué y cuándo. Se registran las operaciones que modifican datos.",
     [ btn("⬇ Exportar CSV", "ghost sm", () => downloadCSV("audit")) ]
   ));
+  const integrity = el("section", { class:"audit-integrity" }, [
+    el("div", { class:"loading" }, "Verificando integridad del registro…"),
+  ]);
+  root.appendChild(integrity);
+  api.get("/api/admin/audit-summary").then(data => {
+    integrity.innerHTML = "";
+    const intact = !data.invalid;
+    integrity.classList.toggle("attention", !intact);
+    integrity.append(
+      el("div", { class:"audit-integrity-mark" }, intact ? "✓" : "!"),
+      el("div", { class:"audit-integrity-copy" }, [
+        el("strong", {}, intact ? "Integridad verificada" : "Revisión necesaria"),
+        el("small", {}, `${data.valid || 0} firmas válidas de ${data.checked || 0} registros comprobados${data.unsigned ? ` · ${data.unsigned} antiguos sin firma` : ""}`),
+      ]),
+      el("dl", {}, [
+        el("div", {}, [el("dt", {}, "Últimas 24 h"), el("dd", {}, String(data.last_24h || 0))]),
+        el("div", {}, [el("dt", {}, "Administradores"), el("dd", {}, String(data.actors || 0))]),
+        el("div", {}, [el("dt", {}, "Alterados"), el("dd", {}, String(data.invalid || 0))]),
+      ])
+    );
+  }).catch(() => { integrity.innerHTML = "<div class='error'>No se pudo verificar la integridad ahora.</div>"; });
   root.appendChild(sectionLegend("¿Qué muestra este registro?", [
     ["🟢", "GET no se registra (solo lecturas)"],
     ["✏️", "POST / PUT / PATCH — creación o cambios"],
@@ -11635,11 +11798,88 @@ async function viewLogs(root){
   await refresh();
 }
 
+async function openLanguageGovernance() {
+  const overlay = el("div", { class:"ac-overlay" });
+  const close = () => { document.removeEventListener("keydown", onKey); overlay.remove(); };
+  const onKey = e => { if (e.key === "Escape") close(); };
+  const body = el("div", { class:"language-governance-body" }, [el("div", { class:"loading" }, "Revisando catálogos…")]);
+  const modal = el("div", { class:"ac-dialog ac-dialog-wide language-governance", role:"dialog", "aria-modal":"true" }, [
+    el("div", { class:"technical-history-head" }, [
+      el("div", {}, [el("small", {}, "PUBLICACIÓN EDITORIAL"), el("h3", {}, "Versiones y traducciones")]),
+      btn("Cerrar", "ghost sm", close),
+    ]), body,
+  ]);
+  overlay.append(el("div", { class:"ac-scrim", onclick:close }), modal);
+  document.body.appendChild(overlay); document.addEventListener("keydown", onKey);
+  try {
+    const [data, revisionsData] = await Promise.all([
+      api.get("/api/admin/content-governance"),
+      api.get("/api/admin/content-revisions").catch(() => ({ rows:[] })),
+    ]);
+    body.innerHTML = "";
+    body.appendChild(el("div", { class:"language-version-strip" }, [
+      el("div", {}, [el("span", {}, "Build activo"), el("strong", { class:"mono" }, data.build || "—")]),
+      el("div", {}, [el("span", {}, "Fuente canónica"), el("strong", {}, "Español")]),
+      el("div", {}, [el("span", {}, "Último cambio de textos"), el("strong", {}, data.content_updated_at ? new Date(data.content_updated_at).toLocaleString() : "Sin cambios guardados")]),
+    ]));
+    const matrix = el("div", { class:"language-matrix" });
+    (data.languages || []).forEach(lang => {
+      const completeFaq = Number(lang.faq_items || 0) === Number((data.languages || [])[0]?.faq_items || 0);
+      matrix.appendChild(el("article", { class:"language-card" + (completeFaq ? " complete" : " attention") }, [
+        el("div", { class:"language-card-head" }, [
+          el("span", { class:"language-code" }, lang.code.toUpperCase()),
+          el("div", {}, [el("strong", {}, lang.label), el("small", {}, lang.code === data.canonical_language ? "Idioma fuente" : "Traducción de interfaz")]),
+          el("b", {}, `${lang.coverage}%`),
+        ]),
+        el("div", { class:"language-progress" }, [el("span", { style:`width:${Math.min(100, lang.coverage || 0)}%` })]),
+        el("div", { class:"language-card-meta" }, [
+          el("span", {}, `${lang.translated}/${lang.total} textos de interfaz`),
+          el("span", { class:completeFaq ? "ok" : "warn" }, `${lang.faq_items} FAQ${completeFaq ? " · completas" : " · revisar"}`),
+        ]),
+        btn("Previsualizar FAQ", "ghost sm", () => window.open(`/index.html?preview=faq&lang=${encodeURIComponent(lang.code)}`, "_blank")),
+      ]));
+    });
+    body.appendChild(matrix);
+    const versions = el("section", { class:"language-versions" }, [
+      el("div", { class:"language-versions-head" }, [
+        el("div", {}, [el("small", {}, "HISTORIAL"), el("h4", {}, "Versiones recientes de textos")]),
+        el("span", { class:"muted small" }, "Se guarda una copia con cada cambio"),
+      ]),
+    ]);
+    const revisions = revisionsData.rows || [];
+    if (!revisions.length) versions.appendChild(el("div", { class:"ops-modal-empty" }, "El historial empezará con el próximo cambio guardado."));
+    revisions.slice(0,8).forEach(revision => {
+      const restore = btn("Restaurar", "ghost sm", async () => {
+        if (!(await askConfirm(`¿Restaurar la versión #${revision.id}? Antes se guardará una copia del estado actual.`, { okText:"Restaurar versión" }))) return;
+        restore.disabled = true;
+        try {
+          const result = await api.post(`/api/admin/content-revisions/${revision.id}/restore`, {});
+          toast(`Versión restaurada · ${result.restored || 0} textos`); close(); route("content");
+        } catch (e) { restore.disabled=false; toast(e.message || "No se pudo restaurar", "err"); }
+      });
+      versions.appendChild(el("article", { class:"language-version-row" }, [
+        el("span", { class:"language-code" }, `#${revision.id}`),
+        el("div", {}, [el("strong", {}, `${revision.changes_count || 0} texto(s) modificados`), el("small", {}, `${revision.actor || "Administrador"} · ${revision.created_at ? new Date(revision.created_at).toLocaleString() : "—"}`)]),
+        restore,
+      ]));
+    });
+    body.appendChild(versions);
+    body.appendChild(el("p", { class:"muted small language-note" },
+      "La cobertura de interfaz se calcula sobre el código de este build. Las FAQ se comparan con el catálogo español canónico; una cantidad menor indica que faltan preguntas."));
+  } catch (e) {
+    body.innerHTML = "";
+    body.appendChild(el("div", { class:"error" }, "No se pudo cargar la matriz de idiomas."));
+  }
+}
+
 async function viewContent(root) {
   root.appendChild(viewTitle(
     "Textos de la app",
     "Personaliza todos los textos que ven los usuarios. La vista previa se actualiza en tiempo real mientras escribes.",
-    [ btn("Abrir app en nueva pestaña", "ghost sm", () => window.open("index.html", "_blank")) ]
+    [
+      btn("Versiones y traducciones", "primary sm", () => openLanguageGovernance()),
+      btn("Abrir app en nueva pestaña", "ghost sm", () => window.open("index.html", "_blank")),
+    ]
   ));
 
   root.appendChild(sectionLegend("¿Qué significa cada icono en Textos?", [

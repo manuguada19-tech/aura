@@ -1666,6 +1666,14 @@ async function migrate() {
       INDEX idx_created (created_at),
       INDEX idx_undone (undone_at)
     )`,
+    `CREATE TABLE IF NOT EXISTS content_revisions (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      actor VARCHAR(190) NULL,
+      changes_json LONGTEXT NULL,
+      snapshot_json LONGTEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_created (created_at)
+    )`,
     `CREATE TABLE IF NOT EXISTS countries (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(80) NOT NULL,
@@ -15298,6 +15306,18 @@ app.put("/api/content", wrap(async (req, res) => {
       [k, String(v)]
     );
   }
+  if (entries.some(([k]) => k.startsWith("content."))) {
+    try {
+      const [rows] = await pool.query("SELECT k,v FROM settings WHERE k LIKE 'content.%' ORDER BY k");
+      const snapshot = {}; rows.forEach(row => { snapshot[row.k] = row.v; });
+      const changed = Object.fromEntries(entries.filter(([k]) => k.startsWith("content.")).map(([k,v]) => [k,String(v)]));
+      await pool.execute(
+        "INSERT INTO content_revisions (actor,changes_json,snapshot_json) VALUES (?,?,?)",
+        [req.admin?.email || "admin", JSON.stringify(changed), JSON.stringify(snapshot)]
+      );
+      await pool.execute("DELETE FROM content_revisions WHERE id NOT IN (SELECT id FROM (SELECT id FROM content_revisions ORDER BY id DESC LIMIT 100) keep_rows)");
+    } catch (e) { console.warn("content revision failed:", e.message); }
+  }
   await logActivity("admin", `Contenido actualizado (${entries.length} campos)`);
   res.json({ ok: true });
 }));
@@ -20788,6 +20808,150 @@ app.get("/api/admin/incidents", wrap(async (req, res) => {
   res.json({ ok:true, generated_at:new Date().toISOString(), counts:{
     total:items.length,email:emails.length,push:pushes.length,errors:errors.length,
   }, items:items.slice(0,120) });
+}));
+
+/* V1009 · Embudo real de usuarios. Cada tramo cuenta personas únicas y no
+   eventos, para que las conversiones no se inflen por actividad repetida. */
+app.get("/api/admin/user-funnel", wrap(async (_req, res) => {
+  const count = (sql, args = []) => adminScalar(sql, args);
+  const [registered, profileReady, verified, active30d, liked, matched, messaged, paid] = await Promise.all([
+    count("SELECT COUNT(*) n FROM users"),
+    count(`SELECT COUNT(*) n FROM users u
+            WHERE COALESCE(NULLIF(TRIM(u.bio),''),NULL) IS NOT NULL
+              AND COALESCE(NULLIF(TRIM(u.city),''),NULL) IS NOT NULL
+              AND (COALESCE(NULLIF(TRIM(u.photo_url),''),NULL) IS NOT NULL
+                   OR EXISTS (SELECT 1 FROM photos p WHERE p.user_id=u.id AND p.is_now_photo=0))`),
+    count("SELECT COUNT(*) n FROM users WHERE verified=1"),
+    count("SELECT COUNT(*) n FROM users WHERE last_login >= DATE_SUB(NOW(), INTERVAL 30 DAY)"),
+    count("SELECT COUNT(DISTINCT from_user) n FROM likes WHERE type IN ('like','super')"),
+    count(`SELECT COUNT(DISTINCT uid) n FROM (
+             SELECT user_a uid FROM matches UNION SELECT user_b uid FROM matches
+           ) matched_users`),
+    count("SELECT COUNT(DISTINCT sender_id) n FROM messages"),
+    count("SELECT COUNT(*) n FROM users WHERE plan IN ('premium','gold','platinum')"),
+  ]);
+  const stages = [
+    { key:"registered", label:"Registro completado", value:registered, action:"Base total de cuentas" },
+    { key:"profile", label:"Perfil preparado", value:profileReady, action:"Biografía, ciudad y al menos una foto" },
+    { key:"verified", label:"Identidad verificada", value:verified, action:"Verificación aprobada" },
+    { key:"active", label:"Actividad reciente", value:active30d, action:"Inicio de sesión en los últimos 30 días" },
+    { key:"liked", label:"Primer interés", value:liked, action:"Ha enviado Like o Super Like" },
+    { key:"matched", label:"Primer match", value:matched, action:"Forma parte de al menos un match" },
+    { key:"messaged", label:"Primer mensaje", value:messaged, action:"Ha enviado al menos un mensaje" },
+    { key:"paid", label:"Plan de pago", value:paid, action:"Premium, Gold o Platinum" },
+  ];
+  stages.forEach((stage, index) => {
+    const previous = index ? Number(stages[index - 1].value || 0) : Number(registered || 0);
+    stage.from_previous = index === 0 ? 100 : (previous ? Math.round((stage.value / previous) * 1000) / 10 : 0);
+    stage.from_registered = registered ? Math.round((stage.value / registered) * 1000) / 10 : 0;
+  });
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, generated_at:new Date().toISOString(), stages });
+}));
+
+/* V1009 · Estado de integridad del registro. Recalcula en lectura la huella
+   SHA-256 a partir de los campos almacenados; no expone IP ni secretos. */
+app.get("/api/admin/audit-summary", requireAdmin, wrap(async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT id,actor,method,path,status,request_id,before_json,after_json,changes_json,entry_hash,created_at
+       FROM admin_audit_log ORDER BY id DESC LIMIT 500`
+  );
+  let valid = 0, invalid = 0, unsigned = 0;
+  for (const row of rows) {
+    if (!row.entry_hash) { unsigned++; continue; }
+    const expected = crypto.createHash("sha256").update([
+      row.request_id || "", row.actor || "", row.method || "", row.path || "", String(row.status || ""),
+      row.before_json || "", row.after_json || "", row.changes_json || "",
+    ].join("|")).digest("hex");
+    if (expected === row.entry_hash) valid++; else invalid++;
+  }
+  const dayRows = rows.filter(r => Date.now() - new Date(r.created_at).getTime() <= 86400000);
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:invalid === 0, checked:rows.length, valid, invalid, unsigned,
+    last_24h:dayRows.length, actors:new Set(dayRows.map(r => r.actor).filter(Boolean)).size,
+    last_entry_at:rows[0]?.created_at || null });
+}));
+
+function sourceObjectKeysV1009(source, marker, from = 0) {
+  const at = source.indexOf(marker, from);
+  if (at < 0) return [];
+  const start = source.indexOf("{", at);
+  if (start < 0) return [];
+  let depth = 0, quote = "", escaped = false, end = source.length;
+  for (let i = start; i < source.length; i++) {
+    const ch = source[i];
+    if (quote) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") { quote = ch; continue; }
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) { end = i + 1; break; }
+  }
+  const keys = new Set();
+  const re = /["']([^"']+)["']\s*:/g;
+  let match;
+  const body = source.slice(start, end);
+  while ((match = re.exec(body))) if (match[1].startsWith("content.") || match[1] === "common.loading") keys.add(match[1]);
+  return Array.from(keys);
+}
+
+/* V1009 · Matriz de idiomas y versión editorial. La cobertura se obtiene del
+   código que se va a servir, no de cifras escritas a mano. */
+app.get("/api/admin/content-governance", requireAdmin, wrap(async (_req, res) => {
+  const appSource = fs.readFileSync(path.join(__dirname, "public", "app.js"), "utf8");
+  const baseKeys = sourceObjectKeysV1009(appSource, "const contentFallback =");
+  const translationsAt = appSource.indexOf("const translations =");
+  const faqEs = require(path.join(__dirname, "public", "faq_content.js"));
+  const faqI18n = require(path.join(__dirname, "public", "faq_translations.js"));
+  const labels = { es:"Español", en:"English", fr:"Français", de:"Deutsch", it:"Italiano", pt:"Português" };
+  const languages = Object.keys(labels).map(code => {
+    const translated = code === "es" ? baseKeys.length : sourceObjectKeysV1009(appSource, `${code}: {`, translationsAt).length;
+    const faq = code === "es" ? faqEs : faqI18n[code];
+    const faqItems = Array.isArray(faq?.items) ? faq.items.length : 0;
+    return { code, label:labels[code], translated, total:baseKeys.length,
+      coverage:baseKeys.length ? Math.round((translated / baseKeys.length) * 1000) / 10 : 0,
+      faq_items:faqItems, faq_updated:faq?.updated || null };
+  });
+  const [[updated]] = await pool.query("SELECT MAX(updated_at) AS at FROM settings WHERE k LIKE 'content.%'");
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, build:BUILD_ID, content_updated_at:updated?.at || null,
+    canonical_language:"es", languages });
+}));
+
+app.get("/api/admin/content-revisions", requireAdmin, wrap(async (_req, res) => {
+  const [rows] = await pool.query(
+    "SELECT id,actor,changes_json,created_at FROM content_revisions ORDER BY id DESC LIMIT 20"
+  );
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, rows:rows.map(row => {
+    const changes = safeJson(row.changes_json) || {};
+    return { id:row.id, actor:row.actor, created_at:row.created_at,
+      changed_keys:Object.keys(changes), changes_count:Object.keys(changes).length };
+  }) });
+}));
+
+app.post("/api/admin/content-revisions/:id/restore", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error:"invalid_id" });
+  const [[revision]] = await pool.query("SELECT snapshot_json FROM content_revisions WHERE id=? LIMIT 1", [id]);
+  if (!revision) return res.status(404).json({ error:"not_found" });
+  const snapshot = safeJson(revision.snapshot_json);
+  if (!snapshot || typeof snapshot !== "object") return res.status(409).json({ error:"invalid_snapshot" });
+  const [currentRows] = await pool.query("SELECT k,v FROM settings WHERE k LIKE 'content.%' ORDER BY k");
+  const current = {}; currentRows.forEach(row => { current[row.k] = row.v; });
+  await pool.execute(
+    "INSERT INTO content_revisions (actor,changes_json,snapshot_json) VALUES (?,?,?)",
+    [req.admin?.email || "admin", JSON.stringify({ restored_from:id }), JSON.stringify(current)]
+  );
+  for (const [key, value] of Object.entries(snapshot)) {
+    if (!key.startsWith("content.")) continue;
+    await pool.execute("INSERT INTO settings (k,v) VALUES (?,?) ON DUPLICATE KEY UPDATE v=VALUES(v)", [key,String(value)]);
+  }
+  await logActivity("admin", `Textos restaurados desde la versión #${id}`);
+  res.json({ ok:true, restored:Object.keys(snapshot).filter(k => k.startsWith("content.")).length });
 }));
 
 app.post("/api/admin/incidents/:kind/:id/retry", wrap(async (req, res) => {
