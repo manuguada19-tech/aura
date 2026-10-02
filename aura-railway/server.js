@@ -10276,6 +10276,27 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
   });
 }));
 
+/* V1018 · Política anticapturas para la app de usuario. Una web/PWA no puede
+   bloquear la captura del sistema operativo, pero sí puede aplicar medidas de
+   disuasión. La excepción administrativa se decide en servidor con el token
+   firmado: nunca se acepta un rol enviado por el navegador. */
+app.get("/api/my/capture-policy", wrap(async (req, res) => {
+  const me = verifyUserToken(readUserToken(req));
+  if (!me) return res.json({ ok:true, protected:true, admin_exempt:false });
+  const [[user]] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [me]);
+  const email = String(user?.email || "").trim().toLowerCase();
+  let staff = false;
+  if (email) {
+    try {
+      const [[row]] = await pool.query("SELECT id FROM staff WHERE LOWER(email)=? AND status='active' LIMIT 1", [email]);
+      staff = !!row;
+    } catch {}
+  }
+  const adminExempt = !!email && (emailIsAdminListed(email) || email === activeAdminEmail() || staff);
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, protected:!adminExempt, admin_exempt:adminExempt });
+}));
+
 /* ============================================================
    V728 · Cancelar una verificación de edad enviada por error
    ------------------------------------------------------------

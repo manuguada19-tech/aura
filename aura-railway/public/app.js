@@ -4316,6 +4316,7 @@ const SECTION_MAP = {
 function render(screenFn, opts = {}) {
   _lastScreenFn = screenFn;
   _lastScreenOpts = opts;
+  if (!state?.user?.id) { try { setCaptureProtectionV1018(false); } catch {} }
   // Remove info-open flag when navigating away from an info screen
   const infoFns = ["screenInfoHelp","screenInfoFaq","screenInfoTerms","screenInfoPrivacy","screenInfoContact","screenInfoRules","screenInfoPreferences","screenInfoKycPolicy","screenSupportTicket"];
   if (!infoFns.includes(screenFn && screenFn.name)) {
@@ -4559,6 +4560,7 @@ try {
 function showApp() {
   tabbar.hidden = false;
   document.body.classList.add("app-open");
+  try { syncCaptureProtectionV1018(); } catch {}
   try { syncDesktopApp(); } catch {}
   // Ensure the current user is registered in DB for real chat + start heartbeat.
   // Auth.refresh() consigue un token de sesión firmado de forma silenciosa para
@@ -4567,6 +4569,7 @@ function showApp() {
     try {
       await chatApi.ensure();
       await Auth.refresh();
+      await syncCaptureProtectionV1018();
       startHeartbeat();
       await syncUserPlan();
       await syncOwnIdentityForFilters(true); // V984 · filtros acordes al género/orientación propios
@@ -18882,6 +18885,13 @@ function screenSafetyCenter(root) {
     "Tu espacio seguro",
     "Consulta las medidas que has tomado y el estado de los casos enviados al equipo de Aura."
   ));
+  const captureIsProtectedV1018 = !!captureProtectionEnabledV1018;
+  wrap.appendChild(el("section", { class:"capture-status-v1018","aria-label":"Protección frente a capturas" }, [
+    el("strong", {}, captureIsProtectedV1018 ? "Protección frente a capturas activa" : "Capturas permitidas para administración"),
+    el("small", {}, captureIsProtectedV1018
+      ? "La app añade una marca de cuenta, bloquea la impresión y oculta el contenido al pasar a segundo plano. El sistema operativo puede seguir realizando capturas."
+      : "Esta sesión administrativa o vista previa no lleva marca de agua ni bloqueo de impresión."),
+  ]));
   const trustedContactV1017 = el("div", { class:"trusted-contact-slot-v1017" }, [el("small", { class:"muted" }, "Buscando tu contacto de confianza…")]);
   const emergencyHelpV1017 = el("details", { class:"emergency-help-v1017" }, [
     el("summary", {}, "Necesito ayuda ahora"),
@@ -22518,6 +22528,73 @@ function authHeaders() {
   try { Auth.apply(h); } catch {}
   return h;
 }
+
+/* V1018 · Protección anticapturas de la web/PWA.
+   Los navegadores no pueden impedir una captura del sistema operativo. Estas
+   medidas son deliberadamente honestas: marca de agua trazable, impresión en
+   blanco y cortina al pasar la app a segundo plano. El servidor decide la
+   excepción para cuentas administrativas; el panel admin no carga este código. */
+let captureProtectionEnabledV1018 = false;
+let capturePolicySeqV1018 = 0;
+function captureWatermarkTextV1018() {
+  const id = state?.user?.id == null ? "—" : String(state.user.id);
+  const date = new Date().toLocaleDateString("es-ES", { day:"2-digit",month:"2-digit",year:"numeric" });
+  return `Aura · cuenta #${id} · ${date}`;
+}
+function ensureCaptureLayersV1018() {
+  let watermark = document.getElementById("capturePrivacyWatermarkV1018");
+  if (!watermark) {
+    watermark = el("div", { id:"capturePrivacyWatermarkV1018",class:"capture-watermark-v1018","aria-hidden":"true" });
+    document.body.appendChild(watermark);
+  }
+  const text = captureWatermarkTextV1018();
+  watermark.replaceChildren(...Array.from({ length:12 }, () => el("span", {}, text)));
+  let curtain = document.getElementById("capturePrivacyCurtainV1018");
+  if (!curtain) {
+    curtain = el("div", { id:"capturePrivacyCurtainV1018",class:"capture-curtain-v1018","aria-hidden":"true" }, [
+      el("strong", {}, "Contenido protegido"),
+      el("small", {}, "Vuelve a Aura para mostrar la pantalla"),
+    ]);
+    document.body.appendChild(curtain);
+  }
+}
+function setCaptureProtectionV1018(enabled) {
+  captureProtectionEnabledV1018 = !!enabled;
+  if (captureProtectionEnabledV1018) ensureCaptureLayersV1018();
+  document.body.classList.toggle("capture-protected-v1018", captureProtectionEnabledV1018);
+  if (!captureProtectionEnabledV1018) document.body.classList.remove("capture-background-v1018");
+  window.dispatchEvent(new CustomEvent("aura:capture-policy", { detail:{ protected:captureProtectionEnabledV1018 } }));
+}
+async function syncCaptureProtectionV1018() {
+  const seq = ++capturePolicySeqV1018;
+  if (!state?.user?.id || isPreviewMode()) { setCaptureProtectionV1018(false); return; }
+  // Protegido mientras se valida la excepción: nunca hay un destello sin marca.
+  setCaptureProtectionV1018(true);
+  try {
+    const response = await fetch("/api/my/capture-policy", { headers:authHeaders(),cache:"no-store" });
+    const data = response.ok ? await response.json() : null;
+    if (seq !== capturePolicySeqV1018) return;
+    setCaptureProtectionV1018(!(data && data.admin_exempt === true));
+  } catch {
+    if (seq === capturePolicySeqV1018) setCaptureProtectionV1018(true);
+  }
+}
+(function installCaptureProtectionV1018() {
+  const conceal = () => {
+    if (captureProtectionEnabledV1018) document.body.classList.add("capture-background-v1018");
+  };
+  const reveal = () => document.body.classList.remove("capture-background-v1018");
+  document.addEventListener("visibilitychange", () => document.hidden ? conceal() : reveal());
+  window.addEventListener("pagehide", conceal);
+  window.addEventListener("pageshow", reveal);
+  window.addEventListener("blur", () => setTimeout(() => { if (!document.hasFocus()) conceal(); }, 80));
+  window.addEventListener("focus", reveal);
+  window.addEventListener("keydown", (event) => {
+    if (!captureProtectionEnabledV1018 || event.key !== "PrintScreen") return;
+    ensureCaptureLayersV1018();
+    try { toast("Protección activa: la captura incluirá la marca de tu cuenta."); } catch {}
+  });
+})();
 
 /* ================================================================
    V450+ · Popup in-app activo

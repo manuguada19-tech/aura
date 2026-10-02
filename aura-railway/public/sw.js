@@ -40,7 +40,8 @@
 // V1008 · incorpora las FAQ traducidas a los cinco idiomas adicionales.
 // V1016 · añade el asistente, transparencia de recomendaciones y reintentos.
 // V1017 · incorpora llamadas de ayuda y corrige controles de Explorar/admin.
-const CACHE_VERSION = "aura-v127";
+// V1018 · activa la protección disuasoria frente a capturas para usuarios.
+const CACHE_VERSION = "aura-v128";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
