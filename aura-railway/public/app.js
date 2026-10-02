@@ -22856,12 +22856,12 @@ function ensureCapturePolicyGateV1031() {
   if (!gate) {
     gate = el("div", {
       id:"capturePolicyGateV1031", class:"capture-policy-gate-v1031",
-      role:"status", "aria-live":"polite", "aria-label":"Preparando Aura",
+      role:"status", "aria-live":"polite", "aria-label":"Iniciando Aura",
     }, [
       el("div", { class:"capture-policy-gate-card-v1031" }, [
-        el("span", { class:"capture-policy-gate-spinner-v1031", "aria-hidden":"true" }),
-        el("strong", {}, "Preparando Aura"),
-        el("small", {}, "Verificando la protección de esta sesión…"),
+        el("span", { class:"capture-policy-gate-logo-v1032", "aria-hidden":"true" }),
+        el("strong", {}, "Iniciando Aura…"),
+        el("span", { class:"capture-policy-gate-bar-v1032", "aria-hidden":"true" }),
       ]),
     ]);
     document.body.appendChild(gate);
@@ -22923,10 +22923,10 @@ async function syncCaptureProtectionV1018() {
     setCaptureProtectionV1018(false);
     return;
   }
-  // V1031 · Mientras el servidor decide, ocultamos el contenido con una espera
-  // neutra en vez de enseñar provisionalmente la marca. Así una cuenta admin
-  // nunca ve una marca que no le corresponde y una cuenta normal tampoco llega
-  // a mostrar contenido desprotegido antes de validar la política.
+  // V1031/V1032 · Mientras el servidor decide, ocultamos el contenido con la
+  // misma identidad visual del arranque. Así no aparece otra pantalla distinta,
+  // una cuenta admin nunca ve una marca que no le corresponde y una cuenta
+  // normal tampoco muestra contenido desprotegido antes de validar la política.
   setCapturePolicyPendingV1031(true);
   setCaptureProtectionV1018(false);
   try {
