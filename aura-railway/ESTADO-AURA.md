@@ -1,6 +1,19 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1011 (`177390f`, build `926b27d1682b`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1012 (`eb40f5a`, build `e46388c95b73`)**
+
+### V1012 (02/10/2026) — Buscador móvil corregido
+
+- En móvil, el buscador se mueve temporalmente a una capa independiente y
+  queda alineado a 8 px de ambos lados, sin depender de la rejilla superior.
+- Un fondo opaco bloquea y oscurece el panel inferior mientras se busca; los
+  botones permanecen en su posición y no reciben pulsaciones accidentales.
+- Incorpora cierre explícito, restaura el buscador en su posición original al
+  salir y bloquea el desplazamiento de fondo durante la búsqueda.
+- Validada en 390 px: 374 px de ancho útil, márgenes simétricos, fondo cubierto,
+  botones inmóviles y ausencia de desbordamiento. Publicada en commit `eb40f5a`,
+  build `e46388c95b73`; Railway finalizó correctamente y `/api/health` respondió
+  `ready:true`. No se modificaron datos reales.
 
 ### V1011 (02/10/2026) — Buscador estable y navegación legible
 
