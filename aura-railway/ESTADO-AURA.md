@@ -1,6 +1,27 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1016 (`6c43619`, build `92153cb9a113`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1017 (`5324c1b`, build `045fba29db03`)**
+
+### V1017 (02/10/2026) — Emergencias y controles administrativos visibles
+
+- «Perfil → Privacidad y seguridad → Centro de seguridad → Necesito ayuda
+  ahora» ofrece llamadas directas a 112, 091, 062, 061, 016 y 024, identificadas
+  como números de España. Si existe un teléfono de confianza guardado, aparece
+  también «Llamar a mi contacto de confianza»; si no, lleva al plan de cita
+  segura para añadirlo. Ninguna llamada se inicia sin pulsación del usuario.
+- En las tarjetas de Explorar, «¿Por qué aparece?» se sitúa a la derecha y
+  «Visto» a la izquierda; se comprobó geométricamente que ya no se solapan.
+- «Administración → Usuarios» muestra siempre una guía de acciones masivas y
+  un botón «Seleccionar esta página». Al seleccionar aparecen la barra y su
+  «Modo simulación», activado por defecto. En móvil cada cuenta lleva el texto
+  explícito «Seleccionar para acciones masivas».
+- La cronología 360 de la ficha permite eliminar un evento individual o limpiar
+  todos los eventos de actividad con confirmación. Solo Administrador o
+  Superadmin pueden hacerlo; los hitos reales de la cuenta se conservan.
+- Validada en móvil con datos simulados, sin llamadas reales ni cambios en
+  usuarios. `node --check` y `git diff --check` correctos. Publicada en commit
+  `5324c1b`, build `045fba29db03`; Railway terminó correctamente y
+  `/api/health` respondió `ready:true`.
 
 ### V1016 (02/10/2026) — Operaciones avanzadas y ayuda contextual
 
