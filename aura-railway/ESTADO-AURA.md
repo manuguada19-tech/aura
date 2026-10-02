@@ -11,6 +11,12 @@
 - Publicado el ajuste documental en commit `ac85406`. No cambia la aplicación:
   Railway finalizó correctamente, `/api/health` respondió `ready:true` y el
   build público continúa siendo `7f09e235fce6`.
+- Verificados `citasaura.es`, la redirección desde `www.citasaura.es`, HTTPS,
+  `/api/health` y `/api/version`; el dominio propio ya no figura como pendiente.
+- La auditoría opcional y el caso no reproducido de geo-IP se retiran del plan
+  por decisión del propietario. Android nativo queda como único trabajo futuro.
+- Publicada esta depuración en commit `b63208b`; Railway terminó correctamente,
+  `/api/health` respondió `ready:true` y el build siguió en `7f09e235fce6`.
 
 ### V1028 (02/10/2026) — Exención anticapturas resincronizada
 
