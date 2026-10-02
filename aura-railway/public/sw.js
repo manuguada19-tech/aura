@@ -38,7 +38,8 @@
 // V1004 · registra de verdad las solicitudes de copia de datos y amplía FAQ.
 // V1005 · incorpora visitas reales del perfil y la marca de conversación previa.
 // V1008 · incorpora las FAQ traducidas a los cinco idiomas adicionales.
-const CACHE_VERSION = "aura-v125";
+// V1016 · añade el asistente, transparencia de recomendaciones y reintentos.
+const CACHE_VERSION = "aura-v126";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",

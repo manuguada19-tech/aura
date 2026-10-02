@@ -1347,7 +1347,7 @@ const ESCRITURA = [
      .finally(), así que parecía que habían salido pero la sesión valía. */
   [/^POST \/api\/admin\/logout$/, 1],
   // Ocultar elementos de la cola solo modifica la vista personal del panel.
-  [/^POST \/api\/admin\/operations-dismissals$/, 1],
+  [/^(POST|DELETE) \/api\/admin\/operations-dismissals(\/[^/]+)?$/, 1],
 
   /* --- 3. Moderador (2): atender a la gente y aplicar las normas --- */
   // Suspender, banear, avisar y reactivar
@@ -1385,6 +1385,7 @@ const ESCRITURA = [
   /* --- 4. Administrador (3): además, hablarle a los usuarios y el contenido --- */
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/notifications(\/|$)/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/push(\/|$)/, 3],
+  [/^(POST|PATCH|DELETE) \/api\/admin\/saved-segments(\/|$)/, 3],
   [/^POST \/api\/admin\/incidents\/(email|push)\/[^/]+\/retry$/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/popups(\/|$)/, 3],
   [/^(POST|PUT|PATCH|DELETE) \/api\/admin\/newsletters(\/|$)/, 3],
@@ -2694,6 +2695,21 @@ async function migrate() {
       INDEX idx_dismissed_at (dismissed_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
   } catch {}
+  /* V1016 · Segmentos reutilizables para campañas. Solo guardan una definición
+     de audiencia; guardarlos, previsualizarlos o abrirlos nunca envía nada. */
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS admin_saved_segments (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      description VARCHAR(300) NULL,
+      segment VARCHAR(64) NOT NULL DEFAULT 'all',
+      segment_params JSON NULL,
+      created_by VARCHAR(190) NOT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_saved_segments_owner (created_by,updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch {}
   try {
     await pool.execute(`CREATE TABLE IF NOT EXISTS backup_verifications (
       id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -2727,6 +2743,10 @@ async function migrate() {
     "ALTER TABLE devices ADD COLUMN sessions_revoked_at TIMESTAMP NULL",
     "ALTER TABLE users ADD COLUMN sessions_revoked_at TIMESTAMP NULL",
   ]) { try { await pool.execute(stmt); } catch {} }
+  /* V1016 · Clave idempotente de cliente. Permite reintentar un mensaje tras
+     un corte sin crear dos copias si el primer POST sí llegó al servidor. */
+  try { await pool.execute("ALTER TABLE messages ADD COLUMN client_token VARCHAR(80) NULL"); } catch {}
+  try { await pool.execute("ALTER TABLE messages ADD UNIQUE KEY uniq_message_client (sender_id,client_token)"); } catch {}
 
   // Función 5 · Pagos con Stripe. Columnas para enlazar filas locales con los
   //   objetos de Stripe (idempotencia del webhook y trazabilidad).
@@ -7411,6 +7431,8 @@ async function buildAudienceQuery(segment, params) {
     case "anon_lang":          clauses.push("user_id IS NULL"); if (params.lang) { clauses.push("lang LIKE ?"); args.push(String(params.lang).slice(0,8) + "%"); } break;
     case "premium":            clauses.push("user_id IN (SELECT id FROM users WHERE plan IN ('gold','platinum','premium'))"); break;
     case "free":               clauses.push("user_id IN (SELECT id FROM users WHERE plan IS NULL OR plan='free')"); break;
+    case "verified":           clauses.push("user_id IN (SELECT id FROM users WHERE verified=1)"); break;
+    case "unverified":         clauses.push("user_id IN (SELECT id FROM users WHERE COALESCE(verified,0)=0)"); break;
     case "zone":               if (params.zone) { clauses.push("user_id IN (SELECT id FROM users WHERE zone=?)"); args.push(params.zone); } break;
     case "country":            if (params.country) { clauses.push("user_id IN (SELECT id FROM users WHERE country=?)"); args.push(params.country); } break;
     case "city":               if (params.city) { clauses.push("user_id IN (SELECT id FROM users WHERE city=?)"); args.push(params.city); } break;
@@ -16856,6 +16878,31 @@ app.get("/api/admin/activity/user/:id", wrap(async (req, res) => {
   res.json({ ok: true, items: rows });
 }));
 
+/* V1016 · Cronología 360 compacta: hitos de cuenta y actividad real reciente
+   en un único orden temporal. Evita obligar a recorrer todos los bloques. */
+app.get("/api/admin/users/:id/timeline", requireAdmin, wrap(async (req, res) => {
+  const uid = parseInt(req.params.id, 10);
+  if (!uid) return res.status(400).json({ error:"invalid_uid" });
+  const [[user]] = await pool.query("SELECT id,created_at,last_login,verified,status,plan FROM users WHERE id=? LIMIT 1", [uid]);
+  if (!user) return res.status(404).json({ error:"not_found" });
+  const events = [];
+  if (user.created_at) events.push({ kind:"account",title:"Cuenta creada",detail:"Alta en Aura",created_at:user.created_at });
+  if (user.last_login) events.push({ kind:"login",title:"Última conexión",detail:"Actividad de acceso",created_at:user.last_login });
+  const [stream, firstLike, firstMessage, firstMatch] = await Promise.all([
+    adminRows("SELECT id,event,detail,target_type,target_id,created_at FROM activity_stream WHERE user_id=? ORDER BY created_at DESC LIMIT 40", [uid]).catch(() => []),
+    adminRows("SELECT created_at FROM likes WHERE from_user=? ORDER BY created_at ASC LIMIT 1", [uid]).catch(() => []),
+    adminRows("SELECT created_at FROM messages WHERE sender_id=? ORDER BY created_at ASC LIMIT 1", [uid]).catch(() => []),
+    adminRows("SELECT created_at FROM matches WHERE user_a=? OR user_b=? ORDER BY created_at ASC LIMIT 1", [uid,uid]).catch(() => []),
+  ]);
+  if (firstLike[0]) events.push({ kind:"like",title:"Primer interés",detail:"Envió su primer Like o Super Like",created_at:firstLike[0].created_at });
+  if (firstMatch[0]) events.push({ kind:"match",title:"Primer match",detail:"Consiguió su primer match",created_at:firstMatch[0].created_at });
+  if (firstMessage[0]) events.push({ kind:"message",title:"Primer mensaje",detail:"Inició actividad de chat",created_at:firstMessage[0].created_at });
+  stream.forEach(item => events.push({ id:item.id,kind:"event",title:String(item.event || "Evento").replace(/_/g," "),detail:item.detail || null,target_type:item.target_type,target_id:item.target_id,created_at:item.created_at }));
+  events.sort((a,b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, summary:{ status:user.status || "active",plan:user.plan || "free",verified:!!user.verified }, items:events.slice(0,50) });
+}));
+
 /* V934 · Borrar eventos del stream de un usuario desde el panel. El stream
    acumula TODO (logins, telemetría del guard, tracking de cliente) y a veces
    hace falta limpiarlo: un evento concreto que mete ruido o el historial
@@ -20375,11 +20422,16 @@ app.post("/api/my/messages", wrap(async (req, res) => {
   const body = req.body?.body != null ? String(req.body.body).slice(0, 4000) : null;
   const media_type = ["text","photo","audio"].includes(req.body?.media_type) ? req.body.media_type : "text";
   const media_url = req.body?.media_url ? String(req.body.media_url).slice(0, 500) : null;
+  const clientToken = /^[a-zA-Z0-9:_-]{8,80}$/.test(String(req.body?.client_token || "")) ? String(req.body.client_token) : null;
   if (!cid) return res.status(400).json({ error: "conversation_id_required" });
   if (!body && !media_url) return res.status(400).json({ error: "empty_message" });
   const [c] = await pool.query("SELECT id, user_a, user_b FROM conversations WHERE id=? LIMIT 1", [cid]);
   if (!c.length) return res.status(404).json({ error: "not_found" });
   if (c[0].user_a !== me && c[0].user_b !== me) return res.status(403).json({ error: "forbidden" });
+  if (clientToken) {
+    const [[existing]] = await pool.query("SELECT id FROM messages WHERE sender_id=? AND client_token=? LIMIT 1", [me,clientToken]);
+    if (existing) return res.json({ ok:true,id:existing.id,replayed:true });
+  }
   const chatReservation = await reserveNewChatV998(me, cid);
   if (!chatReservation.ok) return res.status(402).json({
     ok: false,
@@ -20393,8 +20445,8 @@ app.post("/api/my/messages", wrap(async (req, res) => {
   let r;
   try {
     [r] = await pool.execute(
-      "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url) VALUES (?,?,?,?,?)",
-      [cid, me, body, media_type, media_url]
+      "INSERT INTO messages (conversation_id, sender_id, body, media_type, media_url, client_token) VALUES (?,?,?,?,?,?)",
+      [cid, me, body, media_type, media_url, clientToken]
     );
   } catch (error) {
     await releaseNewChatV998(me, chatReservation);
@@ -20870,6 +20922,86 @@ app.post("/api/admin/operations-dismissals", wrap(async (req, res) => {
   res.json({ ok:true, dismissed:keys.length });
 }));
 
+/* V1016 · Papelera personal del Centro de trabajo. Restaurar vuelve a mostrar
+   el elemento si continúa pendiente; nunca recrea ni cambia el dato original. */
+app.get("/api/admin/operations-dismissals", requireAdmin, wrap(async (req, res) => {
+  const owner = String(req.admin?.email || "admin").toLowerCase().slice(0, 190);
+  const [rows] = await pool.query(
+    "SELECT id,item_key,dismissed_at FROM admin_work_item_dismissals WHERE dismissed_by=? ORDER BY dismissed_at DESC LIMIT 200",
+    [owner]
+  );
+  const labels = { report:"Denuncia", ticket:"Ticket", appeal:"Apelación", funnel:"Embudo" };
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, items:rows.map(row => {
+    const parts = String(row.item_key || "").split(":");
+    return { ...row, kind:parts[0], label:labels[parts[0]] || "Elemento", reference:parts.slice(1).join(" · ") };
+  }) });
+}));
+
+app.delete("/api/admin/operations-dismissals/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error:"invalid_id" });
+  const owner = String(req.admin?.email || "admin").toLowerCase().slice(0, 190);
+  const [result] = await pool.execute("DELETE FROM admin_work_item_dismissals WHERE id=? AND dismissed_by=?", [id, owner]);
+  res.json({ ok:true, restored:result.affectedRows });
+}));
+
+app.delete("/api/admin/operations-dismissals", requireAdmin, wrap(async (req, res) => {
+  const owner = String(req.admin?.email || "admin").toLowerCase().slice(0, 190);
+  const [result] = await pool.execute("DELETE FROM admin_work_item_dismissals WHERE dismissed_by=?", [owner]);
+  res.json({ ok:true, restored:result.affectedRows });
+}));
+
+const SAVED_SEGMENT_TYPES_V1016 = new Set([
+  "all","premium","free","verified","unverified","zone","country","city","age","active_days","user_ids","funnel_stage"
+]);
+function savedSegmentInputV1016(body) {
+  const name = String(body?.name || "").trim().slice(0, 120);
+  const description = String(body?.description || "").trim().slice(0, 300) || null;
+  const segment = String(body?.segment || "all");
+  const params = body?.segment_params && typeof body.segment_params === "object" && !Array.isArray(body.segment_params)
+    ? body.segment_params : {};
+  if (!name || !SAVED_SEGMENT_TYPES_V1016.has(segment)) return null;
+  return { name, description, segment, params };
+}
+
+app.get("/api/admin/saved-segments", requireAdmin, wrap(async (_req, res) => {
+  const [rows] = await pool.query(
+    "SELECT id,name,description,segment,segment_params,created_by,created_at,updated_at FROM admin_saved_segments ORDER BY updated_at DESC,id DESC"
+  );
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, items:rows.map(row => ({ ...row, segment_params:safeJson(row.segment_params) || row.segment_params || {} })) });
+}));
+
+app.post("/api/admin/saved-segments", requireAdmin, wrap(async (req, res) => {
+  const data = savedSegmentInputV1016(req.body);
+  if (!data) return res.status(400).json({ error:"invalid_segment" });
+  const owner = String(req.admin?.email || "admin").toLowerCase().slice(0, 190);
+  const [result] = await pool.execute(
+    "INSERT INTO admin_saved_segments (name,description,segment,segment_params,created_by) VALUES (?,?,?,?,?)",
+    [data.name,data.description,data.segment,JSON.stringify(data.params),owner]
+  );
+  res.status(201).json({ ok:true, id:result.insertId });
+}));
+
+app.patch("/api/admin/saved-segments/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const data = savedSegmentInputV1016(req.body);
+  if (!id || !data) return res.status(400).json({ error:"invalid_segment" });
+  const [result] = await pool.execute(
+    "UPDATE admin_saved_segments SET name=?,description=?,segment=?,segment_params=? WHERE id=?",
+    [data.name,data.description,data.segment,JSON.stringify(data.params),id]
+  );
+  res.json({ ok:true, updated:result.affectedRows });
+}));
+
+app.delete("/api/admin/saved-segments/:id", requireAdmin, wrap(async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (!id) return res.status(400).json({ error:"invalid_id" });
+  const [result] = await pool.execute("DELETE FROM admin_saved_segments WHERE id=?", [id]);
+  res.json({ ok:true, deleted:result.affectedRows });
+}));
+
 app.get("/api/admin/technical-history", wrap(async (req, res) => {
   const period = ["24h","7d","30d"].includes(String(req.query.period)) ? String(req.query.period) : "24h";
   const hours = period === "30d" ? 720 : (period === "7d" ? 168 : 24);
@@ -20959,6 +21091,37 @@ app.get("/api/admin/user-funnel", requireAdmin, wrap(async (_req, res) => {
   });
   res.set("Cache-Control", "no-store");
   res.json({ ok:true, generated_at:new Date().toISOString(), stages });
+}));
+
+/* V1016 · Evolución por cohortes reales. Cada punto agrupa las cuentas dadas
+   de alta ese día y calcula cuántas han alcanzado hoy cada hito. */
+app.get("/api/admin/user-funnel/trends", requireAdmin, wrap(async (req, res) => {
+  const days = [7,30,90].includes(parseInt(req.query.days, 10)) ? parseInt(req.query.days, 10) : 30;
+  const zone = ["hetero","lgtb"].includes(String(req.query.zone || "")) ? String(req.query.zone) : "";
+  const country = String(req.query.country || "").trim().slice(0, 60);
+  const device = ["mobile","desktop"].includes(String(req.query.device || "")) ? String(req.query.device) : "";
+  const where = ["u.created_at >= DATE_SUB(CURDATE(), INTERVAL ? DAY)"];
+  const args = [days - 1];
+  if (zone) { where.push("u.zone=?"); args.push(zone); }
+  if (country) { where.push("u.country=?"); args.push(country); }
+  if (device) where.push(`EXISTS (SELECT 1 FROM devices dv WHERE dv.user_id=u.id AND ${device === "mobile" ? "(dv.ch_mobile=1 OR dv.ua REGEXP 'Android|iPhone|iPad|Mobile')" : "(COALESCE(dv.ch_mobile,0)=0 AND (dv.ua IS NULL OR dv.ua NOT REGEXP 'Android|iPhone|iPad|Mobile'))"})`);
+  const [rows] = await pool.query(
+    `SELECT DATE(u.created_at) cohort_date,
+            COUNT(*) registered,
+            SUM(${funnelStageCriterion("profile", "u")}) profile,
+            SUM(${funnelStageCriterion("verified", "u")}) verified,
+            SUM(${funnelStageCriterion("active", "u")}) active,
+            SUM(${funnelStageCriterion("liked", "u")}) liked,
+            SUM(${funnelStageCriterion("matched", "u")}) matched,
+            SUM(${funnelStageCriterion("messaged", "u")}) messaged,
+            SUM(${funnelStageCriterion("paid", "u")}) paid
+       FROM users u
+      WHERE ${where.join(" AND ")}
+      GROUP BY DATE(u.created_at)
+      ORDER BY cohort_date ASC`, args
+  );
+  res.set("Cache-Control", "no-store");
+  res.json({ ok:true, days, filters:{ zone:zone || null,country:country || null,device:device || null }, points:rows });
 }));
 
 /* V1010 · Detalle navegable del embudo. Devuelve únicamente los datos

@@ -2152,15 +2152,17 @@ const chatApi = {
     if (!r.ok) return { messages: [] };
     return await r.json();
   },
-  async sendMessage(cid, body, mediaType = "text", mediaUrl = null) {
-    const r = await fetch("/api/my/messages", {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify({ conversation_id: cid, body, media_type: mediaType, media_url: mediaUrl }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return { ...data, error: data.error || "error", status: r.status };
-    return data;
+  async sendMessage(cid, body, mediaType = "text", mediaUrl = null, clientToken = null) {
+    try {
+      const r = await fetch("/api/my/messages", {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ conversation_id: cid, body, media_type: mediaType, media_url: mediaUrl, client_token:clientToken }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return { ...data, error: data.error || "error", status: r.status };
+      return data;
+    } catch (error) { return { error:"network",status:0 }; }
   },
   async heartbeat() {
     if (!state.user || !state.user.id) return;
@@ -11515,6 +11517,27 @@ function renderDiscoverGrid(stack) {
   }
 }
 
+function openRecommendationWhyV1016(u) {
+  const reasons = [
+    "Cumple los filtros que tienes activos en Explorar.",
+    u.city ? `Su perfil indica ${u.city}${u.distance_km != null ? ` · a ${Math.round(Number(u.distance_km))} km` : ""}.` : "La ubicación no se usa cuando falta el permiso o el dato.",
+    u.online ? "Está en línea ahora." : "La actividad reciente puede ordenar perfiles disponibles.",
+    u.verified ? "Su identidad figura como verificada." : "La verificación no es obligatoria para aparecer.",
+    u.boosted ? "Este perfil usa Boost y por eso aparece destacado." : "Este perfil no aparece destacado por Boost.",
+  ];
+  const sheet = el("section", { class:"recommend-why-v1016" }, [
+    el("span", { class:"recommend-why-kicker-v1016" }, "TRANSPARENCIA"),
+    el("h3", {}, `¿Por qué aparece ${u.name || "este perfil"}?`),
+    el("p", {}, "Aura no calcula una puntuación secreta de compatibilidad. Aplica tus filtros y después ordena por señales visibles."),
+    el("ul", {}, reasons.map(reason => el("li", {}, reason))),
+    el("div", { class:"recommend-why-actions-v1016" }, [
+      el("button", { class:"btn btn-outline",onclick:() => { modal.close(); openFilters("discover"); } }, "Revisar mis filtros"),
+      el("button", { class:"btn btn-brand",onclick:() => modal.close() }, "Entendido"),
+    ]),
+  ]);
+  modal.open(sheet);
+}
+
 function buildSwipeCard(u, depth = 0) {
   const scale = 1 - depth * 0.04;
   const y = depth * 10;
@@ -11586,6 +11609,10 @@ function buildSwipeCard(u, depth = 0) {
     html: `<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/></svg><span class="swipe-info-txt">Ver perfil</span>`
   });
   card.appendChild(infoBtn);
+  card.appendChild(el("button", {
+    class:"recommend-why-trigger-v1016",type:"button","aria-label":`Por qué aparece ${u.name || "este perfil"}`,
+    onclick:event => { event.stopPropagation(); openRecommendationWhyV1016(u); },
+  }, "¿Por qué aparece?"));
   decorateChattedProfile(card, u);
   card.addEventListener("click", (e) => {
     // tapping images cycles photos
@@ -15279,6 +15306,9 @@ function screenChat(root, u, isNew, opts = {}) {
     hideFirstMsgSuggestions(); // V635
     const optimistic = bubble("out", v, new Date().toISOString());
     optimistic.dataset.pending = "1";
+    const clientToken = `msg_${state.user?.id || "u"}_${Date.now()}_${Math.random().toString(36).slice(2,10)}`;
+    const sendState = el("span", { class:"message-send-state-v1016",role:"status" }, "Enviando…");
+    optimistic.appendChild(sendState);
     msgs.appendChild(optimistic);
     msgs.scrollTop = msgs.scrollHeight;
     let r;
@@ -15308,25 +15338,50 @@ function screenChat(root, u, isNew, opts = {}) {
         optimistic.title = "Este mensaje se autoborrará en 24 h";
       } catch (e) {
         optimistic.style.opacity = ".5";
+        sendState.textContent = "No enviado";
         toast("No se pudo enviar (efímero).");
         return;
       }
     } else {
-      r = await chatApi.sendMessage(state_.convId, v);
+      const attemptSend = async (fromButton) => {
+        let response = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          if (!root.isConnected) return { error:"closed" };
+          sendState.textContent = attempt === 1 && !fromButton ? "Enviando…" : `Reintentando ${attempt}/3…`;
+          response = await chatApi.sendMessage(state_.convId, v, "text", null, clientToken);
+          if (response && !response.error) return response;
+          if (response?.status && response.status < 500) return response;
+          if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+        }
+        return response || { error:"network" };
+      };
+      r = await attemptSend(false);
       if (r?.status === 402 && r?.feature === "chats_monthly") {
         optimistic.remove();
         toast("Has alcanzado el límite mensual de chats nuevos. Puedes seguir escribiendo en chats ya iniciados.", 5200);
         return;
       }
       if (!r || r.error) {
-        optimistic.style.opacity = ".5";
-        toast("No se pudo enviar. Reintenta.");
+        optimistic.classList.add("send-failed-v1016");
+        sendState.textContent = "No enviado";
+        const retry = el("button", { class:"message-retry-v1016",type:"button" }, "Reintentar");
+        retry.addEventListener("click", async () => {
+          retry.disabled = true; optimistic.classList.remove("send-failed-v1016");
+          const next = await attemptSend(true);
+          if (next && !next.error) {
+            optimistic.dataset.msgId = String(next.id); optimistic.removeAttribute("data-pending"); sendState.textContent = "Enviado"; retry.remove();
+            if (next.id > lastId) lastId = next.id;
+          } else { optimistic.classList.add("send-failed-v1016"); sendState.textContent = "No enviado"; retry.disabled = false; }
+        });
+        optimistic.appendChild(retry);
+        toast("Sin conexión. Aura lo ha reintentado automáticamente.");
         return;
       }
     }
     if (r.id > lastId) lastId = r.id;
     optimistic.dataset.msgId = String(r.id);
     optimistic.removeAttribute("data-pending");
+    sendState.textContent = r.replayed ? "Enviado · recuperado" : "Enviado";
     if (u && Number.isFinite(Number(u.id))) state.chattedProfileIds.add(Number(u.id));
   };
   const sendPhoto = async () => {
@@ -15965,7 +16020,7 @@ async function loadFirstStepsV1009() {
 }
 
 function screenFirstStepsV1009(root) {
-  meSubHeader(root, "Primeros pasos");
+  meSubHeader(root, "Asistente de perfil");
   root.classList.add("first-steps-screen-v1009");
   const wrap = el("div", { class:"first-steps-v1009" }, [el("div", { class:"loading" }, "Revisando tu cuenta…")]);
   root.appendChild(wrap); hideApp();
@@ -15977,7 +16032,7 @@ function screenFirstStepsV1009(root) {
       el("span", { class:"first-steps-kicker-v1009" }, completed === steps.length ? "TODO LISTO" : "PREPARA TU CUENTA"),
       el("div", { class:"first-steps-progress-v1009" }, [
         el("strong", {}, `${percent}%`),
-        el("div", {}, [el("b", {}, `${completed} de ${steps.length} pasos`), el("span", {}, completed === steps.length ? "Tu cuenta está preparada." : "Completa cada punto desde esta guía.")]),
+        el("div", {}, [el("b", {}, `${completed} de ${steps.length} pasos`), el("span", {}, completed === steps.length ? "Tu cuenta está preparada." : "El asistente te lleva directamente a cada dato pendiente.")]),
       ]),
       el("div", { class:"first-steps-track-v1009" }, [el("span", { style:`width:${percent}%` })]),
     ]));
@@ -15995,7 +16050,7 @@ function screenFirstStepsV1009(root) {
       list.appendChild(row);
     });
     wrap.appendChild(list);
-    wrap.appendChild(el("p", { class:"first-steps-note-v1009" }, "Puedes volver aquí cuando quieras desde Perfil → Primeros pasos. El progreso se calcula con los datos reales de tu cuenta."));
+    wrap.appendChild(el("p", { class:"first-steps-note-v1009" }, "Puedes volver aquí cuando quieras desde Perfil → Asistente de perfil. El progreso se calcula con los datos reales de tu cuenta."));
   }).catch(() => {
     wrap.innerHTML = "";
     wrap.appendChild(el("div", { class:"empty" }, [
@@ -16427,7 +16482,7 @@ function screenMe(root) {
 
   const groups = [
     { title: T("content.me.group_account") || "Cuenta", items: [
-      { icon: "✓", title: "Primeros pasos", sub: "Checklist de perfil, verificación y seguridad", onClick: () => render(screenFirstStepsV1009) },
+      { icon: "✓", title: "Asistente de perfil", sub: "Te indica qué falta y abre cada ajuste pendiente", onClick: () => render(screenFirstStepsV1009) },
       { icon: "👁️", title: "Ver mi perfil", sub: "Vista previa de cómo te ven los demás", onClick: openOwnProfilePreview },
       { icon: "👤", title: T("content.me.item_edit_profile") || "Editar perfil", onClick: () => render(screenEditProfile) },
       { icon: "📷", title: T("content.me.item_photos") || "Mis fotos", onClick: () => render(screenMyPhotos) },
@@ -16646,9 +16701,11 @@ function screenAccountStatus(root) {
   wrap.appendChild(el("p", { class: "muted", style: "font-size:13px;margin:0 0 14px;" },
     "Aquí puedes ver el estado de tu verificación, apelaciones enviadas y cualquier infracción registrada en tu cuenta."));
 
+  const boxOverview = el("div", { class: "account-overview-v1016" }, [el("span", { class:"account-overview-mark-v1016" }, "…"),el("span", {}, [el("strong", {}, "Comprobando tu cuenta"),el("small", {}, "Verificación, acceso y casos abiertos")])]);
   const boxKyc      = el("div", { class: "acc-status-box" });
   const boxAppeals  = el("div", { class: "acc-status-box" });
   const boxInfract  = el("div", { class: "acc-status-box" });
+  wrap.appendChild(boxOverview);
   wrap.appendChild(boxKyc);
   wrap.appendChild(boxAppeals);
   wrap.appendChild(boxInfract);
@@ -16712,6 +16769,11 @@ function screenAccountStatus(root) {
         headers: Auth.apply(state.user?.id ? { "X-User-Id": String(state.user.id) } : {}),
       });
       const d = await r.json();
+      const needsAttention = ["rejected","suspended"].includes(d.kyc_status) || Number(d.appeals_open || 0) > 0 || Number(d.infractions_open || 0) > 0;
+      boxOverview.classList.toggle("attention", needsAttention);
+      boxOverview.querySelector(".account-overview-mark-v1016").textContent = needsAttention ? "!" : "✓";
+      boxOverview.querySelector("strong").textContent = needsAttention ? "Tu cuenta necesita atención" : "Tu cuenta está operativa";
+      boxOverview.querySelector("small").textContent = needsAttention ? "Revisa los apartados marcados y sus acciones disponibles." : "No hay bloqueos ni decisiones pendientes que limiten el acceso.";
 
       // KYC
       const kycMap = {
@@ -18771,6 +18833,12 @@ function screenSafetyCenter(root) {
     "Tu espacio seguro",
     "Consulta las medidas que has tomado y el estado de los casos enviados al equipo de Aura."
   ));
+  wrap.appendChild(el("section", { class:"safety-quick-v1016","aria-label":"Acciones rápidas de seguridad" }, [
+    el("button", { type:"button",onclick:() => routeTab("chats") }, [el("strong", {}, "Bloquear o denunciar"),el("small", {}, "Abre un chat y usa el menú ⋯")]),
+    el("button", { type:"button",onclick:() => render(screenSafeDateV1009) }, [el("strong", {}, "Preparar una cita"),el("small", {}, "Checklist y contacto de confianza")]),
+    el("button", { type:"button",onclick:() => render(screenSessionSecurity) }, [el("strong", {}, "Proteger mi acceso"),el("small", {}, "Sesiones, 2FA y dispositivo perdido")]),
+    el("details", {}, [el("summary", {}, "Necesito ayuda ahora"),el("p", {}, "Si existe peligro inmediato, aléjate a un lugar seguro y contacta con los servicios de emergencia de tu zona. Aura no sustituye a emergencias.")]),
+  ]));
 
   const tabs = el("div", { class: "safety-tabs", role: "tablist" });
   const content = el("div", { class: "safety-content" }, [el("p", { class: "muted" }, "Cargando…")]);

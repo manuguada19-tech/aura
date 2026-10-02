@@ -1642,6 +1642,7 @@ $("#nav").addEventListener("click", (e) => {
       { view: "infractions",       label: "Infracciones",           emoji: "⚠️", before: "tickets" },
       { view: "newsletter",        label: "Newsletter",             emoji: "📰", before: "emails" },
       { view: "popups",            label: "Popups y avisos in-app", emoji: "🪧", before: "emails" },
+      { view: "saved_segments",    label: "Segmentos guardados",    emoji: "◎", before: "push_campaigns" },
       { view: "push_campaigns",    label: "Campañas push",          emoji: "🚀", before: "emails" },
       { view: "user_funnel",       label: "Embudo de usuarios",     emoji: "📈", before: "stats" },
       { view: "incidents",         label: "Incidencias técnicas",   emoji: "🩺", before: "logs" },
@@ -1938,7 +1939,7 @@ const VISTA_NIVEL = {
   logs: 1, stats: 1, fx_now_status: 1, live: 1,
   // -- Administrador y arriba (3): hablarle a los usuarios y el contenido --
   content: 3, design: 3, match_celebrate: 3, promos: 3, notifications: 3,
-  fx_notifications: 3, fx_push_ctx: 3, push_campaigns: 3, popups: 3, emails: 3,
+  fx_notifications: 3, fx_push_ctx: 3, saved_segments: 3, push_campaigns: 3, popups: 3, emails: 3,
   newsletter: 3, invites: 3, waitlist: 3,
   /* "Emails de mantenimiento" sube a 4 (solo el dueño) por la misma regla que
      aplico al resto: la única acción de verdad de esa pantalla es
@@ -2106,6 +2107,7 @@ function route(view) {
     staff: viewStaff,
     newsletter: viewNewsletter,
     popups: viewPopups,
+    saved_segments: viewSavedSegmentsV1016,
     push_campaigns: viewPushCampaigns,
     device_incidents: viewDeviceIncidents,
     incidents: viewIncidents,
@@ -3120,9 +3122,35 @@ async function viewUserFunnel(root) {
   ]));
   const summary = el("div", { class:"funnel-summary" });
   const chart = el("div", { class:"user-funnel" });
+  const trendPeriod = el("select", { class:"input" }, [[7,"7 días"],[30,"30 días"],[90,"90 días"]].map(([value,label]) => el("option", { value,selected:value === 30 }, label)));
+  const trendZone = el("select", { class:"input" }, [el("option", { value:"" }, "Todas las zonas"),el("option", { value:"hetero" }, "Hetero"),el("option", { value:"lgtb" }, "LGTB+")]);
+  const trendDevice = el("select", { class:"input" }, [el("option", { value:"" }, "Todos los dispositivos"),el("option", { value:"mobile" }, "Móvil"),el("option", { value:"desktop" }, "Escritorio")]);
+  const trends = el("section", { class:"funnel-trends-v1016" }, [
+    el("header", {}, [el("div", {}, [el("small", {}, "EVOLUCIÓN REAL"),el("h3", {}, "Tendencia por cohorte de alta"),el("p", {}, "Cada fila agrupa quienes se registraron ese día y muestra su avance actual.")]),el("div", { class:"funnel-trend-filters-v1016" }, [trendPeriod,trendZone,trendDevice])]),
+    el("div", { class:"funnel-trend-body-v1016" }, [el("div", { class:"loading" }, "Calculando cohortes…")]),
+  ]);
   let requestedStage = window.__pendingFunnelOpen || null;
   window.__pendingFunnelOpen = null;
-  root.append(summary, chart);
+  root.append(summary, chart, trends);
+  async function loadTrends() {
+    const body = trends.querySelector(".funnel-trend-body-v1016");
+    body.replaceChildren(el("div", { class:"loading" }, "Calculando cohortes…"));
+    try {
+      const params = new URLSearchParams({ days:trendPeriod.value });
+      if (trendZone.value) params.set("zone",trendZone.value); if (trendDevice.value) params.set("device",trendDevice.value);
+      const data = await api.get(`/api/admin/user-funnel/trends?${params}`); const rows = data.points || []; body.innerHTML = "";
+      if (!rows.length) { body.appendChild(el("div", { class:"empty" }, "No hay altas en este periodo y cohorte.")); return; }
+      const table = el("table", { class:"data-table funnel-trend-table-v1016" });
+      table.appendChild(el("thead", {}, el("tr", {}, ["Cohorte","Altas","Perfil","Verificadas","Activas","Like","Match","Mensaje","Pago"].map(label => el("th", {}, label)))));
+      const tbody = el("tbody");
+      rows.forEach(row => {
+        const total = Number(row.registered || 0); const cell = key => { const value=Number(row[key] || 0); const pct=total ? Math.round(value/total*100) : 0; return el("td", {}, [el("b", {}, String(value)),el("small", {}, `${pct}%`),el("span", { class:"funnel-cohort-bar-v1016" }, [el("i", { style:`width:${pct}%` })])]); };
+        tbody.appendChild(el("tr", {}, [el("td", {}, new Date(`${String(row.cohort_date).slice(0,10)}T12:00:00`).toLocaleDateString("es-ES", { day:"2-digit",month:"short" })),el("td", {}, el("strong", {}, String(total))),... ["profile","verified","active","liked","matched","messaged","paid"].map(cell)]));
+      });
+      table.appendChild(tbody); body.appendChild(el("div", { class:"table-scroll" }, [table]));
+    } catch { body.replaceChildren(el("div", { class:"error" }, "No se pudo calcular la tendencia.")); }
+  }
+  [trendPeriod,trendZone,trendDevice].forEach(control => control.addEventListener("change", loadTrends));
   async function load() {
     chart.innerHTML = "<div class='loading'>Calculando embudo…</div>";
     try {
@@ -3171,7 +3199,7 @@ async function viewUserFunnel(root) {
       chart.appendChild(el("div", { class:"error" }, "No se pudo calcular el embudo. Vuelve a intentarlo."));
     }
   }
-  await load();
+  await Promise.all([load(),loadTrends()]);
 }
 
 async function openDataConsistency() {
@@ -3264,6 +3292,45 @@ async function openSystemStatus() {
   if (!closed) timer = setInterval(load, 15000);
 }
 
+async function openWorkTrashV1016() {
+  const overlay = el("div", { class:"ac-overlay" });
+  const list = el("div", { class:"work-trash-list-v1016" }, [el("div", { class:"loading" }, "Cargando papelera…")]);
+  const close = () => { document.removeEventListener("keydown", onKey); overlay.remove(); };
+  const onKey = event => { if (event.key === "Escape") close(); };
+  const restoreAll = btn("Restaurar todo", "ghost sm", async () => {
+    if (!confirm("¿Volver a mostrar todos los elementos que sigan pendientes?")) return;
+    restoreAll.disabled = true;
+    try { await api.del("/api/admin/operations-dismissals"); toast("Papelera restaurada"); close(); route("dashboard"); }
+    catch (error) { restoreAll.disabled = false; toast(error?.message || "No se pudo restaurar"); }
+  });
+  const modal = el("section", { class:"ac-dialog work-trash-modal-v1016", role:"dialog", "aria-modal":"true", "aria-label":"Papelera de tareas" }, [
+    el("header", { class:"technical-history-head" }, [
+      el("div", {}, [el("small", {}, "CENTRO DE TRABAJO"), el("h3", {}, "Papelera de tareas"), el("p", {}, "Elementos ocultados por tu cuenta administrativa.")]),
+      el("div", { class:"system-status-head-actions" }, [restoreAll, btn("Cerrar", "ghost sm", close)]),
+    ]), list,
+  ]);
+  overlay.append(el("div", { class:"ac-scrim", onclick:close }), modal);
+  document.body.appendChild(overlay); document.addEventListener("keydown", onKey);
+  try {
+    const data = await api.get("/api/admin/operations-dismissals");
+    const items = data.items || []; list.innerHTML = ""; restoreAll.disabled = !items.length;
+    if (!items.length) { list.appendChild(el("div", { class:"ops-empty" }, "La papelera está vacía.")); return; }
+    items.forEach(item => {
+      const restore = btn("Restaurar", "primary sm", async () => {
+        restore.disabled = true;
+        try { await api.del(`/api/admin/operations-dismissals/${item.id}`); row.remove(); toast("Elemento restaurado"); }
+        catch (error) { restore.disabled = false; toast(error?.message || "No se pudo restaurar"); }
+      });
+      const row = el("article", { class:"work-trash-row-v1016" }, [
+        el("span", { class:"work-trash-icon-v1016" }, "↩"),
+        el("span", {}, [el("strong", {}, `${item.label} · ${item.reference || "sin referencia"}`), el("small", {}, `Ocultado ${fmt.reldate(item.dismissed_at)}`)]),
+        restore,
+      ]);
+      list.appendChild(row);
+    });
+  } catch (error) { list.replaceChildren(el("div", { class:"error" }, "No se pudo cargar la papelera.")); }
+}
+
 function renderOperationsCenter(data, showWork = true, showHealth = true) {
   const wrap = el("section", { class: "ops-center" });
   const generatedAt = data?.generated_at ? new Date(data.generated_at) : new Date();
@@ -3274,6 +3341,7 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
     el("div", {}, [el("small", {}, "PRIORIDADES"), el("h2", {}, "Centro de trabajo"), el("p", {}, "Todo lo que necesita atención, ordenado en una sola cola.")]),
     el("div", { class: "ops-refresh" }, [
       el("span", { class: "ops-updated", role: "status" }, generatedText),
+      btn("Papelera", "ghost sm", openWorkTrashV1016),
       btn("Actualizar", "ghost sm", () => route("dashboard")),
     ]),
   ]);
@@ -4327,6 +4395,8 @@ async function viewUsers(root){
   const bulkBar = el("div", { class: "bulk-bar", id: "usersBulkBar" });
   const bulkCount = el("span", { class: "count" }, "0 seleccionados");
   bulkBar.appendChild(bulkCount);
+  const simulationModeV1016 = el("input", { type:"checkbox",checked:true });
+  bulkBar.appendChild(el("label", { class:"bulk-simulation-v1016",title:"Calcula el impacto sin cambiar ninguna cuenta" }, [simulationModeV1016,el("span", {}, "Modo simulación")])) ;
   bulkBar.appendChild(el("span", { class: "spacer", style: "flex:1" }));
 
   async function bulkAction(action, options = {}) {
@@ -4347,6 +4417,10 @@ async function viewUsers(root){
       const more = (s.affected || 0) > (s.users || []).length
         ? `\n…y ${(s.affected || 0) - s.users.length} más.` : "";
       const skipped = s.skipped ? `\n${s.skipped} selecciones no son usuarios válidos y se omitirán.` : "";
+      if (simulationModeV1016.checked) {
+        alert(`SIMULACIÓN · No se ha aplicado ningún cambio\n\n${s.label || "Acción masiva"}\nAfectaría a ${s.affected || 0} usuario(s):\n${sample}${more}${skipped}\n\nDesactiva “Modo simulación” para habilitar la confirmación real.`);
+        return;
+      }
       const ok = await askConfirm(
         `${s.label || "Aplicar acción"}\n\nAfectará a ${s.affected || 0} usuario(s):\n${sample}${more}${skipped}\n\nLa vista previa caduca en 5 minutos.`,
         { okText:"Confirmar y aplicar", danger:["ban","delete","suspend","unverify"].includes(action) }
@@ -4984,6 +5058,27 @@ async function openUserDrawer(id, onChange) {
     avatar(u.photo_url, 56),
     el("div", {}, [ el("strong", {}, u.name), statusLine ]),
   ]));
+
+  // V1016 · Resumen 360 antes de los formularios extensos. Es plegable para
+  // mantener la ficha compacta y combina hitos con el stream real.
+  const timeline360 = el("section", { class:"user-360-v1016" }, [
+    el("header", {}, [el("span", {}, [el("small", {}, "VISTA 360"),el("h3", {}, "Cronología de la cuenta")]),el("span", { class:"user-360-state-v1016" }, "Cargando…")]),
+    el("div", { class:"user-360-list-v1016" }, [el("div", { class:"loading" }, "Ordenando actividad…")]),
+  ]);
+  form.appendChild(timeline360);
+  (async () => {
+    const list = timeline360.querySelector(".user-360-list-v1016");
+    try {
+      const data = await api.get(`/api/admin/users/${id}/timeline`); const items = data.items || []; const s = data.summary || {};
+      timeline360.querySelector(".user-360-state-v1016").textContent = `${s.verified ? "Verificada" : "Sin verificar"} · ${String(s.plan || "free").toUpperCase()} · ${s.status || "active"}`;
+      list.innerHTML = "";
+      if (!items.length) { list.appendChild(el("div", { class:"empty small" }, "Sin hitos registrados.")); return; }
+      items.slice(0,12).forEach(item => list.appendChild(el("article", { class:`user-360-event-v1016 ${item.kind || "event"}` }, [
+        el("span", { class:"user-360-dot-v1016" }),el("span", {}, [el("strong", {}, item.title || "Evento"),el("small", {}, item.detail || "Sin detalle")]),el("time", {}, fmt.reldate(item.created_at)),
+      ])));
+      if (items.length > 12) list.appendChild(el("small", { class:"muted" }, `${items.length - 12} eventos más disponibles en “Eventos (stream)”.`));
+    } catch { list.replaceChildren(el("div", { class:"empty small" }, "No se pudo cargar la cronología.")); }
+  })();
 
   // V799 · Última conexión AUTOMÁTICA y NO editable. Se muestra en solo lectura
   // (la fecha/hora la gestiona el sistema al iniciar sesión el usuario).
@@ -20473,6 +20568,8 @@ async function viewStaff(root) {
 }
 
 async function viewNewsletter(root) {
+  let segmentDraftV1016 = null;
+  try { segmentDraftV1016 = JSON.parse(sessionStorage.getItem("aura-admin-newsletter-segment-draft") || "null"); sessionStorage.removeItem("aura-admin-newsletter-segment-draft"); } catch {}
   root.appendChild(viewTitle("Newsletter & Campañas", "Envíos masivos, individuales, por segmento o estacionales"));
 
   if (!document.getElementById("newsCss")) {
@@ -20755,6 +20852,10 @@ async function viewNewsletter(root) {
     const isEdit = !!(data && data.id);
     const isTpl = !!(data && data.from_template);
     drawer.appendChild(el("h3", { style: "margin:0 0 8px" }, isEdit ? "Editar campaña" : isTpl ? `Nueva desde plantilla · ${data.name}` : "Nueva campaña"));
+    if (data?.saved_segment_name) drawer.appendChild(el("div", { class:"campaign-prefill-notice" }, [
+      el("strong", {}, "Segmento guardado precargado"), el("span", {}, data.saved_segment_name),
+      el("small", {}, "Revisa el contenido. Nada se envía hasta que lo confirmes."),
+    ]));
 
     const nameInp = el("input", { class: "input", value: data?.name || "", placeholder: "Ej: Orgullo LGBT 2026" });
     const subjInp = el("input", { class: "input", value: data?.subject || "", placeholder: "Asunto del email" });
@@ -20941,9 +21042,12 @@ async function viewNewsletter(root) {
   }
 
   await loadList();
+  if (segmentDraftV1016?.segment) setTimeout(() => openDrawer({ segment:segmentDraftV1016.segment, saved_segment_name:segmentDraftV1016.name }), 0);
 }
 
 async function viewPopups(root) {
+  let segmentDraftV1016 = null;
+  try { segmentDraftV1016 = JSON.parse(sessionStorage.getItem("aura-admin-popup-segment-draft") || "null"); sessionStorage.removeItem("aura-admin-popup-segment-draft"); } catch {}
   root.appendChild(viewTitle("Popups & Push", "Anuncios in-app y notificaciones segmentadas"));
 
   if (!document.getElementById("popCss")) {
@@ -21054,7 +21158,7 @@ async function viewPopups(root) {
   ];
 
   function openPopupModal(p) {
-    const isEdit = !!p;
+    const isEdit = !!p?.id;
     const overlay = el("div", { class: "modal-overlay", style: "position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;backdrop-filter:blur(6px)" });
     const modal = el("div", { style: "background:var(--bg,#1a1e28);border:1px solid var(--border,#2a2f3a);border-radius:18px;max-width:820px;width:100%;max-height:92vh;overflow-y:auto;padding:0" });
     overlay.appendChild(modal);
@@ -21070,6 +21174,10 @@ async function viewPopups(root) {
 
     const body = el("div", { style: "padding:20px 26px 24px" });
     modal.appendChild(body);
+    if (p?.saved_segment_name) body.appendChild(el("div", { class:"campaign-prefill-notice" }, [
+      el("strong", {}, "Segmento guardado precargado"), el("span", {}, p.saved_segment_name),
+      el("small", {}, "Revisa el aviso. No se activa hasta que pulses Crear popup."),
+    ]));
 
     // Helper de sección con título y descripción
     function section(icon, title, desc) {
@@ -21205,6 +21313,7 @@ async function viewPopups(root) {
   }
 
   await load();
+  if (segmentDraftV1016?.segment) setTimeout(() => openPopupModal({ segment:segmentDraftV1016.segment,saved_segment_name:segmentDraftV1016.name,active:0 }), 0);
 }
 
 /* ================================================================
@@ -21852,6 +21961,90 @@ async function pickMessageOrTemplate(kind, promptLabel) {
 /* ============================================================
    Campañas Push · envío masivo o segmentado de notificaciones
    ============================================================ */
+/* V1016 · Biblioteca única de audiencias. Los botones solo abren el editor
+   correspondiente ya preparado; nunca crean ni envían una campaña. */
+async function viewSavedSegmentsV1016(root) {
+  root.appendChild(viewTitle("Segmentos guardados", "Define una audiencia una vez y reutilízala en Push, Newsletter o avisos in-app."));
+  root.appendChild(sectionLegend("Flujo seguro", [
+    ["1", "Guarda el criterio de audiencia"], ["2", "Ábrelo en el canal que necesites"], ["3", "Revisa la campaña y confirma el envío allí"],
+  ]));
+  const toolbar = el("div", { class:"saved-segment-toolbar-v1016" });
+  const list = el("div", { class:"saved-segment-grid-v1016" });
+  root.append(toolbar, list);
+  const labels = { all:"Todos",premium:"Planes de pago",free:"Plan Free",verified:"Verificados",unverified:"Sin verificar",zone:"Por zona",country:"Por país",city:"Por ciudad",age:"Por edad",active_days:"Actividad reciente",user_ids:"Personas concretas",funnel_stage:"Paso del embudo" };
+  const compatibleAll = new Set(["all","premium","free","verified","unverified","zone"]);
+  const channelSegment = item => item.segment === "zone" ? String(item.segment_params?.zone || "all") : item.segment;
+  const use = (item, channel) => {
+    if (channel !== "push" && !compatibleAll.has(item.segment)) { toast("Este criterio avanzado solo está disponible en Push"); return; }
+    const payload = { id:item.id,name:item.name,description:item.description,segment:item.segment,segment_params:item.segment_params || {},audience_label:item.name };
+    if (channel === "push") sessionStorage.setItem("aura-admin-push-funnel-draft", JSON.stringify(payload));
+    else sessionStorage.setItem(`aura-admin-${channel}-segment-draft`, JSON.stringify({ ...payload,segment:channelSegment(item) }));
+    route(channel === "push" ? "push_campaigns" : channel === "newsletter" ? "newsletter" : "popups");
+  };
+  const openForm = (item) => {
+    const overlay = el("div", { class:"ac-overlay" });
+    const close = () => overlay.remove();
+    const name = el("input", { class:"input", maxlength:120,value:item?.name || "",placeholder:"Ej: Verificados de la zona LGTB+" });
+    const description = el("input", { class:"input", maxlength:300,value:item?.description || "",placeholder:"Para qué utiliza el equipo este segmento" });
+    const type = el("select", { class:"input" }, [
+      ["all","Todos"],["premium","Planes de pago"],["free","Plan Free"],["verified","Verificados"],["unverified","Sin verificar"],["zone","Por zona"],["country","Por país"],["city","Por ciudad"],["age","Rango de edad"],["active_days","Actividad reciente"],
+    ].map(([value,label]) => el("option", { value,selected:(item?.segment || "all") === value }, label)));
+    const params = el("div", { class:"saved-segment-params-v1016" });
+    const renderParams = () => {
+      params.innerHTML = ""; const p = item?.segment_params || {};
+      if (type.value === "zone") params.appendChild(el("select", { class:"input",name:"zone" }, [el("option", { value:"hetero",selected:p.zone === "hetero" }, "Hetero"),el("option", { value:"lgtb",selected:p.zone === "lgtb" }, "LGTB+")]));
+      if (type.value === "country") params.appendChild(el("input", { class:"input",name:"country",value:p.country || "",placeholder:"País" }));
+      if (type.value === "city") params.appendChild(el("input", { class:"input",name:"city",value:p.city || "",placeholder:"Ciudad" }));
+      if (type.value === "active_days") params.appendChild(el("input", { class:"input",name:"days",type:"number",min:1,max:365,value:p.days || 7 }));
+      if (type.value === "age") params.append(el("input", { class:"input",name:"min_age",type:"number",min:18,value:p.min_age || 18 }),el("input", { class:"input",name:"max_age",type:"number",min:18,value:p.max_age || 99 }));
+    };
+    type.addEventListener("change", () => { if (item) item.segment_params = {}; renderParams(); }); renderParams();
+    const save = btn(item ? "Guardar cambios" : "Crear segmento", "primary", async () => {
+      const segment_params = {}; params.querySelectorAll("input,select").forEach(input => { if (input.name && input.value !== "") segment_params[input.name] = input.type === "number" ? Number(input.value) : input.value; });
+      if (!name.value.trim()) { toast("Escribe un nombre"); return; }
+      save.disabled = true;
+      try {
+        const body = { name:name.value,description:description.value,segment:type.value,segment_params };
+        if (item) await api.patch(`/api/admin/saved-segments/${item.id}`, body); else await api.post("/api/admin/saved-segments", body);
+        close(); toast(item ? "Segmento actualizado" : "Segmento guardado"); load();
+      } catch (error) { save.disabled = false; toast(error?.message || "No se pudo guardar"); }
+    });
+    const modal = el("section", { class:"ac-dialog saved-segment-modal-v1016",role:"dialog","aria-modal":"true" }, [
+      el("header", {}, [el("h3", {}, item ? "Editar segmento" : "Nuevo segmento"),btn("Cerrar","ghost sm",close)]),
+      el("label", { class:"field" }, [el("span", {}, "Nombre"),name]), el("label", { class:"field" }, [el("span", {}, "Descripción"),description]),
+      el("label", { class:"field" }, [el("span", {}, "Criterio"),type]), params,
+      el("p", { class:"muted" }, "Guardar o editar no contacta a ningún usuario."), save,
+    ]);
+    overlay.append(el("div", { class:"ac-scrim",onclick:close }),modal); document.body.appendChild(overlay); setTimeout(() => name.focus(),30);
+  };
+  const create = btn("Nuevo segmento", "primary", () => openForm(null)); toolbar.appendChild(create);
+  async function load() {
+    list.replaceChildren(el("div", { class:"loading" }, "Cargando segmentos…"));
+    try {
+      const data = await api.get("/api/admin/saved-segments"); const items = data.items || []; list.innerHTML = "";
+      if (!items.length) { list.appendChild(el("div", { class:"empty" }, "Aún no hay segmentos guardados.")); return; }
+      items.forEach(item => {
+        const actions = el("div", { class:"saved-segment-actions-v1016" }, [
+          btn("Usar en Push", "primary sm", () => use(item,"push")),
+          btn("Usar en email", "ghost sm", () => use(item,"newsletter")),
+          btn("Usar en aviso", "ghost sm", () => use(item,"popup")),
+        ]);
+        const card = el("article", { class:"saved-segment-card-v1016" }, [
+          el("div", { class:"saved-segment-card-head-v1016" }, [el("span", {}, labels[item.segment] || item.segment),el("small", {}, `#${item.id}`)]),
+          el("h3", {}, item.name),el("p", {}, item.description || "Sin descripción"),
+          el("code", {}, JSON.stringify(item.segment_params || {})),actions,
+          el("div", { class:"saved-segment-card-foot-v1016" }, [
+            btn("Editar", "ghost xs", () => openForm(item)),
+            btn("Eliminar", "ghost xs danger", async () => { if (!confirm(`¿Eliminar “${item.name}”?`)) return; await api.del(`/api/admin/saved-segments/${item.id}`); toast("Segmento eliminado"); load(); }),
+          ]),
+        ]);
+        list.appendChild(card);
+      });
+    } catch (error) { list.replaceChildren(el("div", { class:"error" }, "No se pudieron cargar los segmentos.")); }
+  }
+  await load();
+}
+
 async function viewPushCampaigns(root) {
   let funnelDraft = null;
   try {
@@ -21990,7 +22183,7 @@ async function viewPushCampaigns(root) {
   btnRefresh.addEventListener("click", load);
   btnNew.addEventListener("click", () => openCampaignEditor());
   load();
-  if (funnelDraft?.segment === "funnel_stage") setTimeout(() => openCampaignEditor(funnelDraft), 0);
+  if (funnelDraft?.segment) setTimeout(() => openCampaignEditor(funnelDraft), 0);
 
   function openCampaignEditor(prefill) {
     prefill = prefill || {};
@@ -22023,7 +22216,7 @@ async function viewPushCampaigns(root) {
     modal.appendChild(el("p", { style: "margin:0 0 16px;color:var(--muted,#8f95a3);font-size:13px" }, "Diseña tu notificación y elige a quién enviarla."));
     if (prefill.audience_label) {
       modal.appendChild(el("div", { class:"campaign-prefill-notice" }, [
-        el("strong", {}, "Audiencia precargada desde el embudo"),
+        el("strong", {}, prefill.id ? "Segmento guardado precargado" : "Audiencia precargada desde el embudo"),
         el("span", {}, prefill.audience_label),
         el("small", {}, "La lista se calculará al enviar. Nada se envía hasta que lo confirmes."),
       ]));
@@ -22093,6 +22286,8 @@ async function viewPushCampaigns(root) {
       el("option", { value: "all_including_anon" }, "🌍 TODOS (registrados + visitantes con PWA)"),
       el("option", { value: "premium" }, "💎 Solo usuarios Premium"),
       el("option", { value: "free" }, "🆓 Solo usuarios gratuitos"),
+      el("option", { value: "verified" }, "✅ Solo cuentas verificadas"),
+      el("option", { value: "unverified" }, "⚠️ Solo cuentas sin verificar"),
       el("option", { value: "zone" }, "🌈 Por zona (hetero / lgtb)"),
       el("option", { value: "country" }, "🌎 Por país (registrados)"),
       el("option", { value: "city" }, "🏙 Por ciudad (registrados)"),
@@ -22115,18 +22310,18 @@ async function viewPushCampaigns(root) {
       const v = segSel.value;
       if (v === "zone") {
         const s = el("select", { name: "zone", style: INPUT_SM + ";width:100%" }, [
-          el("option", { value: "hetero" }, "Hetero"), el("option", { value: "lgtb" }, "LGTB+")
+          el("option", { value: "hetero",selected:prefill.segment_params?.zone !== "lgtb" }, "Hetero"), el("option", { value: "lgtb",selected:prefill.segment_params?.zone === "lgtb" }, "LGTB+")
         ]); segParamsWrap.appendChild(s);
       } else if (v === "country" || v === "anon_country") {
-        segParamsWrap.appendChild(el("input", { name: "country", placeholder: "Ej: España", style: INPUT_SM + ";width:100%" }));
+        segParamsWrap.appendChild(el("input", { name: "country",value:prefill.segment_params?.country || "", placeholder: "Ej: España", style: INPUT_SM + ";width:100%" }));
       } else if (v === "city") {
-        segParamsWrap.appendChild(el("input", { name: "city", placeholder: "Ej: Madrid", style: INPUT_SM + ";width:100%" }));
+        segParamsWrap.appendChild(el("input", { name: "city",value:prefill.segment_params?.city || "", placeholder: "Ej: Madrid", style: INPUT_SM + ";width:100%" }));
       } else if (v === "age") {
-        const min = el("input", { name: "min_age", type: "number", placeholder: "Edad mínima (18)", value: "18", style: INPUT_SM + ";flex:1" });
-        const max = el("input", { name: "max_age", type: "number", placeholder: "Edad máxima (99)", value: "99", style: INPUT_SM + ";flex:1" });
+        const min = el("input", { name: "min_age", type: "number", placeholder: "Edad mínima (18)", value: prefill.segment_params?.min_age || "18", style: INPUT_SM + ";flex:1" });
+        const max = el("input", { name: "max_age", type: "number", placeholder: "Edad máxima (99)", value: prefill.segment_params?.max_age || "99", style: INPUT_SM + ";flex:1" });
         segParamsWrap.appendChild(el("div", { style: "display:flex;gap:8px" }, [min, max]));
       } else if (v === "active_days") {
-        segParamsWrap.appendChild(el("input", { name: "days", type: "number", placeholder: "Últimos N días (ej: 7)", value: "7", style: INPUT_SM + ";width:100%" }));
+        segParamsWrap.appendChild(el("input", { name: "days", type: "number", placeholder: "Últimos N días (ej: 7)", value: prefill.segment_params?.days || "7", style: INPUT_SM + ";width:100%" }));
       } else if (v === "user_ids") {
         // V617 · Buscador por nombre/email con selección múltiple (chips), en lugar
         // de teclear IDs numéricos (que además abría el teclado numérico en móvil).
