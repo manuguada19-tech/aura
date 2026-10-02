@@ -1,6 +1,22 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · PWA publicada: V1036 (`ae0fc58`, build `b8af0fea39d6`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 2 octubre 2026 · PWA publicada: V1037 (`7bf2f42`, build `f470049b97ba`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1037 (02/10/2026) — Publicidad interna con apariencia final
+
+- Los espacios internos del plan Free en Explorar y Buscar usan ahora dos
+  creatividades ficticias con presentación equivalente a un anuncio final,
+  manteniendo la identificación discreta «Contenido de muestra».
+- Continúan siendo demostraciones propias: no cargan AdMob ni AdSense, no abren
+  enlaces, no registran actividad y no generan ingresos. El botón solo muestra
+  un aviso aclaratorio dentro de Aura.
+- Permanecen ausentes del inicio, revisión, acceso, Perfil, suscripciones y de
+  cualquier plan de pago. Android recibe la misma vista al cargar la web remota.
+- Validada exclusivamente con perfiles simulados en 360×800, 390×844 y
+  1440×900, sin desbordamiento horizontal ni scroll añadido en Explorar.
+  `node --check` y `git diff --check` correctos. Publicada en commit `7bf2f42`,
+  build `f470049b97ba`; Railway respondió `ready:true`. No se utilizaron ni
+  modificaron usuarios reales.
 
 ### Android 1.1 (versionCode 2) — Proyecto nativo publicado en GitHub
 
