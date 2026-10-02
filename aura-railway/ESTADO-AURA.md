@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1025 (`a570b52`, build `242eaf1e77f1`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1026 (`cb960cd`, build `43e8a10010da`)**
+
+### V1026 (02/10/2026) — Perfil móvil como lista de ajustes
+
+- El Perfil móvil elimina la tarjeta «Sección actual / Cambiar» y presenta de
+  entrada las siete categorías en una lista única, uniforme y reconocible,
+  siguiendo el patrón habitual de los ajustes del teléfono.
+- Cada categoría abre una pantalla de detalle independiente con el botón
+  explícito «Todos los ajustes» para regresar. Así no se mezclan navegación y
+  contenido ni se añade un desplegable ambiguo.
+- Se unifican tamaños visuales: títulos de 16 px, descripciones de 15 px, filas
+  de 74 px y cheurones de navegación. La cabecera y el bloque de apariencia se
+  compactan para reducir desplazamiento sin volver a usar texto pequeño.
+- En escritorio se conserva la navegación simultánea en dos columnas. Validada
+  con datos simulados en 360×800, 390×844 y 1440×900: apertura y regreso de
+  categorías correctos, sin el selector anterior, sin errores de página ni
+  desbordamiento horizontal. `node --check` y `git diff --check` correctos.
+  Publicada en commit `cb960cd`, build `43e8a10010da`; Railway terminó
+  correctamente y `/api/health` respondió `ready:true`. No se modificaron
+  usuarios reales.
 
 ### V1025 (02/10/2026) — Selector de secciones reconocible
 
