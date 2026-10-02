@@ -1,6 +1,26 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1035 (`c982d08`, build `6bf3f4849139`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1036 (`ae0fc58`, build `b8af0fea39d6`)**
+
+### V1036 (02/10/2026) — Entrada limpia desde beta/revisión
+
+- El acceso reservado desde las pantallas de beta o revisión entra una sola vez
+  en Explorar, vuelve al inicio del contenido y elimina el doble renderizado que
+  podía dejar «Perfil» resaltado mientras se mostraba Explorar.
+- Toda navegación programática sincroniza ahora la pestaña activa. Al desplegar
+  el acceso administrativo, el formulario se mantiene visible sin exigir que
+  el usuario lo busque manualmente mediante scroll.
+- El acceso de superadministrador conserva desde la primera respuesta su plan y
+  zona reales. Así una cuenta Platinum no llega a pintar el anuncio interno de
+  prueba durante el primer renderizado.
+- Validada con perfiles completamente simulados en 360×800, 390×844 y
+  1440×900: entrada en Explorar, pestaña correcta, ausencia del anuncio para
+  Platinum y sin desbordamiento horizontal. `node --check` y `git diff --check`
+  correctos. Publicada en commit `ae0fc58`, build `b8af0fea39d6`; Railway
+  respondió `ready:true`. No se utilizaron ni modificaron usuarios reales.
+- La prueba interna de Google Play, versión 1 (1.0), está activa para la lista
+  de testers seleccionada y se instaló correctamente desde Google Play. No está
+  disponible para el público general.
 
 ### V1035 (02/10/2026) — Arranque de Explorar más rápido
 
