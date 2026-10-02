@@ -1,6 +1,21 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1010 (`7a899f0`, build `5679be656d38`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1011 (`177390f`, build `926b27d1682b`)**
+
+### V1011 (02/10/2026) — Buscador estable y navegación legible
+
+- El buscador global permanece abierto al borrar caracteres y explica cuándo
+  falta escribir uno más, en lugar de desaparecer de forma brusca.
+- Al estar vacío muestra accesos rápidos basados en favoritos y secciones
+  recientes; añade borrado explícito, reintento ante fallo y navegación por
+  teclado. Solo se cierra con Escape, al elegir un resultado o al pulsar fuera.
+- Los siete grupos del menú lateral son ahora bloques contrastados con borde de
+  color, título reforzado, contador de opciones y estado plegado claramente
+  visible.
+- Validado en 390 y 1440 píxeles sin desbordamiento, errores de navegador ni
+  cierres involuntarios al borrar. Publicada en commit `177390f`, build
+  `926b27d1682b`; Railway finalizó correctamente y `/api/health` respondió
+  `ready:true`. No se modificaron datos reales.
 
 ### V1010 (02/10/2026) — Embudo de usuarios accionable
 
