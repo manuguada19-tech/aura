@@ -1,6 +1,26 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1015 (`8f55589`, build `ed4cbc510709`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1016 (`6c43619`, build `92153cb9a113`)**
+
+### V1016 (02/10/2026) — Operaciones avanzadas y ayuda contextual
+
+- Administración incorpora una papelera en «Panel principal → Centro de
+  trabajo» para restaurar individualmente o en bloque las tareas ocultadas.
+- «Comunicación → Segmentos guardados» permite reutilizar audiencias en Push,
+  Newsletter y avisos in-app. La ficha de cada usuario abre con una cronología
+  360 de la cuenta y las acciones masivas incluyen un modo simulación activado
+  por defecto.
+- «Analítica → Embudo de usuarios» añade tendencias por cohortes de 7, 30 y 90
+  días, zona y dispositivo.
+- La app mejora el «Asistente de perfil» y «Estado de la cuenta», añade reintento
+  automático y manual seguro de mensajes, explica «¿Por qué aparece?» en las
+  tarjetas de Explorar sin inventar puntuaciones y ofrece acciones rápidas en
+  el Centro de seguridad.
+- Validada con datos simulados en móvil y escritorio: segmentos, precarga a
+  Push, papelera, embudo/cohortes y versión pública del Asistente. `node --check`
+  y `git diff --check` correctos. No se enviaron campañas ni se modificaron
+  usuarios reales. Publicada en commit `6c43619`, build `92153cb9a113`;
+  Railway terminó correctamente y `/api/health` respondió `ready:true`.
 
 ### V1015 (02/10/2026) — Cierre visible de campañas push
 
