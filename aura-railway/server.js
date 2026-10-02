@@ -10281,10 +10281,13 @@ app.get("/api/my/account-status", wrap(async (req, res) => {
    disuasión. La excepción administrativa se decide en servidor con el token
    firmado: nunca se acepta un rol enviado por el navegador. */
 app.get("/api/my/capture-policy", wrap(async (req, res) => {
+  res.set("Cache-Control", "no-store");
   const me = verifyUserToken(readUserToken(req));
   if (!me) return res.json({ ok:true, protected:true, admin_exempt:false });
-  const [[user]] = await pool.query("SELECT email FROM users WHERE id=? LIMIT 1", [me]);
+  const [[user]] = await pool.query("SELECT email,role,status FROM users WHERE id=? LIMIT 1", [me]);
   const email = String(user?.email || "").trim().toLowerCase();
+  const role = String(user?.role || "user").trim().toLowerCase();
+  const active = String(user?.status || "").trim().toLowerCase() === "active";
   let staff = false;
   if (email) {
     try {
@@ -10292,8 +10295,13 @@ app.get("/api/my/capture-policy", wrap(async (req, res) => {
       staff = !!row;
     } catch {}
   }
-  const adminExempt = !!email && (emailIsAdminListed(email) || email === activeAdminEmail() || staff);
-  res.set("Cache-Control", "no-store");
+  // V1022 · La cuenta del propietario creada mediante el acceso reservado ya
+  // lleva role='superadmin' validado en la base de datos. La política anterior
+  // ignoraba ese dato y dependía solo de que su correo coincidiera con otros
+  // ajustes, por lo que una configuración histórica podía dejarle la marca.
+  // Nunca se confía en state.user.role ni en una cabecera enviada por el cliente.
+  const accountAdmin = ["moderator", "admin", "superadmin"].includes(role);
+  const adminExempt = active && (accountAdmin || (!!email && (emailIsAdminListed(email) || email === activeAdminEmail() || staff)));
   res.json({ ok:true, protected:!adminExempt, admin_exempt:adminExempt });
 }));
 
