@@ -1338,8 +1338,9 @@ $("#themeBtn").addEventListener("click", () => {
   window.__setSidebarMode = applyMode;
 })();
 
-/* V961 · Buscador global real: usuarios, tickets, denuncias, pagos y secciones.
-   El resultado siempre indica el tipo para no abrir la pantalla equivocada. */
+/* V1011 · Buscador global persistente. Al borrar caracteres ya no desaparece:
+   conserva el panel, explica el mínimo y ofrece accesos rápidos. Solo se cierra
+   con Escape, al elegir un resultado o al pulsar fuera. */
 (function wireGlobalSearch() {
   const input = document.querySelector(".search-wrap input");
   const wrap = document.querySelector(".search-wrap");
@@ -1355,16 +1356,67 @@ $("#themeBtn").addEventListener("click", () => {
     "border:1px solid var(--border,#2a2a3a);border-radius:12px;" +
     "box-shadow:0 24px 60px rgba(0,0,0,.45);padding:6px";
   wrap.appendChild(panel);
+  input.type = "search";
+  input.autocomplete = "off";
+  input.setAttribute("aria-label", "Buscar en todo el panel");
+  input.setAttribute("aria-controls", "adminGlobalSearchResults");
+  input.setAttribute("aria-expanded", "false");
+  panel.id = "adminGlobalSearchResults";
+  const shortcut = wrap.querySelector("kbd");
+  const clearButton = el("button", {
+    class:"gsearch-clear", type:"button", hidden:true,
+    title:"Borrar búsqueda", "aria-label":"Borrar búsqueda",
+  }, "×");
+  wrap.insertBefore(clearButton, shortcut || panel);
 
   function close() {
     panel.style.display = "none"; panel.innerHTML = "";
+    input.setAttribute("aria-expanded", "false");
     if (window.matchMedia("(max-width:720px)").matches) wrap.classList.remove("mobile-open");
   }
-  function open() { panel.style.display = "block"; }
+  function open() { panel.style.display = "block"; input.setAttribute("aria-expanded", "true"); }
+  function syncClearButton() {
+    const hasQuery = Boolean(input.value);
+    clearButton.hidden = !hasQuery;
+    wrap.classList.toggle("has-query", hasQuery);
+  }
+  function pickSection(view) {
+    close(); input.value = ""; syncClearButton();
+    document.querySelector(`#nav .nav-link[data-view="${view}"]`)?.click();
+  }
+  function renderIdle() {
+    panel.innerHTML = "";
+    const remaining = Math.max(0, 2 - input.value.trim().length);
+    panel.appendChild(el("div", { class:"gsearch-hint" }, [
+      el("strong", {}, remaining ? (remaining === 1 ? "Escribe un carácter más" : "Busca en todo el panel") : "Busca en todo el panel"),
+      el("span", {}, "Usuarios, tickets, denuncias, pagos y secciones. El buscador permanecerá abierto mientras trabajas."),
+    ]));
+    let preferred = [];
+    try {
+      preferred = [
+        ...JSON.parse(localStorage.getItem("aura-admin-recent") || "[]"),
+        ...JSON.parse(localStorage.getItem("aura-admin-favorites") || "[]"),
+        "users", "tickets", "user_funnel", "stats",
+      ];
+    } catch { preferred = ["users", "tickets", "user_funnel", "stats"]; }
+    const seen = new Set();
+    const links = preferred.map(view => document.querySelector(`#nav .nav-link[data-view="${view}"]`))
+      .filter(link => link && link.style.display !== "none" && !seen.has(link.dataset.view) && seen.add(link.dataset.view)).slice(0,5);
+    if (links.length) {
+      panel.appendChild(el("div", { class:"gsearch-group-title" }, "Accesos rápidos"));
+      const quick = el("div", { class:"gsearch-quick-list" });
+      links.forEach(link => {
+        const label = link.dataset.navLabel || link.querySelector("span:nth-of-type(2)")?.textContent?.trim() || link.textContent.trim();
+        quick.appendChild(el("button", { class:"gsearch-quick", type:"button", onclick:() => pickSection(link.dataset.view) }, label));
+      });
+      panel.appendChild(quick);
+    }
+    open();
+  }
 
   mobileButton?.addEventListener("click", () => {
     wrap.classList.add("mobile-open");
-    requestAnimationFrame(() => input.focus());
+    requestAnimationFrame(() => { input.focus(); input.value.trim().length >= 2 ? run(input.value.trim()) : renderIdle(); });
   });
 
   let timer = null, lastQ = "";
@@ -1379,7 +1431,7 @@ $("#themeBtn").addEventListener("click", () => {
       const modules = Array.from(document.querySelectorAll("#nav .nav-link[data-view]"))
         .filter(n => n.style.display !== "none" && n.textContent.toLocaleLowerCase("es").includes(needle))
         .slice(0, 6)
-        .map(n => ({ view: n.dataset.view, label: n.textContent.replace(/[★☆]/g, "").trim() }));
+        .map(n => ({ view: n.dataset.view, label:n.dataset.navLabel || n.querySelector("span:nth-of-type(2)")?.textContent?.trim() || n.textContent.replace(/[★☆]/g, "").trim() }));
       const total = Object.values(groups).reduce((n, rows) => n + (Array.isArray(rows) ? rows.length : 0), 0) + modules.length;
       if (!total) {
         panel.appendChild(el("div", { style: "padding:10px 12px;opacity:.6;font-size:13px" }, "Sin resultados"));
@@ -1399,8 +1451,8 @@ $("#themeBtn").addEventListener("click", () => {
             ]),
             el("span", { class: "gsearch-arrow" }, "→"),
           ]);
-          row.addEventListener("mousedown", (e) => {
-            e.preventDefault(); close(); input.value = ""; onPick(item);
+          row.addEventListener("click", () => {
+            close(); input.value = ""; syncClearButton(); onPick(item);
           });
           panel.appendChild(row);
         });
@@ -1428,17 +1480,35 @@ $("#themeBtn").addEventListener("click", () => {
         row.addEventListener("focus", () => row.scrollIntoView({ block: "nearest" }));
       });
       open();
-    } catch { close(); }
+    } catch {
+      if (q !== lastQ) return;
+      panel.innerHTML = "";
+      panel.appendChild(el("button", { class:"gsearch-retry", type:"button", onclick:() => run(q) }, [
+        el("strong", {}, "No se pudo completar la búsqueda"), el("span", {}, "Pulsa para volver a intentarlo."),
+      ]));
+      open();
+    }
   }
 
   input.addEventListener("input", () => {
     const q = input.value.trim();
+    lastQ = q;
+    syncClearButton();
     clearTimeout(timer);
-    if (q.length < 2) { close(); return; }
+    if (q.length < 2) { renderIdle(); return; }
     timer = setTimeout(() => run(q), 250);
   });
-  input.addEventListener("keydown", (e) => { if (e.key === "Escape") { close(); input.blur(); } });
-  input.addEventListener("blur", () => setTimeout(close, 150));
+  input.addEventListener("focus", () => input.value.trim().length >= 2 ? run(input.value.trim()) : renderIdle());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { close(); input.blur(); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); panel.querySelector("button")?.focus(); }
+  });
+  clearButton.addEventListener("click", () => {
+    clearTimeout(timer); lastQ = ""; input.value = ""; syncClearButton(); renderIdle(); input.focus();
+  });
+  document.addEventListener("pointerdown", (event) => {
+    if (!wrap.contains(event.target) && event.target !== mobileButton) close();
+  });
 
   // Atajo ⌘K / Ctrl+K para enfocar el buscador desde cualquier vista.
   document.addEventListener("keydown", (e) => {
@@ -1590,13 +1660,20 @@ $("#nav").addEventListener("click", (e) => {
     });
   }
 
-  nav.querySelectorAll(".nav-section").forEach(section => {
+  const sectionAccents = ["#38bdf8", "#f59e0b", "#a78bfa", "#fb7185", "#22c55e", "#f97316"];
+  nav.querySelectorAll(".nav-section").forEach((section, sectionIndex) => {
     const name = section.textContent.trim();
+    let itemCount = 0;
+    for (let node = section.nextElementSibling; node; node = node.nextElementSibling) {
+      if (node.classList?.contains("nav-section")) break;
+      if (node.classList?.contains("nav-link")) itemCount++;
+    }
     section.dataset.sectionName = name;
+    section.style.setProperty("--nav-section-accent", sectionAccents[sectionIndex % sectionAccents.length]);
     section.tabIndex = 0;
     section.setAttribute("role", "button");
     section.setAttribute("aria-expanded", collapsed.has(name) ? "false" : "true");
-    section.innerHTML = `<span>${name}</span><span class="nav-section-chevron">⌄</span>`;
+    section.innerHTML = `<span class="nav-section-name">${name}</span><span class="nav-section-count">${itemCount}</span><span class="nav-section-chevron">⌄</span>`;
     const apply = () => {
       const off = collapsed.has(name);
       section.classList.toggle("collapsed", off);
