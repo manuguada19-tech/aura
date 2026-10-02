@@ -43,7 +43,9 @@
 // V1020 · evita que el selector de tema tape Restablecer en pantallas internas.
 // V1021 · publica el nuevo Perfil compacto y su selector Sistema/Claro/Oscuro.
 // V1023 · sustituye el Perfil por una navegación accesible de categoría única.
-const CACHE_VERSION = "aura-v132";
+// V1033 · Renueva iconos/manifiesto para que el arranque de la PWA use el
+// mismo sello completo que el splash y no conserve el símbolo anterior.
+const CACHE_VERSION = "aura-v133";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
