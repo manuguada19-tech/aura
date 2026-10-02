@@ -1,6 +1,22 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1023 (`8f7fc35`, build `262eb23f7152`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1024 (`aba7c7f`, build `3fb56da26751`)**
+
+### V1024 (02/10/2026) — Cronología actualizada al limpiar
+
+- «Limpiar actividad» actualiza la cronología 360 y la tabla «Eventos
+  (stream)» en cuanto termina el borrado, sin tener que cerrar la ficha ni
+  volver atrás. Los hitos reales conservados permanecen visibles.
+- Se descartan respuestas antiguas que pudieran llegar después del borrado y
+  repintar eventos eliminados. La recarga de ambos bloques fuerza además una
+  consulta nueva; el mismo control protege el borrado individual y «Vaciar
+  stream».
+- Validada con respuestas simuladas y una carrera de peticiones intencionada en
+  390×844 y 1440×900: el evento eliminado no reaparece, el hito «Cuenta
+  creada» se conserva y no existe desbordamiento horizontal. `node --check` y
+  `git diff --check` correctos. Publicada en commit `aba7c7f`, build
+  `3fb56da26751`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se modificaron usuarios reales.
 
 ### V1023 (02/10/2026) — Perfil accesible por categorías
 
