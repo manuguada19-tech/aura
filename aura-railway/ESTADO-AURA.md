@@ -1,6 +1,28 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1022 (`d0b392a`, build público `f3fb7aa4d030`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1023 (`8f7fc35`, build `262eb23f7152`)**
+
+### V1023 (02/10/2026) — Perfil accesible por categorías
+
+- «Perfil» sustituye los acordeones pequeños por una navegación de categoría
+  única: selector grande en móvil y menú lateral en escritorio. Solo se muestra
+  el grupo que la persona desea gestionar, reduciendo altura y ruido visual.
+- Los títulos de las acciones usan 16 px, las descripciones 14 px y los
+  controles principales 15–16 px, con filas de al menos 72 px y botones de
+  tema de 50 px para mejorar lectura y pulsación.
+- El buscador sigue localizando opciones de todas las categorías, admite
+  búsquedas sin tildes y conserva en el DOM los accesos con estado dinámico.
+- El acceso al Asistente de perfil continúa en «Cuenta y perfil», sin repetir
+  el banner de progreso en la portada. Sistema, Claro y Oscuro permanecen
+  visibles y persistentes.
+- El Centro de seguridad ya no muestra a nadie el texto interno «Capturas
+  permitidas para administración»; solo las cuentas protegidas ven la
+  explicación destinada a usuarios.
+- Validada con datos simulados en 360×800, 390×844 y 1440×900: sin
+  desbordamiento horizontal, selector, menú, búsqueda, temas y tamaños de texto
+  correctos. `node --check` y `git diff --check` correctos. Publicada en commit
+  `8f7fc35`, build `262eb23f7152`; Railway terminó correctamente y
+  `/api/health` respondió `ready:true`. No se modificaron usuarios reales.
 
 ### V1022 (02/10/2026) — Superadmin sin marca de agua
 
