@@ -37,12 +37,14 @@
 // V1003 · añade la fuente compartida y actualizada de preguntas frecuentes.
 // V1004 · registra de verdad las solicitudes de copia de datos y amplía FAQ.
 // V1005 · incorpora visitas reales del perfil y la marca de conversación previa.
-const CACHE_VERSION = "aura-v124";
+// V1008 · incorpora las FAQ traducidas a los cinco idiomas adicionales.
+const CACHE_VERSION = "aura-v125";
 const CORE_ASSETS = [
   "./index.html",
   "./styles.css",
   "./app.js",
   "./faq_content.js",
+  "./faq_translations.js",
   "./manifest.json",
 ];
 

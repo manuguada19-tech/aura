@@ -11267,6 +11267,72 @@ body.desktop-app .discover.is-grid .discover-stack.discover-grid-mode {
 }
 body.desktop-app .chat-list { max-width: 760px; margin-left: auto; margin-right: auto; }
 
+/* V1008 · Páginas públicas de información abiertas desde la PWA en PC.
+   Conservan el contenido interactivo y multilingüe, pero abandonan la
+   simulación de teléfono y los paneles promocionales del welcome antiguo. */
+@media (min-width: 901px) and (hover: hover) and (pointer: fine) {
+  html:has(body.public-info-desktop),
+  body.public-info-desktop {
+    overflow: auto !important;
+    min-height: 100% !important;
+  }
+  body.public-info-desktop .stage {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    min-height: 100dvh !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: var(--bg) var(--grad-hero) !important;
+  }
+  body.public-info-desktop .stage-side,
+  body.public-info-desktop .stage-side-left,
+  body.public-info-desktop .stage-side-right {
+    display: none !important;
+  }
+  body.public-info-desktop #phoneScaleWrap {
+    display: block !important;
+    width: 100% !important;
+    min-height: 100dvh !important;
+    transform: none !important;
+  }
+  body.public-info-desktop .phone {
+    width: 100% !important;
+    max-width: none !important;
+    min-width: 0 !important;
+    height: auto !important;
+    max-height: none !important;
+    min-height: 100dvh !important;
+    margin: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+  body.public-info-desktop .phone-notch,
+  body.public-info-desktop .phone-status,
+  body.public-info-desktop .phone-home,
+  body.public-info-desktop #tabbar {
+    display: none !important;
+  }
+  body.public-info-desktop .app-viewport,
+  body.public-info-desktop .screen-info {
+    width: 100% !important;
+    height: auto !important;
+    min-height: 100dvh !important;
+    overflow: visible !important;
+  }
+  body.public-info-desktop .screen-info > .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+  body.public-info-desktop .info-wrap {
+    width: min(100% - 48px, 1040px);
+    max-width: 1040px;
+    padding: 28px 0 64px;
+  }
+}
+
 /* ==========================================================================
    V952 · ESCRITORIO CON ACABADO (body.desktop-app)
    V951 montó la estructura (barra lateral + ancho completo) pero quedó sosa:

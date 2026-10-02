@@ -4317,6 +4317,7 @@ function render(screenFn, opts = {}) {
   const infoFns = ["screenInfoHelp","screenInfoFaq","screenInfoTerms","screenInfoPrivacy","screenInfoContact","screenInfoRules","screenInfoPreferences","screenInfoKycPolicy","screenSupportTicket"];
   if (!infoFns.includes(screenFn && screenFn.name)) {
     document.body.classList.remove("info-open");
+    document.body.classList.remove("public-info-desktop");
   }
   if ((screenFn && screenFn.name) !== "screenProfileDetail") {
     document.body.classList.remove("profile-open");
@@ -19850,6 +19851,16 @@ function subscriptionPaymentMethodsV999() {
 function infoPage(root, title, content) {
   root.classList.add("screen-info");
   document.body.classList.add("info-open");
+  // V1008 · Las páginas informativas abiertas sin sesión desde la bienvenida
+  // deben usar el lienzo completo en PC. Antes, al salir de welcome-desktop,
+  // reaparecía la maqueta histórica de teléfono con paneles promocionales.
+  let publicDesktop = false;
+  try {
+    publicDesktop = !state?.user?.id &&
+      typeof _welcomeIsDesktop === "function" && _welcomeIsDesktop() &&
+      !(typeof isPreviewMode === "function" && isPreviewMode());
+  } catch {}
+  document.body.classList.toggle("public-info-desktop", publicDesktop);
   // Si venimos de una pantalla concreta guardada en window.__infoBackTo,
   // volvemos a ella al pulsar atrás. Si no y hay sesión iniciada, volvemos
   // al perfil ("me"); solo si no hay usuario vamos a la pantalla de bienvenida.
@@ -19934,6 +19945,15 @@ function screenInfoHelp(root) {
 }
 
 function screenInfoFaq(root) {
+  const faqUi = ({
+    es: { search: "Buscar en las preguntas...", all: "Todas", empty: "No hemos encontrado preguntas con esos términos.", missing: "¿No encuentras tu pregunta?", help: "Escríbenos y te ayudamos personalmente.", contact: "Contactar" },
+    en: { search: "Search the questions...", all: "All", empty: "We couldn't find any questions matching those terms.", missing: "Can't find your question?", help: "Write to us and we'll help you personally.", contact: "Contact us" },
+    fr: { search: "Rechercher dans les questions...", all: "Toutes", empty: "Nous n’avons trouvé aucune question correspondant à ces termes.", missing: "Vous ne trouvez pas votre question ?", help: "Écrivez-nous et nous vous aiderons personnellement.", contact: "Nous contacter" },
+    de: { search: "Fragen durchsuchen...", all: "Alle", empty: "Wir haben keine Fragen zu diesen Begriffen gefunden.", missing: "Ihre Frage ist nicht dabei?", help: "Schreiben Sie uns – wir helfen Ihnen persönlich weiter.", contact: "Kontakt aufnehmen" },
+    it: { search: "Cerca tra le domande...", all: "Tutte", empty: "Non abbiamo trovato domande corrispondenti a questi termini.", missing: "Non trovi la tua domanda?", help: "Scrivici e ti aiuteremo personalmente.", contact: "Contattaci" },
+    pt: { search: "Pesquisar nas perguntas...", all: "Todas", empty: "Não encontrámos perguntas com esses termos.", missing: "Não encontras a tua pergunta?", help: "Escreve-nos e ajudamos-te pessoalmente.", contact: "Contactar" },
+  })[currentLang] || null;
+  const ui = faqUi || { search: "Buscar en las preguntas...", all: "Todas", empty: "No hemos encontrado preguntas con esos términos.", missing: "¿No encuentras tu pregunta?", help: "Escríbenos y te ayudamos personalmente.", contact: "Contactar" };
   const c = document.createDocumentFragment();
   c.appendChild(infoHero(
     `<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.6" fill="currentColor"/></svg>`,
@@ -19946,16 +19966,18 @@ function screenInfoFaq(root) {
     type: "search",
     id: "faqSearchInput",
     class: "faq-search",
-    placeholder: "Buscar en las preguntas...",
+    placeholder: ui.search,
     oninput: () => faqApplyFilter()
   });
   c.appendChild(search);
 
   // V1003 · El contenido español vive en faq_content.js y se comparte con
   // /faq y su JSON-LD. Aquí solo se conserva la presentación interactiva.
-  const faqContent = window.AURA_FAQ_ES || { categories: [], items: [] };
+  const faqContent = (window.AURA_FAQ_I18N && window.AURA_FAQ_I18N[currentLang])
+    || window.AURA_FAQ_ES
+    || { categories: [], items: [] };
   const categories = [
-    { key: "all", label: "Todas", ic: "✨" },
+    { key: "all", label: ui.all, ic: "✨" },
     ...faqContent.categories.map((cat) => ({ key: cat.key, label: cat.label, ic: cat.icon })),
   ];
   const pills = el("div", { class: "faq-pills" });
@@ -19994,14 +20016,14 @@ function screenInfoFaq(root) {
   // Estado vacío cuando la búsqueda no devuelve resultados.
   list.appendChild(el("div", { class: "faq-empty", id: "faqEmpty", style: "display:none" }, [
     el("div", { class: "faq-empty-ic" }, "🔍"),
-    el("div", {}, "No hemos encontrado preguntas con esos términos."),
+    el("div", {}, ui.empty),
   ]));
   c.appendChild(list);
 
   c.appendChild(el("div", { class: "info-cta" }, [
-    el("div", { class: "info-cta-h" }, "¿No encuentras tu pregunta?"),
-    el("div", { class: "info-cta-p" }, "Escríbenos y te ayudamos personalmente."),
-    el("button", { class: "btn btn-brand", type: "button", onclick: () => render(screenInfoContact) }, "Contactar"),
+    el("div", { class: "info-cta-h" }, ui.missing),
+    el("div", { class: "info-cta-p" }, ui.help),
+    el("button", { class: "btn btn-brand", type: "button", onclick: () => render(screenInfoContact) }, ui.contact),
   ]));
 
   infoPage(root, T("content.info.faq.title"), c);

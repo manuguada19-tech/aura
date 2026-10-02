@@ -1,8 +1,27 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1006 (`f1f2cd6`, build `5d6fab064a92`) · siguiente preparada: V1007**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1006 (`f1f2cd6`, build `5d6fab064a92`) · siguiente preparada: V1008**
 
-### V1007 (preparada, sin commit ni publicación) — Identidad estable en Didit
+### V1008 (preparada, sin commit ni publicación) — FAQ multilingües
+
+- Las 46 preguntas frecuentes están disponibles en español, inglés, francés,
+  alemán, italiano y portugués europeo; se incluye la nueva explicación de las
+  visitas al perfil y el aviso «Ya hablasteis».
+- El español continúa como fuente canónica para la página pública y el SEO. La
+  aplicación selecciona el catálogo correspondiente al idioma activo.
+- Buscador, categoría «Todas», estado sin resultados y bloque de contacto
+  cambian también de idioma; si el catálogo traducido no carga, se conserva el
+  español como alternativa segura.
+- En PC, las páginas públicas de Ayuda, FAQ, Normas, Términos, Privacidad y
+  Contacto usan ahora el lienzo de escritorio completo; ya no reaparece el
+  marco de móvil con paneles promocionales al abrirlas desde la PWA.
+- El nuevo catálogo entra en la caché PWA y en la huella de build para evitar
+  que una versión anterior quede servida tras el despliegue.
+- Validadas sintaxis, correspondencia de categorías, 46 entradas por idioma,
+  búsqueda, las seis páginas informativas y vistas de 390 y 1440 píxeles sin
+  desbordamiento. No se ha publicado ni modificado ningún dato real.
+
+### V1007 (commit `eeb290f`, sin publicación) — Identidad estable en Didit
 
 - Didit recibe una referencia estable por cuenta, en lugar del identificador
   incremental de cada intento; las verificaciones posteriores quedan como

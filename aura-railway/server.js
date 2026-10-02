@@ -20533,7 +20533,7 @@ const BUILD_ID = (() => {
     // al desplegar cambios del admin el navegador servía la versión cacheada y
     // había que forzar recarga a mano. Ahora cualquier cambio en estos ficheros
     // cambia el BUILD_ID y el checker del cliente recarga solo.
-    for (const f of ["app.js", "styles.css", "index.html", "admin.html", "admin.css", "admin.js", "admin_features.js"]) {
+    for (const f of ["app.js", "styles.css", "index.html", "faq_content.js", "faq_translations.js", "admin.html", "admin.css", "admin.js", "admin_features.js"]) {
       try { h.update(fs.readFileSync(path.join(__dirname, "public", f))); } catch {}
     }
     return h.digest("hex").slice(0, 12);
