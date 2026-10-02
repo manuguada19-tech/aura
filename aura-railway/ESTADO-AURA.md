@@ -2,6 +2,16 @@
 
 **Fecha de este resumen: 2 octubre 2026 · última publicada: V1028 (`fb9b423`, build `7f09e235fce6`)**
 
+### Mantenimiento documental (02/10/2026) — Pendientes depurados
+
+- Retirado el bloque de seguridad que el propietario confirmó como resuelto.
+- EmailJS queda documentado como sistema activo de envío de OTP, emails y
+  plantillas; el SMTP de Arsys deja de figurar como configuración o tarea
+  pendiente.
+- Publicado el ajuste documental en commit `ac85406`. No cambia la aplicación:
+  Railway finalizó correctamente, `/api/health` respondió `ready:true` y el
+  build público continúa siendo `7f09e235fce6`.
+
 ### V1028 (02/10/2026) — Exención anticapturas resincronizada
 
 - La app detecta si la política anticapturas recibió un token caducado o ligado
