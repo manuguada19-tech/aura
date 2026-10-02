@@ -1,6 +1,22 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1009 (`f7a3077`, build `df097ab0b04c`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1010 (`7a899f0`, build `5679be656d38`)**
+
+### V1010 (02/10/2026) — Embudo de usuarios accionable
+
+- Las ocho tarjetas del embudo son clicables y permiten alternar entre las
+  personas que tienen el paso pendiente y quienes ya lo completaron.
+- Cada fila identifica al usuario, su plan, estado y última actividad; en los
+  pendientes detalla el requisito ausente. En «Perfil preparado» separa
+  biografía, ciudad y foto para evitar diagnósticos genéricos.
+- El detalle incorpora búsqueda por nombre, email o ID, contadores por pestaña,
+  paginación y acceso directo a la ficha administrativa completa.
+- El nuevo listado está paginado, protegido por autenticación administrativa y
+  solo realiza lecturas. Validado con datos simulados en 390 y 1440 píxeles,
+  sin desbordamiento; buscador, pestañas y apertura de ficha correctos.
+- Publicada en commit `7a899f0`, build `5679be656d38`; Railway finalizó
+  correctamente y `/api/health` respondió `ready:true`. No se modificaron datos
+  reales durante la validación.
 
 ### V1009 (02/10/2026) — Operaciones y acompañamiento de usuarios
 
