@@ -1150,34 +1150,18 @@ Backend (`server.js`):
 
 ---
 
-## 4) Pendientes
+## 4) Pendiente actual
 
-> **Estado a 8/09/2026:** el punto 4.a **ya está resuelto** (V860–V878: la causa
-> era el umbral de precisión de 3000 m y que el PC pisaba la ubicación del móvil;
-> ahora son 300 m en la constante compartida `GPS_GOOD_ACCURACY_M`). Se conserva
-> el texto original de 4.a como registro de la investigación. El cambio de DNS
-> del punto 4.b sigue pendiente.
->
-> Queda además un detalle **sin arreglar** encontrado al revisar V880:
-> en `server.js` (~línea 6723) el geoip solo escribe la ubicación
-> `WHERE ... (lat IS NULL OR lng IS NULL)`, así que si `users.lat/lng` tiene un
-> valor malo, no se corrige nunca. No se ha tocado porque no se pidió.
+### 4.a) Aplicación Android nativa
 
-### 4.a) GPS real desde móvil no se guarda — ✅ RESUELTO en V877/V878
-- El modal de GPS aparece y se acepta, pero `user_gps.lat/lng` sigue NULL.
-- El navegador acepta el permiso pero `watchPosition` no reenvía coordenadas al backend.
-- Datos actuales en BD para user_id=27 (Manu):
-  - `consent_given=1` (fijado a mano con UPDATE)
-  - `lat/lng` NULL o coords de prueba (40.633, -3.166 = centro Guadalajara aprox)
-- **Investigar en PC con DevTools abierto**: capturar red al pulsar "activar" y ver si `/api/my/gps/consent` y `/api/my/gps/report` se llaman y qué status devuelven.
-- Sospecha: `state.user.id` puede estar undefined al inicializar GPS.boot() antes de que login termine, o `watchPosition` no arranca.
-
-### 4.b) DNS de citasaura.es a Railway
-- Cloudflare > citasaura.es > DNS > registro CNAME `www` apunta a `97pu9z85.mule.page`.
-- Cambiar destino a `content-education-production-3b4b.up.railway.app`.
-- Nube en GRIS (DNS only), NO naranja proxied.
-- Antes: añadir `www.citasaura.es` en Railway > Custom Domain para obtener CNAME correcto.
-- Después de cambiar DNS: revertir APP_URL a `https://www.citasaura.es`.
+- La aplicación actual continúa siendo web/PWA.
+- Queda para una fase futura elegir el identificador de paquete, preparar la
+  aplicación Android e integrar `FLAG_SECURE` y Play Integrity.
+- Antes de distribuirla deberán validarse cámara, ubicación, notificaciones,
+  enlaces internos, permisos y actualización de la aplicación.
+- `FLAG_SECURE` y Play Integrity refuerzan la protección, pero no pueden impedir
+  fotografías externas ni garantizar el bloqueo absoluto de capturas.
+- No preparar todavía una aplicación iOS.
 
 ---
 
