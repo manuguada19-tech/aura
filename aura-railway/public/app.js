@@ -18846,31 +18846,103 @@ function emergencyCallV1017(number, title, detail, featured = false) {
   ]);
 }
 
+function openTrustedContactEditorV1019(contact, onSaved) {
+  const current = contact && typeof contact === "object" ? contact : {};
+  const form = el("form", { class:"trusted-contact-form-v1019" }, [
+    el("div", { class:"sheet-title" }, current.emergency_phone ? "Gestionar contacto de confianza" : "Añadir contacto de confianza"),
+    el("p", { class:"trusted-contact-intro-v1019" }, "Guarda un teléfono para poder llamar directamente desde el Centro de seguridad. No se vincula con tus citas ni se contacta automáticamente."),
+  ]);
+  const phone = el("input", {
+    class:"input", type:"tel", inputmode:"tel", autocomplete:"tel", maxlength:"40", required:true,
+    value:String(current.emergency_phone || ""), placeholder:"Ej.: 600 123 123",
+  });
+  const email = el("input", {
+    class:"input", type:"email", autocomplete:"email", maxlength:"190",
+    value:String(current.emergency_email || ""), placeholder:"Opcional",
+  });
+  const error = el("p", { class:"trusted-contact-error-v1019", role:"alert", hidden:true });
+  form.append(
+    el("label", { class:"field" }, [el("span", {}, "Teléfono"), phone]),
+    el("label", { class:"field" }, [el("span", {}, "Email para emergencias"), email]),
+    el("small", { class:"trusted-contact-privacy-v1019" }, "Aura solo mostrará aquí el teléfono guardado. Ninguna llamada, mensaje o email se envía sin una acción tuya."),
+    error
+  );
+  const save = el("button", { class:"btn btn-brand", type:"submit" }, "Guardar contacto");
+  form.appendChild(el("div", { class:"sheet-actions trusted-contact-actions-v1019" }, [
+    el("button", { class:"btn btn-outline", type:"button", "data-close":true }, "Cancelar"),
+    save,
+  ]));
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const rawPhone = phone.value.trim();
+    if (!emergencyDialNumberV1017(rawPhone)) {
+      error.textContent = "Introduce un número de teléfono válido.";
+      error.hidden = false;
+      phone.focus();
+      return;
+    }
+    if (email.value.trim() && !email.checkValidity()) {
+      error.textContent = "Revisa el email de emergencia.";
+      error.hidden = false;
+      email.focus();
+      return;
+    }
+    error.hidden = true;
+    save.disabled = true;
+    save.textContent = "Guardando…";
+    try {
+      const response = await fetch("/api/my/emergency-contacts", {
+        method:"PUT",
+        headers:{ "Content-Type":"application/json", ...authHeaders() },
+        body:JSON.stringify({ emergency_phone:rawPhone, emergency_email:email.value.trim() || null }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok !== true) throw new Error(data.error || "save_failed");
+      modal.close();
+      toast("Contacto de confianza guardado");
+      if (typeof onSaved === "function") await onSaved();
+    } catch {
+      error.textContent = "No se pudo guardar el contacto. Inténtalo de nuevo.";
+      error.hidden = false;
+      save.disabled = false;
+      save.textContent = "Guardar contacto";
+    }
+  });
+  modal.open(form);
+  setTimeout(() => phone.focus(), 80);
+}
+
 async function loadTrustedEmergencyContactV1017(host) {
+  let email = "";
   let label = "";
   let phone = "";
-  try {
-    const saved = safeDatePlanV1009();
-    label = String(saved.contact || "").trim();
-    phone = emergencyDialNumberV1017(label);
-  } catch {}
   try {
     const response = await fetch("/api/my/emergency-contacts", { headers:authHeaders() });
     if (response.ok) {
       const data = await response.json();
+      email = String(data.emergency_email || "").trim();
       const stored = String(data.emergency_phone || "").trim();
       if (emergencyDialNumberV1017(stored)) { label = stored; phone = emergencyDialNumberV1017(stored); }
     }
   } catch {}
   host.innerHTML = "";
   if (phone) {
-    host.appendChild(el("a", { class:"trusted-call-v1017",href:`tel:${phone}` }, [
-      el("span", {}, [el("strong", {}, "Llamar a mi contacto de confianza"),el("small", {}, label || phone)]),
-      el("b", { "aria-hidden":"true" }, "Llamar"),
+    host.appendChild(el("div", { class:"trusted-contact-ready-v1019" }, [
+      el("a", { class:"trusted-call-v1017",href:`tel:${phone}` }, [
+        el("span", {}, [el("strong", {}, "Llamar a mi contacto de confianza"),el("small", {}, label || phone)]),
+        el("b", { "aria-hidden":"true" }, "Llamar"),
+      ]),
+      el("button", {
+        class:"trusted-contact-manage-v1019", type:"button",
+        onclick:() => openTrustedContactEditorV1019({ emergency_phone:label, emergency_email:email }, () => loadTrustedEmergencyContactV1017(host)),
+      }, "Cambiar contacto"),
     ]));
   } else {
-    host.appendChild(el("button", { class:"trusted-call-v1017 empty",type:"button",onclick:() => render(screenSafeDateV1009) }, [
-      el("span", {}, [el("strong", {}, "Añadir un contacto de confianza"),el("small", {}, "Guarda su teléfono en tu plan de cita segura")]),
+    host.appendChild(el("button", {
+      class:"trusted-call-v1017 empty", type:"button",
+      onclick:() => openTrustedContactEditorV1019({ emergency_email:email }, () => loadTrustedEmergencyContactV1017(host)),
+    }, [
+      el("span", {}, [el("strong", {}, "Añadir un contacto de confianza"),el("small", {}, "Guarda un teléfono para llamarle desde aquí")]),
       el("b", { "aria-hidden":"true" }, "Añadir"),
     ]));
   }
@@ -18912,7 +18984,7 @@ function screenSafetyCenter(root) {
   ]);
   wrap.appendChild(el("section", { class:"safety-quick-v1016","aria-label":"Acciones rápidas de seguridad" }, [
     el("button", { type:"button",onclick:() => routeTab("chats") }, [el("strong", {}, "Bloquear o denunciar"),el("small", {}, "Abre un chat y usa el menú ⋯")]),
-    el("button", { type:"button",onclick:() => render(screenSafeDateV1009) }, [el("strong", {}, "Preparar una cita"),el("small", {}, "Checklist y contacto de confianza")]),
+    el("button", { type:"button",onclick:() => render(screenSafeDateV1009) }, [el("strong", {}, "Preparar una cita"),el("small", {}, "Checklist personal antes de quedar")]),
     el("button", { type:"button",onclick:() => render(screenSessionSecurity) }, [el("strong", {}, "Proteger mi acceso"),el("small", {}, "Sesiones, 2FA y dispositivo perdido")]),
     emergencyHelpV1017,
   ]));
@@ -21481,6 +21553,9 @@ async function boot() {
       }
       if ((n === "recovery" || n === "recuperacion") && typeof screenRecoveryCenterV1009 === "function") {
         try { seedPreviewSession(); activatePreviewTab("me"); render(screenRecoveryCenterV1009); return; } catch {}
+      }
+      if ((n === "safety" || n === "centro-seguridad") && typeof screenSafetyCenter === "function") {
+        try { seedPreviewSession(); activatePreviewTab("me"); render(screenSafetyCenter); return; } catch {}
       }
       if ((n === "traveler" || n === "viajero") && typeof screenTravelerMode === "function") {
         try { seedPreviewSession(); state.user.plan = "gold"; activatePreviewTab("me"); render(screenTravelerMode); return; } catch {}
