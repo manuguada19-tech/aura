@@ -1346,6 +1346,8 @@ const ESCRITURA = [
      token seguía siendo válido ocho horas más: el panel borra el navegador en el
      .finally(), así que parecía que habían salido pero la sesión valía. */
   [/^POST \/api\/admin\/logout$/, 1],
+  // Ocultar elementos de la cola solo modifica la vista personal del panel.
+  [/^POST \/api\/admin\/operations-dismissals$/, 1],
 
   /* --- 3. Moderador (2): atender a la gente y aplicar las normas --- */
   // Suspender, banear, avisar y reactivar
@@ -2681,6 +2683,16 @@ async function migrate() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_created (created_at)
     ) ENGINE=InnoDB`);
+  } catch {}
+  try {
+    await pool.execute(`CREATE TABLE IF NOT EXISTS admin_work_item_dismissals (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      dismissed_by VARCHAR(190) NOT NULL,
+      item_key VARCHAR(190) NOT NULL,
+      dismissed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_admin_work_item (dismissed_by,item_key),
+      INDEX idx_dismissed_at (dismissed_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
   } catch {}
   try {
     await pool.execute(`CREATE TABLE IF NOT EXISTS backup_verifications (
@@ -20763,6 +20775,17 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
       due_at: row.due_at || null,
       view_name: "user_funnel",
     }));
+  const keyedWorkItems = [
+    ...funnelItems.map(item => ({ ...item, dismiss_key:`funnel:${item.stage}:${item.count}` })),
+    ...workItems.map(item => ({ ...item, dismiss_key:`${item.kind}:${item.id}` })),
+  ];
+  const dismissedBy = String(req.admin?.email || "admin").toLowerCase().slice(0, 190);
+  const dismissedRows = await adminRows(
+    "SELECT item_key FROM admin_work_item_dismissals WHERE dismissed_by=?",
+    [dismissedBy]
+  );
+  const dismissedKeys = new Set(dismissedRows.map(row => String(row.item_key || "")));
+  const visibleWorkItems = keyedWorkItems.filter(item => !dismissedKeys.has(item.dismiss_key));
 
   const technicalIssues = [];
   if (!dbOk) technicalIssues.push({ level: "critical", label: "Base de datos sin respuesta" });
@@ -20804,7 +20827,7 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
     ok: true,
     generated_at: new Date().toISOString(),
     queues,
-    work_items: [...funnelItems, ...workItems],
+    work_items: visibleWorkItems,
     stalled_users: funnelItems,
     health: {
       status: technicalIssues.length ? "attention" : "ok",
@@ -20826,6 +20849,25 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
       issues: technicalIssues,
     },
   });
+}));
+
+/* V1014 · Ocultar elementos del Centro de trabajo no elimina ni modifica el
+   ticket, denuncia, apelación o usuario original: solo guarda la preferencia
+   personal de quien administra. Las alertas agregadas reaparecen si cambia su
+   número, porque el recuento forma parte de la clave. */
+app.post("/api/admin/operations-dismissals", wrap(async (req, res) => {
+  const values = Array.isArray(req.body?.keys) ? req.body.keys : [req.body?.key];
+  const allowed = /^(?:(?:report|ticket|appeal):\d+|funnel:(?:profile|verified|active|liked):\d+)$/;
+  const keys = [...new Set(values.map(value => String(value || "").trim()).filter(value => allowed.test(value)))].slice(0, 50);
+  if (!keys.length) return res.status(400).json({ error:"invalid_work_items" });
+  const dismissedBy = String(req.admin?.email || "admin").toLowerCase().slice(0, 190);
+  await pool.query(
+    `INSERT INTO admin_work_item_dismissals (dismissed_by,item_key) VALUES ${keys.map(() => "(?,?)").join(",")}
+     ON DUPLICATE KEY UPDATE dismissed_at=NOW()`,
+    keys.flatMap(key => [dismissedBy, key])
+  );
+  pool.execute("DELETE FROM admin_work_item_dismissals WHERE dismissed_at < DATE_SUB(NOW(), INTERVAL 90 DAY)").catch(() => {});
+  res.json({ ok:true, dismissed:keys.length });
 }));
 
 app.get("/api/admin/technical-history", wrap(async (req, res) => {

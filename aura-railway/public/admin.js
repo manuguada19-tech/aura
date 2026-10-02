@@ -3292,9 +3292,7 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
   if (showWork) wrap.appendChild(queueGrid);
 
   const lower = el("div", { class: `ops-lower${showHealth ? "" : " no-health"}${showWork ? "" : " no-work"}` });
-  const work = el("div", { class: "ops-list" }, [
-    el("div", { class: "ops-subhead" }, [el("strong", {}, "Siguiente por atender"), el("small", {}, `${(data?.work_items || []).length} elementos prioritarios`)]),
-  ]);
+  const work = el("div", { class: "ops-list" });
   const severityRank = { critical: 0, high: 1, medium: 2, low: 3 };
   const items = (data?.work_items || []).slice().sort((a, b) => {
     const now = Date.now();
@@ -3308,6 +3306,23 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
     if (Number.isFinite(aDue) || Number.isFinite(bDue)) return (Number.isFinite(aDue) ? aDue : Infinity) - (Number.isFinite(bDue) ? bDue : Infinity);
     return new Date(a.created_at || 0) - new Date(b.created_at || 0);
   });
+  const workCount = el("small", {}, `${items.length} elementos prioritarios`);
+  const clearAll = btn("Vaciar lista", "ghost xs", async () => {
+    const keys = items.map(item => item.dismiss_key).filter(Boolean);
+    if (!keys.length || !confirm(`¿Quitar los ${keys.length} elementos de “Siguiente por atender”?\n\nSolo desaparecen de esta cola. No se borran tickets, denuncias ni usuarios.`)) return;
+    clearAll.disabled = true;
+    try {
+      await api.post("/api/admin/operations-dismissals", { keys });
+      toast("Lista vaciada. Los datos originales se conservan.", 3500);
+      route("dashboard");
+    } catch (error) {
+      clearAll.disabled = false;
+      toast(error?.message || "No se pudo vaciar la lista", 3500);
+    }
+  });
+  const headActions = el("div", { class:"ops-subhead-actions" }, [workCount]);
+  if (items.some(item => item.dismiss_key)) headActions.appendChild(clearAll);
+  work.appendChild(el("div", { class:"ops-subhead" }, [el("strong", {}, "Siguiente por atender"), headActions]));
   if (!items.length) work.appendChild(el("div", { class: "ops-empty" }, "No hay tareas pendientes."));
   items.slice(0, 7).forEach(item => {
     const dueAt = item.due_at ? new Date(item.due_at) : null;
@@ -3319,19 +3334,40 @@ function renderOperationsCenter(data, showWork = true, showHealth = true) {
       : dueSoon
         ? el("span", { class: "ops-sla urgent" }, `SLA próximo · ${fmt.reldate(item.due_at)}`)
         : el("time", {}, fmt.reldate(item.created_at));
-    const row = el("button", { class: `ops-item${overdue ? " overdue" : ""}`, type: "button" }, [
-      el("span", { class: `ops-severity ${item.severity || "medium"}` }),
-      el("span", { class: "ops-item-copy" }, [el("strong", {}, item.title || "Pendiente"), el("small", {}, item.detail || "")]),
-      timing, el("span", { class: "ops-go" }, "→"),
-    ]);
-    row.addEventListener("click", () => {
+    const openItem = () => {
       if (item.kind === "funnel") {
         window.__pendingFunnelOpen = { stage:item.stage, status:item.status || "missing" };
       }
       openDashboardSection(item.view_name, "Centro de trabajo");
       if (item.kind === "ticket") openTicketDrawer(item.id);
       else if (item.kind === "report") openReportDrawer(item.id);
-    });
+    };
+    const dismiss = el("button", {
+      class:"ops-dismiss", type:"button", title:"Quitar de esta lista",
+      "aria-label":`Quitar ${item.title || "elemento"} de Siguiente por atender`,
+      onclick:async event => {
+        event.stopPropagation();
+        if (!item.dismiss_key) return;
+        dismiss.disabled = true;
+        try {
+          await api.post("/api/admin/operations-dismissals", { key:item.dismiss_key });
+          toast("Elemento quitado. El dato original se conserva.", 3200);
+          route("dashboard");
+        } catch (error) {
+          dismiss.disabled = false;
+          toast(error?.message || "No se pudo quitar el elemento", 3500);
+        }
+      },
+    }, "×");
+    const row = el("article", {
+      class:`ops-item${overdue ? " overdue" : ""}`, role:"button", tabindex:"0",
+      onclick:event => { if (!event.target.closest(".ops-dismiss")) openItem(); },
+      onkeydown:event => { if ((event.key === "Enter" || event.key === " ") && !event.target.closest(".ops-dismiss")) { event.preventDefault(); openItem(); } },
+    }, [
+      el("span", { class: `ops-severity ${item.severity || "medium"}` }),
+      el("span", { class: "ops-item-copy" }, [el("strong", {}, item.title || "Pendiente"), el("small", {}, item.detail || "")]),
+      timing, el("span", { class: "ops-go" }, "→"), item.dismiss_key ? dismiss : null,
+    ]);
     work.appendChild(row);
   });
   if (showWork) lower.appendChild(work);
