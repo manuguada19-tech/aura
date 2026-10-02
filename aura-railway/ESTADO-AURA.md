@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1028 (`fb9b423`, build `7f09e235fce6`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1029 (`b7be742`, build `2659b83d3716`)**
+
+### V1029 (02/10/2026) — Usuarios del mapa en lista paginada
+
+- El mapa de «Cerca de ti» deja de extender tarjetas de perfiles en la parte
+  inferior. En su lugar muestra un resumen compacto con el total de usuarios,
+  un botón para abrirlos y una guía para actualizar la zona desde el mapa.
+- «Ver usuarios» abre una lista central con foto, nombre, edad, ubicación o
+  distancia, estado y acceso al perfil. Si hay más de cinco resultados, se
+  reparten en páginas con controles Anterior y Siguiente.
+- Validada con 12 perfiles totalmente simulados en 360×800, 390×844 y
+  1440×900: cambio de página correcto, cinco filas por página, sin
+  desbordamiento horizontal y con más espacio útil para el mapa. `node --check`
+  y `git diff --check` correctos. Publicada en commit `b7be742`, build
+  `2659b83d3716`; Railway terminó correctamente y `/api/health` respondió
+  `ready:true`. No se utilizaron ni modificaron usuarios reales.
+- La publicación corresponde a la web/PWA. El proyecto Android nativo permanece
+  local y todavía no se ha distribuido.
 
 ### Mantenimiento documental (02/10/2026) — Pendientes depurados
 
