@@ -1,8 +1,8 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1006 (`f1f2cd6`, build `5d6fab064a92`) · siguiente preparada: V1008**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1008 (`6d7bc6c`, build `cf601c9ad3cf`)**
 
-### V1008 (preparada, sin commit ni publicación) — FAQ multilingües
+### V1008 (02/10/2026) — FAQ multilingües
 
 - Las 46 preguntas frecuentes están disponibles en español, inglés, francés,
   alemán, italiano y portugués europeo; se incluye la nueva explicación de las
@@ -19,7 +19,9 @@
   que una versión anterior quede servida tras el despliegue.
 - Validadas sintaxis, correspondencia de categorías, 46 entradas por idioma,
   búsqueda, las seis páginas informativas y vistas de 390 y 1440 píxeles sin
-  desbordamiento. No se ha publicado ni modificado ningún dato real.
+  desbordamiento. Publicada en commit `6d7bc6c`, build `cf601c9ad3cf`; Railway
+  finalizó correctamente y `/api/health` respondió `ready:true`. No se modificó
+  ningún dato real.
 
 ### V1007 (commit `eeb290f`, sin publicación) — Identidad estable en Didit
 
