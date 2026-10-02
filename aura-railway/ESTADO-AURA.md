@@ -1,6 +1,21 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · última publicada: V1034 (`0f499fe`, build `938c0cf33c21`)**
+**Fecha de este resumen: 2 octubre 2026 · última publicada: V1035 (`c982d08`, build `6bf3f4849139`)**
+
+### V1035 (02/10/2026) — Arranque de Explorar más rápido
+
+- Las comprobaciones independientes de plan, prestaciones e identidad se
+  ejecutan en paralelo con la consulta inicial de perfiles, en lugar de sumar
+  varias rondas de red antes de empezar a buscar.
+- Se conserva una sola carga visible y una sola petición a Explorar. Si la zona
+  cambió realmente en otro dispositivo, Aura la corrige en segundo plano sin
+  vaciar el mazo ni volver a mostrar «Buscando personas cerca…».
+- Validada con perfiles totalmente simulados y 700 ms de latencia artificial
+  por petición en 360×800, 390×844 y 1440×900: un único acceso a
+  `/api/discover`, perfiles visibles alrededor de los 2 segundos y sin
+  desbordamiento horizontal. `node --check` y `git diff --check` correctos.
+  Publicada en commit `c982d08`, build `6bf3f4849139`; Railway respondió
+  `ready:true`. No se utilizaron ni modificaron usuarios reales.
 
 ### V1034 (02/10/2026) — Explorar sin doble carga y Perfil limpio
 
