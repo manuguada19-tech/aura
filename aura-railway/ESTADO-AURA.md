@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1039 (`c3777a4`, build `1306b24f2fb3`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1040 (`794b396`, build `a9025e9fd90b`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1040 (03/10/2026) — QR visible y privado al activar 2FA
+
+- El alta de la verificación en dos pasos deja de depender de un script servido
+  por un CDN externo, que podía no cargar y dejar únicamente un recuadro blanco.
+- Aura incluye ahora una copia local de la librería QR con su licencia MIT. El
+  URI TOTP se convierte en QR dentro del propio dispositivo y no se envía a
+  servicios de terceros.
+- El modal muestra «Generando código QR…» durante la carga y un error explícito
+  si no pudiera generarlo, en vez de mantener un espacio vacío. El QR utiliza
+  248 px para conservar módulos nítidos incluso en pantallas de 360 px.
+- Validada con un secreto y una cuenta completamente simulados en 360×800,
+  390×844 y 1440×900: QR visible y decodificable, sin desbordamiento horizontal
+  ni scroll añadido. `node --check` y `git diff --check` correctos. Publicada en
+  commit `794b396`, build `a9025e9fd90b`; la librería pública respondió `200` y
+  Railway devolvió `/api/health` con `ready:true`. No se utilizaron ni
+  modificaron usuarios reales.
 
 ### V1039 (03/10/2026) — Perfil moderno y retorno estable desde Buscar
 
