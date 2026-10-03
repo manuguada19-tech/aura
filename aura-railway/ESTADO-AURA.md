@@ -1,6 +1,23 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1038 (`320a1c2`, build `6e87d69216de`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1039 (`c3777a4`, build `1306b24f2fb3`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1039 (03/10/2026) — Perfil moderno y retorno estable desde Buscar
+
+- Al pulsar un resultado de Buscar se abre la misma ficha moderna utilizada en
+  Explorar, en lugar de la vista antigua con foto duplicada, tipografía y
+  botones sobredimensionados y selector de tema superpuesto.
+- La cabecera incluye el regreso accesible «Volver a Buscar». Al volver se
+  conservan el texto escrito, el conjunto de resultados y la posición de
+  desplazamiento anterior.
+- Los botones Pasar y Me gusta regresan también a Buscar cuando la ficha se
+  abrió desde esa sección; el registro normal de visitas y reacciones no cambia.
+- Validada exclusivamente con perfiles simulados en 360×800, 390×844 y
+  1440×900: ficha moderna visible, vista antigua ausente, selector de tema
+  oculto, regreso correcto y sin desbordamiento horizontal. `node --check` y
+  `git diff --check` correctos. Publicada en commit `c3777a4`, build
+  `1306b24f2fb3`; Railway respondió `ready:true`. No se utilizaron ni
+  modificaron usuarios reales.
 
 ### V1038 (03/10/2026) — Simulador privado de planes para superadmin
 
