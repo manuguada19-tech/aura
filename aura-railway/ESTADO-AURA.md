@@ -1,6 +1,28 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 2 octubre 2026 · PWA publicada: V1037 (`7bf2f42`, build `f470049b97ba`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1038 (`320a1c2`, build `6e87d69216de`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1038 (03/10/2026) — Simulador privado de planes para superadmin
+
+- Perfil → Plan y facturación incorpora «Probar planes sin guardar» únicamente
+  para sesiones cuyo rol real es `superadmin`. Permite previsualizar Free,
+  Premium, Gold y Platinum sin cambiar `users.plan` ni la suscripción real.
+- La selección y las prestaciones simuladas se conservan solo en
+  `sessionStorage`, se obtienen del catálogo público de planes y se eliminan al
+  cerrar sesión o al pulsar «Volver al plan real».
+- Mientras la simulación está activa, el cliente bloquea antes de salir del
+  dispositivo las peticiones API que escriben datos, la telemetría y el aviso
+  de desconexión. Solo permite la renovación técnica del token de sesión.
+- El indicador del modo de prueba se limita a las pantallas de Perfil para no
+  tapar controles de Explorar ni Buscar. Android recibe la misma función al
+  cargar la web publicada, sin necesitar un nuevo App Bundle.
+- Validada exclusivamente con una cuenta y perfiles simulados en 360×800,
+  390×844 y 1440×900: anuncio interno visible al simular Free, ausencia de
+  desbordamiento, escritura de prueba bloqueada localmente con `409`, ninguna
+  petición no-GET enviada y restauración correcta del plan Platinum simulado.
+  `node --check` y `git diff --check` correctos. Publicada en commit `320a1c2`,
+  build `6e87d69216de`; Railway respondió `ready:true`. No se utilizaron ni
+  modificaron usuarios reales.
 
 ### V1037 (02/10/2026) — Publicidad interna con apariencia final
 
