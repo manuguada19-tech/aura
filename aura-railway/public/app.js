@@ -2181,6 +2181,7 @@ const chatApi = {
   },
   async offline() {
     if (!state.user || !state.user.id) return;
+    if (planSimulationActiveV1038()) return;
     try {
       // Use sendBeacon so it works during page unload. sendBeacon no permite
       // cabeceras → el token va en el cuerpo (readUserToken lee body.auth_token).
@@ -3590,6 +3591,19 @@ function showRestrictionModal() {
 (function installRestrictionInterceptor(){
   const _fetch = window.fetch.bind(window);
   window.fetch = async function(input, init) {
+    // V1038 · El simulador de planes del superadmin es estrictamente local.
+    // Mientras está activo, ninguna petición que modifique datos de la API sale
+    // del dispositivo. Así probar la interfaz no crea eventos, actividad,
+    // auditoría, pagos ni cambios en la cuenta real.
+    try {
+      if (shouldBlockPlanSimulationWriteV1038(input, init)) {
+        try { toast("Modo prueba: esta acción no se guarda"); } catch {}
+        return new Response(JSON.stringify({ ok:false, error:"plan_simulation_no_write", simulated:true }), {
+          status:409,
+          headers:{ "Content-Type":"application/json" },
+        });
+      }
+    } catch {}
     const r = await _fetch(input, init);
     try {
       if (r.status === 423) {
@@ -4336,6 +4350,7 @@ const SECTION_MAP = {
   screenChats: "chats", screenChat: "chats",
   screenMe: "profile", screenEditProfile: "profile", screenSettings: "profile",
   screenSubscription: "profile", screenSubscriptions: "profile",
+  screenPlanSimulationV1038: "profile",
   screenMyPhotos: "profile", screenVerifyAccount: "profile",
   screenInvisibleMode: "profile", screenSecurity: "profile",
   screenSessionSecurity: "profile", screenSafetyCenter: "profile",
@@ -4409,6 +4424,7 @@ function render(screenFn, opts = {}) {
   // .screen-hero that were styled by applyDesign() before the render lose
   // their inline background/color).
   try { applyDesign(); } catch {}
+  try { syncPlanSimulationIndicatorV1038(); } catch {}
 }
 function _rerender() {
   if (_lastScreenFn) render(_lastScreenFn, _lastScreenOpts || {});
@@ -11125,7 +11141,97 @@ const PLAN_PROFILE_LIMITS = {
   gold:     80,
   platinum: Infinity, // most expensive plan unlocks everything
 };
+const PLAN_SIMULATION_KEY_V1038 = "aura.plan-simulation.v1038";
+const PLAN_SIMULATION_CODES_V1038 = ["free", "premium", "gold", "platinum"];
+
+function planSimulationEligibleV1038() {
+  return !!(state?.user?.id && String(state.user.role || "").toLowerCase() === "superadmin");
+}
+
+function readPlanSimulationV1038() {
+  if (!planSimulationEligibleV1038()) return null;
+  try {
+    const value = JSON.parse(sessionStorage.getItem(PLAN_SIMULATION_KEY_V1038) || "null");
+    if (!value || String(value.user_id) !== String(state.user.id)) return null;
+    const plan = String(value.plan || "").toLowerCase();
+    if (!PLAN_SIMULATION_CODES_V1038.includes(plan)) return null;
+    return { plan, features: value.features && typeof value.features === "object" ? value.features : null };
+  } catch { return null; }
+}
+
+function planSimulationActiveV1038() {
+  return !!readPlanSimulationV1038();
+}
+
+function simulatedPlanEntitlementsV1038(features) {
+  const result = {};
+  for (const [key, raw] of Object.entries(features || {})) {
+    const entitlement = Object.assign({}, raw || {});
+    if (entitlement.enabled && !entitlement.unlimited && entitlement.remaining == null) {
+      entitlement.remaining = Math.max(0, Number(entitlement.quota || 0));
+      entitlement.used = 0;
+    }
+    result[key] = entitlement;
+  }
+  return result;
+}
+
+function shouldBlockPlanSimulationWriteV1038(input, init) {
+  if (!planSimulationActiveV1038()) return false;
+  const method = String(init?.method || (input && input.method) || "GET").toUpperCase();
+  if (["GET", "HEAD", "OPTIONS"].includes(method)) return false;
+  const raw = typeof input === "string" ? input : (input && input.url) || "";
+  const pathname = new URL(raw, location.href).pathname;
+  // Mantiene únicamente la renovación técnica de la sesión. No cambia el plan
+  // ni genera actividad funcional; el resto de escrituras queda en el cliente.
+  if (pathname === "/api/my/session/token") return false;
+  return pathname.startsWith("/api/");
+}
+
+async function setPlanSimulationV1038(plan) {
+  if (!planSimulationEligibleV1038()) return false;
+  const normalized = String(plan || "").toLowerCase();
+  if (!PLAN_SIMULATION_CODES_V1038.includes(normalized)) return false;
+  const response = await fetch("/api/public/plans", { cache:"no-store" });
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data?.entitlements?.[normalized]) throw new Error("simulation_unavailable");
+  const features = simulatedPlanEntitlementsV1038(data.entitlements[normalized]);
+  sessionStorage.setItem(PLAN_SIMULATION_KEY_V1038, JSON.stringify({
+    user_id:String(state.user.id), plan:normalized, features,
+  }));
+  state.entitlements = features;
+  try { updateMeTierBadge(); } catch {}
+  try { syncPlanSimulationIndicatorV1038(); } catch {}
+  return true;
+}
+
+async function clearPlanSimulationV1038(options = {}) {
+  try { sessionStorage.removeItem(PLAN_SIMULATION_KEY_V1038); } catch {}
+  try { await syncUserPlan({ suppressRerender:true }); } catch {}
+  try { updateMeTierBadge(); } catch {}
+  try { syncPlanSimulationIndicatorV1038(); } catch {}
+  if (options.render !== false) render(screenMe);
+}
+
+function syncPlanSimulationIndicatorV1038() {
+  let indicator = document.getElementById("planSimulationIndicatorV1038");
+  const simulation = readPlanSimulationV1038();
+  const profileScreen = document.querySelector(".screen")?.dataset.section === "profile";
+  if (!simulation || !profileScreen) { if (indicator) indicator.remove(); return; }
+  if (!indicator) {
+    indicator = el("div", { id:"planSimulationIndicatorV1038", class:"plan-simulation-indicator-v1038", role:"status" }, [
+      el("span", { class:"plan-simulation-indicator-copy-v1038" }),
+      el("button", { type:"button", onclick:() => clearPlanSimulationV1038() }, "Salir"),
+    ]);
+    document.body.appendChild(indicator);
+  }
+  const copy = indicator.querySelector(".plan-simulation-indicator-copy-v1038");
+  if (copy) copy.textContent = `Modo prueba · ${planLabel(simulation.plan)}`;
+}
+
 function getUserPlan() {
+  const simulated = readPlanSimulationV1038();
+  if (simulated) return simulated.plan;
   const p = (state.user && (state.user.plan || state.user.plan_key)) || "free";
   return String(p).toLowerCase();
 }
@@ -11297,7 +11403,12 @@ async function syncUserPlan(options = {}) {
     const s = r.ok ? await r.json().catch(() => null) : null;
     const entitlementPayload = entitlementResponse.ok ? await entitlementResponse.json().catch(() => null) : null;
     const previousEntitlements = JSON.stringify(state.entitlements || {});
-    if (entitlementPayload?.features) state.entitlements = entitlementPayload.features;
+    if (entitlementPayload?.features) {
+      const simulation = readPlanSimulationV1038();
+      state.entitlements = simulation?.features
+        ? simulatedPlanEntitlementsV1038(simulation.features)
+        : entitlementPayload.features;
+    }
     const entitlementsChanged = previousEntitlements !== JSON.stringify(state.entitlements || {});
     const planValue = entitlementPayload?.plan || s?.plan;
     if (!planValue) return;
@@ -15371,7 +15482,7 @@ function screenChat(root, u, isNew, opts = {}) {
   const callAllowedV1002 = (key, minimum) => {
     const entitlement = state.entitlements?.[key];
     if (entitlement && typeof entitlement.enabled === "boolean") return entitlement.enabled;
-    return (planRankV1002[String(state.user?.plan || "free").toLowerCase()] || 0) >= planRankV1002[minimum];
+    return (planRankV1002[getUserPlan()] || 0) >= planRankV1002[minimum];
   };
   const audioCallAllowed = callAllowedV1002("audio_calls", "gold");
   const videoCallAllowed = callAllowedV1002("video_calls", "platinum");
@@ -16649,6 +16760,13 @@ function screenMe(root) {
     { title: "Plan y facturación", items: [
       { icon: "💎", title: subscriptionTitle, sub: (getUserPlan() === "free" ? "Plan Free · descubre Premium" : ("Plan " + planLabel(getUserPlan()))), onClick: () => render(screenSubscriptions) },
       { icon: "🧾", title: "Pagos y facturas", sub: "Facturas, reembolsos y cobros pendientes", onClick: () => render(screenBilling) },
+      ...(planSimulationEligibleV1038() ? [{
+        icon: "T", title: "Probar planes sin guardar",
+        sub: planSimulationActiveV1038()
+          ? `Simulando ${planLabel(getUserPlan())} · sin registros`
+          : "Solo en este dispositivo · sin actividad administrativa",
+        onClick: () => render(screenPlanSimulationV1038),
+      }] : []),
     ]},
     { title: "Beneficios", items: [
       { icon: "◉", id: "meProfileVisitorsRow", title: "Quién vio mi perfil", sub: "Consulta tus visitas y visitantes", onClick: () => render(screenProfileVisitors) },
@@ -16768,6 +16886,7 @@ function screenMe(root) {
       { icon: "⏻", title: T("content.me.item_logout") || "Cerrar sesión", onClick: () => {
           state.user = null;
           try { localStorage.removeItem("aura-session"); } catch {}
+          try { sessionStorage.removeItem(PLAN_SIMULATION_KEY_V1038); } catch {}
           Auth.clear();
           // Si la app está en revisión, vuelve a la pantalla de revisión con
           // el bloque de acceso por código para el superadmin.
@@ -16987,6 +17106,66 @@ function screenMe(root) {
 function meSubHeader(root, title) {
   root.classList.add("screen-me-sub");
   root.appendChild(topbar(title, () => routeTab("me")));
+}
+
+/* V1038 · Simulador local de planes para la cuenta superadmin.
+   No modifica users.plan ni llama a ninguna ruta de escritura. Las prestaciones
+   se leen del catálogo público y se conservan únicamente en sessionStorage. */
+function screenPlanSimulationV1038(root) {
+  if (!planSimulationEligibleV1038()) { routeTab("me"); return; }
+  meSubHeader(root, "Modo de prueba de planes");
+  const simulation = readPlanSimulationV1038();
+  const realPlan = String((state.user && (state.user.plan || state.user.plan_key)) || "free").toLowerCase();
+  const planCopy = {
+    free:"Publicidad visible y prestaciones básicas",
+    premium:"Sin publicidad y primeras prestaciones ampliadas",
+    gold:"Funciones avanzadas y cuotas superiores",
+    platinum:"Acceso visual a todas las prestaciones",
+  };
+  const wrap = el("div", { class:"plan-simulation-v1038" }, [
+    el("section", { class:"plan-simulation-note-v1038" }, [
+      el("strong", {}, "Prueba privada en este dispositivo"),
+      el("p", {}, "Cambia únicamente lo que Aura muestra en esta sesión. Tu suscripción real no cambia y el cambio no aparece en actividad, eventos, auditoría ni fichas de Administración."),
+      el("small", {}, "Mientras esté activo, Aura bloquea likes, mensajes, pagos y cualquier otra escritura para que la prueba no deje datos."),
+    ]),
+    el("div", { class:"plan-simulation-status-v1038" }, [
+      el("span", {}, [el("small", {}, "PLAN REAL"), el("strong", {}, planLabel(realPlan))]),
+      el("span", {}, [el("small", {}, "VISTA ACTUAL"), el("strong", {}, simulation ? planLabel(simulation.plan) + " · prueba" : "Plan real")]),
+    ]),
+  ]);
+  const grid = el("div", { class:"plan-simulation-grid-v1038", role:"group", "aria-label":"Plan que quieres simular" });
+  PLAN_SIMULATION_CODES_V1038.forEach((plan) => {
+    const active = simulation?.plan === plan;
+    const button = el("button", {
+      type:"button", class:`plan-simulation-option-v1038 ${plan}${active ? " active" : ""}`,
+      "aria-pressed":String(active),
+      onclick:async () => {
+        grid.querySelectorAll("button").forEach(item => { item.disabled = true; });
+        try {
+          await setPlanSimulationV1038(plan);
+          toast(`Vista de prueba: ${planLabel(plan)}`);
+          render(screenPlanSimulationV1038);
+        } catch {
+          toast("No se pudo preparar el plan de prueba");
+          grid.querySelectorAll("button").forEach(item => { item.disabled = false; });
+        }
+      },
+    }, [el("strong", {}, planLabel(plan)), el("small", {}, planCopy[plan])]);
+    grid.appendChild(button);
+  });
+  wrap.appendChild(grid);
+  const actions = el("div", { class:"plan-simulation-actions-v1038" });
+  if (simulation) {
+    actions.appendChild(el("button", { class:"btn btn-brand", type:"button", onclick:() => routeTab("discover") }, "Abrir Explorar"));
+    actions.appendChild(el("button", { class:"btn btn-outline", type:"button", onclick:() => routeTab("search") }, "Abrir Buscar"));
+    actions.appendChild(el("button", { class:"btn btn-ghost", type:"button", onclick:async () => {
+      await clearPlanSimulationV1038({ render:false });
+      toast("Modo de prueba finalizado");
+      render(screenPlanSimulationV1038);
+    } }, "Volver al plan real"));
+  }
+  wrap.appendChild(actions);
+  root.appendChild(wrap);
 }
 
 /* — Mi cuenta y estado —
@@ -22773,6 +22952,7 @@ async function maybePromptForPushAnon() {
     // datos sensibles; se ignora cualquier error de red.
     function reportEvent(ev, detail) {
       try {
+        if (planSimulationActiveV1038()) return;
         const body = JSON.stringify({ event: ev, detail: detail || null });
         if (navigator.sendBeacon) {
           navigator.sendBeacon("/api/client-event", new Blob([body], { type: "application/json" }));

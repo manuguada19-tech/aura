@@ -12621,3 +12621,61 @@ button.profile-visitor-row-v1005{cursor:pointer}.profile-visitor-row-v1005.hidde
   .call-v1002-local-video { right: 10px; bottom: 10px; width: 29%; border-radius: 13px; }
   .call-v1002-control { min-height: 50px; padding-inline: 5px; font-size: 11px; }
 }
+
+/* V1038 · Simulador local de planes exclusivo del superadmin. */
+.plan-simulation-v1038 {
+  width: min(100%,760px); margin: 0 auto; padding: 16px;
+  display: grid; gap: 14px;
+}
+.plan-simulation-note-v1038 {
+  padding: 14px 16px; border: 1px solid color-mix(in srgb,#38bdf8 38%,var(--border));
+  border-radius: 16px; background: color-mix(in srgb,#0ea5e9 9%,var(--surface));
+}
+.plan-simulation-note-v1038 strong { display: block; font-size: 16px; }
+.plan-simulation-note-v1038 p { margin: 6px 0; font-size: 13.5px; line-height: 1.45; color: var(--text-soft); }
+.plan-simulation-note-v1038 small { display: block; font-size: 12px; line-height: 1.4; color: var(--text-muted); }
+.plan-simulation-status-v1038 {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+}
+.plan-simulation-status-v1038 > span {
+  min-width: 0; padding: 11px 13px; border: 1px solid var(--border); border-radius: 13px;
+  background: var(--surface);
+}
+.plan-simulation-status-v1038 small {
+  display: block; margin-bottom: 3px; color: var(--text-muted); font-size: 10.5px;
+  font-weight: 800; letter-spacing: .07em;
+}
+.plan-simulation-status-v1038 strong { display: block; font-size: 14px; }
+.plan-simulation-grid-v1038 {
+  display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px;
+}
+.plan-simulation-option-v1038 {
+  min-height: 86px; padding: 13px; border: 1px solid var(--border); border-radius: 15px;
+  color: var(--text); background: var(--surface); text-align: left; font: inherit; cursor: pointer;
+}
+.plan-simulation-option-v1038 strong { display: block; margin-bottom: 5px; font-size: 15px; }
+.plan-simulation-option-v1038 small { display: block; color: var(--text-soft); font-size: 12px; line-height: 1.35; }
+.plan-simulation-option-v1038.active {
+  border-color: #38bdf8; background: color-mix(in srgb,#0ea5e9 12%,var(--surface));
+  box-shadow: inset 0 0 0 1px rgba(56,189,248,.25);
+}
+.plan-simulation-option-v1038.active::after {
+  content: "ACTIVO"; display: inline-block; margin-top: 8px; color: #38bdf8;
+  font-size: 10.5px; font-weight: 900; letter-spacing: .06em;
+}
+.plan-simulation-actions-v1038 { display: flex; flex-wrap: wrap; gap: 8px; }
+.plan-simulation-indicator-v1038 {
+  position: fixed; right: 12px; bottom: calc(var(--tab-height,62px) + env(safe-area-inset-bottom,0px) + 10px);
+  z-index: 90; display: flex; align-items: center; gap: 9px; padding: 8px 9px 8px 12px;
+  border: 1px solid rgba(56,189,248,.5); border-radius: 999px; color: #eafaff;
+  background: rgba(5,25,38,.94); box-shadow: 0 10px 28px rgba(0,0,0,.28);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  font-size: 12px; font-weight: 800;
+}
+.plan-simulation-indicator-v1038 button {
+  border: 0; border-radius: 999px; padding: 5px 9px; color: #062334; background: #67e8f9;
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+@media (min-width: 901px) {
+  .plan-simulation-indicator-v1038 { bottom: 18px; }
+}
