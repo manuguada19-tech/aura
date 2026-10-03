@@ -1,6 +1,20 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1040 (`794b396`, build `a9025e9fd90b`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1041 (`a4c83e3`, build `d5a23e39f2fd`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1041 (03/10/2026) — QR 2FA estable en Chrome para Android
+
+- Se corrige el segundo caso detectado en Chrome para Android: la librería
+  llegaba a pintar el QR, pero su conversión posterior a una imagen `data:`
+  podía dejar un rectángulo blanco.
+- Aura copia ahora el lienzo QR ya pintado a un canvas independiente y visible.
+  La conversión interna posterior ya no puede ocultarlo ni sustituirlo.
+- Validada con un secreto y una cuenta completamente simulados en 360×800,
+  390×844 y 1440×900: canvas visible, QR decodificable en los tres tamaños, sin
+  desbordamiento horizontal ni scroll añadido. `node --check` y
+  `git diff --check` correctos. Publicada en commit `a4c83e3`, build
+  `d5a23e39f2fd`; el código servido contiene la corrección y Railway devolvió
+  `/api/health` con `ready:true`. No se utilizaron ni modificaron usuarios reales.
 
 ### V1040 (03/10/2026) — QR visible y privado al activar 2FA
 
