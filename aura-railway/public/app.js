@@ -19182,11 +19182,20 @@ function renderTwoFactorQR(container, otpauth) {
         // eslint-disable-next-line no-undef
         correctLevel: QRCode.CorrectLevel.M,
       });
-      const graphic = container.querySelector("img") || container.querySelector("canvas");
-      if (!graphic) { fail(); return; }
-      container.querySelectorAll("canvas, img").forEach((node) => {
-        node.style.display = node === graphic ? "block" : "none";
-      });
+      // qrcodejs pinta primero un canvas válido y después intenta convertirlo
+      // a <img> mediante data: URI. Algunos Chrome/Android dejan esa imagen en
+      // blanco. Copiamos el canvas ya pintado a otro independiente para que la
+      // conversión posterior de la librería no pueda ocultarlo ni sustituirlo.
+      const sourceCanvas = container.querySelector("canvas");
+      if (!sourceCanvas) { fail(); return; }
+      const graphic = document.createElement("canvas");
+      graphic.width = size;
+      graphic.height = size;
+      const ctx = graphic.getContext("2d");
+      if (!ctx) { fail(); return; }
+      ctx.drawImage(sourceCanvas, 0, 0, size, size);
+      container.innerHTML = "";
+      container.appendChild(graphic);
       graphic.setAttribute("aria-label", "Código QR para configurar la verificación en dos pasos");
       graphic.style.display = "block";
       graphic.style.width = `${size}px`;
