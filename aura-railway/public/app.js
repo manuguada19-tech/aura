@@ -19011,7 +19011,9 @@ function openTwoFactorSetup(onDone) {
       <p style="margin:0 0 12px;font-size:14px;color:#e6d9ff;line-height:1.4">
         Instala una app autenticadora (<strong>Google Authenticator</strong>, <strong>Authy</strong>, <strong>Aegis</strong>…) y escanea el código QR.
       </p>
-      <div class="twofa-qr" style="background:#fff;padding:14px;border-radius:14px;display:grid;place-items:center;min-height:220px"></div>
+      <div class="twofa-qr" style="background:#fff;padding:14px;border-radius:14px;display:grid;place-items:center;min-height:220px;color:#17131f;text-align:center">
+        <span style="font-size:13px;font-weight:700">Generando código QR…</span>
+      </div>
       <div style="margin-top:12px;padding:10px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);border-radius:10px">
         <small style="display:block;color:#c9bce4;margin-bottom:6px">¿No puedes escanear? Introduce esta clave manualmente:</small>
         <code class="twofa-secret" style="display:block;font-family:monospace;font-size:14px;letter-spacing:1.5px;word-break:break-all;color:#ffb37a"></code>
@@ -19054,7 +19056,8 @@ function openTwoFactorSetup(onDone) {
   }).then(r => r.json()).then(d => {
     if (!d || !d.ok) { toast("No se pudo iniciar el 2FA"); close(); return; }
     card.querySelector(".twofa-secret").textContent = d.secret;
-    // QR con librería externa cargada bajo demanda.
+    // El QR se genera íntegramente en el dispositivo con una copia local de la
+    // librería. El secreto TOTP no se envía a servicios de terceros.
     renderTwoFactorQR(card.querySelector(".twofa-qr"), d.otpauth);
   }).catch(() => { toast("Error de red"); close(); });
 
@@ -19152,30 +19155,62 @@ function openTwoFactorDisable(onDone) {
   });
 }
 
-/* Renderiza el QR usando qrcode.js cargado bajo demanda (CDN).
-   Si no hay red muestra el fallback manual (código base32). */
+/* Renderiza el QR usando qrcode.js cargado desde Aura. Mantener una copia local
+   evita que un bloqueo del CDN deje únicamente un rectángulo blanco y, además,
+   impide enviar el secreto TOTP a un dominio externo. */
 function renderTwoFactorQR(container, otpauth) {
-  container.innerHTML = "";
+  if (!container || !otpauth) return;
+  const fail = () => {
+    container.innerHTML = "";
+    container.appendChild(el("div", { style:"max-width:240px;color:#251a30;font-size:13px;font-weight:700;line-height:1.4" },
+      "No se pudo generar el QR. Cierra esta ventana y vuelve a intentarlo."));
+  };
   const doRender = () => {
     try {
-      const size = 220;
-      const cnv = document.createElement("canvas");
-      cnv.width = size; cnv.height = size;
-      container.appendChild(cnv);
+      // 248 px mantiene módulos nítidos incluso en QR densos (el URI TOTP
+      // incluye emisor, cuenta y parámetros) y sigue cabiendo en 360 px.
+      const size = 248;
+      container.innerHTML = "";
+      // qrcodejs genera el canvas de forma síncrona y no necesita conexión.
       // eslint-disable-next-line no-undef
-      QRCode.toCanvas(cnv, otpauth, { width: size, margin: 1 }, (err) => {
-        if (err) container.textContent = "No se pudo generar el QR";
+      new QRCode(container, {
+        text: otpauth,
+        width: size,
+        height: size,
+        colorDark: "#111111",
+        colorLight: "#ffffff",
+        // eslint-disable-next-line no-undef
+        correctLevel: QRCode.CorrectLevel.M,
       });
-    } catch {
-      container.textContent = "QR no disponible";
+      const graphic = container.querySelector("img") || container.querySelector("canvas");
+      if (!graphic) { fail(); return; }
+      container.querySelectorAll("canvas, img").forEach((node) => {
+        node.style.display = node === graphic ? "block" : "none";
+      });
+      graphic.setAttribute("aria-label", "Código QR para configurar la verificación en dos pasos");
+      graphic.style.display = "block";
+      graphic.style.width = `${size}px`;
+      graphic.style.height = `${size}px`;
+      graphic.style.maxWidth = "100%";
+      graphic.style.objectFit = "contain";
+      graphic.style.imageRendering = "pixelated";
+    } catch (err) {
+      console.warn("No se pudo generar el QR 2FA", err);
+      fail();
     }
   };
-  if (typeof window.QRCode !== "undefined") { doRender(); return; }
-  const s = document.createElement("script");
-  s.src = "https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js";
-  s.onload = doRender;
-  s.onerror = () => { container.textContent = "QR no disponible"; };
-  document.head.appendChild(s);
+  if (typeof window.QRCode === "function") { doRender(); return; }
+  if (!window.__auraQRCodeLoader) {
+    window.__auraQRCodeLoader = new Promise((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "/vendor/qrcode.min.js?v=1";
+      s.async = true;
+      s.onload = () => typeof window.QRCode === "function" ? resolve() : reject(new Error("QR library unavailable"));
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+  window.__auraQRCodeLoader.then(doRender).catch(fail);
 }
 
 /* — V985 · Seguridad y sesiones — */
