@@ -12430,7 +12430,12 @@ function actionBtn(cls, path, onclick, label) {
 
 /* ---- Search ---- */
 let searchNowOnly = (() => { try { return localStorage.getItem("aura-search-now-only") === "1"; } catch { return false; } })();
+let searchReturnStateV1039 = null;
 function screenSearch(root) {
+  // V1039 · Al volver desde una ficha conservamos exactamente el texto, los
+  // resultados y la posición que el usuario tenía en Buscar.
+  const restoreSearch = searchReturnStateV1039;
+  searchReturnStateV1039 = null;
   // V865 · Chip "Buscan ahora" también en Buscar: filtra la cuadrícula a quien
   // está activa en los últimos ~15 min. Mismo criterio que en el mapa.
   let updateSearchFilterChrome = () => {};
@@ -12469,8 +12474,13 @@ function screenSearch(root) {
     searchFilterBadge.hidden = n === 0;
     searchResetBtn.hidden = n === 0;
   };
+  const searchInput = el("input", {
+    class: "search-input", placeholder: T("content.search.placeholder"),
+    value: restoreSearch?.query || "",
+    oninput: (e) => filterSearch(e.target.value),
+  });
   root.appendChild(el("div", { class: "search-bar" }, [
-    el("input", { class: "search-input", placeholder: T("content.search.placeholder"), oninput: (e) => filterSearch(e.target.value) }),
+    searchInput,
     nowChip,
     searchFiltersBtn,
     searchResetBtn,
@@ -12478,8 +12488,17 @@ function screenSearch(root) {
   const grid = el("div", { class: "results-grid", id: "resultsGrid" });
   root.appendChild(grid);
   // Caché de la última búsqueda para poder filtrar en cliente sin re-pedir.
-  grid._pool = null;
-  populateResults(grid);
+  grid._pool = Array.isArray(restoreSearch?.pool) ? restoreSearch.pool : null;
+  populateResults(grid, restoreSearch?.query || "").then(() => {
+    if (!restoreSearch) return;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const previousBehavior = root.style.scrollBehavior;
+      root.style.scrollBehavior = "auto";
+      root.scrollTop = Math.max(0, Number(restoreSearch.scrollTop) || 0);
+      if (viewport) viewport.scrollTop = Math.max(0, Number(restoreSearch.viewportScrollTop) || 0);
+      requestAnimationFrame(() => { root.style.scrollBehavior = previousBehavior; });
+    }));
+  });
 }
 function getSearchQuery() { const i = document.querySelector(".search-input"); return i ? i.value : ""; }
 async function populateResults(grid, filter = "") {
@@ -12548,7 +12567,16 @@ function renderResults(grid, filter = "") {
       ]),
     ]);
     decorateChattedProfile(card, u);
-    card.addEventListener("click", () => openProfile(u, "search"));
+    card.addEventListener("click", () => {
+      const searchScreen = card.closest(".screen");
+      searchReturnStateV1039 = {
+        query:getSearchQuery(),
+        scrollTop:searchScreen?.scrollTop || 0,
+        viewportScrollTop:viewport?.scrollTop || 0,
+        pool:grid._pool,
+      };
+      openProfileDetail(u, { backTo:"search", source:"search" });
+    });
     grid.appendChild(card);
     // El anuncio de prueba suma una fila propia; nunca sustituye ni elimina
     // perfiles. En listas cortas se añade tras el último resultado.
@@ -15096,12 +15124,13 @@ function screenProfileDetail(root, u, opts = {}) {
   root.classList.add("screen-profile-detail");
   document.body.classList.add("profile-open");
   const selfPreview = !!(opts && opts.selfPreview);
-  const backTo = opts && opts.backTo; // "chat" | "likes" | "nearby" | undefined
+  const backTo = opts && opts.backTo; // "chat" | "likes" | "nearby" | "search" | undefined
   const backLabel = selfPreview ? "Volver a mi perfil"
                   : backTo === "chat" ? "Volver al chat"
                   : backTo === "likes" ? "Volver a likes"
                   : backTo === "visitors" ? "Volver a visitantes"
                   : backTo === "nearby" ? "Volver a cerca de ti"
+                  : backTo === "search" ? "Volver a Buscar"
                   : "Volver a descubrir";
   const backHandler = () => {
     document.body.classList.remove("profile-open");
@@ -15119,6 +15148,10 @@ function screenProfileDetail(root, u, opts = {}) {
     } else if (backTo === "nearby") {
       showApp();
       routeTab("nearby");
+    } else if (backTo === "search") {
+      // routeTab ya restaura el caparazón de la app. Evitamos showApp() aquí
+      // porque pintaría Buscar dos veces y consumiría el estado de retorno.
+      routeTab("search");
     } else {
       showApp();
       routeTab("discover");
@@ -15364,7 +15397,7 @@ function screenProfileDetail(root, u, opts = {}) {
     ]));
   } else {
     // Actions
-    const returnTab = backTo === "likes" ? "likes" : "discover";
+    const returnTab = backTo === "likes" ? "likes" : backTo === "search" ? "search" : "discover";
     const pdReal = u._real && typeof u.id === "number" && Number.isFinite(u.id);
     // V747 · Cada acción lleva su LEYENDA debajo para que se entienda qué hace.
     const pdActItem = (btn, label) => el("div", { class: "pd-act-item" }, [
