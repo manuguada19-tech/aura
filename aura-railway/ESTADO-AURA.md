@@ -1,6 +1,28 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 3 octubre 2026 · PWA publicada: V1041 (`a4c83e3`, build `d5a23e39f2fd`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 4 octubre 2026 · PWA publicada: V1042 (`55410a5`, build `1caa20f91e98`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1042 (04/10/2026) — Administración organizada por áreas
+
+- El panel móvil prescinde del menú lateral y utiliza cinco accesos estables:
+  Inicio, Pendientes, Buscar, Recientes y Cuenta. Las herramientas quedan
+  agrupadas en seis áreas compactas sin eliminar rutas ni permisos existentes.
+- El inicio prioriza el saludo y nombre reales, el texto operativo, un mensaje
+  diario, las cuatro colas principales y los accesos por áreas. En escritorio,
+  el lateral muestra las mismas seis áreas y la identidad administrativa real.
+- Las categorías incorporan búsqueda, recuentos claros de herramientas y
+  regreso con conservación de categoría y posición. «Producto y experiencia»
+  separa Contenido y marca, Comunidad y conexión y Multimedia y privacidad.
+- Si el perfil administrativo no define nombre o foto, `/api/admin/me` usa como
+  respaldo el perfil de Aura que tenga el mismo email; sin foto se muestran
+  iniciales. KYC cambia las etiquetas visibles «Liveness» y «Prueba de vida» por
+  «Videoidentificación», conservando `liveness_score` internamente.
+- Validada solo con datos simulados en 360×800, 390×844 y 1440×900: seis áreas,
+  13 herramientas de Producto y experiencia, barra móvil y lateral de
+  escritorio correctos, sin desbordamiento horizontal ni errores visibles.
+  `node --check` y `git diff --check` correctos. Publicada en commit `55410a5`,
+  build `1caa20f91e98`; Railway respondió `/api/health` con `ready:true`. No se
+  utilizaron ni modificaron usuarios reales y no se enviaron campañas.
 
 ### V1041 (03/10/2026) — QR 2FA estable en Chrome para Android
 
