@@ -1,6 +1,29 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 4 octubre 2026 · PWA publicada: V1042 (`55410a5`, build `1caa20f91e98`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 4 octubre 2026 · PWA publicada: V1043 (`fcd7f4b`, build `155f0cfa8e18`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1043 (04/10/2026) — Administración compacta y acceso web editorial
+
+- El inicio de administración muestra un resumen compacto con saludo, texto
+  operativo, frase diaria, buscador, cuatro prioridades y seis áreas. Las
+  métricas, copias y controles anteriores permanecen disponibles en «Métricas y
+  controles avanzados»; «Ver detalle» abre directamente ese bloque.
+- La entrada web adopta un comportamiento híbrido: una primera visita abre la
+  portada pública, mientras una sesión o preferencia existente entra en la app.
+  «Conocer Aura» desde Perfil permite regresar siempre a la web informativa.
+- Mientras Aura está en revisión o beta, la portada prioriza «Leer las guías» y
+  conserva «Acceso de pruebas» como enlace secundario. Al abrir el servicio o
+  pausar únicamente los registros, los botones cambian automáticamente según
+  los mismos ajustes que utiliza la aplicación.
+- Se incorpora «Sobre Aura» con responsable, proceso editorial, correcciones,
+  financiación y separación entre publicidad y producto. Las guías identifican
+  al equipo editorial, el sitemap incluye la nueva página y los datos de
+  Términos, Privacidad y Contacto quedan unificados y actualizados.
+- Validada exclusivamente con datos simulados en los cuatro estados de acceso y
+  en 360×800, 390×844 y 1440×900, sin desbordamiento horizontal ni errores de
+  JavaScript. `node --check` y `git diff --check` correctos. Publicada en el
+  commit `fcd7f4b`, build `155f0cfa8e18`; Railway respondió `ready:true`. No se
+  utilizaron ni modificaron usuarios reales y no se enviaron campañas.
 
 ### V1042 (04/10/2026) — Administración organizada por áreas
 
