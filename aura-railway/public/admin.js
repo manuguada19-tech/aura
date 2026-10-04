@@ -813,14 +813,25 @@ async function openAdminProfile() {
   drawer.open(node);
 }
 
+let __adminIdentity = { name: "Administrador", role: "Superadministrador", avatar: "" };
+
 /* Apply admin user (avatar, name, role) to sidebar + topbar. */
 function applyAdminUserUi(u) {
-  const av = u.avatar || "https://i.pravatar.cc/160?img=12";
+  __adminIdentity = {
+    name: u.name || __adminIdentity.name || "Administrador",
+    role: u.role || __adminIdentity.role || "Superadministrador",
+    avatar: u.avatar || "",
+  };
+  const initials = (__adminIdentity.name.match(/\p{L}+/gu) || ["A"])
+    .slice(0, 2).map(part => part[0].toUpperCase()).join("");
   document.querySelectorAll(".au-avatar, .tb-avatar").forEach(n => {
-    n.style.backgroundImage = `url('${av}')`;
+    n.style.backgroundImage = __adminIdentity.avatar ? `url('${__adminIdentity.avatar}')` : "none";
+    n.textContent = __adminIdentity.avatar ? "" : initials;
+    n.classList.toggle("uses-initials", !__adminIdentity.avatar);
   });
-  document.querySelectorAll(".au-name").forEach(n => { n.textContent = u.name || "Administrador"; });
-  document.querySelectorAll(".au-role").forEach(n => { n.textContent = u.role || "Superadministrador"; });
+  document.querySelectorAll(".au-name").forEach(n => { n.textContent = __adminIdentity.name; });
+  document.querySelectorAll(".au-role").forEach(n => { n.textContent = __adminIdentity.role; });
+  document.querySelectorAll(".admin-greeting-name").forEach(n => { n.textContent = __adminIdentity.name.split(/\s+/)[0]; });
 }
 // Initial load
 (async () => {
@@ -1619,11 +1630,12 @@ const drawer = {
 };
 
 /* Nav router */
-$("#nav").addEventListener("click", (e) => {
-  const link = e.target.closest(".nav-link"); if (!link) return;
-  $$(".nav-link", $("#nav")).forEach(l => l.classList.toggle("active", l === link));
-  route(link.dataset.view);
-  if (typeof window.__closeSidebar === "function") window.__closeSidebar();
+document.querySelectorAll("#nav, #adminHubNav").forEach(navNode => {
+  navNode.addEventListener("click", (e) => {
+    const link = e.target.closest(".nav-link"); if (!link) return;
+    route(link.dataset.view);
+    if (typeof window.__closeSidebar === "function") window.__closeSidebar();
+  });
 });
 
 /* Inyecta en el sidebar entradas de secciones nuevas que no vienen en el HTML
@@ -1671,6 +1683,7 @@ $("#nav").addEventListener("click", (e) => {
   const nav = document.getElementById("nav");
   const sidebar = document.getElementById("sidebar");
   if (!nav || !sidebar) return;
+  if (document.getElementById("adminHubNav")) return;
   const readList = (key, fallback = []) => {
     try { const v = JSON.parse(localStorage.getItem(key) || "null"); return Array.isArray(v) ? v : fallback; }
     catch { return fallback; }
@@ -1798,13 +1811,13 @@ $("#nav").addEventListener("click", (e) => {
   });
 })();
 
-/* V962 · Barra inferior móvil. Las mejoras importantes dejan de depender de
-   que el administrador sepa abrir y recorrer todo el menú lateral. */
+/* V1042 · Navegación principal móvil: cinco destinos estables, sin cajón
+   lateral ni listas interminables. */
 (function installMobileAdminTools() {
   if (document.querySelector(".mobile-admin-tools")) return;
   const bar = el("nav", { class: "mobile-admin-tools", "aria-label": "Accesos rápidos del panel" });
-  const tool = (icon, label, action) => {
-    const b = el("button", { type: "button" }, [el("span", {}, icon), el("small", {}, label)]);
+  const tool = (icon, label, view, action) => {
+    const b = el("button", { type: "button", "data-mobile-view": view }, [el("span", {}, icon), el("small", {}, label)]);
     b.addEventListener("click", action); return b;
   };
   const onDashboard = (selector) => {
@@ -1813,11 +1826,11 @@ $("#nav").addEventListener("click", (e) => {
     else { document.querySelector('[data-view="dashboard"]')?.click(); setTimeout(scroll, 350); }
   };
   bar.append(
-    tool("☰", "Menú", () => document.getElementById("menuBtn")?.click()),
-    tool("⌕", "Buscar", () => document.getElementById("mobileSearchBtn")?.click()),
-    tool("!", "Pendientes", () => onDashboard(".ops-center")),
-    tool("●", "Estado", () => onDashboard(".ops-health")),
-    tool("⚙", "Mi panel", () => openDashboardPrefs()),
+    tool("⌂", "Inicio", "dashboard", () => route("dashboard")),
+    tool("!", "Pendientes", "pending", () => onDashboard(".ops-center")),
+    tool("⌕", "Buscar", "hub_all", () => route("hub_all")),
+    tool("◷", "Recientes", "hub_recent", () => route("hub_recent")),
+    tool("○", "Cuenta", "account", () => openAdminProfile()),
   );
   document.body.appendChild(bar);
 })();
@@ -1840,6 +1853,8 @@ $("#nav").addEventListener("click", (e) => {
 let __currentAdminView = "dashboard";
 let __dashboardNavigation = null;
 let __dashboardRestoreScroll = null;
+let __adminHubNavigation = null;
+let __adminHubRestoreScroll = null;
 
 function openDashboardSection(view, label) {
   const container = $("#view");
@@ -1855,6 +1870,34 @@ function returnToDashboard() {
   __dashboardRestoreScroll = Number(__dashboardNavigation?.scrollTop || 0);
   __dashboardNavigation = null;
   route("dashboard");
+}
+
+function rememberAdminRecent(view) {
+  if (!view || view === "dashboard" || view.startsWith("hub_")) return;
+  try {
+    const old = JSON.parse(localStorage.getItem("aura-admin-recent") || "[]");
+    const next = [view, ...(Array.isArray(old) ? old : []).filter(item => item !== view)].slice(0, 8);
+    localStorage.setItem("aura-admin-recent", JSON.stringify(next));
+  } catch (e) {}
+}
+
+function openAdminTool(view, hubView, hubLabel) {
+  const container = document.getElementById("view");
+  __adminHubNavigation = {
+    target: view,
+    hub: hubView,
+    label: hubLabel || "Herramientas",
+    scrollTop: Number(window.scrollY || container?.scrollTop || 0),
+  };
+  rememberAdminRecent(view);
+  route(view);
+}
+
+function returnToAdminHub() {
+  const nav = __adminHubNavigation;
+  if (!nav?.hub) return route("dashboard");
+  __adminHubRestoreScroll = Number(nav.scrollTop || 0);
+  route(nav.hub);
 }
 
 /* V967 · Actualización en tiempo real del panel. El servidor avisa por SSE
@@ -1984,6 +2027,115 @@ function puedeVerVista(view) {
   if (!necesario) return true;
   return nivelUsuario() >= necesario;
 }
+
+/* V1042 · Una única fuente de verdad para la navegación del panel. Las rutas
+   existentes no desaparecen: se agrupan en seis áreas legibles y cada fila
+   continúa pasando por puedeVerVista(), igual que antes. */
+const ADMIN_NAV_CATEGORIES = [
+  {
+    id: "users", view: "hub_users", title: "Usuarios y seguridad", tone: "blue", icon: "👥",
+    desc: "Cuentas, identidad, accesos y dispositivos",
+    items: [
+      ["users", "Usuarios", "Cuentas, estado, bloqueos y sesiones"],
+      ["traveler", "Modo viajero", "Estancias, destinos y límites"],
+      ["user_activity", "Actividad por usuario", "Historial individual y acciones"],
+      ["profile_visits", "Visitas de perfiles", "Quién ha visitado cada perfil"],
+      ["kyc", "Verificación de edad", "Documentos y videoidentificación"],
+      ["duplicates", "Posibles duplicados", "Cuentas que requieren comprobación"],
+      ["infractions", "Infracciones", "Sanciones y reincidencias"],
+      ["otp", "Códigos OTP", "Verificaciones y códigos enviados"],
+      ["device_incidents", "Dispositivos perdidos", "Bloqueo, alarma y mensajes remotos"],
+      ["invites", "Invitaciones", "Códigos de acceso para testers"],
+    ],
+  },
+  {
+    id: "moderation", view: "hub_moderation", title: "Moderación y soporte", tone: "rose", icon: "🛡️",
+    desc: "Revisiones, denuncias, ayuda y conversaciones",
+    items: [
+      ["moderation", "Moderación", "Perfiles y contenido pendiente"],
+      ["fx_moderation_ai", "Fotos por aprobar", "Cola de revisión asistida"],
+      ["reports", "Denuncias", "Reportes abiertos de usuarios"],
+      ["appeals", "Apelaciones", "Revisión de sanciones y bloqueos"],
+      ["tickets", "Tickets de soporte", "Consultas y peticiones activas"],
+      ["chats", "Chats", "Monitorización y moderación"],
+      ["incidents", "Incidencias técnicas", "Seguimiento de casos críticos"],
+    ],
+  },
+  {
+    id: "money", view: "hub_money", title: "Monetización", tone: "green", icon: "💳",
+    desc: "Planes, pagos, promociones y publicidad",
+    items: [
+      ["subscriptions", "Suscripciones", "Planes activos y renovaciones"],
+      ["payments", "Pagos y facturación", "Ingresos, cobros y devoluciones"],
+      ["promos", "Campañas y promociones", "Códigos y descuentos"],
+      ["reads", "Lecturas de chat", "Créditos y packs de lectura"],
+      ["boost", "Boost / Impulso", "Compras y activaciones"],
+      ["ads", "Anuncios", "Configuración publicitaria"],
+      ["fx_rewards", "Recompensas y cupones", "Premios, reglas y canjes"],
+    ],
+  },
+  {
+    id: "comms", view: "hub_comms", title: "Comunicación y campañas", tone: "violet", icon: "🔔",
+    desc: "Avisos, email, campañas y acceso beta",
+    items: [
+      ["notifications", "Notificaciones", "Avisos push e internos"],
+      ["broadcasts", "Canal Equipo de Aura", "Mensajes oficiales dentro de la app"],
+      ["fx_notifications", "Notificaciones enviadas", "Historial y estado de entrega"],
+      ["fx_push_ctx", "Push contextuales", "Automatizaciones por comportamiento"],
+      ["saved_segments", "Segmentos guardados", "Audiencias reutilizables"],
+      ["push_campaigns", "Campañas push", "Creación, programación y resultados"],
+      ["emails", "Plantillas de email", "Mensajes transaccionales"],
+      ["newsletter", "Newsletter", "Campañas generales y segmentadas"],
+      ["popups", "Popups y avisos in-app", "Mensajes destacados dentro de Aura"],
+      ["maintenance_emails", "Emails de mantenimiento", "Comunicaciones de servicio"],
+      ["waitlist", "Lista de espera beta", "Solicitudes de acceso"],
+    ],
+  },
+  {
+    id: "experience", view: "hub_experience", title: "Producto y experiencia", tone: "orange", icon: "✨",
+    desc: "Contenido, comunidad y funciones de Aura",
+    groups: [
+      ["Contenido y marca", ["content", "design", "match_celebrate", "fx_stickers"]],
+      ["Comunidad y conexión", ["fx_now_status", "fx_icebreakers", "fx_stories", "fx_events", "fx_achievements", "fx_zones"]],
+      ["Multimedia y privacidad", ["fx_video", "fx_voice_notes", "fx_vault"]],
+    ],
+    items: [
+      ["content", "Textos de la app", "Copias, idiomas y documentos legales"],
+      ["design", "Diseño", "Colores, tipografía y marca"],
+      ["match_celebrate", "Match y celebraciones", "Animaciones y mensajes de conexión"],
+      ["fx_now_status", "Estados y minutos", "Configuración de Busco ahora"],
+      ["fx_icebreakers", "Rompehielos", "Preguntas para iniciar conversaciones"],
+      ["fx_stickers", "Stickers", "Biblioteca y disponibilidad"],
+      ["fx_stories", "Historias 24 h", "Publicaciones temporales"],
+      ["fx_events", "Quedadas", "Eventos y encuentros"],
+      ["fx_achievements", "Logros y XP", "Progreso y recompensas"],
+      ["fx_zones", "Zonas", "Áreas y disponibilidad"],
+      ["fx_video", "Videollamadas", "Control de la función"],
+      ["fx_voice_notes", "Notas de voz", "Configuración multimedia"],
+      ["fx_vault", "Bóveda cifrada", "Contenido privado protegido"],
+    ],
+  },
+  {
+    id: "system", view: "hub_system", title: "Sistema y análisis", tone: "slate", icon: "⚙️",
+    desc: "Analítica, permisos, privacidad y operación",
+    items: [
+      ["stats", "Estadísticas", "Métricas y evolución general"],
+      ["fx_heatmap", "Mapa de calor GPS", "Distribución agregada por zonas"],
+      ["user_funnel", "Embudo de usuarios", "Conversión por cada etapa"],
+      ["fx_ab", "A/B tests", "Experimentos activos y resultados"],
+      ["fx_gdpr", "GDPR", "Privacidad y solicitudes"],
+      ["staff", "Staff y permisos", "Administradores y moderadores"],
+      ["audit", "Auditoría", "Registro de acciones administrativas"],
+      ["settings", "Ajustes", "Configuración general de la aplicación"],
+      ["logs", "Logs del sistema", "Eventos técnicos y errores"],
+      ["backup", "Backup", "Exportación e importación segura"],
+    ],
+  },
+];
+
+function adminCategoryForView(view) {
+  return ADMIN_NAV_CATEGORIES.find(category => category.items.some(item => item[0] === view));
+}
 function aplicarMenuPorRango() {
   const nivel = nivelUsuario();
   if (nivel >= 4) return; // el dueño lo ve todo
@@ -2000,6 +2152,11 @@ function aplicarMenuPorRango() {
   document.querySelectorAll("[data-view]").forEach(n => {
     const v = n.getAttribute("data-view");
     if (!puedeVerVista(v)) n.style.display = "none";
+  });
+  document.querySelectorAll("#adminHubNav [data-view^='hub_']").forEach(link => {
+    if (link.dataset.view === "hub_all") return;
+    const category = ADMIN_NAV_CATEGORIES.find(item => item.view === link.dataset.view);
+    if (category && !category.items.some(item => puedeVerVista(item[0]))) link.style.display = "none";
   });
   /* Los títulos de sección que se quedan sin ninguna entrada visible se esconden
      también: un título con nada debajo parece un fallo de carga.
@@ -2060,7 +2217,161 @@ function guardedRoot(root, gen) {
   });
 }
 
+let __adminOperationsSnapshot = null;
+
+function pendingCountForAdminView(view) {
+  const queues = Array.isArray(__adminOperationsSnapshot?.queues) ? __adminOperationsSnapshot.queues : [];
+  return queues.filter(queue => queue.view === view || queue.view_name === view)
+    .reduce((sum, queue) => sum + Number(queue.count || 0), 0);
+}
+
+function syncAdminNavigation(view) {
+  const category = adminCategoryForView(view);
+  const activeView = category?.view || view;
+  document.querySelectorAll("#adminHubNav .nav-link").forEach(link => {
+    link.classList.toggle("active", link.dataset.view === activeView);
+  });
+  document.querySelectorAll(".mobile-admin-tools [data-mobile-view]").forEach(button => {
+    const key = button.dataset.mobileView;
+    button.classList.toggle("active", key === view || (key === "dashboard" && view === "dashboard"));
+  });
+  const context = document.querySelector(".admin-topbar-context");
+  if (context) {
+    const title = view === "dashboard" ? "Panel principal" : category?.title || (view === "hub_all" ? "Todas las herramientas" : view === "hub_recent" ? "Recientes" : "Administración");
+    context.querySelector("strong").textContent = title;
+    context.querySelector("small").textContent = view === "dashboard" ? "Vista general de administración" : "Panel de administración de Aura";
+  }
+}
+
+function adminToolRow(item, category) {
+  const [view, title, desc] = item;
+  const pending = pendingCountForAdminView(view);
+  const row = el("button", {
+    class: `admin-tool-row tone-${category.tone}`,
+    type: "button",
+    "data-admin-tool": view,
+  }, [
+    el("span", { class: "admin-tool-icon", "aria-hidden": "true" }, category.icon),
+    el("span", { class: "admin-tool-copy" }, [el("strong", {}, title), el("small", {}, desc)]),
+    pending ? el("span", { class: "admin-tool-pending" }, fmt.num(pending)) : null,
+    el("span", { class: "admin-tool-arrow", "aria-hidden": "true" }, "›"),
+  ]);
+  row.addEventListener("click", () => openAdminTool(view, category.view, category.title));
+  return row;
+}
+
+function adminCategoryHeader(category, count) {
+  return el("div", { class: "admin-directory-head" }, [
+    el("button", { class: "admin-directory-back", type: "button", onclick: () => route("dashboard"), "aria-label": "Volver al inicio" }, "←"),
+    el("div", {}, [
+      el("small", { class: "admin-directory-kicker" }, `${count} herramientas`),
+      el("h1", {}, category.title),
+      el("p", {}, category.desc),
+    ]),
+  ]);
+}
+
+function viewAdminCategoryDirectory(root, requestedView) {
+  const category = ADMIN_NAV_CATEGORIES.find(item => item.view === requestedView) || ADMIN_NAV_CATEGORIES[0];
+  const allowed = category.items.filter(item => puedeVerVista(item[0]));
+  root.appendChild(adminCategoryHeader(category, allowed.length));
+  const search = el("input", { class: "admin-directory-search", type: "search", placeholder: "Buscar dentro de esta área…", "aria-label": "Buscar herramienta" });
+  root.appendChild(search);
+  const body = el("div", { class: "admin-directory-body" });
+  root.appendChild(body);
+
+  const paint = () => {
+    const query = search.value.trim().toLocaleLowerCase("es");
+    body.innerHTML = "";
+    const matches = allowed.filter(item => `${item[1]} ${item[2]}`.toLocaleLowerCase("es").includes(query));
+    if (!matches.length) {
+      body.appendChild(el("div", { class: "admin-directory-empty" }, "No hay herramientas con ese nombre."));
+      return;
+    }
+    if (category.groups) {
+      category.groups.forEach(([label, views]) => {
+        const groupItems = matches.filter(item => views.includes(item[0]));
+        if (!groupItems.length) return;
+        body.appendChild(el("h2", { class: "admin-tool-group-title" }, label));
+        const list = el("div", { class: "admin-tool-list" });
+        groupItems.forEach(item => list.appendChild(adminToolRow(item, category)));
+        body.appendChild(list);
+      });
+    } else {
+      const list = el("div", { class: "admin-tool-list" });
+      matches.forEach(item => list.appendChild(adminToolRow(item, category)));
+      body.appendChild(list);
+    }
+  };
+  search.addEventListener("input", paint);
+  paint();
+  if (Number.isFinite(__adminHubRestoreScroll)) {
+    const top = __adminHubRestoreScroll;
+    __adminHubRestoreScroll = null;
+    requestAnimationFrame(() => window.scrollTo({ top }));
+  }
+}
+
+function viewAllAdminTools(root) {
+  root.appendChild(el("div", { class: "admin-directory-head" }, [
+    el("button", { class: "admin-directory-back", type: "button", onclick: () => route("dashboard"), "aria-label": "Volver al inicio" }, "←"),
+    el("div", {}, [el("small", { class: "admin-directory-kicker" }, "Acceso directo"), el("h1", {}, "Todas las herramientas"), el("p", {}, "Encuentra cualquier función del panel sin recorrer menús.")]),
+  ]));
+  const search = el("input", { class: "admin-directory-search", type: "search", placeholder: "Escribe: pagos, usuarios, KYC…", "aria-label": "Buscar en todas las herramientas", autofocus: "autofocus" });
+  root.appendChild(search);
+  const body = el("div", { class: "admin-all-tools" });
+  root.appendChild(body);
+  const paint = () => {
+    const query = search.value.trim().toLocaleLowerCase("es");
+    body.innerHTML = "";
+    ADMIN_NAV_CATEGORIES.forEach(category => {
+      const items = category.items.filter(item => puedeVerVista(item[0]) && `${item[1]} ${item[2]} ${category.title}`.toLocaleLowerCase("es").includes(query));
+      if (!items.length) return;
+      const section = el("section", { class: "admin-all-group" }, [
+        el("h2", {}, [document.createTextNode(category.title), el("span", {}, String(items.length))]),
+      ]);
+      const list = el("div", { class: "admin-tool-list" });
+      items.forEach(item => list.appendChild(adminToolRow(item, category)));
+      section.appendChild(list); body.appendChild(section);
+    });
+    if (!body.children.length) body.appendChild(el("div", { class: "admin-directory-empty" }, "No hay herramientas con ese nombre."));
+  };
+  search.addEventListener("input", paint);
+  paint();
+}
+
+function viewRecentAdminTools(root) {
+  root.appendChild(el("div", { class: "admin-directory-head" }, [
+    el("button", { class: "admin-directory-back", type: "button", onclick: () => route("dashboard"), "aria-label": "Volver al inicio" }, "←"),
+    el("div", {}, [el("small", { class: "admin-directory-kicker" }, "Accesos rápidos"), el("h1", {}, "Recientes"), el("p", {}, "Las últimas herramientas que has utilizado en este dispositivo.")]),
+  ]));
+  let recent = [];
+  try { recent = JSON.parse(localStorage.getItem("aura-admin-recent") || "[]"); } catch (e) {}
+  const found = (Array.isArray(recent) ? recent : []).map(view => {
+    const category = adminCategoryForView(view);
+    return category ? { category, item: category.items.find(item => item[0] === view) } : null;
+  }).filter(entry => entry?.item && puedeVerVista(entry.item[0]));
+  if (!found.length) return root.appendChild(el("div", { class: "admin-directory-empty" }, "Tus accesos recientes aparecerán aquí."));
+  const list = el("div", { class: "admin-tool-list" });
+  found.forEach(entry => list.appendChild(adminToolRow(entry.item, entry.category)));
+  root.appendChild(list);
+}
+
+function ensureAdminHubReturn(container, view) {
+  if (__adminHubNavigation?.target !== view || container.querySelector(".vt-back, .admin-hub-return")) return;
+  const back = el("button", {
+    class: "btn ghost sm admin-hub-return",
+    type: "button",
+    onclick: returnToAdminHub,
+  }, `← ${__adminHubNavigation.label}`);
+  container.insertBefore(back, container.firstChild);
+}
+
 function route(view) {
+  view = view || "dashboard";
+  syncAdminNavigation(view);
+  if (!view.startsWith("hub_") && view !== __adminHubNavigation?.target) __adminHubNavigation = null;
+  rememberAdminRecent(view);
   if (view === "dashboard" && __dashboardRestoreScroll === null) __dashboardNavigation = null;
   if (view !== "dashboard" && __dashboardNavigation?.target !== view) __dashboardNavigation = null;
   /* Blindaje: esconder la entrada del menú no basta, porque el hash se escribe a
@@ -2092,6 +2403,14 @@ function route(view) {
   }
   const map = {
     dashboard: viewDashboard, users: viewUsers, traveler: viewTravelerAdmin, profile_visits: viewProfileVisitsV1005, moderation: viewModeration,
+    hub_users: root => viewAdminCategoryDirectory(root, "hub_users"),
+    hub_moderation: root => viewAdminCategoryDirectory(root, "hub_moderation"),
+    hub_money: root => viewAdminCategoryDirectory(root, "hub_money"),
+    hub_comms: root => viewAdminCategoryDirectory(root, "hub_comms"),
+    hub_experience: root => viewAdminCategoryDirectory(root, "hub_experience"),
+    hub_system: root => viewAdminCategoryDirectory(root, "hub_system"),
+    hub_all: viewAllAdminTools,
+    hub_recent: viewRecentAdminTools,
     reports: viewReports, appeals: viewAppeals, tickets: viewTickets, chats: viewChatsAdmin, otp: viewOtpCodes,
     subscriptions: viewSubscriptions,
     payments: viewPayments, promos: viewPromos, reads: viewReadsAdmin, boost: viewBoostAdmin, stats: viewStats,
@@ -2116,7 +2435,7 @@ function route(view) {
     // Legacy: 'live' redirige a chats (fusionado en V410)
     live: viewChatsAdmin,
   };
-  __currentAdminView = view || "dashboard";
+  __currentAdminView = view;
   const gen = ++__routeGen;
   const container = $("#view");
   container.innerHTML = "";
@@ -2137,7 +2456,7 @@ function route(view) {
         loading.remove();
         Promise.resolve(now[view](guardedRoot(container, gen), { el, $, api: window.__adminApi }))
           .catch(err => { console.error(err); if (gen === __routeGen) container.appendChild(el("div", { class: "error" }, "Error: " + (err && err.message || err))); })
-          .finally(() => { if (gen === __routeGen) labelTables(container); });
+          .finally(() => { if (gen === __routeGen) { ensureAdminHubReturn(container, view); labelTables(container); } });
       } else if (++tries > 30) {
         clearInterval(wait);
         if (gen !== __routeGen) return; // la vista ya no es la que espera
@@ -2153,6 +2472,7 @@ function route(view) {
     .finally(() => {
       loading.remove();
       if (gen !== __routeGen) return; // otro route() ganó: ni etiquetar tablas ajenas
+      ensureAdminHubReturn(container, view);
       labelTables(container);
       if (view === "dashboard" && Number.isFinite(__dashboardRestoreScroll)) {
         const restoreTop = __dashboardRestoreScroll;
@@ -2281,12 +2601,13 @@ function viewTitle(t, sub, actions=[]) {
   const leftCol = el("div", { class: "vt-left" });
   if (!isDashboard) {
     const fromDashboard = __dashboardNavigation?.target === __currentAdminView;
+    const fromHub = __adminHubNavigation?.target === __currentAdminView;
     const backBtn = el("button", {
       class: "btn btn-ghost sm vt-back",
       type: "button",
-      title: fromDashboard ? `Volver a ${__dashboardNavigation.label}` : "Volver al panel principal",
-      onclick: () => fromDashboard ? returnToDashboard() : route("dashboard"),
-    }, fromDashboard ? `← ${__dashboardNavigation.label}` : "← Panel principal");
+      title: fromHub ? `Volver a ${__adminHubNavigation.label}` : fromDashboard ? `Volver a ${__dashboardNavigation.label}` : "Volver al panel principal",
+      onclick: () => fromHub ? returnToAdminHub() : fromDashboard ? returnToDashboard() : route("dashboard"),
+    }, fromHub ? `← ${__adminHubNavigation.label}` : fromDashboard ? `← ${__dashboardNavigation.label}` : "← Panel principal");
     leftCol.appendChild(backBtn);
   }
   leftCol.appendChild(el("div", { class: "vt-heading" }, [
@@ -3496,6 +3817,7 @@ async function viewDashboard(root){
   const activity = activityAvailable && Array.isArray(activityResult.value) ? activityResult.value : [];
   const zones = zonesAvailable && Array.isArray(zonesResult.value) ? zonesResult.value : [];
   const operations = operationsAvailable ? operationsResult.value : null;
+  __adminOperationsSnapshot = operations;
   const loadedAt = new Date();
   const failedBlocks = [
     !statsAvailable && "métricas",
@@ -3514,18 +3836,37 @@ async function viewDashboard(root){
   const sparkOnline = Array.isArray(stats.online_series) ? stats.online_series : []; // sin histórico real de "en línea"
   const sparkMatches = Array.isArray(stats.matches_7d) ? stats.matches_7d : [];
 
-  root.appendChild(proHero({
-    icon: "💗",
-    title: "Panel principal · Aura",
-    desc: "Vista general en tiempo real de la actividad, ingresos y salud de la plataforma.",
-    gradA: "#ec4899", gradB: "#7c3aed",
-    stats: [
-      { v: dashboardMetric(stats.total), l: "Usuarios" },
-      { v: dashboardMetric(stats.online), l: "En línea" },
-      { v: dashboardMetric(stats.mrr, fmt.eur), l: "MRR" },
-      { v: dashboardMetric(stats.matches), l: "Matches" },
-    ],
-  }));
+  const hour = new Date().getHours();
+  const greeting = hour < 13 ? "Buenos días" : hour < 20 ? "Buenas tardes" : "Buenas noches";
+  const firstName = (__adminIdentity.name || "Administrador").trim().split(/\s+/)[0];
+  const queues = Array.isArray(operations?.queues) ? operations.queues : [];
+  const pendingTotal = queues.reduce((sum, queue) => sum + Number(queue.count || 0), 0);
+  const health = operations?.health || {};
+  const hasIncident = health.status && (health.status !== "ok" || health.ready === false || health.database?.ok === false);
+  const operationalText = !operationsAvailable
+    ? "No se pudo comprobar ahora el estado operativo. Puedes volver a intentarlo desde el centro de trabajo."
+    : hasIncident
+      ? "Hay una incidencia técnica que requiere revisión."
+      : pendingTotal > 0
+        ? `Tienes ${fmt.num(pendingTotal)} elementos que requieren atención.`
+        : "Todo al día. Aura funciona correctamente.";
+  const dailyMessages = [
+    "Cada revisión resuelta hace Aura más segura.",
+    "La claridad en cada decisión protege a toda la comunidad.",
+    "Un panel ordenado permite actuar mejor y más rápido.",
+    "Cuidar cada detalle también es cuidar la experiencia de Aura.",
+    "Las mejores comunidades se construyen con atención constante.",
+  ];
+  const dayIndex = Math.floor(Date.now() / 86400000) % dailyMessages.length;
+  root.appendChild(el("section", { class: "admin-dashboard-intro" }, [
+    el("small", { class: "admin-dashboard-kicker" }, "CENTRO DE CONTROL"),
+    el("h1", {}, [document.createTextNode(`${greeting}, `), el("span", { class: "admin-greeting-name" }, firstName)]),
+    el("p", { class: "admin-dashboard-lead" }, "Lo importante primero; el resto, organizado por áreas."),
+    el("p", { class: "admin-dashboard-daily" }, dailyMessages[dayIndex]),
+    el("div", { class: `admin-operational-message${hasIncident ? " attention" : pendingTotal ? " pending" : " ok"}`, role: "status" }, [
+      el("span", { "aria-hidden": "true" }), el("strong", {}, operationalText),
+    ]),
+  ]));
 
   const kpisPro = document.createElement("div");
   kpisPro.className = "pro-kpis";
@@ -3557,11 +3898,11 @@ async function viewDashboard(root){
   dashPrefs.kpis.forEach(key => { if (kpiCards[key]) kpisPro.appendChild(kpiCards[key]); });
   root.appendChild(kpisPro);
 
-  root.appendChild(viewTitle("Panel principal",
-    "Vista general de tu plataforma en tiempo real.",
-    [ btn("Personalizar", "ghost sm", openDashboardPrefs),
-      btn("Exportar usuarios", "ghost sm", () => downloadCSV("users")),
-      btn("＋ Ir a campañas", "primary sm", () => openDashboardSection("notifications", "Panel principal")) ]));
+  root.appendChild(el("div", { class: "admin-dashboard-actions" }, [
+    btn("Personalizar", "ghost sm", openDashboardPrefs),
+    btn("Exportar usuarios", "ghost sm", () => downloadCSV("users")),
+    btn("Ir a campañas", "primary sm", () => openDashboardSection("notifications", "Panel principal")),
+  ]));
 
   root.appendChild(el("div", { class: `dashboard-freshness${failedBlocks.length ? " attention" : ""}` }, [
     el("div", {}, [
@@ -3690,7 +4031,7 @@ async function viewDashboard(root){
   } catch (e) { /* silent */ }
 
   // Section cards grid — quick access shortcuts, especially handy on mobile
-  const SECTION_CARDS = [
+  const LEGACY_SECTION_CARDS = [
     { id: "users", title: "Usuarios", desc: "Cuentas, verificaciones y bloqueos.", cls: "rose",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4 0-8 2-8 6v2h16v-2c0-4-4-6-8-6z"/></svg>` },
     { id: "traveler", title: "Modo viajero", desc: "Estancias, itinerarios y límites por plan.", cls: "blue",
@@ -3752,14 +4093,23 @@ async function viewDashboard(root){
     { id: "device_incidents", title: "Dispositivos perdidos", desc: "Reportes de robo/pérdida, alarma remota y bloqueo.", cls: "red",
       ico: `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M17 2H7a2 2 0 00-2 2v16a2 2 0 002 2h10a2 2 0 002-2V4a2 2 0 00-2-2zm-5 18a1 1 0 110-2 1 1 0 010 2zM17 16H7V4h10v12z"/></svg>` },
   ];
-  const sectionsWrap = el("div", { class: "sections-shortcut" }, [
+  const SECTION_CARDS = ADMIN_NAV_CATEGORIES
+    .map(category => ({
+      id: category.view,
+      title: category.title,
+      desc: category.desc,
+      cls: category.tone,
+      count: category.items.filter(item => puedeVerVista(item[0])).length,
+      ico: `<span aria-hidden="true">${category.icon}</span>`,
+    }))
+    .filter(category => category.count > 0);
+  const sectionsWrap = el("div", { class: "sections-shortcut admin-area-shortcuts" }, [
     el("div", { class: "sections-shortcut-head" }, [
-      el("h3", {}, "Accesos rápidos"),
-      el("small", {}, "Toca una sección para abrirla"),
+      el("h3", {}, "Áreas de administración"),
+      el("button", { class: "admin-see-all", type: "button", onclick: () => route("hub_all") }, "Ver todas"),
     ]),
   ]);
   const cardsGrid = el("div", { class: "section-cards" });
-  SECTION_CARDS.sort((a, b) => a.title.localeCompare(b.title, "es", { sensitivity: "base" }));
   SECTION_CARDS.forEach(s => {
     const card = el("button", { class: `section-card ${s.cls}`, "data-target": s.id, type: "button" }, [
       el("div", { class: "sc-ico", html: s.ico }),
@@ -3767,10 +4117,11 @@ async function viewDashboard(root){
         el("h4", {}, s.title),
         el("p", {}, s.desc),
       ]),
+      el("span", { class: "sc-count" }, `${s.count} herramientas`),
       el("span", { class: "sc-arrow", html: `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M9 6l6 6-6 6"/></svg>` }),
     ]);
     card.addEventListener("click", () => {
-      openDashboardSection(s.id, "Accesos rápidos");
+      route(s.id);
       // Visual feedback on the main view
       const mainView = document.getElementById("view");
       if (mainView) {
@@ -3785,7 +4136,14 @@ async function viewDashboard(root){
     cardsGrid.appendChild(card);
   });
   sectionsWrap.appendChild(cardsGrid);
-  if (dashPrefs.shortcuts) root.appendChild(sectionsWrap);
+  if (dashPrefs.shortcuts) {
+    const kpisNode = root.querySelector(".pro-kpis");
+    const operationsNode = root.querySelector(".ops-center");
+    if (kpisNode && operationsNode) root.insertBefore(operationsNode, kpisNode);
+    if (operationsNode) operationsNode.after(sectionsWrap);
+    else if (kpisNode) root.insertBefore(sectionsWrap, kpisNode);
+    else root.appendChild(sectionsWrap);
+  }
 
   const kpis = [
     { title: "Usuarios totales", val: dashboardMetric(stats.total), sub: statsAvailable ? `${fmt.num(stats.active || 0)} activos` : "Sin datos", cls: "rose", target: "users",
@@ -18199,7 +18557,7 @@ async function openKycDetail(id) {
       ["Edad calculada", v.extracted_age ?? "—"],
       ["Doc score",      v.doc_score],
       ["Face match",     v.selfie_match_score],
-      ["Liveness",       v.liveness_score],
+      ["Videoidentificación (detección de vida)", v.liveness_score],
       ["Doc hash",       v.doc_hash ? String(v.doc_hash).slice(0, 24) + "…" : "—"],
       ["IP",             v.ip || "—"],
       ["Fingerprint",    v.fingerprint ? String(v.fingerprint).slice(0, 16) + "…" : "—"],
@@ -18342,6 +18700,8 @@ async function viewKyc(root) {
         el("h1", { style: "margin:0;font-size:22px;" }, "Verificación de edad (KYC)"),
         el("p", { class: "muted", style: "margin:2px 0 0;" },
           "Cola de revisiones, decisiones de Didit y dispositivos bloqueados. Las imágenes se conservan cifradas un máximo de 30 días."),
+        el("p", { class: "muted", style: "margin:5px 0 0;font-size:11.5px;" },
+          "La videoidentificación verifica mediante un vídeo corto que la persona está presente y no utiliza una fotografía o grabación reproducida."),
       ]),
     ]),
   ]));
@@ -18585,7 +18945,7 @@ async function viewKyc(root) {
             <td data-label="Edad">${row.extracted_age != null ? row.extracted_age : "—"}</td>
             <td data-label="Documento">${scoreCell(row.doc_score)}</td>
             <td data-label="Rostro">${scoreCell(row.selfie_match_score)}</td>
-            <td data-label="Prueba de vida">${scoreCell(row.liveness_score)}</td>
+            <td data-label="Videoidentificación">${scoreCell(row.liveness_score)}</td>
             <td data-label="Estado">${statusBadge(row.status)}</td>
             <td data-label="Decisión Didit">${decCell}</td>
             <td class="mono" data-label="País">${row.didit_country || "—"}</td>

@@ -15550,6 +15550,14 @@ function esDuenoDelPanel(entry) {
 app.get("/api/admin/me", wrap(async (req, res) => {
   const entry = await verifyAdminToken(readAdminToken(req));
   if (!entry) return res.status(401).json({ error: "unauthorized" });
+  let linkedUser = null;
+  try {
+    const [linkedRows] = await pool.query(
+      "SELECT name, photo_url FROM users WHERE LOWER(email)=? LIMIT 1",
+      [String(entry.email || "").toLowerCase()]
+    );
+    linkedUser = linkedRows[0] || null;
+  } catch (e) { console.warn("[admin/me] linked user:", e.message); }
   if (!esDuenoDelPanel(entry)) {
     let fila = null;
     try {
@@ -15562,23 +15570,25 @@ app.get("/api/admin/me", wrap(async (req, res) => {
     return res.json({
       ok: true,
       email: entry.email,
-      name: (fila && fila.name) || entry.email,
+      name: (fila && fila.name) || linkedUser?.name || entry.email,
       role: NIVEL_NOMBRE[nivelDe(entry.role)] || "Equipo",
       role_key: entry.role || "",
-      avatar: (fila && fila.avatar) || "",
+      avatar: (fila && fila.avatar) || linkedUser?.photo_url || "",
       is_owner: false,
       must_change_password: !!(fila && fila.must_change_password) || !!entry.must_change_pw,
       // El equipo no gestiona el correo de acceso al panel: no se le manda.
       override_email: "",
     });
   }
+  const configuredName = getSetting("admin.display_name", "");
+  const configuredAvatar = getSetting("admin.avatar", "");
   res.json({
     ok: true,
     email: entry.email,
-    name: getSetting("admin.display_name", "") || "Administrador",
+    name: configuredName || linkedUser?.name || "Administrador",
     role: getSetting("admin.role", "") || "Superadministrador",
     role_key: "superadmin",
-    avatar: getSetting("admin.avatar", "") || "",
+    avatar: configuredAvatar || linkedUser?.photo_url || "",
     is_owner: true,
     must_change_password: false,
     override_email: getSetting("admin.email", "") || "",
