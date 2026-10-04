@@ -1827,7 +1827,7 @@ document.querySelectorAll("#nav, #adminHubNav").forEach(navNode => {
   };
   bar.append(
     tool("⌂", "Inicio", "dashboard", () => route("dashboard")),
-    tool("!", "Pendientes", "pending", () => onDashboard(".ops-center")),
+    tool("!", "Pendientes", "pending", () => onDashboard(".admin-compact-priorities")),
     tool("⌕", "Buscar", "hub_all", () => route("hub_all")),
     tool("◷", "Recientes", "hub_recent", () => route("hub_recent")),
     tool("○", "Cuenta", "account", () => openAdminProfile()),
@@ -4327,6 +4327,62 @@ async function viewDashboard(root){
   row.appendChild(panel("Distribución por zona", [], [ donut ]));
 
   root.appendChild(row);
+
+  /* V1043 · La portada aprobada es deliberadamente breve. Conservamos todos
+     los KPIs, controles y gráficas, pero quedan en un bloque secundario para
+     que el inicio muestre primero pendientes y áreas, sin una pantalla larga. */
+  const introNode = root.querySelector(".admin-dashboard-intro");
+  const areasNode = root.querySelector(".admin-area-shortcuts") || sectionsWrap;
+  const quickSearch = el("button", {
+    class: "admin-home-search", type: "button",
+    onclick: () => {
+      if (window.matchMedia("(max-width:720px)").matches) document.getElementById("mobileSearchBtn")?.click();
+      else document.querySelector(".search-wrap input")?.focus();
+    },
+  }, [
+    el("span", { class:"admin-home-search-icon", "aria-hidden":"true", html:'<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>' }),
+    el("span", {}, "Buscar una sección o herramienta…"),
+  ]);
+  const priorities = el("section", { class: "admin-compact-priorities" }, [
+    el("div", { class: "admin-compact-title" }, [el("h2", {}, "Necesita atención"), el("button", { type:"button", onclick:() => {
+      const detail = document.querySelector(".admin-dashboard-secondary");
+      if (!detail) return;
+      detail.open = true;
+      requestAnimationFrame(() => detail.scrollIntoView({ behavior:"smooth", block:"start" }));
+    } }, "Ver detalle")]),
+  ]);
+  const priorityGrid = el("div", { class: "admin-priority-grid" });
+  const preferredQueues = ["kyc", "reports", "tickets", "device_incidents"];
+  const queueByView = new Map(queues.map(queue => [queue.view || queue.view_name, queue]));
+  const priorityMeta = {
+    kyc: ["Verificación KYC", "Documentos pendientes"],
+    reports: ["Denuncias", "Reportes abiertos"],
+    tickets: ["Tickets", "Conversaciones activas"],
+    device_incidents: ["Dispositivos", "Incidencias activas"],
+  };
+  preferredQueues.forEach((view, index) => {
+    const queue = queueByView.get(view) || {};
+    const [label, detail] = priorityMeta[view];
+    const card = el("button", { class:`admin-priority-card p${index + 1}`, type:"button" }, [
+      el("span", { class:"admin-priority-copy" }, [el("strong", {}, label), el("small", {}, detail)]),
+      el("b", {}, fmt.num(queue.count || 0)),
+    ]);
+    card.addEventListener("click", () => openDashboardSection(view, label));
+    priorityGrid.appendChild(card);
+  });
+  priorities.appendChild(priorityGrid);
+
+  const secondary = el("details", { class:"admin-dashboard-secondary" });
+  secondary.appendChild(el("summary", {}, [
+    el("span", {}, [el("strong", {}, "Métricas y controles avanzados"), el("small", {}, "Estadísticas, estado técnico, copias y configuración rápida")]),
+    el("b", { "aria-hidden":"true" }, "+"),
+  ]));
+  const secondaryBody = el("div", { class:"admin-dashboard-secondary-body" });
+  Array.from(root.children).forEach(node => {
+    if (node !== introNode && node !== areasNode) secondaryBody.appendChild(node);
+  });
+  secondary.appendChild(secondaryBody);
+  root.replaceChildren(introNode, quickSearch, priorities, areasNode, secondary);
 }
 // Construye el formulario de creación de usuario como un NODO reutilizable,
 // para poder incrustarlo en la propia vista Usuarios (no en un drawer lateral).

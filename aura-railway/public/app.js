@@ -16911,6 +16911,7 @@ function screenMe(root) {
       { icon: "✉️", title: T("content.me.item_contact") || "Contacto", onClick: () => render(screenInfoContact) },
     ]},
     { title: "Información y normas", items: [
+      { icon: "✦", title: "Conocer Aura", sub: "Funciones, seguridad, guías y preguntas frecuentes", onClick: () => { window.location.assign("/?web=1"); } },
       { icon: "⭐", title: T("content.me.item_rules") || "Normas de la comunidad", onClick: () => render(screenInfoRules) },
       { icon: "📜", title: T("content.me.item_terms") || "Términos y privacidad", onClick: () => render(screenInfoTerms) },
       { icon: "ℹ️", title: T("content.me.item_about") || "Acerca de Aura", sub: T("content.me.version") || "Versión 1.0.0", onClick: () => render(screenAbout) },

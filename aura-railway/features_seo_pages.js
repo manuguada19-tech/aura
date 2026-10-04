@@ -42,6 +42,9 @@ const FAQ = FAQ_CONTENT_ES.items;
    reescribieron el 10/09. No se usa la fecha de arranque: fingir que todo cambia
    cada día haría que Google dejase de confiar en lastmod. */
 const PAGE_LASTMOD = "2026-09-10";
+const PORTADA_LASTMOD = "2026-10-04";
+const LEGAL_LASTMOD = "2026-10-04";
+const ABOUT_LASTMOD = "2026-10-04";
 // El FAQ sí ha cambiado después que el resto de páginas generales. Mantener su
 // fecha separada evita fingir cambios en URLs que no se han tocado.
 const FAQ_LASTMOD = FAQ_CONTENT_ES.updated;
@@ -62,6 +65,7 @@ const FAQ_LASTMOD = FAQ_CONTENT_ES.updated;
    misma puerta que usa la PWA instalada. */
 const APP_URL = "/explorar";
 const APP_ENTRADA = "/index.html";
+const APP_PREF_KEY = "aura-skip-public-home";
 
 /* V930 · El reclamo de la app, en UN solo sitio Y ATADO AL ESTADO REAL.
    --------------------------------------------------------------------
@@ -112,6 +116,9 @@ const BOTONES_DE_ACCESO = {
 
 function avisoDeAcceso() { return AVISOS_DE_ACCESO[estadoDelAcceso()]; }
 function botonDeAcceso() { return BOTONES_DE_ACCESO[estadoDelAcceso()]; }
+function accesoPublicoDisponible() {
+  return estadoDelAcceso() === "abierto" || estadoDelAcceso() === "sinregistro";
+}
 
 /* La portada dice el estado en dos sitios más: la línea pequeña debajo del botón
    de arriba y el párrafo "En qué punto está Aura". Las cuatro redacciones viven
@@ -138,9 +145,15 @@ function parrafoDeEstado() { return PARRAFOS_DE_ESTADO[estadoDelAcceso()]; }
    registro abierto. Si no se pasa el segundo, se usa el primero. */
 function ctaApp(tituloCerrado, tituloAbierto) {
   const abierto = estadoDelAcceso() === "abierto";
-  const titulo = abierto && tituloAbierto ? tituloAbierto : tituloCerrado;
+  const accesoPublico = accesoPublicoDisponible();
+  const titulo = accesoPublico
+    ? (abierto && tituloAbierto ? tituloAbierto : tituloCerrado)
+    : "Sigue descubriendo Aura";
   return `<div class="cta"><h2>${esc(titulo)}</h2><p>${avisoDeAcceso()}</p>` +
-    `<a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a></div>`;
+    (accesoPublico
+      ? `<a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a>`
+      : `<a class="btn" href="/como-funciona">Conocer la aplicación</a><a class="cta-secondary" href="${APP_URL}">Acceso de pruebas</a>`)
+    + `</div>`;
 }
 
 /* --------------------------------------------------------------------
@@ -471,11 +484,19 @@ function scriptSesionHtml() {
     + `if(location.pathname!=="/")return;`
     + `if(new URLSearchParams(location.search||"").get("web")==="1")return;`
     + `if(document.referrer){try{if(new URL(document.referrer).origin===location.origin)return;}catch(e){}}`
+    + `var p="";try{p=localStorage.getItem("${APP_PREF_KEY}")||"";}catch(e){}`
     + `var t="";try{t=localStorage.getItem("aura-auth-token")||"";}catch(e){}`
     + `var s=null;if(!t){try{s=JSON.parse(localStorage.getItem("aura-session")||"null");}catch(e){}}`
-    + `if(!t&&!(s&&s.id))return;`
+    + `if(p!=="1"&&!t&&!(s&&s.id))return;`
     + `location.replace("${APP_ENTRADA}"+location.search+location.hash);`
     + `}catch(e){}})();<\/script>`;
+}
+
+/* Al elegir cualquier enlace que abre Aura, recordamos la elección solamente
+   en ese navegador. Las futuras visitas directas al dominio entran en la app;
+   `/?web=1` sigue permitiendo volver a esta web informativa en cualquier momento. */
+function scriptPreferenciaAppHtml() {
+  return `<script>(function(){document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a");if(!a)return;try{var u=new URL(a.href,location.href);if(u.origin===location.origin&&u.pathname==="${APP_URL}")localStorage.setItem("${APP_PREF_KEY}","1");}catch(x){}});})();<\/script>`;
 }
 
 /* --------------------------------------------------------------------
@@ -631,6 +652,7 @@ function layout(opts) {
     .cta h2{margin:0 0 8px}
     .btn{display:inline-block;background:linear-gradient(90deg,var(--brand),var(--brand2));color:#fff;font-weight:700;padding:13px 26px;border-radius:12px;margin-top:8px}
     .btn:hover{text-decoration:none;filter:brightness(1.05)}
+    .cta-secondary{display:inline-block;margin:8px 0 0 14px;padding:10px 4px;color:var(--soft);font-size:14px;font-weight:700}
     .crumb{font-size:13px;color:var(--soft);margin:0 0 6px}
     .crumb a{color:var(--soft)}
     article.post p{color:#d5d7de}
@@ -638,6 +660,9 @@ function layout(opts) {
     article.post ul,article.post ol{color:#d5d7de;padding-left:22px}
     article.post li{margin:6px 0}
     .meta{color:var(--soft);font-size:14px;margin:0 0 22px}
+    .editorial-byline{display:flex;align-items:center;gap:12px;margin:0 0 24px;padding:13px 15px;border:1px solid var(--border);border-radius:14px;background:var(--card)}
+    .editorial-byline .mark{width:38px;height:38px;display:grid;place-items:center;flex:0 0 38px;border-radius:12px;background:linear-gradient(135deg,rgba(255,59,107,.2),rgba(255,138,59,.14));color:#ff7aa0;font-weight:900}
+    .editorial-byline strong,.editorial-byline small{display:block}.editorial-byline small{color:var(--soft);font-size:13px;line-height:1.45}
     .postlist{list-style:none;padding:0;margin:0}
     .postlist li{border:1px solid var(--border);border-radius:16px;padding:18px 20px;margin:12px 0;background:var(--card)}
     .postlist h3{margin:0 0 6px}
@@ -689,6 +714,7 @@ function layout(opts) {
     <div class="fine">© 2026 Aura · Hecho con ♥ en España · <a href="/">Volver al inicio</a> · <a href="${APP_URL}">Abrir la app</a>${consentPie}</div>
   </div></footer>
   ${consentUi}
+  ${scriptPreferenciaAppHtml()}
 </body>
 </html>`;
 }
@@ -710,6 +736,7 @@ const NAV = [
    las dos guías prioritarias dependían del índice y de enlaces contextuales.
    Este segundo menú hace explícita la arquitectura sin llenar la cabecera. */
 const FOOTER_EXTRA = [
+  { label: "Sobre Aura", path: "/sobre-aura" },
   { label: "Algoritmo de matches", path: "/guias/como-funciona-el-algoritmo-de-matches" },
   { label: "Seguridad en citas", path: "/guias/seguridad-en-citas-online" },
   { label: "Centro de ayuda", path: "/ayuda" },
@@ -723,7 +750,7 @@ const FOOTER_EXTRA = [
 
 // Términos, portados 1:1 desde screenInfoTerms() (el HTML de <b>/<a> es propio)
 const TERMS = [
-  { h: "1. Titularidad y datos identificativos del prestador (LSSI-CE art. 10)", p: "El servicio Aura (en adelante, «Aura» o «el Servicio»), accesible en <b>citasaura.es</b>, es operado por <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Bulevar Clara Campoamor 9</b>, España, e email de contacto <b>hola@citasaura.es</b>. Estos datos identifican al prestador del servicio de la sociedad de la información conforme al artículo 10 de la Ley 34/2002, de Servicios de la Sociedad de la Información y del Comercio Electrónico (LSSI-CE)." },
+  { h: "1. Titularidad y datos identificativos del prestador (LSSI-CE art. 10)", p: "El servicio Aura (en adelante, «Aura» o «el Servicio»), accesible en <b>citasaura.es</b>, es operado por <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Calle Alcalá de Henares 16, 19003 Guadalajara</b>, España, e email de contacto <b>hola@citasaura.es</b>. Estos datos identifican al prestador del servicio de la sociedad de la información conforme al artículo 10 de la Ley 34/2002, de Servicios de la Sociedad de la Información y del Comercio Electrónico (LSSI-CE)." },
   { h: "2. Objeto y aceptación de los términos", p: "Estos Términos regulan el acceso y uso de Aura, un servicio digital de encuentros personales. Al pulsar «Acepto» durante el registro, o al utilizar cualquier funcionalidad del Servicio, declaras haber leído, entendido y aceptado íntegramente estas condiciones. Si no estás conforme con alguna cláusula, no continúes con el registro y no uses la aplicación." },
   { h: "3. Requisitos para registrarte", p: "Sólo puedes crear una cuenta si: (a) tienes <b>18 años cumplidos o más</b>; (b) dispones de plena capacidad jurídica para obligarte contractualmente en tu país de residencia; (c) no has sido previamente suspendido o expulsado del Servicio; y (d) aceptas someterte al proceso de verificación de identidad y edad descrito en la <a href='/verificacion'>Política de Verificación de Identidad</a>. Está expresamente prohibido el uso por menores." },
   { h: "4. Registro, cuenta y credenciales", p: "Para usar Aura debes crear una cuenta con datos veraces, exactos y actualizados. Eres responsable de mantener la confidencialidad de tu contraseña y de cualquier actividad realizada desde tu cuenta. Debes notificarnos inmediatamente cualquier acceso no autorizado escribiendo a <b>seguridad@citasaura.es</b>. Aura podrá suspender la cuenta si detecta indicios de fraude, suplantación o uso indebido." },
@@ -770,7 +797,7 @@ function textoCookiesHtml() {
 
 // Privacidad, portada 1:1 desde screenInfoPrivacy()
 const PRIVACY = [
-  { h: "1. Responsable del tratamiento", p: "El responsable del tratamiento de tus datos personales es <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Bulevar Clara Campoamor 9</b>, España. Correo de contacto: <b>seguridad@citasaura.es</b>. Datos del Delegado de Protección de Datos (DPO), si aplica: <b>dpo@citasaura.es</b>." },
+  { h: "1. Responsable del tratamiento", p: "El responsable del tratamiento de tus datos personales es <b>Manuel de Pedro</b>, con NIF <b>03137923X</b>, domicilio en <b>Calle Alcalá de Henares 16, 19003 Guadalajara</b>, España. Correo de contacto para cuestiones de privacidad y ejercicio de derechos: <b>seguridad@citasaura.es</b>." },
   { h: "2. Categorías de datos que tratamos", p: "(a) <b>Datos identificativos y de contacto</b>: nombre, email, teléfono (opcional), fecha de nacimiento.<br>(b) <b>Datos del perfil</b>: fotos, biografía, género, orientación, altura, peso, etnia (opcional), ciudad, provincia, país, preferencias.<br>(c) <b>Datos biométricos</b> (categoría especial, art. 9 RGPD): imagen del documento de identidad, selfie y vídeo corto durante la verificación KYC.<br>(d) <b>Datos de uso</b>: matches, likes, mensajes, tiempo de uso, historial de suscripción.<br>(e) <b>Datos técnicos</b>: dirección IP, huella de dispositivo (fingerprint), sistema operativo, navegador, identificadores de sesión y cookies técnicas.<br>(f) <b>Datos de facturación</b>: producto contratado, importe, IVA. No almacenamos tarjetas: los pagos los procesa Stripe." },
   { h: "3. Finalidades y bases jurídicas del tratamiento", p: "<b>Prestación del Servicio</b> (art. 6.1.b — ejecución del contrato): crear tu cuenta, mostrar tu perfil, entregar mensajes y matches, gestionar tu suscripción.<br><b>Verificación de edad e identidad</b> (art. 6.1.c — obligación legal de proteger a menores + art. 9.2.a — consentimiento explícito para datos biométricos).<br><b>Seguridad y prevención del fraude</b> (art. 6.1.f — interés legítimo): bloqueo por IP y huella de dispositivo, detección de bots, moderación automatizada.<br><b>Comunicaciones comerciales</b> (art. 6.1.a — consentimiento): sólo si marcas expresamente la casilla correspondiente durante el registro.<br><b>Cumplimiento de obligaciones legales</b> (art. 6.1.c): facturación, atención a requerimientos judiciales." },
   { h: "4. Plazos de conservación", p: "<b>Datos de cuenta y perfil</b>: mientras la cuenta esté activa; tras la baja se borran en un plazo máximo de <b>30 días</b>.<br><b>Datos biométricos (KYC)</b>: máximo <b>30 días</b> desde la superación (o fracaso) del proceso y después se eliminan automáticamente.<br><b>Datos de facturación</b>: 6 años (art. 30 Código de Comercio) y 4 años a efectos fiscales (LGT).<br><b>Logs de seguridad</b>: 12 meses.<br><b>Comunicaciones comerciales</b>: hasta que retires el consentimiento." },
@@ -1508,12 +1535,21 @@ function pagePortada() {
      que acordarse de cambiarlas al abrir el registro -- exactamente la clase de
      cosa de la que uno no se acuerda, y la web habría seguido diciendo "en
      revisión" con la app abierta, o peor, al revés. */
+  const accesoPublico = accesoPublicoDisponible();
+  const portadaPrincipal = accesoPublico
+    ? `<a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a>`
+    : `<a class="btn" href="/guias">Leer las guías</a>`;
+  const portadaSecundario = accesoPublico
+    ? `<a href="#como-funciona" style="color:var(--soft)">o mira antes cómo funciona</a>`
+    : `<a href="${APP_URL}" style="color:var(--soft)">Acceso de pruebas</a>`;
   const body = `
     <p style="font-size:18px;color:var(--soft);max-width:660px">Aura es una app de citas española para mayores de 18 años. Esta página la cuenta entera antes de que entres: cómo se comprueba quién eres, cuándo se abre un chat, en qué orden aparece la gente y qué cuesta.</p>
 
-    <p style="margin:22px 0 4px;display:flex;flex-wrap:wrap;align-items:center;gap:14px"><a class="btn" href="${APP_URL}">${esc(botonDeAcceso())}</a>
-      <a href="#como-funciona" style="color:var(--soft)">o mira antes cómo funciona</a></p>
+    <p style="margin:22px 0 4px;display:flex;flex-wrap:wrap;align-items:center;gap:14px">${portadaPrincipal}
+      ${portadaSecundario}</p>
     <p style="margin:6px 0 0;font-size:14px;color:var(--soft)">${lineaDeEstado()}</p>
+
+    <p style="margin:18px 0 0;font-size:14px;color:var(--soft)">Proyecto y contenidos mantenidos desde España por el responsable identificado en <a href="/sobre-aura">Sobre Aura</a>.</p>
 
     <h2>Qué es Aura</h2>
     <p>Aura funciona como cabe esperar de una app de citas: creas un perfil con fotos y una descripción, dices qué buscas y a quién quieres ver, y vas pasando perfiles. Cuando dos personas se dan «me gusta», se abre un chat. Hasta ahí, nada nuevo.</p>
@@ -1660,7 +1696,7 @@ function pageTerms() {
     path: "/terminos",
     eyebrow: "Legal",
     h1: "Términos y condiciones",
-    sub: "Las reglas del juego, explicadas de forma clara. Última actualización: 13 de agosto de 2026.",
+    sub: "Las reglas del juego, explicadas de forma clara. Última actualización: 4 de octubre de 2026.",
     breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Términos", path: "/terminos" }],
     bodyHtml: legalListHtml(TERMS),
   });
@@ -1673,7 +1709,7 @@ function pagePrivacy() {
     path: "/privacidad",
     eyebrow: "Legal",
     h1: "Política de privacidad",
-    sub: "Cómo protegemos, usamos y respetamos tus datos. Conforme al RGPD y la LOPD-GDD.",
+    sub: "Cómo protegemos, usamos y respetamos tus datos. Actualizada el 4 de octubre de 2026.",
     breadcrumb: [{ name: "Inicio", path: "/" }, { name: "Privacidad", path: "/privacidad" }],
     bodyHtml: legalListHtml(PRIVACY),
   });
@@ -1795,7 +1831,7 @@ function pageContact() {
     <p>Y un aviso que vale para siempre: nosotros no te vamos a pedir nunca la contraseña, ni un código de verificación, ni un pago por soporte. Si recibes un mensaje así con nuestro nombre, no es nuestro — mándanoslo a seguridad@citasaura.es y lo denunciamos.</p>
     <div class="card">
       <h3>Datos del prestador (LSSI-CE)</h3>
-      <p>Aura es operado por <b>Manuel de Pedro</b>, NIF 03137923X, domicilio en Bulevar Clara Campoamor 9, España. Para cualquier cuestión legal o de protección de datos escríbenos a seguridad@citasaura.es.</p>
+      <p>Aura es operado por <b>Manuel de Pedro</b>, NIF 03137923X, domicilio en Calle Alcalá de Henares 16, 19003 Guadalajara, España. Para cualquier cuestión legal o de protección de datos escríbenos a seguridad@citasaura.es.</p>
     </div>
     <p>Respondemos en menos de 24 horas laborables. También puedes abrir un ticket desde tu perfil dentro de la <a href="${APP_URL}">app</a>.</p>`;
   return layout({
@@ -1811,6 +1847,54 @@ function pageContact() {
       "@context": "https://schema.org",
       "@type": "ContactPage",
       url: BASE + "/contacto",
+    },
+  });
+}
+
+function pageSobreAura() {
+  const body = `
+    <p style="font-size:18px;color:var(--soft);max-width:680px">Aura es una aplicación de citas desarrollada y operada desde España. Esta web explica el producto con detalle y publica recursos prácticos para conocer gente con más seguridad, claridad y respeto.</p>
+
+    <h2>Quién está detrás</h2>
+    <div class="card">
+      <h3>Responsable de Aura</h3>
+      <p>El titular y responsable editorial es <b>Manuel de Pedro</b>, con domicilio profesional en Calle Alcalá de Henares 16, 19003 Guadalajara, España. Para consultas generales puedes escribir a <b>hola@citasaura.es</b>; las cuestiones de privacidad y seguridad se atienden en <b>seguridad@citasaura.es</b>.</p>
+    </div>
+
+    <h2>Qué publicamos</h2>
+    <p>La documentación del producto se redacta a partir del funcionamiento real de Aura: cómo se ordenan los perfiles, qué exige la verificación, cuándo se abre un chat, qué información se conserva y qué controles tiene cada persona. Si una función cambia, revisamos también la explicación relacionada para que la web y la aplicación no cuenten cosas distintas.</p>
+    <p>Las guías editoriales tratan problemas concretos de las citas online: preparar un perfil, iniciar una conversación, reconocer señales de fraude o planificar una primera cita. No publicamos artículos automáticos para ocupar resultados de búsqueda ni copiamos textos de otras páginas. Cuando un contenido trata seguridad, derechos o trámites, enlazamos las fuentes oficiales necesarias para que el lector pueda comprobarlo.</p>
+
+    <h2>Cómo revisamos el contenido</h2>
+    <div class="grid">
+      <div class="card"><h3>Comprobación del producto</h3><p>Las explicaciones de funciones se contrastan con la versión activa de Aura y se corrigen cuando cambia el comportamiento de la aplicación.</p></div>
+      <div class="card"><h3>Fechas visibles</h3><p>Cada guía muestra su publicación y, si cambia de forma sustancial, su última actualización. No cambiamos fechas para fingir novedades.</p></div>
+      <div class="card"><h3>Correcciones abiertas</h3><p>Si detectas un dato incorrecto, puedes comunicarlo en Contacto. Revisamos tanto el texto como la pantalla de la aplicación a la que se refiere.</p></div>
+      <div class="card"><h3>Publicidad separada</h3><p>La publicidad solo puede aparecer en guías y preguntas frecuentes con contenido suficiente. No se inserta dentro de perfiles, chats, registro, pagos ni pantallas privadas.</p></div>
+    </div>
+
+    <h2>Cómo se financia Aura</h2>
+    <p>Aura combina un plan gratuito y planes de pago. Las posibles unidades publicitarias de la web se identifican como publicidad y no determinan qué recomendamos ni cambian el orden de los perfiles. No vendemos datos personales ni cedemos perfiles a anunciantes. La información completa está en la <a href="/privacidad">Política de privacidad</a>.</p>
+
+    <h2>Estado del servicio</h2>
+    <p>La portada indica automáticamente si el registro está abierto, limitado a pruebas privadas o temporalmente en revisión. Así evitamos prometer un acceso que no está disponible. Las guías, la ayuda, las normas y la documentación legal permanecen públicas en cualquiera de esos estados.</p>
+
+    <div class="cta"><h2>¿Tienes una corrección o una pregunta?</h2><p>Cuéntanos qué página has leído y qué dato deberíamos revisar.</p><a class="btn" href="/contacto">Contactar con Aura</a></div>`;
+  return layout({
+    title: "Sobre Aura y su contenido editorial",
+    description: "Quién está detrás de Aura, cómo se crea y revisa su contenido y cómo se separan la aplicación, la información editorial y la publicidad.",
+    path: "/sobre-aura",
+    eyebrow: "Transparencia",
+    h1: "Sobre Aura",
+    sub: "Quién mantiene la aplicación y cómo preparamos la información de esta web.",
+    breadcrumb: [{ name:"Inicio", path:"/" }, { name:"Sobre Aura", path:"/sobre-aura" }],
+    bodyHtml: body,
+    jsonLd: {
+      "@context":"https://schema.org",
+      "@type":"AboutPage",
+      name:"Sobre Aura",
+      url:BASE + "/sobre-aura",
+      author:{ "@type":"Person", name:"Manuel de Pedro" },
     },
   });
 }
@@ -1916,6 +2000,7 @@ function pageGuide(slug) {
   const body = `
     <article class="post">
       <p class="meta">${esc(fmtDate(g.date))}${g.updated && g.updated !== g.date ? " · actualizado el " + esc(fmtDate(g.updated)) : ""} · ${g.minutes} min de lectura</p>
+      <div class="editorial-byline"><span class="mark" aria-hidden="true">A</span><span><strong>Equipo editorial de Aura</strong><small>Contenido original revisado por el responsable de Aura · <a href="/sobre-aura">Cómo trabajamos</a></small></span></div>
       ${g.body}
     </article>
     ${adUnit()}
@@ -1942,7 +2027,7 @@ function pageGuide(slug) {
       dateModified: g.updated || g.date,
       inLanguage: "es",
       mainEntityOfPage: BASE + "/guias/" + g.slug,
-      author: { "@type": "Organization", name: SITE },
+      author: { "@type": "Organization", name: "Equipo editorial de Aura", url: BASE + "/sobre-aura" },
       publisher: { "@type": "Organization", name: SITE, logo: { "@type": "ImageObject", url: BASE + "/assets/welcome-logo-light.png" } },
     },
   });
@@ -1953,16 +2038,17 @@ function sitemapXml() {
     // V930 · La portada es "/" y sólo se lista "/". /inicio sigue respondiendo
     // 200 con la misma página, pero con canonical a "/": listar las dos sería
     // pedirle a Google que indexe dos veces lo mismo.
-    { loc: "/", pri: "1.0", freq: "weekly", lastmod: PAGE_LASTMOD },
+    { loc: "/", pri: "1.0", freq: "weekly", lastmod: PORTADA_LASTMOD },
     { loc: "/como-funciona", pri: "0.9", freq: "monthly", lastmod: PAGE_LASTMOD },
     { loc: "/guias", pri: "0.8", freq: "weekly", lastmod: PAGE_LASTMOD },
     { loc: "/faq", pri: "0.8", freq: "monthly", lastmod: FAQ_LASTMOD },
     { loc: "/verificacion", pri: "0.6", freq: "yearly", lastmod: PAGE_LASTMOD },
     { loc: "/normas", pri: "0.6", freq: "yearly", lastmod: PAGE_LASTMOD },
     { loc: "/ayuda", pri: "0.6", freq: "monthly", lastmod: PAGE_LASTMOD },
-    { loc: "/contacto", pri: "0.5", freq: "yearly", lastmod: PAGE_LASTMOD },
-    { loc: "/terminos", pri: "0.4", freq: "yearly", lastmod: PAGE_LASTMOD },
-    { loc: "/privacidad", pri: "0.4", freq: "yearly", lastmod: PAGE_LASTMOD },
+    { loc: "/contacto", pri: "0.5", freq: "yearly", lastmod: LEGAL_LASTMOD },
+    { loc: "/sobre-aura", pri: "0.5", freq: "monthly", lastmod: ABOUT_LASTMOD },
+    { loc: "/terminos", pri: "0.4", freq: "yearly", lastmod: LEGAL_LASTMOD },
+    { loc: "/privacidad", pri: "0.4", freq: "yearly", lastmod: LEGAL_LASTMOD },
   ];
   GUIDES.forEach((g) => urls.push({ loc: "/guias/" + g.slug, pri: "0.7", freq: "monthly", lastmod: g.updated || g.date }));
   const body = urls
@@ -2057,6 +2143,7 @@ function register(app, deps) {
   app.get("/verificacion", (req, res) => html(res, pageKyc()));
   app.get("/ayuda", (req, res) => html(res, pageHelp()));
   app.get("/contacto", (req, res) => html(res, pageContact()));
+  app.get("/sobre-aura", (req, res) => html(res, pageSobreAura()));
 
   // Guías (índice + artículos)
   app.get("/guias", (req, res) => html(res, pageGuidesIndex()));
