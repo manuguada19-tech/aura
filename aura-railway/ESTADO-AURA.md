@@ -1,6 +1,25 @@
 # ESTADO DE AURA — Resumen para no perder el hilo si se reinicia el chat
 
-**Fecha de este resumen: 4 octubre 2026 · PWA publicada: V1043 (`fcd7f4b`, build `155f0cfa8e18`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+**Fecha de este resumen: 4 octubre 2026 · PWA publicada: V1044 (`171cb11`, build `5edae619ab83`) · Android: 1.1 (`versionCode 2`, `bfcc202`)**
+
+### V1044 (04/10/2026) — Incidencias accionables y copias mensuales
+
+- El aviso operativo del inicio administrativo pasa a ser un botón accesible
+  únicamente cuando existe una incidencia real y muestra la acción «Ver».
+- Si todas las incidencias corresponden a las copias, abre directamente
+  «Copias de seguridad»; para errores técnicos, emails, push o base de datos,
+  abre «Incidencias técnicas». Sin incidencias conserva su carácter informativo.
+- Las copias continúan siendo manuales: no se ha creado ninguna ejecución ni
+  notificación diaria. El recordatorio por antigüedad pasa de 7 a 30 días y se
+  considera grave a partir de 90 días.
+- La desaparición de un snapshot temporal durante un despliegue de Railway
+  continúa visible dentro de Copias, pero deja de marcar toda Aura como averiada.
+- Validada exclusivamente con incidencias simuladas de copia y técnicas en
+  360×800, 390×844 y 1440×900. Ambos destinos se abren correctamente, sin
+  desbordamiento horizontal ni errores de JavaScript. `node --check` y
+  `git diff --check` correctos. Publicada en el commit `171cb11`, build
+  `5edae619ab83`; Railway respondió `ready:true`. No se crearon copias ni se
+  utilizaron o modificaron datos reales.
 
 ### V1043 (04/10/2026) — Administración compacta y acceso web editorial
 
