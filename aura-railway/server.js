@@ -20886,22 +20886,24 @@ app.get("/api/admin/operations-summary", wrap(async (req, res) => {
   const visibleWorkItems = keyedWorkItems.filter(item => !dismissedKeys.has(item.dismiss_key));
 
   const technicalIssues = [];
-  if (!dbOk) technicalIssues.push({ level: "critical", label: "Base de datos sin respuesta" });
-  if (emailFailed) technicalIssues.push({ level: "danger", label: `${emailFailed} emails fallidos en 24 h` });
-  if (emailQueued >= 25) technicalIssues.push({ level: "warn", label: `${emailQueued} emails en cola` });
-  if (pushFailed) technicalIssues.push({ level: "danger", label: `${pushFailed} envíos push fallidos en 24 h` });
-  if (pushQueued >= 10) technicalIssues.push({ level: "warn", label: `${pushQueued} campañas push en cola` });
-  if (errors24h) technicalIssues.push({ level: errors24h >= 10 ? "danger" : "warn", label: `${errors24h} errores registrados en 24 h` });
-  if (backup["backup.last_snapshot_at"] && !serverSnapshotAvailable) {
-    technicalIssues.push({ level: "warn", label: "El último backup del servidor ya no está disponible" });
-  }
+  if (!dbOk) technicalIssues.push({ level: "critical", view: "incidents", label: "Base de datos sin respuesta" });
+  if (emailFailed) technicalIssues.push({ level: "danger", view: "incidents", label: `${emailFailed} emails fallidos en 24 h` });
+  if (emailQueued >= 25) technicalIssues.push({ level: "warn", view: "incidents", label: `${emailQueued} emails en cola` });
+  if (pushFailed) technicalIssues.push({ level: "danger", view: "incidents", label: `${pushFailed} envíos push fallidos en 24 h` });
+  if (pushQueued >= 10) technicalIssues.push({ level: "warn", view: "incidents", label: `${pushQueued} campañas push en cola` });
+  if (errors24h) technicalIssues.push({ level: errors24h >= 10 ? "danger" : "warn", view: "incidents", label: `${errors24h} errores registrados en 24 h` });
+  /* V1044 · Los snapshots guardados dentro de Railway son temporales y pueden
+     desaparecer al desplegar. Eso se sigue viendo en Copias, pero no es una
+     caída de Aura y ya no enciende el aviso técnico de la portada. Las copias
+     continúan siendo manuales; el recordatorio general pasa de 7 a 30 días. */
   if (!latestBackup) {
-    technicalIssues.push({ level: "danger", label: "No hay ninguna copia de seguridad registrada" });
+    technicalIssues.push({ level: "warn", view: "backup", label: "No hay ninguna copia de seguridad registrada" });
   } else {
     const backupAgeDays = Math.floor((Date.now() - latestBackup.ts) / 86400000);
-    if (backupAgeDays >= 7) {
+    if (backupAgeDays >= 30) {
       technicalIssues.push({
-        level: backupAgeDays >= 30 ? "danger" : "warn",
+        level: backupAgeDays >= 90 ? "danger" : "warn",
+        view: "backup",
         label: `La última copia tiene ${backupAgeDays} días`,
       });
     }

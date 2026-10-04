@@ -4889,13 +4889,16 @@ textarea.input { resize: vertical; min-height: 60px; }
 .admin-dashboard-intro h1 { margin:5px 0 4px; font-size:clamp(25px,3vw,34px); line-height:1.05; letter-spacing:-.045em; }
 .admin-dashboard-lead { margin:0; color:var(--text-soft); font-size:13px; }
 .admin-dashboard-daily { margin:8px 0 0; color:var(--text-muted); font-size:11.5px; font-style:italic; }
-.admin-operational-message { display:flex; align-items:center; gap:9px; margin-top:13px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:var(--panel-2); }
+.admin-operational-message { width:100%; display:flex; align-items:center; gap:9px; margin-top:13px; padding:10px 12px; border:1px solid var(--border); border-radius:12px; background:var(--panel-2); color:var(--text); font:inherit; text-align:left; }
 .admin-operational-message > span { width:8px; height:8px; flex:0 0 8px; border-radius:50%; background:var(--success); box-shadow:0 0 0 4px rgba(16,185,129,.12); }
 .admin-operational-message strong { font-size:11.5px; line-height:1.35; }
 .admin-operational-message.pending { border-color:rgba(255,59,107,.28); background:rgba(255,59,107,.055); }
 .admin-operational-message.pending > span { background:var(--brand-1); box-shadow:0 0 0 4px rgba(255,59,107,.12); }
 .admin-operational-message.attention { border-color:rgba(239,68,68,.35); }
 .admin-operational-message.attention > span { background:var(--danger); box-shadow:0 0 0 4px rgba(239,68,68,.12); }
+.admin-operational-message.actionable { cursor:pointer; transition:border-color .15s,background .15s,transform .15s; }
+.admin-operational-message.actionable:hover,.admin-operational-message.actionable:focus-visible { border-color:rgba(239,68,68,.58); background:rgba(239,68,68,.075); transform:translateY(-1px); outline:0; }
+.admin-operational-open { margin-left:auto; color:#f87171; font-size:10.5px; white-space:nowrap; }
 .admin-dashboard-actions { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:7px; margin:0 0 12px; }
 .admin-see-all { padding:0; border:0; background:transparent; color:var(--brand-1); font-size:11px; font-weight:800; cursor:pointer; }
 .admin-area-shortcuts { margin-top:2px; }

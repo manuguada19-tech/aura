@@ -3850,6 +3850,15 @@ async function viewDashboard(root){
       : pendingTotal > 0
         ? `Tienes ${fmt.num(pendingTotal)} elementos que requieren atención.`
         : "Todo al día. Aura funciona correctamente.";
+  const operationalIssues = Array.isArray(health.issues) ? health.issues : [];
+  const operationalIssueViews = new Set(operationalIssues.map(issue => issue?.view).filter(Boolean));
+  const operationalIssueView = operationalIssueViews.size === 1 && operationalIssueViews.has("backup")
+    ? "backup"
+    : "incidents";
+  const openOperationalIssue = () => openDashboardSection(
+    operationalIssueView,
+    operationalIssueView === "backup" ? "Copias de seguridad" : "Incidencias técnicas"
+  );
   const dailyMessages = [
     "Cada revisión resuelta hace Aura más segura.",
     "La claridad en cada decisión protege a toda la comunidad.",
@@ -3863,8 +3872,15 @@ async function viewDashboard(root){
     el("h1", {}, [document.createTextNode(`${greeting}, `), el("span", { class: "admin-greeting-name" }, firstName)]),
     el("p", { class: "admin-dashboard-lead" }, "Lo importante primero; el resto, organizado por áreas."),
     el("p", { class: "admin-dashboard-daily" }, dailyMessages[dayIndex]),
-    el("div", { class: `admin-operational-message${hasIncident ? " attention" : pendingTotal ? " pending" : " ok"}`, role: "status" }, [
-      el("span", { "aria-hidden": "true" }), el("strong", {}, operationalText),
+    el(hasIncident ? "button" : "div", {
+      class: `admin-operational-message${hasIncident ? " attention actionable" : pendingTotal ? " pending" : " ok"}`,
+      ...(hasIncident
+        ? { type:"button", onclick:openOperationalIssue, "aria-label":`${operationalText} Abrir detalle.` }
+        : { role:"status" }),
+    }, [
+      el("span", { "aria-hidden": "true" }),
+      el("strong", {}, operationalText),
+      hasIncident ? el("b", { class:"admin-operational-open", "aria-hidden":"true" }, "Ver →") : null,
     ]),
   ]));
 
